@@ -1,16 +1,19 @@
 import os
-import requests
+# No longer need requests here!
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Any, Dict
 from sqlalchemy.orm import Session
 import pandas as pd
+from pathlib import Path
 
 from app import crud, schemas
 from app.api import deps
 from app.services.ai_service import ai_service
 from app.services.word_generator_service import word_generator_service
 from app.services.computation_service import computation_service
+from app.services.mcp_client import mcp_client  # Import our new client
+from app.services.email_service import email_service
 
 router = APIRouter()
 REPORTS_DIR = "generated_reports"
@@ -25,10 +28,16 @@ class ReportGenerationResponse(BaseModel):
     message: str
     report_path: str = None
 
-def send_email_notification(email: str, report_name: str, file_path: str):
-    print(f"BACKGROUND TASK: Sending email to {email} for report {report_name} with attachment {file_path}...")
-    # Real email logic (e.g., using smtplib) would go here
-    print("Email sent.")
+def send_email_notification(recipients: List[str], report_name: str, file_path: str):
+    """Background task to send an email notification with the report."""
+    subject = f"自动化报告已生成: {report_name}"
+    body = f"您好，\n\n附件中是您订阅的最新报告 '{report_name}'。\n\n此邮件由AutoReportAI系统自动发出，请勿回复。"
+    email_service.send_email(
+        recipients=recipients,
+        subject=subject,
+        body=body,
+        attachment_path=Path(file_path),
+    )
 
 def _get_data_from_source(sql_query: str) -> pd.DataFrame:
     """ Mock function to simulate fetching data and returning a pandas DataFrame. """
@@ -46,22 +55,7 @@ def _get_data_from_source(sql_query: str) -> pd.DataFrame:
         return pd.DataFrame([{"total": 2190000}])
     return pd.DataFrame()
 
-def _call_ai_chart_service(description: str, data: List[Dict[str, Any]]) -> str:
-    """Makes an internal API call to the AI service to generate a chart."""
-    # In a real microservices architecture, this URL would point to the AI service's address
-    # For now, it calls itself, but through the HTTP layer, enforcing decoupling.
-    backend_url = os.getenv("BACKEND_API_URL", "http://localhost:8000/api/v1")
-    endpoint = f"{backend_url}/ai/generate-chart"
-    payload = {"description": description, "data": data}
-    
-    try:
-        response = requests.post(endpoint, json=payload)
-        response.raise_for_status()
-        return response.json()["image_base64"]
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to call AI chart service: {e}")
-        # Return a placeholder or raise an exception
-        return ""
+# The messy _call_ai_chart_service function is now gone.
 
 
 @router.post("/generate", response_model=ReportGenerationResponse)
@@ -117,15 +111,23 @@ def generate_report(
             print(f"Skipping computed field '{mapping.placeholder_name}' due to error: {e}")
             final_data[mapping.placeholder_name] = "[计算错误]"
 
-    # 4. Call AI Service for charts VIA API
+    # 4. Call AI Service for charts VIA FastMCP CLIENT
     chart_mappings = [m for m in template.mappings if m.placeholder_type == "chart"]
     for mapping in chart_mappings:
         chart_data = final_data.get(mapping.placeholder_name)
         if chart_data:
-            # This now makes an HTTP request instead of a direct function call
-            b64_image = _call_ai_chart_service(mapping.description, chart_data)
-            final_data[mapping.placeholder_name] = b64_image
+            # Clean, abstract, and robust call using our client
+            response = mcp_client.post(
+                service_name="ai_service",
+                endpoint="/generate-chart",
+                payload={"description": mapping.description, "data": chart_data}
+            )
             
+            if response:
+                final_data[mapping.placeholder_name] = response.get("image_base64", "")
+            else:
+                final_data[mapping.placeholder_name] = "[AI图表生成失败]"
+
     # 5. Call AI Service for text summary (if requested)
     # We can check if a specific placeholder like 'ai_summary' exists.
     # For now, let's assume if any text placeholder exists, we might want a summary.
@@ -146,10 +148,9 @@ def generate_report(
         data=final_data
     )
 
-    # 6. Send Email in Background
+    # 7. Send Email in Background
     if request.recipients:
-        for email in request.recipients:
-            background_tasks.add_task(send_email_notification, email, request.report_name, output_path)
+        background_tasks.add_task(send_email_notification, request.recipients, request.report_name, output_path)
 
     return {
         "status": "success",

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-docx
+requests
+pydantic
+sqlalchemy
+psycopg2-binary
+pandas
+numpy
+matplotlib

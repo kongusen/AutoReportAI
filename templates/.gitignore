@@ -1,0 +1,5 @@
+# Ignore all files in this directory, as they are user-uploaded content.
+*
+
+# Do not ignore this .gitignore file itself, so the directory is kept.
+!.gitignore 

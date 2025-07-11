@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:13
+    container_name: autoreport_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=autoreport
+      - POSTGRES_PASSWORD=autoreport
+      - POSTGRES_DB=autoreport
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: autoreport_backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
+    restart: unless-stopped
+
+volumes:
+  postgres_data: 

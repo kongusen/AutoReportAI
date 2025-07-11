@@ -8,4 +8,12 @@ psycopg2-binary
 pandas
 numpy
 matplotlib
+scikit-learn
+python-docx
+# For OpenAI integration
+openai
+python-dotenv
+httpx
 apscheduler
+passlib[bcrypt]
+python-jose[cryptography]

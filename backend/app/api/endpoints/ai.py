@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from sqlalchemy.orm import Session
 
-from app.services.ai_service import ai_service
+from app.services.ai_service import AIService
+from app.api import deps
 
 router = APIRouter()
 
@@ -13,18 +15,21 @@ class ChartRequest(BaseModel):
 class ChartResponse(BaseModel):
     image_base64: str
 
+def get_ai_service(db: Session = Depends(deps.get_db)) -> AIService:
+    return AIService(db)
+
 @router.post("/generate-chart", response_model=ChartResponse)
-def generate_chart(request: ChartRequest):
+def generate_chart(
+    *, 
+    request: ChartRequest,
+    ai_service: AIService = Depends(get_ai_service)
+):
     """
-    Receives data and a description, and returns a base64 encoded chart image.
+    Generates a chart image from data and a description.
+    This endpoint is called by other services (like report_generation) via FastMCP.
     """
-    try:
-        image_base64 = ai_service.generate_chart_from_description(
-            data=request.data,
-            description=request.description
-        )
-        return {"image_base64": image_base64}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate chart: {e}") 
+    image_base64 = ai_service.generate_chart_from_description(
+        data=request.data, 
+        description=request.description
+    )
+    return {"image_base64": image_base64} 

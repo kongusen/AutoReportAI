@@ -14,27 +14,27 @@ services:
       - "5432:5432"
     restart: unless-stopped
 
-  backend:
-    build: ./backend
-    container_name: autoreport_backend
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-    environment:
-      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
-    restart: unless-stopped
-
-  scheduler:
-    build: ./backend
-    container_name: autoreport_scheduler
-    depends_on:
-      - backend
-    command: python scheduler/main.py
-    environment:
-      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
-      - BACKEND_API_URL=http://backend:8000/api/v1
-    restart: unless-stopped
+#  backend:
+#    build: ./backend
+#    container_name: autoreport_backend
+#    ports:
+#      - "8000:8000"
+#    depends_on:
+#      - db
+#    environment:
+#      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
+#    restart: unless-stopped
+#
+#  scheduler:
+#    build: ./backend
+#    container_name: autoreport_scheduler
+#    depends_on:
+#      - backend
+#    command: python scheduler/main.py
+#    environment:
+#      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
+#      - BACKEND_API_URL=http://backend:8000/api/v1
+#    restart: unless-stopped
 
 volumes:
   postgres_data: 

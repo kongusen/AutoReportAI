@@ -1,24 +1,28 @@
-# AutoReportAI - 系统架构与功能方案 (v2)
+# AutoReportAI - 系统架构与功能方案 (v3)
 
 ## 1. 概览 (Overview)
 
-本项目旨在构建一个名为“AutoReportAI”的自动化报告生成系统。系统以用户上传的Word文档为模板，通过连接外部业务数据库获取实时数据，并利用数据分析和AI能力，自动填充模板生成分析报告，最终通过邮件分发并归档。
+本项目旨在构建一个名为“AutoReportAI”的自动化报告生成系统。系统以用户上传的Word文档为模板，通过连接**多种数据源**（SQL, CSV, API）获取实时数据，并利用**可配置的AI服务**，自动填充模板生成分析报告，最终通过邮件分发并归档。
 
-整个系统采用现代化、容器化的微服务思想进行设计，确保各模块的高内聚、低耦合，方便独立开发、测试、部署和扩展。所有核心功能都将通过“MCP（Machine-Callable Platform）接口”（即RESTful API）暴露，便于AI模块或任何其他系统集成调用。
+整个系统采用现代化、容器化的微服务思想进行设计，确保各模块的高内聚、低耦合。所有核心功能都将通过RESTful API暴露，前端与后端完全分离。
 
 ### 1.1. 技术栈
 
-*   **后端框架**: Python 3.9 + FastAPI (高性能、异步Web框架)
-*   **数据库**: PostgreSQL (稳定、强大的开源关系型数据库)
+*   **后端框架**: Python 3.9 + FastAPI
+*   **数据库**: PostgreSQL
 *   **数据持久化/ORM**: SQLAlchemy
 *   **数据分析与处理**: Pandas, NumPy
 *   **图表生成**: Matplotlib
+*   **AI集成**: OpenAI
 *   **Word文档处理**: python-docx
-*   **前端框架**: Next.js (React框架，支持服务端渲染)
+*   **前端框架**: Next.js, React, TypeScript, Tailwind CSS
+*   **HTTP客户端**: Axios (前端), HTTpx (后端)
 *   **部署与运维**: Docker, Docker Compose
-*   **任务调度**: APScheduler (或Celery Beat)
+*   **任务调度**: APScheduler
 
 ## 2. 系统架构图 (System Architecture Diagram)
+
+*宏观架构图保持不变，核心交互流程依然有效。*
 
 ```mermaid
 graph TD
@@ -30,24 +34,21 @@ graph TD
         B[Web界面]
     end
 
-    subgraph "后端 (FastAPI on Docker)"
+    subgraph "后端 (FastAPI)"
         C{API网关}
-        C -- "/templates" --> D[模板管理 (CRUD & Parse)]
-        C -- "/mappings" --> E[数据映射管理]
+        C -- "/templates" --> D[模板管理]
+        C -- "/data-sources" --> E[数据源管理]
+        C -- "/ai-providers" --> H[AI供应商管理]
         C -- "/reports" --> F[报告生成流程]
         C -- "/tasks" --> G[任务管理]
-        C -- "/ai" --> H[AI服务 (文本 & 图表)]
-        C -- "/files" --> I[文件服务]
     end
 
-    subgraph "持久化与存储 (Docker Volumes)"
-        J[(PostgreSQL DB)]
-        K[/templates]
-        L[/generated_reports]
+    subgraph "持久化 (PostgreSQL on Docker)"
+        J[(数据库)]
     end
 
     subgraph "外部依赖"
-        M[(业务数据库)]
+        M[业务数据库/CSV/API]
         N((SMTP邮件服务))
     end
     
@@ -56,163 +57,116 @@ graph TD
     end
 
     A -- "访问" --> B
-    B -- "调用MCP接口" --> C
+    B -- "调用API" --> C
     
-    D -- "读/写模板文件" --> K
-    D -- "读/写模板元数据/JSON" --> J
+    D -- "读/写" --> J
+    E -- "读/写" --> J
+    H -- "读/写" --> J
     
-    E -- "定义占位符与SQL的映射" --> J
-    
-    F -- "调用" --> H
-    F -- "读取映射" --> E
-    F -- "连接/查询" --> M
-    F -- "读取模板JSON" --> D
-    F -- "生成Word" --> L
+    F -- "读取配置" --> J
+    F -- "调用数据检索服务" --> M
+    F -- "调用AI服务" --> H
     F -- "发送邮件" --> N
 
     G -- "读/写" --> J
-    I -- "读/写" --> L
-    
     O -- "定时触发" --> F
     O -- "读取任务" --> G
 ```
 
-## 3. 核心数据库模型 (Core DB Models)
+## 3. 核心数据库模型 (v3)
 
-为支持新功能，数据库将包含以下核心模型：
+```mermaid
+erDiagram
+    Template ||--o{ PlaceholderMapping : "包含"
+    PlaceholderMapping }o--|| DataSource : "关联"
+    AIProvider {
+        int id PK
+        string provider_name
+        enum provider_type
+        string api_base_url
+        string api_key
+        string default_model_name
+        int is_active
+    }
+    DataSource {
+        int id PK
+        string name
+        enum source_type
+        string db_query
+        string file_path
+        string api_url
+        string api_method
+    }
+    Template {
+        int id PK
+        string file_path
+        string name
+    }
+    PlaceholderMapping {
+        int id PK
+        int template_id FK
+        string placeholder_name
+        enum placeholder_type
+        int data_source_id FK
+    }
+```
 
-*   `Template`: 存储模板信息，包括文件名、描述以及**首次解析后缓存的JSON结构**。
-*   `PlaceholderMapping`: 存储每个占位符的详细映射规则。
-    *   `template_id`: 关联到具体的模板。
-    *   `placeholder_name`: 占位符名称（如 `total_sales`）。
-    *   `placeholder_type`: 占位符类型（`query`, `computed`, `chart`, `table`）。
-    *   `source_logic`: 数据源逻辑。如果类型是`query`，这里就存SQL语句；如果是`chart`，这里存用于获取图表数据的SQL。
-    *   `description`: 占位符的自然语言描述（特别是对于图表）。
+## 4. 模块功能详解 (v3)
 
-## 4. 模块功能详解 (Detailed Module Functions)
-
-### 4.1. 模板管理 (Template Management) - 已升级
-*   **核心能力**: 提供模板的完整CRUD能力。上传新模板时解析其结构并存入数据库，避免后续重复解析。
+### 4.1. 数据源管理 (Data Source Management) - **核心升级**
+*   **核心能力**: 集中管理所有数据来源。这是系统灵活性和可扩展性的基石。
 *   **开发思路**:
-    1.  **接口**:
-        *   `POST /api/v1/templates`: 上传`.docx`文件。服务会将文件存入`/templates`目录，然后**立即解析**，并将文件名和解析出的JSON结构存入`Template`表。
-        *   `GET /api/v1/templates`: 列出所有数据库中已记录的模板。
-        *   `GET /api/v1/templates/{id}`: 获取单个模板的详细信息（包括其缓存的JSON结构）。
-        *   `PUT /api/v1/templates/{id}`: 更新模板元数据（如描述）。
-        *   `DELETE /api/v1/templates/{id}`: 从数据库和文件系统中删除模板。
-    2.  **解析逻辑增强**: 解析函数需要能识别更丰富的、统一带有描述的占位符格式。我们将使用正则表达式来捕获括号或引号内的描述。
-        *   查询/计算占位: `{{total_sales "返回公司本年度的总销售额"}}`
-        *   图表占位: `[chart:sales_by_region "生成一张柱状图，展示按区域划分的销售额排名前五的地区"]`
-        *   表格占位: `[table:detailed_sales "列出所有销售记录的详细信息，包括区域、产品和金额"]`
-    3.  **输出**: 解析后的JSON将包含占位符名称、类型和从模板中提取的自然语言描述。
-        ```json
-        {
-          "placeholders": [
-            {"name": "total_sales", "type": "scalar", "description": "返回公司本年度的总销售额"},
-            {"name": "sales_by_region", "type": "chart", "description": "生成一张柱状图，展示按区域划分的销售额排名前五的地区"},
-            {"name": "detailed_sales", "type": "table", "description": "列出所有销售记录的详细信息，包括区域、产品和金额"}
-          ]
-        }
-        ```
+    1.  **模型 (`DataSource`)**: 定义了一个包含多种来源类型的统一模型。
+        *   `source_type`: 枚举类型，包括 `sql`, `csv`, `api`。
+        *   `db_query`: 存储SQL查询语句。
+        *   `file_path`: 存储CSV文件的服务器路径。
+        *   `api_url`, `api_method`, `api_headers`, `api_body`: 存储调用外部API所需的所有配置。
+    2.  **服务 (`DataRetrievalService`)**: 创建了一个专门的服务，负责根据`DataSource`对象的类型，执行相应的数据获取逻辑（执行SQL，读取CSV，请求API），并统一返回Pandas DataFrame。
+    3.  **接口**: 提供完整的CRUD API (`/api/v1/data-sources`) 来管理这些数据源配置。
 
-### 4.2. 数据映射管理 (Data Mapping Management) - 新增
-*   **核心能力**: 为模板中的每个占位符配置其数据来源。
+### 4.2. AI供应商管理 (AI Provider Management) - **核心升级**
+*   **核心能力**: 使AI服务变得可配置、可插拔。
 *   **开发思路**:
-    1.  **接口**: `POST /api/v1/templates/{template_id}/mappings`
-    2.  **输入**: 一个映射配置列表。
-        ```json
-        [
-          {
-            "placeholder_name": "total_sales",
-            "placeholder_type": "query",
-            "source_logic": "SELECT SUM(amount) FROM sales WHERE sale_date > '2023-01-01';"
-          },
-          {
-            "placeholder_name": "sales_by_region",
-            "placeholder_type": "chart",
-            "source_logic": "SELECT region, SUM(amount) FROM sales GROUP BY region ORDER BY SUM(amount) DESC LIMIT 5;"
-          }
-        ]
-        ```
-    3.  **处理**: 服务将这些配置存入`PlaceholderMapping`表，与`template_id`关联。
+    1.  **模型 (`AIProvider`)**: 存储不同AI供应商（如OpenAI）的配置，包括API Key、Base URL、默认模型等。通过一个`is_active`字段来控制当前全局使用的是哪一个配置。
+    2.  **服务 (`AIService`)**: `AIService`在执行操作前，会先从数据库查询当前激活的`AIProvider`配置。
+    3.  **动态调用**: 根据激活的提供商类型，服务会动态地选择使用真实的LLM客户端（如`openai`库）还是内部的mock逻辑，实现了AI能力的无缝切换。
+    4.  **接口**: 提供完整的CRUD API (`/api/v1/ai-providers`) 来管理这些AI配置。
 
-### 4.3. AI服务 (AI Service) - 已升级
-*   **核心能力**:
-    *   **(已有)** 接收结构化数据，撰写分析性文本。
-    *   **(新增)** 接收**图表数据的查询结果**和**自然语言描述**，调用`matplotlib`生成图表。
+### 4.3. 模板与映射管理 (Template & Mapping Management)
+*   **核心能力**: 管理模板及其占位符与数据源的关联。
 *   **开发思路**:
-    1.  **接口**: `POST /api/v1/ai/generate-chart`
-    2.  **输入**:
-        ```json
-        {
-          "description": "近半年各区域销售额对比柱状图",
-          "data": [{"region": "昆明", "total": 500}, {"region": "大理", "total": 400}]
-        }
-        ```
-    3.  **处理**:
-        *   使用`pandas`将输入数据转换为DataFrame。
-        *   **解析描述**: 通过关键词（如 "柱状图", "饼图", "折线图"）判断要生成的图表类型。
-        *   **动态绘图**: 调用`matplotlib`的相应函数进行绘图。可以根据描述中的其他关键词调整样式（如“对比”可能意味着使用不同颜色）。
-        *   **中文支持**: 确保在绘图时指定了已安装的中文字体。
-    4.  **输出**: Base64编码的图表图片字符串。
+    1.  **模型 (`PlaceholderMapping`)**: 该模型不再直接存储SQL语句，而是通过一个外键`data_source_id`关联到`DataSource`模型。
+    2.  **接口**:
+        *   `POST /api/v1/templates`: 上传模板并解析。
+        *   `POST /api/v1/mappings`: 为模板中的占位符关联已创建的数据源ID。
 
-### 4.4. 报告生成与分发 (Report Generation & Distribution) - 已升级
-*   **核心能力**: 升级版的流程编排，能处理模板、映射、数据、AI的全流程调用。
-*   **开发思路**:
-    1.  **接口**: `POST /api/v1/reports/generate`
-    2.  **输入**: `{ "template_id": 1, "recipients": ["test@example.com"], "report_name": "2023年10月销售报告" }`
-    3.  **处理 (新流程)**:
-        1.  根据`template_id`从数据库获取模板的缓存JSON结构和所有关联的`PlaceholderMapping`。
-        2.  遍历`mappings`，执行SQL查询获取所有占位符所需的数据，形成一个**原始数据集**。
-        3.  遍历原始数据集，找到所有图表类型的数据。
-        4.  对每一个图表数据，调用**AI图表生成服务 (4.3)**，传入数据和描述，获取Base64图片。将返回的图片字符串**更新/替换**到数据集中。
-        5.  (可选) 调用AI文本生成服务，丰富报告内容。
-        6.  调用`WordGeneratorService`，传入模板文件和**最终处理完成的数据集**（其中图表占位符的值现在是Base64图片），生成报告。
-        7.  调用`EmailService`，在后台任务中发送邮件。
+### 4.4. 报告生成流程 (Report Generation Flow)
+*   **核心能力**: 编排整个报告生成过程，逻辑更清晰。
+*   **新流程**:
+    1.  根据`template_id`获取模板及其所有`PlaceholderMapping`。
+    2.  遍历每个`mapping`，获取其关联的`DataSource`对象。
+    3.  将`DataSource`对象传递给 **`DataRetrievalService`**，获取一个Pandas DataFrame。
+    4.  根据`mapping`中定义的占位符类型（`text`, `chart`, `table`）对DataFrame进行处理（取单个值或转为字典列表）。
+    5.  对于图表类型，调用 **`AIService`**（它会使用激活的`AIProvider`）生成图表。
+    6.  将最终的数据集传递给`WordGeneratorService`生成报告。
+    7.  发送邮件。
 
-### 3.5. 任务管理与调度 (Task Management & Scheduling)
-*   **核心能力**: 提供一个管理界面和API，用于创建、配置和管理周期性的报告生成任务。
-*   **开发思路**:
-    1.  **数据模型**: `Task`表已在PostgreSQL中定义，包含任务名称、CRON表达式格式的调度周期、关联的模板、收件人等信息。
-    2.  **接口 (MCP)**:
-        *   `GET /api/v1/tasks`: 列出所有任务。
-        *   `POST /api/v1/tasks`: 创建新任务。
-        *   `PUT /api/v1/tasks/{task_id}`: 更新任务。
-        *   `DELETE /api/v1/tasks/{task_id}`: 删除任务。
-    3.  **调度器 (Scheduler)**:
-        *   这将是一个**独立的Python进程**，与FastAPI应用一同通过`docker-compose`启动。
-        *   使用`APScheduler`库，配置其使用我们的PostgreSQL作为任务存储后端。
-        *   调度器启动后，会从`Task`表中加载所有启用的任务。
-        *   当任务到达预定时间时，调度器会组装一个请求（包含模板、收件人等信息），并**通过HTTP调用报告生成的API接口** (`POST /api/v1/reports/generate`) 来触发报告生成流程。这种通过API解耦的方式比在调度器进程内执行业务逻辑更加健壮和可扩展。
+## 5. 开发环境 (Development Environment)
+为兼顾开发效率和环境一致性，项目采用**混合开发模式**：
+*   **基础设施 (Docker)**: `PostgreSQL`数据库服务运行在Docker容器中，通过`docker-compose up -d`启动。这确保了所有开发者使用的数据库版本和配置完全一致。
+*   **应用服务 (本地)**: `FastAPI`后端和`Next.js`前端应用直接在开发者本地机器上运行。
+    *   **后端**: 在Python虚拟环境 (`venv`) 中运行，通过`.env`文件配置环境变量（如数据库连接字符串指向`localhost`），并使用`uvicorn`的`--reload`模式实现热重载。
+    *   **前端**: 使用`npm run dev`启动开发服务器，同样支持热重载。
+*   **优点**: 这种模式避免了在每次代码修改后都重新构建整个Docker镜像的耗时过程，极大地提升了编码和调试的速度，同时保证了核心依赖（数据库）的稳定性。
 
-### 3.6. 文件系统与前端 (File System & Frontend)
-*   **核心能力**: 提供一个用户友好的Web界面，用于管理模板、任务、查看和下载已生成的报告。
-*   **开发思路**:
-    1.  **后端支持**: 提供API接口用于文件操作。
-        *   `GET /api/v1/files`: 列出`/generated_reports`目录下的所有报告。
-        *   `GET /api/v1/files/{filename}`: 下载指定的报告文件。
-    2.  **前端实现 (Next.js)**:
-        *   创建一个仪表盘（Dashboard）布局。
-        *   **模板管理页**: 展示已上传的模板，允许上传新模板，点击模板可以触发分析并查看其JSON结构。
-        *   **任务管理页**: 调用任务管理API，通过表单实现对定时任务的增删改查。
-        *   **报告库**: 调用文件服务API，展示所有已生成的报告，并提供下载按钮。
-
-## 5. 下一步开发计划 (Next Steps) - 已更新
-
-1.  **数据库模型更新**:
-    *   在`backend/app/models`中创建`template.py`和`placeholder_mapping.py`。
-    *   在`backend/app/schemas`中为新模型创建对应的Pydantic Schema。
-    *   更新`backend/app/initial_data.py`以在启动时创建新表。
-2.  **实现模板管理 (CRUD)**:
-    *   创建`crud_template.py`。
-    *   重构`template_analysis.py`端点，实现文件的上传、解析、存储和管理功能。
-3.  **实现数据映射管理**:
-    *   创建`crud_placeholder_mapping.py`。
-    *   创建`mapping_management.py` API端点。
-4.  **升级AI和报告生成服务**:
-    *   实现`ai/generate-chart`接口的逻辑。
-    *   重构`report_generation.py`端点以遵循新的、更复杂的编排流程。
-5.  **构建和测试**:
-    *   在完成上述模块后，通过`docker-compose`重新构建和测试端到端的报告生成流程。
-6.  **前端开发**:
-    *   前端需要新增**模板管理**和**数据映射配置**界面。 
+## 6. 前端架构 (Frontend Architecture)
+*   **框架**: Next.js (App Router)
+*   **状态管理**: React Hooks (`useState`, `useEffect`, `useContext`)
+*   **认证流程**:
+    1.  **登录页 (`/login`)**: 用户提交表单，通过API获取JWT。
+    2.  **Token存储**: JWT存储在浏览器的`localStorage`中。
+    3.  **API客户端 (`Axios`)**: 创建了一个`axios`实例，通过拦截器在每个发出的请求头中自动附加`Authorization: Bearer <token>`。
+    4.  **路由保护 (`AuthProvider`)**: 一个包裹全局布局的客户端组件，它会检查token是否存在。如果用户未登录，则自动重定向到`/login`页面，实现了对应用内页面的保护。
+*   **UI组件**:
+    *   **应用布局**: 包含一个固定的侧边栏导航和主内容区。
+    *   **管理页面**: 为数据源、AI供应商等模块创建了标准的表格展示页面，支持数据的增删改查。 

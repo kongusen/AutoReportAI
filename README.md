@@ -1,108 +1,215 @@
-# AutoReportAI - 自动化报告生成系统
+<div align="center">
+  <img src="https://raw.githubusercontent.com/user-attachments/assets/15ba393a-864a-4f1c-8af2-8b43834a3b04" width="150" alt="AutoReportAI Logo">
+  <h1>AutoReportAI</h1>
+  <p>
+    <b>An intelligent, task-driven, and scheduler-centric automated report generation system.</b>
+  </p>
+  <p>
+    AutoReportAI transforms raw data into polished Word documents (`.docx`) through a fully automated, customizable workflow.
+  </p>
 
-AutoReportAI 是一个强大的、**由任务驱动的**自动化报告生成平台。用户可以通过配置一个**任务（Task）**来定义报告的整个生命周期：使用哪个Word模板，从哪个数据源获取数据，何时通过Cron表达式进行调度，以及最终报告发送给哪些收件人。
+  <p>
+    <a href="https://github.com/your-username/AutoReportAI/stargazers"><img src="https://img.shields.io/github/stars/your-username/AutoReportAI?style=flat-square" alt="GitHub stars"></a>
+    <a href="https://github.com/your-username/AutoReportAI/forks"><img src="https://img.shields.io/github/forks/your-username/AutoReportAI?style=flat-square" alt="GitHub forks"></a>
+    <a href="https://github.com/your-username/AutoReportAI/issues"><img src="https://img.shields.io/github/issues/your-username/AutoReportAI?style=flat-square" alt="GitHub issues"></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/github/license/your-username/AutoReportAI?style=flat-square" alt="License"></a>
+  </p>
 
-## ✨ 主要功能
+  <p>
+    <b>English</b> | <a href="./README_zh.md">简体中文</a>
+  </p>
+</div>
 
-- **任务驱动与调度**:
-    - 以“任务”为核心，编排报告生成的所有环节。
-    - 支持Cron表达式，实现灵活的定时调度（如每小时、每天、每周）。
-- **数据ETL与宽表**:
-    - 在报告生成前，自动从外部数据源执行ETL流程。
-    - 将数据加载到本地的**分析宽表**中，实现高效率的数据查询。
-- **动态Word模板**: 支持在 `.docx` 模板中使用 `{{text}}`, `[chart:name]`, `[table:name]` 等多种占位符。
-- **多源数据获取**: 可集中管理和连接多种数据源（SQL、CSV、API）。
-- **可配置AI服务**:
-    - 支持通过API配置和切换不同的AI供应商（如OpenAI）。
-    - 利用大语言模型（LLM）根据自然语言描述和数据动态生成图表和分析文本。
-- **报告历史与审计**:
-    - 自动记录每一次任务执行的结果（成功或失败）。
-    - 可追溯历史报告文件和错误信息。
-- **Web管理界面**: 提供一个基于Next.js的现代化Web界面，用于管理任务、数据源、AI供应商等核心资源。
-- **用户认证与授权**: 基于JWT的安全机制，保护所有核心API。
+---
 
-## 🛠️ 技术栈
+## ✨ Key Features
 
-- **后端**: FastAPI, Python 3.9, SQLAlchemy, Pandas
-- **任务调度**: APScheduler
-- **前端**: Next.js, React, TypeScript, Tailwind CSS, Axios
-- **数据库**: PostgreSQL
-- **部署与开发**: Docker, Docker Compose
-- **AI集成**: OpenAI
+AutoReportAI is not just a report generator; it's a complete automation platform built on a robust, scheduler-centric architecture.
 
-## 🚀 本地开发环境设置
+- **🤖 Task-Driven Workflow**: Define a `Task` to orchestrate the entire reporting lifecycle—what data to use, which template to apply, when to run, and who to notify.
+- **🕒 Cron-Based Scheduling**: Leverage the power of `APScheduler` for fine-grained, automated task execution using standard cron expressions.
+- **📊 ETL & Data Mart**: Before each report, a dedicated **ETL service** fetches data from external sources and loads it into a local "wide table" (analytics data mart). This decouples data retrieval from report generation, ensuring high performance and data consistency.
+- **🧩 Dynamic Report Composition**: Reports are assembled dynamically. A `ToolDispatcherService` uses AI to interpret needs, fetch data from the local data mart, and generate content blocks (text, tables, charts). A `ReportCompositionService` then intelligently populates these blocks into `.docx` templates.
+- **🔌 Pluggable AI Providers**: Abstracted AI services allow you to switch between different Large Language Models (e.g., OpenAI, a local mock) via a simple configuration change.
+- **🗂️ Comprehensive History & Auditing**: Every task execution, whether successful or failed, is logged in a `ReportHistory` table. This provides a complete audit trail, including error messages and paths to generated reports.
+- **🌐 Modern Web Interface**: A sleek frontend built with Next.js and Tailwind CSS for managing tasks, data sources, AI providers, and viewing report history.
 
-本项目采用“Docker + 本地虚拟环境”的混合模式进行开发，以兼顾效率和环境一致性。
+## 🏛️ System Architecture
 
-### 1. 先决条件
+The system is orchestrated by a central scheduler, which triggers a two-phase process: the ETL phase and the Report Generation phase.
 
-- [Docker](https://www.docker.com/get-started/) 和 Docker Compose
+```mermaid
+graph TD
+    subgraph "User/Admin"
+        A[Browser]
+    end
+
+    subgraph "Frontend (Next.js)"
+        B[Web UI]
+    end
+
+    subgraph "Backend (FastAPI)"
+        C{API Gateway}
+        C -- "/tasks" --> G[1. Task Management]
+        C -- "/templates" --> D[Template Mgmt]
+        C -- "/data-sources" --> E[Data Source Mgmt]
+        C -- "/history" --> K[Report History]
+    end
+    
+    subgraph "Scheduler (APScheduler)"
+        O[Master Scheduler Process]
+    end
+
+    subgraph "Core Services"
+        I[ETLService]
+        P[ToolDispatcherService]
+        Q[ReportCompositionService]
+    end
+
+    subgraph "Data Persistence (PostgreSQL)"
+        J[(Database)]
+        J -- R/W --> Task
+        J -- R/W --> Template
+        J -- R/W --> DataSource
+        J -- Write --> AnalyticsData[Local Data Mart]
+        J -- Write --> ReportHistory
+    end
+
+    subgraph "External Dependencies"
+        M[Business DBs/CSVs/APIs]
+    end
+
+    A -- Visits --> B
+    B -- Calls API --> C
+    
+    O -- "1. Reads schedule" --> Task
+    O -- "2. Triggers ETL" --> I
+    I -- "Reads config" --> DataSource
+    I -- "Fetches from" --> M
+    I -- "Writes to" --> AnalyticsData
+    
+    O -- "3. Triggers Tools" --> P
+    P -- "Reads from" --> AnalyticsData
+    
+    O -- "4. Triggers Composition" --> Q
+    Q -- "Assembles results from" --> P
+    
+    O -- "5. Logs result" --> ReportHistory
+```
+
+## 🛠️ Tech Stack
+
+| Category          | Technology                                                                                                                              |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Backend**       | <img src="https://img.shields.io/badge/Python-3.9-blue.svg?logo=python&style=flat-square" alt="Python"> <img src="https://img.shields.io/badge/FastAPI-0.103-blue.svg?logo=fastapi&style=flat-square" alt="FastAPI"> <img src="https://img.shields.io/badge/SQLAlchemy-2.0-orange.svg?style=flat-square" alt="SQLAlchemy"> |
+| **Scheduler**     | <img src="https://img.shields.io/badge/APScheduler-3.10-green.svg?style=flat-square" alt="APScheduler">                                     |
+| **Frontend**      | <img src="https://img.shields.io/badge/Next.js-14-black.svg?logo=next.js&style=flat-square" alt="Next.js"> <img src="https://img.shields.io/badge/React-18-blue.svg?logo=react&style=flat-square" alt="React"> <img src="https://img.shields.io/badge/TypeScript-5-blue.svg?logo=typescript&style=flat-square" alt="TypeScript"> <img src="https://img.shields.io/badge/Tailwind_CSS-3-cyan.svg?logo=tailwind-css&style=flat-square" alt="Tailwind CSS"> |
+| **Database**      | <img src="https://img.shields.io/badge/PostgreSQL-15-blue.svg?logo=postgresql&style=flat-square" alt="PostgreSQL">                       |
+| **DevOps**        | <img src="https://img.shields.io/badge/Docker-24-blue.svg?logo=docker&style=flat-square" alt="Docker">                                      |
+| **AI Integration**| <img src="https://img.shields.io/badge/OpenAI-1.3-blue.svg?logo=openai&style=flat-square" alt="OpenAI">                                       |
+
+
+## 🚀 Quick Start
+
+This project uses a hybrid development model: core infrastructure (PostgreSQL) runs in Docker, while application services run locally.
+
+### 1. Prerequisites
+
+- [Docker](https://www.docker.com/get-started/) & Docker Compose
 - [Python 3.9+](https://www.python.org/downloads/)
-- [Node.js](https://nodejs.org/) (v18 或更高) 和 npm
+- [Node.js](https://nodejs.org/) (v18 or higher) & npm
 
-### 2. 后端API服务设置
+### 2. Backend API Setup
 
-1.  **启动数据库服务**:
+1.  **Start Database Service**:
     ```bash
     docker-compose up -d
     ```
-    *该命令会根据 `docker-compose.yml` 在后台启动一个PostgreSQL数据库容器。*
+    *This spins up a PostgreSQL container in the background.*
 
-2.  **创建`.env`文件**:
-    在 `backend/` 目录下，创建一个名为 `.env` 的文件，并填入以下内容。
+2.  **Create `.env` file**:
+    Create a file named `.env` in the `backend/` directory with the following content:
     ```dotenv
     # backend/.env
     DATABASE_URL=postgresql://autoreport:autoreport@localhost:5432/autoreport
     ```
 
-3.  **创建并激活Python虚拟环境**:
+3.  **Setup Python Environment**:
     ```bash
-    # 在项目根目录运行
+    # From the project root
     python3 -m venv venv
-    source ven/bin/activate
+    source venv/bin/activate
+    # On Windows, use: venv\Scripts\activate
     ```
-    *在Windows上，激活命令为 `venv\Scripts\activate`*
 
-4.  **安装Python依赖**:
+4.  **Install Python Dependencies**:
     ```bash
     pip install -r backend/requirements.txt
     ```
 
-5.  **启动后端API服务器**:
+5.  **Run Backend API Server**:
     ```bash
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir ./backend
     ```
-    *服务将在 `http://localhost:8000` 上运行。请**保持此终端运行**。*
-    *首次启动时，它会自动在数据库中创建所有表，并生成一个默认用户。*
+    *The API server will be available at `http://localhost:8000`. Keep this terminal running.*
 
-### 3. 调度器服务设置
+### 3. Scheduler Service Setup
 
-**在一个新的终端窗口中**，确保你仍然在激活的Python虚拟环境中 (`source venv/bin/activate`)，然后运行以下命令：
+In a **new terminal**, ensure the Python virtual environment is activated (`source venv/bin/activate`) and run:
 
 ```bash
 python scheduler/main.py
 ```
-*这将启动独立的调度器进程。它会连接到数据库，加载所有活动任务，并根据其Cron计划等待执行。请**保持此终端运行**以确保定时任务能被触发。*
+*This starts the standalone scheduler process. It will connect to the database, load active tasks, and wait to execute them based on their cron schedules. Keep this terminal running.*
 
-### 4. 前端设置 (Frontend)
+### 4. Frontend Setup
 
-1.  **安装Node.js依赖**:
+1.  **Install Node.js Dependencies**:
     ```bash
-    # 在一个新终端中，于项目根目录运行
+    # From the project root, in a new terminal
     npm install --prefix frontend
     ```
 
-2.  **启动前端开发服务器**:
+2.  **Run Frontend Dev Server**:
     ```bash
     npm run dev --prefix frontend
     ```
-    *服务将在 `http://localhost:3000` 上运行。*
+    *The web application will be available at `http://localhost:3000`.*
 
-### 5. 访问应用
+### 5. Accessing the Application
 
-- **前端应用**: 打开浏览器，访问 `http://localhost:3000`。
-- **后端API文档**: 访问 `http://localhost:8000/docs` 可以查看由FastAPI自动生成的Swagger UI。
+- **Web App**: Navigate to `http://localhost:3000`.
+- **API Docs**: Explore the auto-generated Swagger UI at `http://localhost:8000/docs`.
 
-**默认登录凭证**:
-- **用户名**: `admin@example.com`
-- **密码**: `password`
+**Default Login**:
+- **Username**: `admin@example.com`
+- **Password**: `password`
+
+## 🗺️ Roadmap
+
+We have ambitious plans for AutoReportAI. Here are some of the features we're looking to build next:
+
+- [ ] **Frontend Completion**:
+    - [ ] Fully functional Task creation and editing form.
+    - [ ] Interactive report history viewer with logs and download links.
+    - [ ] Dashboard for system status overview.
+- [ ] **More Tool Integrations**:
+    - [ ] Advanced charting options (e.g., Plotly).
+    - [ ] Direct data manipulation tools within the dispatcher.
+- [ ] **Enhanced Data Sources**:
+    - [ ] Support for more databases (e.g., MySQL, SQLite).
+    - [ ] Support for cloud storage buckets (S3, GCS) as data sources.
+- [ ] **Improved User Management**:
+    - [ ] Role-based access control (RBAC).
+    - [ ] User group management for report distribution.
+- [ ] **Testing & CI/CD**:
+    - [ ] Comprehensive unit and integration test coverage.
+    - [ ] GitHub Actions workflow for automated testing and deployment.
+
+## 🤝 Contributing
+
+Contributions are welcome! If you have ideas for new features, improvements, or bug fixes, please open an issue to discuss it first.
+
+## 📄 License
+
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.

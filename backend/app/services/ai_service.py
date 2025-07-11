@@ -44,6 +44,32 @@ class AIService:
         
         return image_base64
 
+    def generate_text_summary(self, context_data: Dict[str, Any]) -> str:
+        """
+        Generates a narrative text summary based on the provided data context.
+        
+        This is a mock implementation using a simple rule-based template.
+        It can be replaced with a call to a real Large Language Model (LLM).
+        """
+        project_name = context_data.get("project_name", "该项目")
+        total_sales = context_data.get("total_sales_from_regions", 0)
+        
+        # Example of finding the region with the highest sales
+        regional_sales = context_data.get("sales_by_region", [])
+        top_region = ""
+        max_sales = 0
+        if isinstance(regional_sales, list) and regional_sales:
+            top_performer = max(regional_sales, key=lambda x: x.get('sales', 0))
+            top_region = top_performer.get("region", "")
+            max_sales = top_performer.get("sales", 0)
+
+        summary = (
+            f"根据数据显示，{project_name}本月表现优异。总销售额达到 {total_sales:,.2f}元。"
+            f"其中，{top_region}地区表现最为突出，销售额为 {max_sales:,.2f}元，是主要的增长动力。"
+            "建议持续关注该地区的市场动态，并考虑将成功经验推广至其他区域。"
+        )
+        return summary
+
     def _create_bar_chart(self, df: pd.DataFrame, title: str):
         if len(df.columns) < 2:
             raise ValueError("Bar chart requires at least two columns (labels and values).")

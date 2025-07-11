@@ -1,57 +1,39 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import List, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import Any
+
+from app.db.session import get_db
+from app.services.etl_service import ETLService
 
 router = APIRouter()
 
-class DataRequirement(BaseModel):
-    placeholders: List[str]
-    charts: List[str]
-    tables: List[str]
+def get_etl_service(db: Session = Depends(get_db)) -> ETLService:
+    return ETLService(db)
 
-class FetchedData(BaseModel):
-    data: Dict[str, Any]
-
-@router.post("/fetch", response_model=FetchedData)
-def fetch_data(requirements: DataRequirement):
+@router.post("/run-etl/{data_source_id}", response_model=dict, status_code=status.HTTP_200_OK)
+def run_etl_for_data_source(
+    data_source_id: int,
+    etl_service: ETLService = Depends(get_etl_service),
+) -> Any:
     """
-    Corresponds to "组织数据溯源" and "数据分析".
-    
-    This MCP interface receives data requirements (placeholders, charts, tables)
-    and returns the fetched and processed data. It would interact with
-    a database, run SQL queries, and perform calculations.
-    
-    (This is a mock implementation)
+    Manually trigger the ETL process for a specific data source.
+    This will extract data from the source and load it into the local analytics table.
     """
-    # In a real implementation, this service would connect to a business DB.
-    # It would map requirements like "total_sales" to specific SQL queries,
-    # execute them, and perform any necessary analysis or calculations.
-    
-    mock_data = {
-        "project_name": "云南旅游项目",
-        "report_date": "2023-10-27",
-        "total_sales": 1500000,
-        "sales_by_region_chart": {
-            "type": "bar",
-            "data": {"昆明": 500000, "大理": 400000, "丽江": 600000}
-        },
-        "detailed_sales_data_table": [
-            {"region": "昆明", "sales": 500000, "growth": "5%"},
-            {"region": "大理", "sales": 400000, "growth": "3%"},
-            {"region": "丽江", "sales": 600000, "growth": "8%"}
-        ]
-    }
-    
-    # Filter the data to return only what was requested
-    response_data = {}
-    for key in requirements.placeholders:
-        if key in mock_data:
-            response_data[key] = mock_data[key]
-    for key in requirements.charts:
-        if key in mock_data:
-            response_data[key] = mock_data[key]
-    for key in requirements.tables:
-        if key in mock_data:
-            response_data[key] = mock_data[key]
-            
-    return {"data": response_data}
+    try:
+        result = etl_service.run_etl(data_source_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred during the ETL process: {str(e)}",
+        )

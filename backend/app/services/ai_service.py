@@ -5,6 +5,7 @@ import base64
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 import openai
+import json
 
 from app import crud
 from app.core.config import settings
@@ -12,9 +13,98 @@ from app.core.config import settings
 class AIService:
     def __init__(self, db: Session):
         self.db = db
+        self.client = None
+        self.provider_config = self._get_active_provider()
+        
+        if self.provider_config.get("provider_type") == "openai":
+            self.client = openai.OpenAI(
+                api_key=self.provider_config["api_key"],
+                base_url=self.provider_config.get("api_base_url"),
+            )
+            
         # Font settings remain
         plt.rcParams['font.sans-serif'] = ['SimHei']
         plt.rcParams['axes.unicode_minus'] = False
+
+    def interpret_description_for_tool(self, task_type: str, description: str) -> Dict[str, Any]:
+        """
+        Uses an AI to interpret a natural language description and generate parameters for a tool.
+        """
+        if not (self.provider_config["provider_type"] == "openai" and self.client):
+            # If no real AI is configured, return mock parameters.
+            print("AI provider not configured, returning mock parameters.")
+            if "投诉" in description:
+                return {"data_source_id": 1}
+            return {}
+
+        # Define the expected JSON structure for each tool type
+        tool_formats = {
+            "count": """
+            - **'count'**: 统计数量。
+              - `data_source_id`: 数据源的数字ID (例如: 1, 2, 3).
+              - `column_name`: 要统计的列名。
+              - `query_conditions`: (可选) 一个用于过滤数据的条件字典。
+            示例: `{"data_source_id": 1, "column_name": "value"}`
+            """,
+            "query": """
+            - **'query'**: 计算百分比变化。
+              - `value1`: 第一个值 (例如, 上个月的数量)。
+              - `value2`: 第二个值 (例如, 这个月的数量)。
+            示例: `{"value1": 100, "value2": 120}`
+            """,
+            "draw": """
+            - **'draw'**: 生成图表。
+              - `data_source_id`: 数据源的数字ID.
+              - `x_column`: 图表的X轴对应的列名。
+              - `y_column`: 图表的Y轴对应的列名。
+              - `title`: 图表的标题。
+              - `chart_type`: (可选) 'bar', 'pie', 'line'.
+            示例: `{"data_source_id": 1, "x_column": "category", "y_column": "value", "title": "各类投诉占比", "chart_type": "bar"}`
+            """
+        }
+
+        if task_type not in tool_formats:
+            raise ValueError(f"Unsupported task_type: {task_type}")
+
+        selected_format = tool_formats[task_type]
+
+        prompt = f"""
+        你是一个智能AI助手，你的任务是根据用户的自然语言描述，为特定的工具生成一个JSON格式的参数对象。
+
+        **任务:**
+        将以下描述转换为一个JSON对象，用于 `{task_type}` 工具。
+
+        **描述:**
+        "{description}"
+
+        **工具和JSON格式:**
+        {selected_format}
+
+        **说明:**
+        1. 分析描述以提取所有必要的参数。
+        2. 如果描述中提到了特定的实体（例如“投诉”、“销售额”），请推断出最合适的 `data_source_id`。假设 "投诉" 数据源的ID是 `1`，"销售" 数据源的ID是 `2`。
+        3. 如果某些参数在描述中没有明确提到，请根据常识和上下文进行推断。
+        4. 你的回答**必须**只包含一个格式正确的JSON对象，不带任何额外的解释或代码块标记。
+
+        **输出JSON:**
+        """
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.provider_config.get("model_name") or "gpt-4-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            params = json.loads(content)
+            return params
+        except json.JSONDecodeError:
+            print(f"Failed to parse JSON from AI response: {content}")
+            raise ValueError("AI returned invalid JSON.")
+        except Exception as e:
+            print(f"An unexpected error occurred during AI parameter generation: {e}")
+            raise
 
     def _get_active_provider(self):
         provider = crud.ai_provider.get_active(self.db)
@@ -24,30 +114,24 @@ class AIService:
         return {
             "provider_type": provider.provider_type.value,
             "api_key": provider.api_key,
-            "api_base_url": provider.api_base_url,
+            "api_base_url": str(provider.api_base_url) if provider.api_base_url else None,
             "model_name": provider.default_model_name,
         }
 
     def generate_chart_from_description(self, data: List[Dict[str, Any]], description: str) -> str:
-        provider_config = self._get_active_provider()
-        
-        if provider_config["provider_type"] == "openai":
-            return self._generate_chart_with_openai(data, description, provider_config)
+        if self.provider_config["provider_type"] == "openai" and self.client:
+            return self._generate_chart_with_openai(data, description)
         else: # Fallback to mock generation
             return self._generate_chart_mock(data, description)
 
     def generate_text_summary(self, context_data: Dict[str, Any]) -> str:
-        provider_config = self._get_active_provider()
-
-        if provider_config["provider_type"] == "openai":
-            return self._generate_text_with_openai(context_data, provider_config)
+        if self.provider_config["provider_type"] == "openai" and self.client:
+            return self._generate_text_with_openai(context_data)
         else: # Fallback to mock generation
             return self._generate_text_mock(context_data)
 
-    def _generate_chart_with_openai(self, data: List[Dict[str, Any]], description: str, config: Dict) -> str:
-        client = openai.OpenAI(api_key=config["api_key"], base_url=config.get("api_base_url"))
-        
-        # Simplified data to string for the prompt
+    def _generate_chart_with_openai(self, data: List[Dict[str, Any]], description: str) -> str:
+        # client is now self.client
         data_str = pd.DataFrame(data).to_string()
 
         prompt = f"""
@@ -68,8 +152,8 @@ class AIService:
         """
 
         try:
-            response = client.chat.completions.create(
-                model=config["model_name"] or "gpt-4",
+            response = self.client.chat.completions.create(
+                model=self.provider_config["model_name"] or "gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
             )
@@ -89,10 +173,8 @@ class AIService:
             print(f"OpenAI chart generation failed: {e}")
             return self._generate_chart_mock(data, description) # Fallback on error
 
-    def _generate_text_with_openai(self, context_data: Dict[str, Any], config: Dict) -> str:
-        client = openai.OpenAI(api_key=config["api_key"], base_url=config.get("api_base_url"))
-        
-        # Prune large data like images before sending to LLM
+    def _generate_text_with_openai(self, context_data: Dict[str, Any]) -> str:
+        # client is now self.client
         prompt_data = {k: v for k, v in context_data.items() if not isinstance(v, str) or not v.startswith('iVBOR')}
         
         prompt = f"""
@@ -103,8 +185,8 @@ class AIService:
         请直接输出分析摘要文本。
         """
         try:
-            response = client.chat.completions.create(
-                model=config["model_name"] or "gpt-3.5-turbo",
+            response = self.client.chat.completions.create(
+                model=self.provider_config["model_name"] or "gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.choices[0].message.content

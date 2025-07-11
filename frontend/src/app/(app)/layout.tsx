@@ -3,6 +3,13 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
+const navLinks = [
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/data-sources', label: 'Data Sources' },
+  { href: '/ai-providers', label: 'AI Providers' },
+  { href: '/tasks', label: 'Tasks' },
+];
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
@@ -19,21 +26,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="mt-6">
           <ul>
-            <li>
-              <Link href="/" className="block px-6 py-3 text-gray-700 hover:bg-gray-100">
-                Dashboard
-              </Link>
-            </li>
-            <li>
-              <Link href="/data-sources" className="block px-6 py-3 text-gray-700 hover:bg-gray-100">
-                Data Sources
-              </Link>
-            </li>
-            <li>
-              <Link href="/ai-providers" className="block px-6 py-3 text-gray-700 hover:bg-gray-100">
-                AI Providers
-              </Link>
-            </li>
+            {navLinks.map((link) => (
+              <li key={link.href}>
+                <Link href={link.href} className="block px-6 py-3 text-gray-700 hover:bg-gray-100">
+                  {link.label}
+                </Link>
+              </li>
+            ))}
           </ul>
         </nav>
         <div className="absolute bottom-0 w-64 p-6">

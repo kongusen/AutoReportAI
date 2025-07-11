@@ -2,90 +2,60 @@ import docx
 import io
 import base64
 import re
-from typing import Dict, Any, List
+from docx.shared import Inches
 
 class WordGeneratorService:
-    TABLE_PLACEHOLDER_REGEX = re.compile(r"\[table:(\w+)\]")
+    # Regex to find <img ...> tags with base64 data
+    IMG_REGEX = re.compile(r'<img src="data:image/png;base64,([^"]+)">')
 
-    def generate_report(
-        self, 
-        template_path: str, 
-        output_path: str, 
-        data: Dict[str, Any]
-    ):
+    def generate_report_from_content(self, composed_content: str, output_path: str):
         """
-        Generates a .docx report by filling a template with provided data.
-        - Replaces {{text_placeholder}} with string values.
-        - Replaces [chart:chart_placeholder] with a base64 encoded image.
-        - Fills tables marked with [table:table_placeholder] in the first cell.
+        Generates a .docx report from a string containing the fully composed content.
+        This content can include text and special <img> tags for base64 images.
         """
-        doc = docx.Document(template_path)
-
-        # --- 1. Fill Text and Chart Placeholders in Paragraphs ---
-        for p in doc.paragraphs:
-            self._replace_text_in_run(p, data)
-            self._replace_chart_in_run(p, data)
-
-        # --- 2. Fill Table Placeholders ---
-        for table in doc.tables:
-            # Check the first cell for a table placeholder
-            first_cell_text = table.cell(0, 0).text
-            match = self.TABLE_PLACEHOLDER_REGEX.search(first_cell_text)
-            
-            if match:
-                key = match.group(1)
-                table_data = data.get(key)
-                
-                if isinstance(table_data, list) and table_data:
-                    # Clear the placeholder text from the first cell
-                    table.cell(0, 0).text = table.cell(0, 0).text.replace(match.group(0), "").strip()
-
-                    # Get headers from the first row of the template table
-                    headers = [cell.text for cell in table.rows[0].cells]
-                    
-                    # Add data rows
-                    for item in table_data:
-                        row_cells = table.add_row().cells
-                        for i, header in enumerate(headers):
-                            # Allow for case-insensitive and flexible key matching
-                            cell_value = self._find_value_for_header(header, item)
-                            row_cells[i].text = str(cell_value)
+        doc = docx.Document()
         
+        # Split the content into paragraphs based on newlines
+        paragraphs = composed_content.split('\n')
+        
+        for para_text in paragraphs:
+            self._process_paragraph(doc, para_text)
+            
         doc.save(output_path)
 
-    def _replace_text_in_run(self, paragraph, data: Dict[str, Any]):
-        # Simple text replacement for {{key}}
-        for key, value in data.items():
-            if isinstance(value, (str, int, float)) and f"{{{{{key}}}}}" in paragraph.text:
-                paragraph.text = paragraph.text.replace(f"{{{{{key}}}}}", str(value))
-    
-    def _replace_chart_in_run(self, paragraph, data: Dict[str, Any]):
-        # Replaces [chart:key] with a base64 image
-        for key, value in data.items():
-            if f"[chart:{key}]" in paragraph.text and self._is_base64(value):
-                # Clear the placeholder text
-                paragraph.text = paragraph.text.replace(f"[chart:{key}]", "")
-                # Add image from base64 string
-                try:
-                    image_stream = io.BytesIO(base64.b64decode(value))
-                    paragraph.add_run().add_picture(image_stream, width=docx.shared.Inches(5.0))
-                except Exception as e:
-                    print(f"Error adding picture for key {key}: {e}")
+    def _process_paragraph(self, doc, para_text: str):
+        """
+        Processes a single paragraph of text, adding text and images to the document.
+        """
+        # Find all image tags in the paragraph
+        img_matches = list(self.IMG_REGEX.finditer(para_text))
+        
+        if not img_matches:
+            # If no images, add the whole paragraph as text
+            doc.add_paragraph(para_text)
+            return
 
-    def _find_value_for_header(self, header: str, item: Dict[str, Any]) -> Any:
-        # Tries to find a value in the data item, ignoring case and looking for partial matches
-        header_lower = header.lower().strip()
-        for key, value in item.items():
-            if key.lower().strip() == header_lower:
-                return value
-        return "" # Return empty string if no match found
+        current_pos = 0
+        for match in img_matches:
+            # Add text before the image
+            start, end = match.span()
+            if start > current_pos:
+                doc.add_paragraph(para_text[current_pos:start])
 
-    def _is_base64(self, s: Any) -> bool:
-        if not isinstance(s, str):
-            return False
-        try:
-            return base64.b64encode(base64.b64decode(s)).decode() == s
-        except Exception:
-            return False
+            # Add the image
+            base64_data = match.group(1)
+            try:
+                image_stream = io.BytesIO(base64.b64decode(base64_data))
+                doc.add_picture(image_stream, width=Inches(6.0))
+            except Exception as e:
+                print(f"Error decoding or adding picture: {e}")
+                # Add a placeholder text on error
+                doc.add_paragraph(f"[Image could not be loaded: {e}]")
+            
+            current_pos = end
+        
+        # Add any remaining text after the last image
+        if current_pos < len(para_text):
+            doc.add_paragraph(para_text[current_pos:])
 
 word_generator_service = WordGeneratorService()

@@ -2,8 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import api from '@/lib/api';
+import { DataSourceForm, DataSourceFormValues } from '@/components/DataSourceForm';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 
-// Define the type for a single data source
 interface DataSource {
   id: number;
   name: string;
@@ -17,42 +24,89 @@ export default function DataSourcesPage() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<DataSource | null>(null);
+
+  const fetchDataSources = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/data-sources');
+      setDataSources(response.data);
+    } catch (err) {
+      setError('Failed to fetch data sources.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchDataSources = async () => {
-      try {
-        setLoading(true);
-        const response = await api.get('/data-sources');
-        setDataSources(response.data);
-      } catch (err) {
-        setError('Failed to fetch data sources.');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchDataSources();
   }, []);
+  
+  const handleFormSubmit = async (values: DataSourceFormValues) => {
+    try {
+      if (editingSource) {
+        await api.put(`/data-sources/${editingSource.id}`, values);
+      } else {
+        await api.post('/data-sources', values);
+      }
+      setIsModalOpen(false);
+      setEditingSource(null);
+      fetchDataSources(); // Refresh data
+    } catch (err) {
+      console.error('Failed to save data source', err);
+      // You might want to show an error message to the user here
+    }
+  };
 
-  if (loading) {
-    return <div>Loading...</div>;
-  }
+  const handleDelete = async (id: number) => {
+    if (window.confirm('Are you sure you want to delete this data source?')) {
+        try {
+            await api.delete(`/data-sources/${id}`);
+            fetchDataSources(); // Refresh data
+        } catch (err) {
+            console.error('Failed to delete data source', err);
+        }
+    }
+  };
+  
+  const openModalForNew = () => {
+    setEditingSource(null);
+    setIsModalOpen(true);
+  };
 
-  if (error) {
-    return <div className="text-red-500">{error}</div>;
-  }
+  const openModalForEdit = (source: DataSource) => {
+    setEditingSource(source);
+    setIsModalOpen(true);
+  };
+
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div className="text-red-500">{error}</div>;
 
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Data Sources</h1>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
-          Add New Source
-        </button>
+        <Button onClick={openModalForNew}>Add New Source</Button>
       </div>
+      
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingSource ? 'Edit Data Source' : 'Add New Data Source'}</DialogTitle>
+          </DialogHeader>
+          <DataSourceForm 
+            onSubmit={handleFormSubmit}
+            defaultValues={editingSource || undefined}
+          />
+        </DialogContent>
+      </Dialog>
+
       <div className="bg-white shadow-md rounded-lg">
         <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+            {/* ... table head ... */}
+            <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
@@ -79,8 +133,8 @@ export default function DataSourcesPage() {
                   {source.db_query || source.file_path || source.api_url}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <button className="text-indigo-600 hover:text-indigo-900 mr-4">Edit</button>
-                  <button className="text-red-600 hover:text-red-900">Delete</button>
+                  <Button variant="link" onClick={() => openModalForEdit(source)}>Edit</Button>
+                  <Button variant="link" className="text-red-600" onClick={() => handleDelete(source.id)}>Delete</Button>
                 </td>
               </tr>
             ))}

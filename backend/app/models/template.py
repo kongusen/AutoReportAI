@@ -1,4 +1,5 @@
 from sqlalchemy import JSON, Column, Integer, String
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -11,3 +12,6 @@ class Template(Base):
     description = Column(String, nullable=True)
     file_path = Column(String, unique=True)
     parsed_structure = Column(JSON)
+    
+    # Relationship to PlaceholderMapping
+    mappings = relationship("PlaceholderMapping", back_populates="template", cascade="all, delete-orphan")

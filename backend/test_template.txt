@@ -1,0 +1,12 @@
+Test Report Template
+
+This is a sample report with placeholders:
+
+Total Sales: {{total_sales "Total sales amount for the period"}}
+Top Region: {{top_region "Region with highest sales"}}
+
+[chart:sales_chart "Sales performance chart by region"]
+
+Summary: {{summary "Brief summary of the sales performance"}}
+
+End of Report 

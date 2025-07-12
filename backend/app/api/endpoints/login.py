@@ -14,7 +14,7 @@ from app.core.security_logging import get_client_ip, get_user_agent, security_lo
 router = APIRouter()
 
 
-@router.post("/access-token", dependencies=[Depends(RateLimiter(times=5, minutes=1))])
+@router.post("/access-token")
 def login_access_token(
     request: Request,
     db: Session = Depends(deps.get_db),
@@ -58,7 +58,7 @@ def login_access_token(
         user_agent=user_agent,
     )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     return {
         "access_token": security.create_access_token(
             user.id, expires_delta=access_token_expires

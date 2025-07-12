@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.sql import func
 
@@ -15,7 +15,7 @@ class ETLJob(Base):
     description = Column(String, nullable=True)
 
     source_data_source_id = Column(
-        UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False
+        Integer, ForeignKey("data_sources.id"), nullable=False
     )
 
     destination_table_name = Column(String, nullable=False, index=True)

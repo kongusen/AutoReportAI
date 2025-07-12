@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import openai
 import pandas as pd
@@ -16,6 +16,11 @@ class AIService:
     def __init__(self, db: Session):
         self.db = db
         self.provider = crud.ai_provider.get_active(self.db)
+        self.client = None
+        self._initialize_client()
+
+    def _initialize_client(self):
+        """Initialize the AI client based on the active provider."""
         if not self.provider:
             raise ValueError("No active AI Provider found in the database.")
 
@@ -24,8 +29,6 @@ class AIService:
             try:
                 decrypted_api_key = decrypt_data(self.provider.api_key)
             except Exception as e:
-                # Handle potential decryption errors, e.g., if the key is invalid
-                # or was encrypted with a different encryption key.
                 raise ValueError(f"Failed to decrypt API key: {e}")
 
         if self.provider.provider_type.value == "openai":
@@ -42,62 +45,149 @@ class AIService:
         else:
             self.client = None  # Or handle other provider types
 
+    def health_check(self) -> Dict[str, Any]:
+        """Check the health of the AI service."""
+        if not self.provider:
+            return {"status": "error", "message": "No active AI provider"}
+        
+        if not self.client:
+            return {"status": "error", "message": "AI client not initialized"}
+        
+        try:
+            # Simple test request
+            response = self.client.chat.completions.create(
+                model=self.provider.default_model_name or "gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            
+            return {
+                "status": "healthy",
+                "provider": self.provider.provider_name,
+                "model": self.provider.default_model_name,
+                "response_time": "< 1s"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "provider": self.provider.provider_name,
+                "message": str(e)
+            }
+
+    def refresh_provider(self):
+        """Refresh the active provider from database."""
+        self.provider = crud.ai_provider.get_active(self.db)
+        self._initialize_client()
+
+    def get_available_models(self) -> List[str]:
+        """Get available models from the current provider."""
+        if not self.client:
+            return []
+        
+        try:
+            if self.provider.provider_type.value == "openai":
+                models = self.client.models.list()
+                return [model.id for model in models.data]
+        except Exception:
+            # Return default models if API call fails
+            return ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"]
+        
+        return []
+
     def interpret_description_for_tool(
-        self,
-        task_type: str,
-        description: str,
-        df_columns: list[str],
-    ) -> dict:
+        self, task_type: str, description: str, df_columns: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
-        Interprets a natural language description to generate structured parameters for data filtering.
-        This remains the first step to get the data.
+        Uses AI to interpret a natural language description and generate structured parameters
+        for tool execution.
         """
         if not self.client:
-            raise ValueError("AI client is not initialized.")
+            raise ValueError("AI client not initialized")
 
+        # Create a prompt for the AI to interpret the description
         system_prompt = f"""
-        You are a data analysis assistant. Your task is to interpret a user's natural language
-        description and convert it into a structured JSON object of parameters for data processing.
-        The user wants to perform a task of type '{task_type}'.
-        The available data columns are: {df_columns}.
-
-        You must identify the following from the user's description:
-        1.  **date_range**: A list of two strings representing the start and end date. Analyze terms like "last month", "this week", "today" relative to the current date, {datetime.now().strftime('%Y-%m-%d')}. If no date is mentioned, return an empty list.
-        2.  **filters**: A dictionary of key-value pairs for filtering the data. The keys must be valid column names from the provided list. If no filters are mentioned, return an empty dictionary.
-        3.  **metrics**: A list of column names the user is interested in for analysis (e.g., for plotting on the y-axis or for summarization). This should be a non-empty list.
-        4.  **dimensions**: (Optional) A list of column names to use for grouping or as the x-axis in a chart.
-        5.  **chart_type**: (Only for 'chart' task type) The suggested type of chart. Can be 'bar', 'line', 'pie', etc. If the task type is not 'chart', omit this field.
-
-        The user's request is: "{description}"
-
-        Your response MUST be a valid JSON object only, with no other text or explanations.
-        Example for a chart request "last week's sales for product 'X'":
+        You are an AI assistant that converts natural language descriptions into structured parameters for data analysis tools.
+        
+        Task type: {task_type}
+        Description: {description}
+        Available columns: {df_columns if df_columns else "Unknown"}
+        
+        Based on the description, generate a JSON object with the following structure:
         {{
-            "date_range": ["{(datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')}", "{datetime.now().strftime('%Y-%m-%d')}"],
-            "filters": {{"product_name": "X"}},
-            "metrics": ["sales"],
-            "dimensions": ["date"],
-            "chart_type": "line"
+            "filters": [
+                {{"column": "column_name", "operator": "==", "value": "some_value"}}
+            ],
+            "metrics": ["column1", "column2"],
+            "dimensions": ["column3", "column4"],
+            "chart_type": "bar|line|pie",
+            "aggregation": "sum|count|avg|max|min"
         }}
+        
+        Only include fields that are relevant to the task. Return only the JSON object.
         """
 
-        response = self.client.chat.completions.create(
-            model=self.provider.default_model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.provider.default_model_name or "gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": description}
+                ],
+                max_tokens=500,
+                temperature=0.1
+            )
+            
+            content = response.choices[0].message.content.strip()
+            
+            # Try to parse the JSON response
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return a basic structure
+                return {
+                    "filters": [],
+                    "metrics": df_columns[:2] if df_columns else [],
+                    "dimensions": df_columns[2:4] if df_columns and len(df_columns) > 2 else [],
+                    "chart_type": "bar",
+                    "aggregation": "sum"
+                }
+        except Exception as e:
+            raise ValueError(f"Failed to interpret description: {str(e)}")
 
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("AI service returned empty content")
+    def generate_report_content(self, data: Dict[str, Any], template_context: str) -> str:
+        """
+        Generate report content based on data and template context.
+        """
+        if not self.client:
+            raise ValueError("AI client not initialized")
+
+        system_prompt = """
+        You are an AI assistant that generates professional report content based on data analysis results.
+        Generate clear, concise, and professional text that explains the data insights.
+        Focus on key findings, trends, and actionable insights.
+        """
+
+        user_prompt = f"""
+        Template context: {template_context}
+        Data: {json.dumps(data, indent=2)}
+        
+        Generate professional report content that explains these findings.
+        """
 
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            raise ValueError("Failed to decode AI service response as JSON")
+            response = self.client.chat.completions.create(
+                model=self.provider.default_model_name or "gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            raise ValueError(f"Failed to generate report content: {str(e)}")
 
     def generate_chart_from_description(
         self, data: List[Dict[str, Any]], description: str

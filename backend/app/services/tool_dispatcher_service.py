@@ -13,7 +13,7 @@ class ToolDispatcherService:
     def __init__(self, db: Session):
         self.db = db
         self.ai_service = AIService(db)
-        self.data_retrieval_service = DataRetrievalService(db)
+        self.data_retrieval_service = DataRetrievalService()
         self.visualization_service = VisualizationService()
 
     def dispatch(

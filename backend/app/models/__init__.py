@@ -1,6 +1,7 @@
 from .ai_provider import AIProvider
 from .analytics_data import AnalyticsData
 from .data_source import DataSource
+from .etl_job import ETLJob
 from .placeholder_mapping import PlaceholderMapping
 from .report_history import ReportHistory
 from .task import Task

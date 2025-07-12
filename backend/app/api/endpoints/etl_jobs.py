@@ -115,3 +115,83 @@ def trigger_etl_job(
         raise HTTPException(status_code=500, detail=f"Failed to run ETL job: {str(e)}")
 
     return {"msg": "ETL job has been triggered successfully."}
+
+
+@router.get("/{id}/status", response_model=dict)
+def get_etl_job_status(
+    *,
+    db: Session = Depends(deps.get_db),
+    id: uuid.UUID,
+    current_user: models.User = Depends(deps.get_current_active_superuser),
+) -> Any:
+    """
+    Get the status of an ETL job.
+    """
+    try:
+        from app.services.etl_service import etl_service
+        status = etl_service.get_job_status(job_id=str(id))
+        return status
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
+
+
+@router.post("/{id}/validate", response_model=dict)
+def validate_etl_job(
+    *,
+    db: Session = Depends(deps.get_db),
+    id: uuid.UUID,
+    current_user: models.User = Depends(deps.get_current_active_superuser),
+) -> Any:
+    """
+    Validate ETL job configuration.
+    """
+    try:
+        from app.services.etl_service import etl_service
+        validation_results = etl_service.validate_job_configuration(job_id=str(id))
+        return validation_results
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to validate job: {str(e)}")
+
+
+@router.post("/{id}/dry-run", response_model=dict)
+def dry_run_etl_job(
+    *,
+    db: Session = Depends(deps.get_db),
+    id: uuid.UUID,
+    current_user: models.User = Depends(deps.get_current_active_superuser),
+) -> Any:
+    """
+    Perform a dry run of an ETL job (validate without executing).
+    """
+    try:
+        from app.services.etl_service import etl_service
+        result = etl_service.run_job(job_id=str(id), dry_run=True)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to perform dry run: {str(e)}")
+
+
+@router.get("/data-source/{data_source_id}/tables", response_model=dict)
+def list_data_source_tables(
+    *,
+    db: Session = Depends(deps.get_db),
+    data_source_id: int,
+    current_user: models.User = Depends(deps.get_current_active_superuser),
+) -> Any:
+    """
+    List available tables/data from a data source.
+    """
+    try:
+        from app.services.etl_service import etl_service
+        tables = etl_service.list_available_tables(data_source_id=data_source_id)
+        return tables
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list tables: {str(e)}")

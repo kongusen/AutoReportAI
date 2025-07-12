@@ -29,10 +29,5 @@ class PlaceholderMapping(Base):
     # For now, we keep it for smoother transition
     data_source_query = Column(String, nullable=True)
 
-
-# Add the relationship to the Template model
-from .template import Template
-
-Template.mappings = relationship(
-    "PlaceholderMapping", back_populates="template", cascade="all, delete-orphan"
-)
+    # Relationship to Template
+    template = relationship("Template", back_populates="mappings")

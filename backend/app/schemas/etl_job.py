@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 class ETLJobBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    source_data_source_id: uuid.UUID
+    source_data_source_id: int
     destination_table_name: str = Field(
         ..., pattern=r"^[a-zA-Z0-9_]+$", min_length=1, max_length=63
     )
@@ -38,7 +38,7 @@ class ETLJobCreate(ETLJobBase):
 class ETLJobUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
-    source_data_source_id: Optional[uuid.UUID] = None
+    source_data_source_id: Optional[int] = None
     destination_table_name: Optional[str] = Field(
         None, pattern=r"^[a-zA-Z0-9_]+$", min_length=1, max_length=63
     )

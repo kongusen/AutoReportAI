@@ -12,9 +12,14 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # Database configuration
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/app"
-    )
+    db_user: str = os.getenv("POSTGRES_USER", "postgres")
+    db_password: str = os.getenv("POSTGRES_PASSWORD", "postgres")
+    db_host: str = os.getenv("POSTGRES_HOST", "localhost")
+    db_port: str = os.getenv("POSTGRES_PORT", "5432")
+    db_name: str = os.getenv("POSTGRES_DB", "app")
+    
+    # Use the dynamically constructed URL
+    DATABASE_URL: str = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
     # Redis configuration for rate limiting
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -32,13 +37,6 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your_password")
     EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL", "noreply@example.com")
     EMAILS_FROM_NAME: str = os.getenv("EMAILS_FROM_NAME", "AutoReportAI")
-
-    db_user: str = os.getenv("POSTGRES_USER", "postgres")
-    db_password: str = os.getenv("POSTGRES_PASSWORD", "postgres")
-    db_host: str = os.getenv("POSTGRES_HOST", "localhost")
-    db_port: str = os.getenv("POSTGRES_PORT", "5432")
-    db_name: str = os.getenv("POSTGRES_DB", "app")
-    db_url: str = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
     test_db_user: str = os.getenv("TEST_POSTGRES_USER", "testuser")
     test_db_password: str = os.getenv("TEST_POSTGRES_PASSWORD", "testpassword")

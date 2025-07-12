@@ -19,6 +19,7 @@ class DataSource(Base):
     source_type = Column(Enum(DataSourceType), nullable=False)
 
     # For 'sql' type
+    connection_string = Column(String, nullable=True)
     db_query = Column(String, nullable=True)
 
     # For 'csv' type

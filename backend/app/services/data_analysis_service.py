@@ -8,7 +8,7 @@ from app.services.visualization_service import VisualizationService
 class DataAnalysisService:
     def __init__(self, db_session: Session):
         self.db_session = db_session
-        self.retrieval_service = DataRetrievalService(db_session)
+        self.retrieval_service = DataRetrievalService()
         self.statistics_service = StatisticsService()
         self.visualization_service = VisualizationService()
 

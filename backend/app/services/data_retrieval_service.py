@@ -1,8 +1,10 @@
-import pandas as pd
+from typing import Any, Dict
+
 import httpx
-from typing import Dict, Any
+import pandas as pd
 
 from app import models
+
 
 class DataRetrievalService:
     async def fetch_data(self, source: models.DataSource) -> pd.DataFrame:
@@ -19,7 +21,7 @@ class DataRetrievalService:
             raise ValueError(f"Unsupported data source type: {source.source_type}")
 
     def _fetch_from_sql(self, source: models.DataSource) -> pd.DataFrame:
-        """ Mock function to simulate fetching data from SQL. """
+        """Mock function to simulate fetching data from SQL."""
         print(f"Executing SQL: {source.db_query}")
         if "region" in source.db_query.lower():
             data = [
@@ -35,7 +37,7 @@ class DataRetrievalService:
         return pd.DataFrame()
 
     def _fetch_from_csv(self, source: models.DataSource) -> pd.DataFrame:
-        """ Fetches data from a CSV file. """
+        """Fetches data from a CSV file."""
         try:
             # In a real scenario, ensure the file_path is secure and not traversing directories
             return pd.read_csv(source.file_path)
@@ -47,7 +49,7 @@ class DataRetrievalService:
             return pd.DataFrame()
 
     async def _fetch_from_api(self, source: models.DataSource) -> pd.DataFrame:
-        """ Fetches data from an external API. """
+        """Fetches data from an external API."""
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.request(
@@ -64,4 +66,5 @@ class DataRetrievalService:
             print(f"API request failed: {e}")
             return pd.DataFrame()
 
-data_retrieval_service = DataRetrievalService() 
+
+data_retrieval_service = DataRetrievalService()

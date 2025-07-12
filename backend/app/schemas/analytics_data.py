@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
+
 
 # Shared properties
 class AnalyticsDataBase(BaseModel):
@@ -8,14 +10,17 @@ class AnalyticsDataBase(BaseModel):
     data: Dict[str, Any]
     data_source_id: int
 
+
 # Properties to receive on creation
 class AnalyticsDataCreate(AnalyticsDataBase):
     pass
+
 
 # Properties to receive on update
 class AnalyticsDataUpdate(BaseModel):
     record_id: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
+
 
 # Properties shared by models stored in DB
 class AnalyticsDataInDBBase(AnalyticsDataBase):
@@ -25,6 +30,7 @@ class AnalyticsDataInDBBase(AnalyticsDataBase):
     class Config:
         orm_mode = True
 
+
 # Properties to return to client
 class AnalyticsData(AnalyticsDataInDBBase):
-    pass 
+    pass

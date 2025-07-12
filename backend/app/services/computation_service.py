@@ -1,5 +1,7 @@
+from typing import Callable, Dict
+
 import pandas as pd
-from typing import Dict, Callable
+
 
 class ComputationService:
     def __init__(self):
@@ -25,9 +27,9 @@ class ComputationService:
         Calculates the sum of the 'sales' column from the 'sales_by_region' DataFrame.
         """
         df = context.get("sales_by_region")
-        if df is None or 'sales' not in df.columns:
+        if df is None or "sales" not in df.columns:
             return 0
-        return df['sales'].sum()
+        return df["sales"].sum()
 
     def _add_price_per_unit(self, context: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
@@ -35,14 +37,17 @@ class ComputationService:
         Returns the modified DataFrame.
         """
         df = context.get("sales_by_region")
-        if df is None or not all(col in df.columns for col in ['sales', 'units_sold']):
-            return pd.DataFrame() # Return empty if required columns are missing
-        
+        if df is None or not all(col in df.columns for col in ["sales", "units_sold"]):
+            return pd.DataFrame()  # Return empty if required columns are missing
+
         # Avoid division by zero
-        df['price_per_unit'] = df.apply(
-            lambda row: row['sales'] / row['units_sold'] if row['units_sold'] != 0 else 0,
-            axis=1
+        df["price_per_unit"] = df.apply(
+            lambda row: (
+                row["sales"] / row["units_sold"] if row["units_sold"] != 0 else 0
+            ),
+            axis=1,
         )
         return df
 
-computation_service = ComputationService() 
+
+computation_service = ComputationService()

@@ -6,11 +6,14 @@ ai_service = AIService()
 data_retrieval_service = DataRetrievalService()
 statistics_service = StatisticsService()
 
+
 def get_ai_service() -> AIService:
     return ai_service
+
 
 def get_data_retrieval_service() -> DataRetrievalService:
     return data_retrieval_service
 
+
 def get_statistics_service() -> StatisticsService:
-    return statistics_service 
+    return statistics_service

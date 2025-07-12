@@ -1,13 +1,15 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
+
 from app.db.base import Base
+
 
 class AnalyticsData(Base):
     __tablename__ = "analytics_data"
 
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # The unique identifier for the record from the original data source.
     # E.g., a primary key, a unique hash, or a composite key.
     record_id = Column(String, index=True, nullable=False)
@@ -19,7 +21,7 @@ class AnalyticsData(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Foreign key to link this data record back to its source.
-    data_source_id = Column(Integer, ForeignKey("datasource.id"), nullable=False)
-    
+    data_source_id = Column(Integer, ForeignKey("data_sources.id"), nullable=False)
+
     # Relationship to the DataSource model
-    data_source = relationship("DataSource") 
+    data_source = relationship("DataSource")

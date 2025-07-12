@@ -1,10 +1,10 @@
-'use client';
+'use client'
 
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -12,15 +12,15 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 
 export const dataSourceFormSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -28,16 +28,19 @@ export const dataSourceFormSchema = z.object({
   db_query: z.string().optional(),
   file_path: z.string().optional(),
   api_url: z.string().url().optional().or(z.literal('')),
-});
+})
 
-export type DataSourceFormValues = z.infer<typeof dataSourceFormSchema>;
+export type DataSourceFormValues = z.infer<typeof dataSourceFormSchema>
 
 interface DataSourceFormProps {
-  onSubmit: (values: DataSourceFormValues) => void;
-  defaultValues?: Partial<DataSourceFormValues>;
+  onSubmit: (values: DataSourceFormValues) => void
+  defaultValues?: Partial<DataSourceFormValues>
 }
 
-export function DataSourceForm({ onSubmit, defaultValues }: DataSourceFormProps) {
+export function DataSourceForm({
+  onSubmit,
+  defaultValues,
+}: DataSourceFormProps) {
   const form = useForm<DataSourceFormValues>({
     resolver: zodResolver(dataSourceFormSchema),
     defaultValues: defaultValues || {
@@ -47,9 +50,9 @@ export function DataSourceForm({ onSubmit, defaultValues }: DataSourceFormProps)
       file_path: '',
       api_url: '',
     },
-  });
+  })
 
-  const sourceType = form.watch('source_type');
+  const sourceType = form.watch('source_type')
 
   return (
     <Form {...form}>
@@ -130,16 +133,19 @@ export function DataSourceForm({ onSubmit, defaultValues }: DataSourceFormProps)
               <FormItem>
                 <FormLabel>API URL</FormLabel>
                 <FormControl>
-                  <Input placeholder="https://api.example.com/data" {...field} />
+                  <Input
+                    placeholder="https://api.example.com/data"
+                    {...field}
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
         )}
-        
+
         <Button type="submit">Submit</Button>
       </form>
     </Form>
-  );
-} 
+  )
+}

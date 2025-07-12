@@ -1,12 +1,16 @@
+from typing import Any, Dict, List
+
 import pandas as pd
-from typing import List, Dict, Any
+
 
 class VisualizationService:
     """
     A service for generating data visualizations.
     """
 
-    def generate_bar_chart(self, data: List[Dict[str, Any]], x_column: str, y_column: str, title: str) -> Dict[str, Any]:
+    def generate_bar_chart(
+        self, data: List[Dict[str, Any]], x_column: str, y_column: str, title: str
+    ) -> Dict[str, Any]:
         """
         Generates the data structure for a bar chart.
 
@@ -24,7 +28,9 @@ class VisualizationService:
 
         df = pd.DataFrame(data)
         if x_column not in df.columns or y_column not in df.columns:
-            raise ValueError(f"One or more columns ('{x_column}', '{y_column}') not found in data.")
+            raise ValueError(
+                f"One or more columns ('{x_column}', '{y_column}') not found in data."
+            )
 
         # For now, return a structured dictionary that a frontend could use.
         # This simulates generating data for a library like Chart.js
@@ -32,8 +38,10 @@ class VisualizationService:
             "type": "bar",
             "title": title,
             "labels": df[x_column].tolist(),
-            "datasets": [{
-                "label": title,
-                "data": df[y_column].tolist(),
-            }]
-        } 
+            "datasets": [
+                {
+                    "label": title,
+                    "data": df[y_column].tolist(),
+                }
+            ],
+        }

@@ -1,4 +1,5 @@
 from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -6,6 +7,7 @@ from app import crud, models, schemas
 from app.api import deps
 
 router = APIRouter()
+
 
 @router.get("", response_model=List[schemas.Task])
 def list_tasks(
@@ -19,6 +21,7 @@ def list_tasks(
     tasks = crud.task.get_multi(db, skip=skip, limit=limit)
     return tasks
 
+
 @router.post("", response_model=schemas.Task)
 def create_task(
     *,
@@ -30,6 +33,7 @@ def create_task(
     """
     task = crud.task.create(db=db, obj_in=task_in)
     return task
+
 
 @router.put("/{task_id}", response_model=schemas.Task)
 def update_task(

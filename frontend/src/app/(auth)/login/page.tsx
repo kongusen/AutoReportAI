@@ -1,49 +1,60 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import api from '@/lib/api';
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import api from '@/lib/api'
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [username, setUsername] = useState('admin@example.com');
-  const [password, setPassword] = useState('password');
-  const [error, setError] = useState('');
+  const router = useRouter()
+  const [username, setUsername] = useState('admin@example.com')
+  const [password, setPassword] = useState('password')
+  const [error, setError] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+    e.preventDefault()
+    setError('')
 
     try {
-      const formData = new URLSearchParams();
-      formData.append('username', username);
-      formData.append('password', password);
+      const formData = new URLSearchParams()
+      formData.append('username', username)
+      formData.append('password', password)
 
       const response = await api.post('/login/access-token', formData, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-      });
+      })
 
       if (response.data.access_token) {
-        localStorage.setItem('access_token', response.data.access_token);
-        router.push('/');
+        localStorage.setItem('access_token', response.data.access_token)
+        router.push('/')
       } else {
-        setError('Login failed: No access token received.');
+        setError('Login failed: No access token received.')
       }
     } catch (err: unknown) {
-      if (err instanceof Error && 'response' in err && err.response && typeof err.response === 'object' && 'data' in err.response && err.response.data && typeof err.response.data === 'object' && 'detail' in err.response.data) {
-        setError((err.response.data as { detail: string }).detail);
+      if (
+        err instanceof Error &&
+        'response' in err &&
+        err.response &&
+        typeof err.response === 'object' &&
+        'data' in err.response &&
+        err.response.data &&
+        typeof err.response.data === 'object' &&
+        'detail' in err.response.data
+      ) {
+        setError((err.response.data as { detail: string }).detail)
       } else {
-        setError('An unexpected error occurred.');
+        setError('An unexpected error occurred.')
       }
     }
-  };
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">
       <div className="p-8 bg-white rounded-lg shadow-md w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center text-gray-800">AutoReportAI Login</h1>
+        <h1 className="text-2xl font-bold mb-6 text-center text-gray-800">
+          AutoReportAI Login
+        </h1>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label
@@ -89,5 +100,5 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
-  );
-} 
+  )
+}

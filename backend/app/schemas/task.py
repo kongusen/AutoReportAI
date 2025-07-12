@@ -1,35 +1,75 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+import json
+from typing import List, Optional
 
-# Shared properties
+from cron_validator import CronValidator
+from pydantic import BaseModel, field_validator
+
+
 class TaskBase(BaseModel):
     name: str
-    data_source_id: int
+    description: Optional[str] = None
     template_id: int
+    data_source_id: int
     schedule: Optional[str] = None
-    recipients: Optional[str] = None # Can be a comma-separated string of emails
-    is_active: bool = True
+    recipients: Optional[List[str]] = []
 
-# Properties to receive on task creation
+    @field_validator("schedule")
+    @classmethod
+    def validate_schedule(cls, v: Optional[str]) -> Optional[str]:
+        if v and not CronValidator.parse(v):
+            raise ValueError("Invalid cron schedule format")
+        return v
+
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v:
+            for email in v:
+                if not ("@" in email and "." in email):
+                    raise ValueError(f"Invalid email format: {email}")
+        return v
+
+
 class TaskCreate(TaskBase):
     pass
 
-# Properties to receive on task update
+
 class TaskUpdate(BaseModel):
     name: Optional[str] = None
-    data_source_id: Optional[int] = None
+    description: Optional[str] = None
     template_id: Optional[int] = None
+    data_source_id: Optional[int] = None
     schedule: Optional[str] = None
-    recipients: Optional[str] = None
-    is_active: Optional[bool] = None
+    recipients: Optional[List[str]] = None
 
-# Properties shared by models stored in DB
-class TaskInDBBase(TaskBase):
+    @field_validator("schedule")
+    @classmethod
+    def validate_schedule(cls, v: Optional[str]) -> Optional[str]:
+        if v and not CronValidator.parse(v):
+            raise ValueError("Invalid cron schedule format")
+        return v
+
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v:
+            for email in v:
+                if not ("@" in email and "." in email):
+                    raise ValueError(f"Invalid email format: {email}")
+        return v
+
+
+class Task(TaskBase):
     id: int
+    owner_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
-# Properties to return to client
-class Task(TaskInDBBase):
-    pass 
+
+class TaskRead(TaskBase):
+    id: int
+    owner_id: int
+
+    class Config:
+        from_attributes = True

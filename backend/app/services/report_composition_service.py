@@ -1,5 +1,6 @@
-from typing import Dict, Any
 import base64
+from typing import Any, Dict
+
 
 class ReportCompositionService:
     def is_base64(self, s: Any) -> bool:
@@ -11,7 +12,7 @@ class ReportCompositionService:
             return False
         # Common base64 padding can be '==' or '='.
         # A more robust check might involve trying to decode it.
-        return s.startswith('iVBORw0KGgo') or s.endswith(('==', '='))
+        return s.startswith("iVBORw0KGgo") or s.endswith(("==", "="))
 
     def compose_report(self, template_content: str, results: Dict[str, Any]) -> str:
         """
@@ -36,9 +37,10 @@ class ReportCompositionService:
             else:
                 # For any other type, convert it to a string.
                 replacement = str(result)
-            
+
             composed_content = composed_content.replace(placeholder, replacement)
-            
+
         return composed_content
 
-report_composition_service = ReportCompositionService() 
+
+report_composition_service = ReportCompositionService()

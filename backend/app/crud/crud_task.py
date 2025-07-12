@@ -7,4 +7,4 @@ class CRUDTask(CRUDBase[Task, TaskCreate, TaskUpdate]):
     pass
 
 
-task = CRUDTask(Task) 
+task = CRUDTask(Task)

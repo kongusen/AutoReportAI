@@ -1,31 +1,30 @@
-from fastapi import FastAPI
+import redis.asyncio as redis
+from fastapi import Depends, FastAPI
+from fastapi_limiter import FastAPILimiter
+
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.logging_config import setup_logging
 from app.initial_data import init_db
-from app.api.endpoints import (
-    login,
-    templates,
-    data_sources,
-    ai_providers,
-    tasks,
-    report_generation,
-    analysis,
-)
+
+# Setup logging as soon as the application starts
+setup_logging()
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
+@app.on_event("startup")
+async def startup():
+    # setup_logging() # Can be called again if needed, it's idempotent
+    init_db()
+    redis_connection = redis.from_url(
+        settings.REDIS_URL, encoding="utf-8", decode_responses=True
+    )
+    await FastAPILimiter.init(redis_connection)
+
+
+# All API routes are handled by the api_router
 app.include_router(api_router, prefix=settings.API_V1_STR)
-app.include_router(data_sources.router, prefix="/api/v1", tags=["data-sources"])
-app.include_router(ai_providers.router, prefix="/api/v1", tags=["ai-providers"])
-app.include_router(tasks.router, prefix="/api/v1", tags=["tasks"])
-app.include_router(
-    report_generation.router, prefix="/api/v1", tags=["report-generation"]
-)
-app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 
 
 @app.get("/")

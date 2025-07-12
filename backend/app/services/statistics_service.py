@@ -1,5 +1,7 @@
 from typing import List
+
 import pandas as pd
+
 
 class StatisticsService:
     """
@@ -36,7 +38,9 @@ class StatisticsService:
             raise ValueError(f"Column '{column_name}' not found in data.")
         return df[column_name].mean()
 
-    def calculate_percentage_change(self, current_value: float, previous_value: float) -> float:
+    def calculate_percentage_change(
+        self, current_value: float, previous_value: float
+    ) -> float:
         """
         Calculates the percentage change between two values.
 
@@ -48,9 +52,10 @@ class StatisticsService:
             return 0.0  # Avoid division by zero
         return ((current_value - previous_value) / previous_value) * 100
 
+
 # You can add more statistical functions here as needed, for example:
 # - calculate_median
 # - calculate_mode
 # - calculate_std_dev
 # - perform_trend_analysis
-# - etc. 
+# - etc.

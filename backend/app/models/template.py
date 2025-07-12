@@ -1,9 +1,13 @@
-from sqlalchemy import Column, Integer, String, JSON
+from sqlalchemy import JSON, Column, Integer, String
+
 from app.db.base import Base
 
+
 class Template(Base):
+    __tablename__ = "templates"
+    
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True, unique=True)
     description = Column(String, nullable=True)
     file_path = Column(String, unique=True)
-    parsed_structure = Column(JSON) 
+    parsed_structure = Column(JSON)

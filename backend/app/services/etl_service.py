@@ -1,74 +1,113 @@
-from sqlalchemy.orm import Session
-from typing import List, Dict, Any
-import uuid
+import pandas as pd
+import structlog
+from sqlalchemy import create_engine
 
-from app import crud
-from app.services.data_retrieval_service import DataRetrievalService
+from app import crud, models
+from app.core.config import settings
+from app.core.security_utils import ConnectionStringError, validate_connection_string
+from app.db.session import get_db_session
+from app.services.data_sanitization_service import data_sanitizer
+from app.services.etl_engine_service import ETLTransformationEngine
+
+logger = structlog.get_logger(__name__)
+
 
 class ETLService:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def run_etl(self, data_source_id: int) -> Dict[str, Any]:
+    def run_job(self, job_id: str) -> None:
         """
-        Runs a full ETL (Extract, Transform, Load) process for a given data source.
-
-        1. Fetches the data source configuration.
-        2. Uses DataRetrievalService to extract raw data.
-        3. Transforms and loads the data into the local AnalyticsData table.
+        Runs a specific ETL job using a secure, structured transformation engine.
+        This method is designed to be called by the scheduler and manages its own
+        database session.
         """
-        # 1. Fetch data source
-        data_source = crud.data_source.get(self.db, id=data_source_id)
-        if not data_source:
-            raise ValueError(f"Data source with id {data_source_id} not found.")
-
-        # 2. Extract data
-        retrieval_service = DataRetrievalService(db=self.db)
-        try:
-            raw_data = retrieval_service.fetch_data(data_source_id=data_source_id)
-        except Exception as e:
-            raise RuntimeError(f"Failed to extract data from source {data_source_id}: {e}")
-
-        # 3. Load data
-        records_loaded = 0
-        records_failed = 0
-        
-        # For simplicity, we assume the first column is the unique record_id.
-        # In a real-world scenario, this might need to be more sophisticated.
-        if not raw_data:
-            return {"status": "success", "message": "No data found to load.", "records_loaded": 0, "records_failed": 0}
-            
-        # Try to infer a unique ID column.
-        # This is a basic implementation. A more robust solution might require explicit configuration.
-        first_row = raw_data[0]
-        id_column_candidates = ['id', 'uuid', 'key', '订单号', '投诉ID']
-        record_id_key = next((key for key in id_column_candidates if key in first_row), None)
-
-        if not record_id_key:
-            print("Warning: No standard unique ID column found. Using a generated UUID for each record.")
-
-        for row in raw_data:
+        log = logger.bind(job_id=job_id)
+        log.info("etl_job.run.started")
+        with get_db_session() as db:
             try:
-                if record_id_key:
-                    record_id = str(row[record_id_key])
+                # 1. Get ETL Job configuration
+                etl_job = crud.etl_job.get(db, id=job_id)
+                if not etl_job:
+                    log.error("etl_job.run.error", reason="job_not_found")
+                    raise ValueError("ETL Job not found")
+
+                log = log.bind(job_name=etl_job.name)
+
+                if not etl_job.enabled:
+                    log.warning("etl_job.run.skipped", reason="job_disabled")
+                    return
+
+                # 2. Get source database connection details
+                source_db = crud.data_source.get(db, id=etl_job.source_data_source_id)
+                if not source_db:
+                    log.error(
+                        "etl_job.run.error",
+                        reason="source_db_not_found",
+                        source_id=etl_job.source_data_source_id,
+                    )
+                    raise ValueError("Source data source not found")
+
+                # Validate the connection string before use
+                try:
+                    validate_connection_string(source_db.connection_string)
+                except ConnectionStringError as e:
+                    log.error(
+                        "etl_job.run.error",
+                        reason="invalid_connection_string",
+                        error=str(e),
+                    )
+                    raise ValueError(f"Invalid source connection string: {e}")
+
+                source_engine = create_engine(source_db.connection_string)
+
+                # 3. Read data from source using the predefined query
+                query = etl_job.source_query
+                if not query:
+                    log.error("etl_job.run.error", reason="no_source_query")
+                    raise ValueError("ETL Job has no source_query defined.")
+
+                log.info("etl_job.source.reading_data")
+                df = pd.read_sql(query, source_engine)
+                log.info("etl_job.source.data_loaded", row_count=len(df))
+
+                # Sanitize the loaded data as an early security measure
+                df = data_sanitizer.sanitize_dataframe(df)
+                log.info("etl_job.source.data_sanitized", row_count=len(df))
+
+                # 4. Execute transformations using the secure engine
+                log.info("etl_job.transform.started")
+                config = etl_job.transformation_config
+                if config and config.get("operations"):
+                    engine = ETLTransformationEngine(
+                        transformation_config=config, df=df
+                    )
+                    transformed_df = engine.run()
+                    log.info(
+                        "etl_job.transform.finished",
+                        operation_count=len(config["operations"]),
+                    )
                 else:
-                    # If no unique key is found, generate one. This may lead to duplicates on re-runs.
-                    record_id = str(uuid.uuid4())
+                    transformed_df = df  # No transformations to apply
+                    log.info(
+                        "etl_job.transform.skipped", reason="no_operations_defined"
+                    )
 
-                data_to_create = {
-                    "record_id": record_id,
-                    "data": row,
-                    "data_source_id": data_source_id,
-                }
-                crud.analytics_data.create(self.db, obj_in=data_to_create)
-                records_loaded += 1
+                # 5. Write transformed data to destination
+                log.info(
+                    "etl_job.load.started",
+                    table=etl_job.destination_table_name,
+                    row_count=len(transformed_df),
+                )
+                dest_engine = create_engine(settings.DATABASE_URL)
+                transformed_df.to_sql(
+                    etl_job.destination_table_name,
+                    dest_engine,
+                    if_exists="replace",
+                    index=False,
+                )
+                log.info("etl_job.load.finished")
             except Exception as e:
-                print(f"Failed to load record: {row}. Error: {e}")
-                records_failed += 1
+                log.exception("etl_job.run.failed")
+                # We raise the exception so APScheduler can log it as a job failure.
+                raise
 
-        return {
-            "status": "success",
-            "message": f"ETL process completed for data source {data_source.name}.",
-            "records_loaded": records_loaded,
-            "records_failed": records_failed,
-        } 
+
+etl_service = ETLService()

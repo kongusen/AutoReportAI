@@ -1,12 +1,13 @@
 import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from pathlib import Path
 from typing import List
 
 from app.core.config import settings
+
 
 class EmailService:
     def send_email(
@@ -48,5 +49,6 @@ class EmailService:
             print(f"Email sent successfully to {', '.join(recipients)}")
         except Exception as e:
             print(f"Failed to send email. Error: {e}")
+
 
 email_service = EmailService()

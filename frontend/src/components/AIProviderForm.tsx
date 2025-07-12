@@ -1,10 +1,10 @@
-'use client';
+'use client'
 
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -12,33 +12,40 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 
 export const aiProviderFormSchema = z.object({
   name: z.string().min(1, 'Provider name is required'),
   api_key: z.string().min(1, 'API key is required'),
-  api_base: z.string().url('Please enter a valid URL').optional().or(z.literal('')),
+  api_base: z
+    .string()
+    .url('Please enter a valid URL')
+    .optional()
+    .or(z.literal('')),
   model_name: z.string().min(1, 'Model name is required'),
-});
+})
 
-export type AIProviderFormValues = z.infer<typeof aiProviderFormSchema>;
+export type AIProviderFormValues = z.infer<typeof aiProviderFormSchema>
 
 interface AIProviderFormProps {
-  onSubmit: (values: AIProviderFormValues) => void;
-  defaultValues?: Partial<AIProviderFormValues>;
+  onSubmit: (values: AIProviderFormValues) => void
+  defaultValues?: Partial<AIProviderFormValues>
 }
 
-export function AIProviderForm({ onSubmit, defaultValues }: AIProviderFormProps) {
+export function AIProviderForm({
+  onSubmit,
+  defaultValues,
+}: AIProviderFormProps) {
   const form = useForm<AIProviderFormValues>({
     resolver: zodResolver(aiProviderFormSchema),
     defaultValues: defaultValues || {
-        name: '',
-        api_key: '',
-        api_base: '',
-        model_name: '',
+      name: '',
+      api_key: '',
+      api_base: '',
+      model_name: '',
     },
-  });
+  })
 
   return (
     <Form {...form}>
@@ -76,7 +83,11 @@ export function AIProviderForm({ onSubmit, defaultValues }: AIProviderFormProps)
             <FormItem>
               <FormLabel>API Key</FormLabel>
               <FormControl>
-                <Input type="password" placeholder="••••••••••••••••" {...field} />
+                <Input
+                  type="password"
+                  placeholder="••••••••••••••••"
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -89,7 +100,10 @@ export function AIProviderForm({ onSubmit, defaultValues }: AIProviderFormProps)
             <FormItem>
               <FormLabel>API Base URL (Optional)</FormLabel>
               <FormControl>
-                <Input placeholder="e.g., https://api.openai.com/v1" {...field} />
+                <Input
+                  placeholder="e.g., https://api.openai.com/v1"
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -98,5 +112,5 @@ export function AIProviderForm({ onSubmit, defaultValues }: AIProviderFormProps)
         <Button type="submit">Submit</Button>
       </form>
     </Form>
-  );
-} 
+  )
+}

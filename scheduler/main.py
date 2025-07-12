@@ -7,8 +7,8 @@ from sqlalchemy.orm import sessionmaker
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
+from app.db.session import get_db_session
 from app.models.task import Task
-from app.services.etl_service import ETLService
 from app.services.report_composition_service import report_composition_service
 from app.services.word_generator_service import word_generator_service
 from app.services.email_service import email_service
@@ -16,127 +16,163 @@ from app.services.template_parser_service import template_parser_service
 from app.models.template import Template
 from app import crud
 import requests # For calling the analysis endpoint
+from datetime import datetime
+from app.models.report_history import ReportHistoryCreate
+from app.models.etl_job import ETLJob
+from app.services.etl_service import etl_service
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://autoreport:autoreport@db:5432/autoreport")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/app")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
-# Database session management
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Database session management is now handled by get_db_session from app.db.session
+# engine = create_engine(DATABASE_URL)
+# SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-@contextmanager
-def get_db_session():
-    """Provide a transactional scope around a series of operations."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# @contextmanager
+# def get_db_session():
+#     """Provide a transactional scope around a series of operations."""
+#     db = SessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
 
 def run_task_flow(task_id: int):
     """
-    The main job function that orchestrates the ETL and report generation.
+    完整的任务执行流程，由调度器触发。
     """
-    print(f"SCHEDULER: Starting task flow for task_id: {task_id}")
-    
-    db = next(get_db_session())
-    task = None
-    report_path = None
-    try:
-        task = db.query(Task).get(task_id)
+    print(f"[{datetime.now()}] Running task flow for task_id: {task_id}")
+    with get_db_session() as db:
+        task = crud.task.get(db, id=task_id)
         if not task:
-            raise ValueError(f"Task {task_id} not found.")
+            print(f"Task with id {task_id} not found.")
+            return
 
-        # Step 1: Run ETL
-        if not task.data_source_id:
-            raise ValueError(f"Task {task_id} has no data source configured.")
-        
-        print(f"SCHEDULER: Running ETL for data_source_id: {task.data_source_id}")
-        etl_service = ETLService(db)
-        etl_service.run_etl(data_source_id=task.data_source_id)
-        print(f"SCHEDULER: ETL completed for data_source_id: {task.data_source_id}")
-
-        # Step 2: Fetch and Parse Template
-        if not task.template_id:
-             raise ValueError(f"Task {task.id} has no template configured.")
-        template = db.query(Template).get(task.template_id)
-        if not template:
-            raise ValueError(f"Template for task {task_id} not found.")
-        
-        placeholders = template_parser_service.parse(template.content)
-        
-        # Step 3: Execute Analysis for each placeholder
-        analysis_results = {}
-        for placeholder in placeholders:
-            print(f"SCHEDULER: Analyzing placeholder: {placeholder}")
-            # This requires the backend to be running and accessible
-            analysis_endpoint = f"{BACKEND_URL}/api/experimental-analysis"
-            try:
-                # We need a token for this endpoint, this is a placeholder
-                # In a real scenario, the scheduler would need a service account token
-                headers = {"Authorization": "Bearer FAKETOKEN"}
-                response = requests.post(analysis_endpoint, json={"placeholder": placeholder}, headers=headers)
-                response.raise_for_status()
-                result_data = response.json()
-                analysis_results[placeholder] = result_data.get("result")
-            except requests.RequestException as e:
-                print(f"SCHEDULER: Failed to analyze placeholder {placeholder}. Error: {e}")
-                analysis_results[placeholder] = f"[Analysis failed: {e}]"
-
-        # Step 4: Compose report
-        composed_content = report_composition_service.compose_report(
-            template_content=template.content,
-            results=analysis_results
-        )
-        
-        # Step 5: Generate Word document
-        output_dir = "generated_reports"
-        os.makedirs(output_dir, exist_ok=True)
-        report_path = os.path.join(output_dir, f"report_{task.name}_{int(time.time())}.docx")
-        
-        word_generator_service.generate_report_from_content(
-            composed_content=composed_content,
-            output_path=report_path
-        )
-        print(f"SCHEDULER: Report generated at {report_path}")
-
-        # Step 6: Send email
-        recipients = [email.strip() for email in (task.recipients or "").split(",") if email.strip()]
-        if recipients:
-            email_service.send_report_email(
-                recipients=recipients,
-                subject=f"Scheduled Report: {task.name}",
-                body=f"Please find the attached report for {task.name}.",
-                attachment_path=report_path
+        history_entry = None
+        try:
+            # 初始化所有服务
+            # etl_service = ETLService(db)
+            tool_dispatcher_service = ToolDispatcherService(db)
+            report_composition_service = ReportCompositionService(db, tool_dispatcher_service)
+            word_generator_service = WordGeneratorService()
+            email_service = EmailService()
+            
+            # 创建进行中的历史记录
+            history_entry = crud.report_history.create(
+                db, obj_in=ReportHistoryCreate(task_id=task_id, status="in_progress")
             )
-            print(f"SCHEDULER: Email sent to {recipients}")
 
-        crud.report_history.create(db, obj_in={
-            "task_id": task.id,
-            "status": "success",
-            "file_path": report_path
-        })
-        print(f"SCHEDULER: Successfully logged history for task {task.id}")
+            # --- 步骤 1: ETL (暂时禁用，直接进入报告生成) ---
+            # print("Step 1: Running ETL...")
+            # etl_service.run_etl(task.data_source_id)
+            # print("ETL completed.")
 
-    except Exception as e:
-        print(f"SCHEDULER: Task flow for {task_id} failed with error: {e}")
-        if task:
-            crud.report_history.create(db, obj_in={
-                "task_id": task.id,
-                "status": "failure",
-                "file_path": report_path, # May be null if generation failed early
-                "error_message": str(e)
-            })
-            print(f"SCHEDULER: Logged failure for task {task.id}")
-    finally:
-        if db:
-            db.close()
-        print(f"SCHEDULER: Task flow finished for task_id: {task_id}")
+            # --- 步骤 2: 报告合成 ---
+            # ToolDispatcherService将直接在内部处理数据检索
+            print("Step 2: Composing report...")
+            composed_html = report_composition_service.process_template(
+                template_id=task.template_id,
+                data_source_id=task.data_source_id, # 传递 data_source_id 以便工具分发器使用
+            )
+            print("Report composition completed.")
+            
+            # --- 步骤 3: 生成Word文档 ---
+            print("Step 3: Generating Word document...")
+            output_path = word_generator_service.generate_word_from_html(
+                html_content=composed_html,
+                task_name=task.name
+            )
+            print(f"Word document generated at: {output_path}")
+
+            # --- 步骤 4: 发送邮件 ---
+            if task.recipients:
+                print(f"Step 4: Sending email to {task.recipients}...")
+                subject = f"自动化报告: {task.name}"
+                body = "您好，附件是您订阅的最新报告，请查收。"
+                email_service.send_email(
+                    recipients=task.recipients.split(','),
+                    subject=subject,
+                    body=body,
+                    attachment_path=output_path
+                )
+                print("Email sent.")
+            
+            # 更新历史记录为成功
+            crud.report_history.update(
+                db, db_obj=history_entry, obj_in={"status": "success", "report_path": output_path}
+            )
+            print(f"Task {task_id} completed successfully.")
+
+        except Exception as e:
+            print(f"An error occurred during task {task_id}: {e}")
+            # 如果出错，更新历史记录为失败
+            if history_entry:
+                error_message = str(e)
+                crud.report_history.update(
+                    db, db_obj=history_entry, obj_in={"status": "failure", "error_message": error_message}
+                )
+
+
+def sync_all_jobs(scheduler):
+    """Syncs all types of jobs (tasks, ETL, etc.) from the database."""
+    print(f"[{datetime.now()}] Running full job sync...")
+    sync_tasks_from_db(scheduler)
+    sync_etl_jobs_from_db(scheduler)
+
+
+def sync_etl_jobs_from_db(scheduler):
+    """
+    Syncs the ETL jobs in the scheduler with the ETLJob models in the database.
+    """
+    print("SCHEDULER: Syncing ETL jobs from database...")
+    with get_db_session() as db:
+        try:
+            db_etl_jobs = db.query(ETLJob).filter_by(enabled=True).all()
+            
+            scheduler_job_ids = {job.id for job in scheduler.get_jobs()}
+            
+            for job_model in db_etl_jobs:
+                job_id = f"etl_{job_model.id}"
+                
+                if not job_model.schedule:
+                    if job_id in scheduler_job_ids:
+                        scheduler.remove_job(job_id)
+                        print(f"SCHEDULER: Removed ETL job '{job_id}' for '{job_model.name}' as it has no schedule.")
+                    continue
+
+                if job_id in scheduler_job_ids:
+                    existing_job = scheduler.get_job(job_id)
+                    if existing_job.trigger.cron_expression != job_model.schedule:
+                        scheduler.reschedule_job(
+                            job_id, 
+                            trigger='cron', 
+                            **_cron_to_dict(job_model.schedule)
+                        )
+                        print(f"SCHEDULER: Rescheduled ETL job '{job_id}' for '{job_model.name}'.")
+                else:
+                    scheduler.add_job(
+                        etl_service.run_job,
+                        'cron',
+                        id=job_id,
+                        name=job_model.name,
+                        args=[job_model.id], # Pass only job_id
+                        **_cron_to_dict(job_model.schedule)
+                    )
+                    print(f"SCHEDULER: Added new ETL job '{job_id}' for '{job_model.name}'.")
+
+            db_job_ids = {f"etl_{job.id}" for job in db_etl_jobs if job.schedule}
+            for job_id in scheduler_job_ids:
+                if job_id.startswith("etl_") and job_id not in db_job_ids:
+                    scheduler.remove_job(job_id)
+                    print(f"SCHEDULER: Removed orphaned ETL job '{job_id}'.")
+        except Exception as e:
+            print(f"SCHEDULER: Error during ETL job sync: {e}")
 
 
 def sync_tasks_from_db(scheduler):
     """
-    Syncs the jobs in the scheduler with the tasks in the database.
+    Syncs the report generation tasks in the scheduler with the Task models in the database.
     """
     print("SCHEDULER: Syncing tasks from database...")
     with get_db_session() as db:
@@ -198,10 +234,10 @@ if __name__ == "__main__":
     }
     scheduler = BlockingScheduler(jobstores=jobstores)
     
-    # Schedule the sync function to run periodically
-    scheduler.add_job(sync_tasks_from_db, 'interval', seconds=30, args=[scheduler])
+    # Schedule the main sync function to run periodically
+    scheduler.add_job(sync_all_jobs, 'interval', seconds=60, args=[scheduler])
     
     print("SCHEDULER: Starting scheduler...")
     # Initial sync on startup
-    sync_tasks_from_db(scheduler)
+    sync_all_jobs(scheduler)
     scheduler.start()

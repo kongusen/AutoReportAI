@@ -1,100 +1,153 @@
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
-import api from '@/lib/api';
+import { useEffect, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
+import api from '@/lib/api'
+import { AxiosResponse } from 'axios'
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
+import { ScheduleBuilder } from '@/components/ScheduleBuilder'
 
-// Define types for what we fetch
+// Define types for API data
 interface Template {
-  id: number;
-  name: string;
+  id: number
+  name: string
 }
 
 interface DataSource {
-  id: number;
-  name: string;
+  id: number
+  name: string
 }
 
-export const taskFormSchema = z.object({
-  template_id: z.coerce.number().min(1, 'Template is required'),
-  data_source_id: z.coerce.number().min(1, 'Data source is required'),
-  status: z.enum(['pending', 'in_progress', 'completed', 'failed']),
-  scheduled_time: z.string().optional().nullable(), // Allow null
-});
+// This is a generic type for our paginated API responses
+interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+}
 
-export type TaskFormValues = z.infer<typeof taskFormSchema>;
+// Schema based on backend model (TaskCreate)
+export const taskFormSchema = z.object({
+  name: z.string().min(1, 'Task name is required.'),
+  template_id: z.string().min(1, 'Template is required.'),
+  data_source_id: z.string().min(1, 'Data source is required.'),
+  schedule: z.string().optional(),
+  recipients: z.string().optional(),
+  is_active: z.boolean(),
+})
+
+export type TaskFormValues = z.infer<typeof taskFormSchema>
+
+export type ProcessedTaskFormValues = Omit<
+  TaskFormValues,
+  'template_id' | 'data_source_id'
+> & {
+  template_id: number
+  data_source_id: number
+}
+
+type OnSubmitCallback = (values: ProcessedTaskFormValues) => void
 
 interface TaskFormProps {
-  onSubmit: (values: TaskFormValues) => void;
-  defaultValues?: Partial<TaskFormValues>;
+  onSubmit: OnSubmitCallback
+  defaultValues?: Partial<TaskFormValues>
 }
 
 export function TaskForm({ onSubmit, defaultValues }: TaskFormProps) {
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [dataSources, setDataSources] = useState<DataSource[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [dataSources, setDataSources] = useState<DataSource[]>([])
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
-    defaultValues: {
-      status: 'pending',
-      ...defaultValues,
+    // This robustly constructs the default values, preventing type errors.
+    values: {
+      name: defaultValues?.name ?? '',
+      template_id: defaultValues?.template_id ?? '',
+      data_source_id: defaultValues?.data_source_id ?? '',
+      schedule: defaultValues?.schedule ?? '',
+      recipients: defaultValues?.recipients ?? '',
+      is_active: defaultValues?.is_active ?? true,
     },
-  });
+  })
 
   useEffect(() => {
-    // Fetch templates
-    api.get('/templates').then(response => setTemplates(response.data));
-    // Fetch data sources
-    api.get('/data-sources').then(response => setDataSources(response.data));
-  }, []);
+    api
+      .get('/templates')
+      .then((response: AxiosResponse<PaginatedResponse<Template>>) => {
+        setTemplates(response.data.items || [])
+      })
+    api
+      .get('/data-sources')
+      .then((response: AxiosResponse<PaginatedResponse<DataSource>>) => {
+        setDataSources(response.data.items || [])
+      })
+  }, [])
 
-  // Format datetime for input
-  const formatDateTimeForInput = (date: Date | string | undefined) => {
-    if (!date) return '';
-    const d = new Date(date);
-    // Return in YYYY-MM-DDTHH:mm format
-    return d.toISOString().slice(0, 16);
-  };
+  const handleFormSubmit = (values: TaskFormValues) => {
+    const convertedValues: ProcessedTaskFormValues = {
+      ...values,
+      template_id: parseInt(values.template_id, 10),
+      data_source_id: parseInt(values.data_source_id, 10),
+    }
+    onSubmit(convertedValues)
+  }
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+      <form
+        onSubmit={form.handleSubmit(handleFormSubmit)}
+        className="space-y-6"
+      >
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Task Name</FormLabel>
+              <FormControl>
+                <Input placeholder="e.g., Monthly Sales Report" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         <FormField
           control={form.control}
           name="template_id"
           render={({ field }) => (
             <FormItem>
               <FormLabel>Template</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={String(field.value || '')}>
+              <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a template" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  {templates.map(template => (
-                    <SelectItem key={template.id} value={String(template.id)}>
-                      {template.name}
+                  {templates.map((t) => (
+                    <SelectItem key={t.id} value={String(t.id)}>
+                      {t.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -110,16 +163,16 @@ export function TaskForm({ onSubmit, defaultValues }: TaskFormProps) {
           render={({ field }) => (
             <FormItem>
               <FormLabel>Data Source</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={String(field.value || '')}>
+              <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a data source" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  {dataSources.map(source => (
-                    <SelectItem key={source.id} value={String(source.id)}>
-                      {source.name}
+                  {dataSources.map((ds) => (
+                    <SelectItem key={ds.id} value={String(ds.id)}>
+                      {ds.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -128,51 +181,77 @@ export function TaskForm({ onSubmit, defaultValues }: TaskFormProps) {
             </FormItem>
           )}
         />
-        
+
         <FormField
           control={form.control}
-          name="status"
+          name="schedule"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Status</FormLabel>
-              <Select onValueChange={field.onChange} defaultValue={field.value}>
+              <FormLabel>Schedule</FormLabel>
+              <FormControl>
+                <ScheduleBuilder
+                  onChange={field.onChange}
+                  value={field.value}
+                />
+              </FormControl>
+              <FormDescription>
+                Select the frequency and time for the task to run.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="recipients"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Recipients</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder="email1@example.com,email2@example.com"
+                  {...field}
+                  value={field.value ?? ''}
+                />
+              </FormControl>
+              <FormDescription>
+                Comma-separated list of email addresses.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="is_active"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Task Status</FormLabel>
+              <Select
+                onValueChange={(value) => field.onChange(value === 'true')}
+                defaultValue={String(field.value)}
+              >
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select a status" />
+                    <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
+                  <SelectItem value="true">Active</SelectItem>
+                  <SelectItem value="false">Inactive</SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
             </FormItem>
           )}
         />
-        
-        <FormField
-          control={form.control}
-          name="scheduled_time"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Scheduled Time (Optional)</FormLabel>
-              <FormControl>
-                <Input
-                  type="datetime-local"
-                  {...field}
-                  value={field.value ? formatDateTimeForInput(field.value) : ''}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
 
-        <Button type="submit">Submit</Button>
+        <Button type="submit" className="w-full">
+          Submit
+        </Button>
       </form>
     </Form>
-  );
-} 
+  )
+}

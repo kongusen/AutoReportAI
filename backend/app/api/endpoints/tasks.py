@@ -25,4 +25,4 @@ def read_tasks(
         tasks = crud.task.get_multi_by_owner(
             db=db, owner_id=current_user.id, skip=skip, limit=limit
         )
-    return tasks 
+    return tasks

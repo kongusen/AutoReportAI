@@ -1,52 +1,53 @@
-'use client';
+'use client'
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import React from 'react'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import AuthProvider from '@/components/AuthProvider'
 
-const navLinks = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/data-sources', label: 'Data Sources' },
-  { href: '/ai-providers', label: 'AI Providers' },
-  { href: '/tasks', label: 'Tasks' },
-];
+const navItems = [
+  { name: 'Tasks', href: '/tasks' },
+  { name: 'ETL Jobs', href: '/etl-jobs' },
+  { name: 'Data Sources', href: '/data-sources' },
+  { name: 'AI Providers', href: '/ai-providers' },
+  // Future pages can be added here
+  // { name: 'Templates', href: '/templates' },
+  // { name: 'History', href: '/history' },
+]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-
-  const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    router.push('/login');
-  };
+  const pathname = usePathname()
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <aside className="w-64 bg-white shadow-md">
-        <div className="p-6">
-          <h1 className="text-xl font-bold text-indigo-600">AutoReportAI</h1>
-        </div>
-        <nav className="mt-6">
-          <ul>
-            {navLinks.map((link) => (
-              <li key={link.href}>
-                <Link href={link.href} className="block px-6 py-3 text-gray-700 hover:bg-gray-100">
-                  {link.label}
-                </Link>
-              </li>
+    <AuthProvider>
+      <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+        {/* Sidebar */}
+        <aside className="w-64 flex-shrink-0 bg-gray-800 dark:bg-black text-white">
+          <div className="flex items-center justify-center h-16 border-b border-gray-700 dark:border-gray-800">
+            <h1 className="text-2xl font-bold">AutoReportAI</h1>
+          </div>
+          <nav className="mt-6">
+            {navItems.map((item) => (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex items-center px-6 py-3 text-base transition-colors duration-200 ${
+                  pathname.startsWith(item.href)
+                    ? 'bg-gray-700 dark:bg-gray-900 text-white'
+                    : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                }`}
+              >
+                {item.name}
+              </Link>
             ))}
-          </ul>
-        </nav>
-        <div className="absolute bottom-0 w-64 p-6">
-            <button 
-              onClick={handleLogout}
-              className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-            >
-              Logout
-            </button>
-        </div>
-      </aside>
-      <main className="flex-1 p-10">
-        {children}
-      </main>
-    </div>
-  );
-} 
+          </nav>
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-8">{children}</div>
+        </main>
+      </div>
+    </AuthProvider>
+  )
+}

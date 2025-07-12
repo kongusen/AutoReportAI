@@ -3,38 +3,91 @@ version: '3.8'
 services:
   db:
     image: postgres:13
-    container_name: autoreport_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
+    container_name: postgres_db
     environment:
-      - POSTGRES_USER=autoreport
-      - POSTGRES_PASSWORD=autoreport
-      - POSTGRES_DB=autoreport
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-app}
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  test_db:
+    image: postgres:13
+    container_name: postgres_test_db
+    environment:
+      - POSTGRES_USER=testuser
+      - POSTGRES_PASSWORD=testpassword
+      - POSTGRES_DB=test_app
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    container_name: autoreport_redis
     restart: unless-stopped
 
-#  backend:
-#    build: ./backend
-#    container_name: autoreport_backend
-#    ports:
-#      - "8000:8000"
-#    depends_on:
-#      - db
-#    environment:
-#      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
-#    restart: unless-stopped
-#
-#  scheduler:
-#    build: ./backend
-#    container_name: autoreport_scheduler
-#    depends_on:
-#      - backend
-#    command: python scheduler/main.py
-#    environment:
-#      - DATABASE_URL=postgresql://autoreport:autoreport@db:5432/autoreport
-#      - BACKEND_API_URL=http://backend:8000/api/v1
-#    restart: unless-stopped
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: autoreport_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: ./scheduler
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin4_container
+    depends_on:
+      - db
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
 
 volumes:
-  postgres_data: 
+  postgres_data:
+  postgres_test_data:
+  pgadmin_data: 

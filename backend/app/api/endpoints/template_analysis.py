@@ -1,7 +1,8 @@
 import os
 import shutil
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
@@ -11,6 +12,7 @@ from app.services.template_parser_service import template_parser
 router = APIRouter()
 
 TEMPLATES_DIR = "templates"
+
 
 @router.post("", response_model=schemas.Template)
 def create_template(
@@ -27,7 +29,9 @@ def create_template(
 
     file_path = os.path.join(TEMPLATES_DIR, file.filename)
     if os.path.exists(file_path):
-        raise HTTPException(status_code=400, detail=f"Template file '{file.filename}' already exists.")
+        raise HTTPException(
+            status_code=400, detail=f"Template file '{file.filename}' already exists."
+        )
 
     try:
         with open(file_path, "wb") as buffer:
@@ -43,12 +47,13 @@ def create_template(
 
     template_in = schemas.TemplateCreate(name=name, description=description)
     template = crud.template.create(
-        db=db, 
-        obj_in=template_in, 
-        file_path=file_path, 
-        parsed_structure=parsed_structure
+        db=db,
+        obj_in=template_in,
+        file_path=file_path,
+        parsed_structure=parsed_structure,
     )
     return template
+
 
 @router.get("", response_model=List[schemas.Template])
 def list_templates(
@@ -61,6 +66,7 @@ def list_templates(
     """
     templates = crud.template.get_multi(db, skip=skip, limit=limit)
     return templates
+
 
 @router.get("/{template_id}", response_model=schemas.Template)
 def get_template(
@@ -76,6 +82,7 @@ def get_template(
         raise HTTPException(status_code=404, detail="Template not found")
     return template
 
+
 @router.delete("/{template_id}", response_model=schemas.Template)
 def delete_template(
     *,
@@ -88,9 +95,9 @@ def delete_template(
     template = crud.template.get(db=db, id=template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     if os.path.exists(template.file_path):
         os.remove(template.file_path)
-        
+
     deleted_template = crud.template.remove(db=db, id=template_id)
     return deleted_template

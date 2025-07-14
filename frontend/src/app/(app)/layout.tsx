@@ -10,9 +10,9 @@ const navItems = [
   { name: 'ETL Jobs', href: '/etl-jobs' },
   { name: 'Data Sources', href: '/data-sources' },
   { name: 'AI Providers', href: '/ai-providers' },
+  { name: 'Templates', href: '/templates' },
+  { name: 'History', href: '/history' },
   // Future pages can be added here
-  // { name: 'Templates', href: '/templates' },
-  // { name: 'History', href: '/history' },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

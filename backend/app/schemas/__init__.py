@@ -4,6 +4,11 @@ from pydantic import BaseModel
 from .ai_provider import AIProvider, AIProviderCreate, AIProviderUpdate
 from .analytics_data import AnalyticsData, AnalyticsDataCreate, AnalyticsDataUpdate
 from .data_source import DataSource, DataSourceCreate, DataSourceUpdate
+from .enhanced_data_source import (
+    EnhancedDataSource,
+    EnhancedDataSourceCreate,
+    EnhancedDataSourceUpdate,
+)
 from .etl_job import ETLJob, ETLJobCreate, ETLJobUpdate
 from .placeholder_mapping import (
     PlaceholderMapping,

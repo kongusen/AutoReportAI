@@ -9,10 +9,10 @@
   </p>
 
   <p>
-    <a href="https://github.com/your-username/AutoReportAI/stargazers"><img src="https://img.shields.io/github/stars/your-username/AutoReportAI?style=flat-square" alt="GitHub stars"></a>
-    <a href="https://github.com/your-username/AutoReportAI/forks"><img src="https://img.shields.io/github/forks/your-username/AutoReportAI?style=flat-square" alt="GitHub forks"></a>
-    <a href="https://github.com/your-username/AutoReportAI/issues"><img src="https://img.shields.io/github/issues/your-username/AutoReportAI?style=flat-square" alt="GitHub issues"></a>
-    <a href="./LICENSE"><img src="https://img.shields.io/github/license/your-username/AutoReportAI?style=flat-square" alt="License"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/stargazers"><img src="https://img.shields.io/github/stars/kongusen/AutoReportAI?style=flat-square" alt="GitHub stars"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/forks"><img src="https://img.shields.io/github/forks/kongusen/AutoReportAI?style=flat-square" alt="GitHub forks"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/issues"><img src="https://img.shields.io/github/issues/kongusen/AutoReportAI?style=flat-square" alt="GitHub issues"></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/github/license/kongusen/AutoReportAI?style=flat-square" alt="License"></a>
     <img src="https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen?style=flat-square" alt="Tests">
   </p>
 
@@ -161,7 +161,7 @@ graph TD
 
 1.  **克隆仓库**:
     ```bash
-    git clone https://github.com/your-username/AutoReportAI.git
+    git clone https://github.com/kongusen/AutoReportAI.git
     cd AutoReportAI
     ```
 

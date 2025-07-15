@@ -98,6 +98,9 @@ test*.xml
 test*.docx
 test*.pdf
 test*.sh
+
+# Templates folder - contains sensitive documents
+templates/
 backend/test_*
 backend/test*.py
 backend/app/tests/

@@ -150,11 +150,7 @@ export function ETLJobForm({
     fetchDataSources()
   }, [])
 
-  // Type compatibility issue between @hookform/resolvers/zod v5.1.1 and react-hook-form v7.60.0
-  // The zodResolver generates a slightly different type signature than what useForm expects
-  // This is a known issue with these library versions and the functionality works correctly at runtime
   const form = useForm<ETLJobFormData>({
-    // @ts-expect-error - Complex type compatibility issue between library versions
     resolver: zodResolver(formSchema),
     defaultValues: { ...defaultValues, ...initialData },
   })

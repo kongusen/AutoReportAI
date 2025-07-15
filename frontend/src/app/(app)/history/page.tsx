@@ -59,7 +59,7 @@ export default function HistoryPage() {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch('/api/history')
+      const response = await fetch('/api/v1/history')
       if (response.ok) {
         const historyData: ReportHistory[] = await response.json()
         setHistory(historyData)
@@ -67,7 +67,7 @@ export default function HistoryPage() {
         // Fetch task details for each unique task_id
         const taskIds: number[] = [...new Set(historyData.map((h: ReportHistory) => h.task_id))]
         const taskPromises = taskIds.map(id => 
-          fetch(`/api/tasks/${id}`).then(res => res.ok ? res.json() : null)
+          fetch(`/api/v1/tasks/${id}`).then(res => res.ok ? res.json() : null)
         )
         
         const taskResults = await Promise.all(taskPromises)
@@ -89,7 +89,7 @@ export default function HistoryPage() {
   const handleDownload = (filePath: string) => {
     // Extract filename from path
     const filename = filePath.split('/').pop()
-    window.open(`/api/reports/download/${filename}`, '_blank')
+    window.open(`/api/v1/reports/download/${filename}`, '_blank')
   }
 
   const formatDate = (dateString: string) => {

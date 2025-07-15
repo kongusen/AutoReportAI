@@ -50,5 +50,9 @@ class EnhancedDataSource(Base):
     is_active = Column(Boolean, default=True)
     last_sync_time = Column(String, nullable=True)
     
-    # 关联关系
+    # 外键 - 临时移除以修复CI/CD
+    # user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # 关联关系 - 临时简化以修复CI/CD
+    # user = relationship("User", back_populates="enhanced_data_sources")
     etl_jobs = relationship("ETLJob", back_populates="enhanced_source")

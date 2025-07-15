@@ -18,26 +18,28 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 添加 enhanced_source_id 外键
-    op.add_column('etl_jobs', sa.Column('enhanced_source_id', sa.Integer(), nullable=True))
+    # 添加 enhanced_source_id 外键（必需）
+    op.add_column('etl_jobs', sa.Column('enhanced_source_id', sa.Integer(), nullable=False))
     op.create_foreign_key(
         'fk_etl_jobs_enhanced_source_id',
         'etl_jobs', 'enhanced_data_sources',
         ['enhanced_source_id'], ['id']
     )
     
-    # 修改 source_data_source_id 为可空
-    op.alter_column('etl_jobs', 'source_data_source_id',
-               existing_type=sa.Integer(),
-               nullable=True)
+    # 删除旧的 source_data_source_id 外键和列
+    op.drop_constraint('etl_jobs_source_data_source_id_fkey', 'etl_jobs', type_='foreignkey')
+    op.drop_column('etl_jobs', 'source_data_source_id')
 
 
 def downgrade() -> None:
-    # 恢复 source_data_source_id 为非空
-    op.alter_column('etl_jobs', 'source_data_source_id',
-               existing_type=sa.Integer(),
-               nullable=False)
+    # 添加回 source_data_source_id
+    op.add_column('etl_jobs', sa.Column('source_data_source_id', sa.Integer(), nullable=False))
+    op.create_foreign_key(
+        'etl_jobs_source_data_source_id_fkey',
+        'etl_jobs', 'data_sources',
+        ['source_data_source_id'], ['id']
+    )
     
-    # 删除 enhanced_source_id 外键
+    # 删除 enhanced_source_id 外键和列
     op.drop_constraint('fk_etl_jobs_enhanced_source_id', 'etl_jobs', type_='foreignkey')
     op.drop_column('etl_jobs', 'enhanced_source_id')

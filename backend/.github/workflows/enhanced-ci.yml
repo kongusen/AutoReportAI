@@ -1,0 +1,133 @@
+name: Enhanced CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+jobs:
+  test-enhanced-system:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-asyncio
+    
+    - name: Wait for PostgreSQL
+      run: |
+        until pg_isready -h localhost -p 5432 -U test; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+    
+    - name: Run database migrations
+      run: |
+        cd backend
+        alembic upgrade head
+    
+    - name: Run basic relationship tests
+      run: |
+        cd backend
+        python test_relationships.py
+    
+    - name: Run complex scenario tests
+      run: |
+        cd backend
+        python test_complex_scenarios.py
+    
+    - name: Run pytest unit tests
+      run: |
+        cd backend
+        pytest tests/ -v --cov=app --cov-report=xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend
+        name: enhanced-system-coverage
+    
+    - name: Test database rollback
+      run: |
+        cd backend
+        alembic downgrade -1
+        alembic upgrade head
+    
+    - name: Validate schema consistency
+      run: |
+        cd backend
+        python -c "
+        from app.models.enhanced_data_source import EnhancedDataSource
+        from app.models.etl_job import ETLJob
+        from app.db.session import engine
+        from sqlalchemy import inspect
+        
+        # 验证表结构
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        assert 'enhanced_data_sources' in tables
+        assert 'etl_jobs' in tables
+        
+        # 验证外键关系
+        etl_columns = inspector.get_columns('etl_jobs')
+        enhanced_source_id = next(c for c in etl_columns if c['name'] == 'enhanced_source_id')
+        assert enhanced_source_id['nullable'] == False
+        
+        print('✅ Schema validation passed')
+        "
+    
+    - name: Performance benchmark
+      run: |
+        cd backend
+        python -c "
+        import time
+        from test_complex_scenarios import ComplexScenarioTester
+        
+        start = time.time()
+        tester = ComplexScenarioTester()
+        result = tester.run_all_tests()
+        duration = time.time() - start
+        
+        print(f'Performance test completed in {duration:.2f}s')
+        assert duration < 30, 'Performance test took too long'
+        "

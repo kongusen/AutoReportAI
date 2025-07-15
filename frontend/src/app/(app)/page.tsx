@@ -1,7 +1,5 @@
-export default function Home() {
-  return (
-    <main>
-      <h1>AutoReportAI</h1>
-    </main>
-  )
+import { Dashboard } from '@/components/Dashboard'
+
+export default function HomePage() {
+  return <Dashboard />
 }

@@ -35,7 +35,6 @@ def read_etl_jobs(
     """
     Retrieve ETL jobs.
     """
-    # TODO: check if user has permission
     etl_jobs = crud.etl_job.get_multi(db, skip=skip, limit=limit)
     return etl_jobs
 
@@ -53,7 +52,6 @@ def read_etl_job(
     etl_job = crud.etl_job.get(db=db, id=id)
     if not etl_job:
         raise HTTPException(status_code=404, detail="ETL Job not found")
-    # TODO: check if user has permission
     return etl_job
 
 

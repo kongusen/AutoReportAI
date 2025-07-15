@@ -10,6 +10,8 @@ from app.api.endpoints import (
     tasks,
     template_analysis,
     users,
+    user_profile,
+    templates,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "tasks",
     "template_analysis",
     "users",
+    "user_profile",
+    "templates",
 ]

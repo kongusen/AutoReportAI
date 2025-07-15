@@ -1,26 +1,23 @@
-# 通用消息模式
-from pydantic import BaseModel
-
-from .ai_provider import AIProvider, AIProviderCreate, AIProviderUpdate
-from .analytics_data import AnalyticsData, AnalyticsDataCreate, AnalyticsDataUpdate
+from .user import User, UserCreate, UserUpdate, UserInDB
+from .user_profile import UserProfile, UserProfileCreate, UserProfileUpdate
+from .template import Template, TemplateCreate, TemplateUpdate, TemplateUpload
+from .enhanced_data_source import EnhancedDataSource, EnhancedDataSourceCreate, EnhancedDataSourceUpdate
 from .data_source import DataSource, DataSourceCreate, DataSourceUpdate
-from .enhanced_data_source import (
-    EnhancedDataSource,
-    EnhancedDataSourceCreate,
-    EnhancedDataSourceUpdate,
-)
 from .etl_job import ETLJob, ETLJobCreate, ETLJobUpdate
-from .placeholder_mapping import (
-    PlaceholderMapping,
-    PlaceholderMappingCreate,
-    PlaceholderMappingUpdate,
-)
+from .ai_provider import AIProvider, AIProviderCreate, AIProviderUpdate
 from .report_history import ReportHistory, ReportHistoryCreate
-from .task import Task, TaskCreate, TaskRead, TaskUpdate
-from .template import Template, TemplateCreate, TemplateUpdate
-from .token import Token, TokenPayload
-from .user import User, UserCreate, UserUpdate
+from .task import Task, TaskCreate, TaskUpdate, TaskRead
+from .token import Msg
 
-
-class Msg(BaseModel):
-    msg: str
+__all__ = [
+    "User", "UserCreate", "UserUpdate", "UserInDB",
+    "UserProfile", "UserProfileCreate", "UserProfileUpdate",
+    "Template", "TemplateCreate", "TemplateUpdate", "TemplateUpload",
+    "EnhancedDataSource", "EnhancedDataSourceCreate", "EnhancedDataSourceUpdate",
+    "DataSource", "DataSourceCreate", "DataSourceUpdate",
+    "ETLJob", "ETLJobCreate", "ETLJobUpdate",
+    "AIProvider", "AIProviderCreate", "AIProviderUpdate",
+    "ReportHistory", "ReportHistoryCreate",
+    "Task", "TaskCreate", "TaskUpdate", "TaskRead",
+    "Msg",
+]

@@ -41,7 +41,7 @@ export default function TemplatesPage() {
 
   const fetchTemplates = async () => {
     try {
-      const response = await fetch('/api/templates')
+      const response = await fetch('/api/v1/templates')
       if (response.ok) {
         const data = await response.json()
         setTemplates(data)
@@ -66,7 +66,7 @@ export default function TemplatesPage() {
         formData.append('description', uploadForm.description)
       }
 
-      const response = await fetch('/api/templates', {
+      const response = await fetch('/api/v1/templates', {
         method: 'POST',
         body: formData
       })

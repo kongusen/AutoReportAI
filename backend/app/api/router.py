@@ -13,6 +13,8 @@ from app.api.endpoints import (
     users,
     enhanced_data_sources,
     mcp_analytics,
+    user_profile,
+    templates,
 )
 
 api_router = APIRouter()
@@ -40,8 +42,14 @@ api_router.include_router(
     report_generation.router, prefix="/reports", tags=["report-generation"]
 )
 api_router.include_router(
-    template_analysis.router, prefix="/templates", tags=["templates"]
+    template_analysis.router, prefix="/template-analysis", tags=["template-analysis"]
 )
 api_router.include_router(
     history.router, prefix="/history", tags=["history"]
+)
+api_router.include_router(
+    user_profile.router, prefix="/user-profile", tags=["user-profile"]
+)
+api_router.include_router(
+    templates.router, prefix="/templates", tags=["templates"]
 )

@@ -302,7 +302,7 @@ async def test_data_source_connection(
     """
     Test the connection to a data source.
     """
-    source = crud.data_source.get(db=db, id=source_id)
+    source = crud.data_source.get(db=db, id=data_source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Data source not found")
 

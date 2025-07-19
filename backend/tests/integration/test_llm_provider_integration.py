@@ -11,6 +11,7 @@ Tests the system's compatibility with different LLM providers:
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, Mock, patch

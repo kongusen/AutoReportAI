@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 

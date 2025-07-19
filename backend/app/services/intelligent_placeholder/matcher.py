@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 
 from ...core.config import settings
 from ...crud.crud_placeholder_mapping import crud_placeholder_mapping
-from ...db.session import get_db_session
+from ...db.session import get_db_session, get_db
 from ...models.placeholder_mapping import PlaceholderMapping
 
 logger = logging.getLogger(__name__)
@@ -585,7 +585,7 @@ class IntelligentFieldMatcher:
         """获取历史映射记录"""
 
         try:
-            db = next(get_db())
+            db = next(get_db_session())
             mappings = crud_placeholder_mapping.get_by_data_source(
                 db, data_source_id=data_source_id, limit=limit
             )

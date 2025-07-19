@@ -9,6 +9,7 @@ import os
 import tempfile
 import json
 import uuid
+import time
 
 from app.services.report_generation.generator import (
     ReportGenerationService,

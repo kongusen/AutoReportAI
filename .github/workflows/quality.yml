@@ -76,7 +76,7 @@ jobs:
         bandit -r app/ -f txt
     
     - name: Upload bandit results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: bandit-security-report
@@ -178,7 +178,7 @@ jobs:
         fail_ci_if_error: false
     
     - name: Upload unit test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: backend-unit-test-results
@@ -224,7 +224,7 @@ jobs:
         fail_ci_if_error: false
     
     - name: Upload frontend test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: frontend-unit-test-results

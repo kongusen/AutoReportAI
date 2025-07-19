@@ -15,6 +15,7 @@ def create_superuser_token(
     # Create superuser
     superuser_data = {
         "username": username,
+        "email": f"{username}@example.com",
         "password": "password123",
         "is_superuser": True,
     }
@@ -62,11 +63,15 @@ def test_create_ai_provider(client: TestClient, db_session: Session):
     response = client.post("/api/v1/ai-providers/", json=provider_data, headers=headers)
     assert response.status_code == 200
 
-    created_provider = response.json()
+    response_data = response.json()
+    assert response_data["success"] == True
+    assert response_data["message"] == "AI提供商创建成功"
+    
+    created_provider = response_data["data"]
     assert created_provider["provider_name"] == "OpenAI"
     assert created_provider["provider_type"] == "openai"
     assert created_provider["default_model_name"] == "gpt-4"
-    assert created_provider["is_active"] == 1
+    assert created_provider["is_active"] == True
 
 
 def test_get_ai_providers(client: TestClient, db_session: Session):
@@ -142,9 +147,13 @@ def test_get_active_ai_provider(client: TestClient, db_session: Session):
     response = client.get("/api/v1/ai-providers/active")
     assert response.status_code == 200
 
-    active_provider = response.json()
+    response_data = response.json()
+    assert response_data["success"] == True
+    assert response_data["message"] == "活跃AI提供商获取成功"
+    
+    active_provider = response_data["data"]
     assert active_provider["provider_name"] == "ActiveAI"
-    assert active_provider["is_active"] == 1
+    assert active_provider["is_active"] == True
 
 
 def test_create_ai_provider_duplicate_name(client: TestClient, db_session: Session):

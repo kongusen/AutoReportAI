@@ -64,6 +64,8 @@ router = APIRouter(tags=["AI服务"])
 async def get_ai_providers(
     provider_type: Optional[str] = Query(None, description="提供商类型"),
     is_active: Optional[bool] = Query(None, description="是否只返回活跃的提供商"),
+    skip: int = Query(0, ge=0, description="跳过的记录数"),
+    limit: int = Query(100, ge=1, le=1000, description="返回的记录数"),
     current_user: models.User = Depends(deps.get_current_user),
     db: Session = Depends(deps.get_db)
 ) -> List[schemas.AIProviderResponse]:
@@ -72,11 +74,73 @@ async def get_ai_providers(
     """
     if not crud.user.is_superuser(current_user):
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    ai_providers = crud.ai_provider.get_multi(db, skip=skip, limit=limit)
-    return APIResponse[List[schemas.AIProvider]](
+    
+    # Apply filters
+    filters = {}
+    if provider_type:
+        filters['provider_type'] = provider_type
+    if is_active is not None:
+        filters['is_active'] = is_active
+    
+    ai_providers = crud.ai_provider.get_multi(db, skip=skip, limit=limit, **filters)
+    
+    # Convert to response format
+    provider_responses = []
+    for provider in ai_providers:
+        provider_responses.append(schemas.AIProviderResponse(
+            id=provider.id,
+            provider_name=provider.provider_name,
+            provider_type=provider.provider_type,
+            api_base_url=provider.api_base_url,
+            default_model_name=provider.default_model_name,
+            is_active=bool(provider.is_active)
+        ))
+    
+    return provider_responses
+
+
+@router.post("/", response_model=APIResponse[schemas.AIProvider])
+def create_ai_provider(
+    *,
+    request: Request,
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_superuser),
+    provider_in: schemas.AIProviderCreate,
+):
+    """
+    Create a new AI provider configuration.
+    """
+    # Check if provider with same name already exists
+    existing_provider = crud.ai_provider.get_by_provider_name(db=db, name=provider_in.provider_name)
+    if existing_provider:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"AI provider with name '{provider_in.provider_name}' already exists"
+        )
+    
+    # Create the provider
+    provider = crud.ai_provider.create(db=db, obj_in=provider_in, user_id=current_user.id)
+    
+    # Log the creation
+    client_ip = get_client_ip(request)
+    security_logger.log_configuration_change(
+        user_id=str(current_user.id),
+        config_type="ai_provider",
+        config_id=str(provider.id),
+        changes={
+            "action": "created",
+            "provider_name": provider.provider_name,
+            "provider_type": provider.provider_type.value,
+            "default_model_name": provider.default_model_name,
+            "is_active": provider.is_active
+        },
+        ip_address=client_ip,
+    )
+    
+    return APIResponse[schemas.AIProvider](
         success=True,
-        message="AI提供商列表获取成功",
-        data=ai_providers
+        message="AI提供商创建成功",
+        data=provider
     )
 
 

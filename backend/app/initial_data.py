@@ -25,7 +25,12 @@ def init_db():
     # Create a first superuser
     user = crud_user.get_by_username(db, username="admin")
     if not user:
-        user_in = UserCreate(username="admin", password="password", is_superuser=True)
+        user_in = UserCreate(
+            username="admin",
+            email="admin@example.com",
+            password="password",
+            is_superuser=True
+        )
         user = crud_user.create(db, obj_in=user_in)
         logger.info("First superuser created")
 

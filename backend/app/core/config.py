@@ -16,10 +16,12 @@ class Settings(BaseSettings):
     db_password: str = os.getenv("POSTGRES_PASSWORD", "postgres")
     db_host: str = os.getenv("POSTGRES_HOST", "localhost")
     db_port: str = os.getenv("POSTGRES_PORT", "5432")
-    db_name: str = os.getenv("POSTGRES_DB", "app")
-    
+    db_name: str = os.getenv("POSTGRES_DB", "postgres")
+
     # Use the dynamically constructed URL
-    DATABASE_URL: str = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    DATABASE_URL: str = (
+        f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    )
 
     # Redis configuration for rate limiting
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -31,12 +33,31 @@ class Settings(BaseSettings):
     }
 
     # Email settings
-    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.example.com")
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", 587))
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    SENDER_EMAIL: str = os.getenv("SENDER_EMAIL", "noreply@autoreportai.com")
+    SENDER_NAME: str = os.getenv("SENDER_NAME", "AutoReportAI")
+
+    # Legacy email settings for backward compatibility
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_USER: str = os.getenv("SMTP_USER", "user@example.com")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "your_password")
     EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL", "noreply@example.com")
     EMAILS_FROM_NAME: str = os.getenv("EMAILS_FROM_NAME", "AutoReportAI")
+
+    # WebSocket settings
+    WS_HOST: str = os.getenv("WS_HOST", "localhost")
+    WS_PORT: int = int(os.getenv("WS_PORT", 8000))
+
+    # Notification settings
+    ENABLE_EMAIL_NOTIFICATIONS: bool = (
+        os.getenv("ENABLE_EMAIL_NOTIFICATIONS", "true").lower() == "true"
+    )
+    ENABLE_WEBSOCKET_NOTIFICATIONS: bool = (
+        os.getenv("ENABLE_WEBSOCKET_NOTIFICATIONS", "true").lower() == "true"
+    )
 
     test_db_user: str = os.getenv("TEST_POSTGRES_USER", "testuser")
     test_db_password: str = os.getenv("TEST_POSTGRES_PASSWORD", "testpassword")
@@ -48,8 +69,8 @@ class Settings(BaseSettings):
     )
 
     # Security settings
-    secret_key: str = os.getenv("SECRET_KEY", "a_very_secret_key")
-    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "a_very_secret_key")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
     ALGORITHM: str = "HS256"
 
     # Encryption key for sensitive data.
@@ -61,6 +82,7 @@ class Settings(BaseSettings):
     class Config:
         case_sensitive = True
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

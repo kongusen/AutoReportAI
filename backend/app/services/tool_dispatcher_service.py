@@ -4,8 +4,8 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app import crud
-from app.services.ai_service import AIService
-from app.services.data_retrieval_service import DataRetrievalService
+from app.services.ai_integration import AIService
+from app.services.data_processing import DataRetrievalService
 from app.services.visualization_service import VisualizationService
 
 

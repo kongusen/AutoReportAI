@@ -1,21 +1,21 @@
 import re
 from typing import Any, Dict
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api import deps
-from app.schemas.analytics_data import AnalyticsDataCreate
-from app.services.ai_service import AIService
-from app.services.data_analysis_service import DataAnalysisService
+from app.services.ai_integration import EnhancedAIService
+from app.services.data_processing import DataAnalysisService
 from app.services.tool_dispatcher_service import ToolDispatcherService
+from app.schemas.base import APIResponse, create_success_response, create_error_response
 
 router = APIRouter()
 
 
-def get_ai_service(db: Session = Depends(deps.get_db)) -> AIService:
-    return AIService(db)
+def get_ai_service(db: Session = Depends(deps.get_db)) -> EnhancedAIService:
+    return EnhancedAIService(db)
 
 
 class AnalysisRequest(BaseModel):
@@ -26,11 +26,23 @@ class AnalysisRequest(BaseModel):
     )
 
 
-@router.post("/experimental-analysis", response_model=dict)
+class AnalysisResponse(BaseModel):
+    placeholder: str
+    task_type: str
+    description: str
+    ai_generated_params: Dict[str, Any]
+    result: Dict[str, Any]
+
+
+class AnalysisStatusResponse(BaseModel):
+    message: str
+
+
+@router.post("/experimental-analysis", response_model=APIResponse[AnalysisResponse])
 def run_experimental_analysis(
     *,
     db: Session = Depends(deps.get_db),
-    ai_service: AIService = Depends(get_ai_service),
+    ai_service: EnhancedAIService = Depends(get_ai_service),
     request: AnalysisRequest,
 ) -> Any:
     """
@@ -73,13 +85,19 @@ def run_experimental_analysis(
         dispatcher = ToolDispatcherService(db=db)
         result = dispatcher.dispatch(task_type=task_type, params=params)
 
-        return {
-            "placeholder": request.placeholder,
-            "task_type": task_type,
-            "description": description,
-            "ai_generated_params": params,
-            "result": result,
-        }
+        analysis_result = AnalysisResponse(
+            placeholder=request.placeholder,
+            task_type=task_type,
+            description=description,
+            ai_generated_params=params,
+            result=result,
+        )
+        
+        return APIResponse[AnalysisResponse](
+            success=True,
+            message="实验性分析完成",
+            data=analysis_result
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,7 +110,7 @@ def run_experimental_analysis(
         )
 
 
-@router.post("/run-analysis/{data_source_id}")
+@router.post("/run-analysis/{data_source_id}", response_model=APIResponse[AnalysisStatusResponse])
 def run_analysis(
     data_source_id: int,
     db: Session = Depends(deps.get_db),
@@ -101,6 +119,13 @@ def run_analysis(
         analysis_service = DataAnalysisService(db)
         # For simplicity, returning a success message.
         # In a real-world scenario, you might return some analysis results.
-        return {"message": f"Analysis started for data source {data_source_id}"}
+        status_result = AnalysisStatusResponse(
+            message=f"Analysis started for data source {data_source_id}"
+        )
+        return APIResponse[AnalysisStatusResponse](
+            success=True,
+            message="数据分析任务已启动",
+            data=status_result
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

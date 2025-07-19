@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, Dict, Any
+from uuid import UUID
 
 from pydantic import BaseModel, HttpUrl, constr
 
@@ -10,7 +11,7 @@ class AIProviderBase(BaseModel):
     provider_type: AIProviderType
     api_base_url: Optional[HttpUrl] = None
     default_model_name: Optional[str] = None
-    is_active: Optional[int] = 0
+    is_active: Optional[bool] = False
 
 
 class AIProviderCreate(AIProviderBase):
@@ -23,10 +24,25 @@ class AIProviderUpdate(AIProviderBase):
 
 class AIProvider(AIProviderBase):
     id: int
+    user_id: UUID
 
     class Config:
         from_attributes = True
 
 
 class AIProviderInDB(AIProvider):
-    api_key: Optional[str] = None
+    api_key: str  # Include the encrypted key in the DB model
+
+
+class AIProviderResponse(AIProviderBase):
+    id: int
+    # Note: api_key is excluded from the response for security
+
+
+class AIProviderTestResponse(BaseModel):
+    """AI提供商测试响应模型"""
+    success: bool
+    message: str
+    response_time: Optional[float] = None
+    test_response: Optional[str] = None
+    model_info: Optional[Dict[str, Any]] = None

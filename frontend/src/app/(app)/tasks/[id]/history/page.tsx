@@ -37,10 +37,10 @@ export default function TaskHistoryPage() {
         // Fetch both task details and its history
         const [taskResponse, historyResponse] = await Promise.all([
           api.get(`/tasks/${taskId}`),
-          api.get(`/tasks/${taskId}/history`),
+          api.get(`/history/task/${taskId}`),
         ])
         setTask(taskResponse.data)
-        setHistory(historyResponse.data.items || [])
+        setHistory(Array.isArray(historyResponse.data) ? historyResponse.data : (historyResponse.data.items || []))
       } catch (err) {
         setError('Failed to fetch task history.')
         console.error(err)

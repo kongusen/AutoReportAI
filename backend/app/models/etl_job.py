@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
-from app.db.base import Base
+from app.db.base_class import Base
 
 
 class ETLJob(Base):
@@ -18,7 +18,7 @@ class ETLJob(Base):
     enhanced_source_id = Column(
         Integer, ForeignKey("enhanced_data_sources.id"), nullable=False
     )
-    # user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 临时移除以修复CI/CD
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     destination_table_name = Column(String, nullable=False, index=True)
 
@@ -34,6 +34,6 @@ class ETLJob(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # 关联关系 - 临时简化以修复CI/CD
-    # user = relationship("User", back_populates="etl_jobs")
+    # 关联关系
+    user = relationship("User", back_populates="etl_jobs")
     enhanced_source = relationship("EnhancedDataSource", back_populates="etl_jobs")

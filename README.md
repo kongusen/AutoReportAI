@@ -13,7 +13,14 @@
     <a href="https://github.com/kongusen/AutoReportAI/forks"><img src="https://img.shields.io/github/forks/kongusen/AutoReportAI?style=flat-square" alt="GitHub forks"></a>
     <a href="https://github.com/kongusen/AutoReportAI/issues"><img src="https://img.shields.io/github/issues/kongusen/AutoReportAI?style=flat-square" alt="GitHub issues"></a>
     <a href="./LICENSE"><img src="https://img.shields.io/github/license/kongusen/AutoReportAI?style=flat-square" alt="License"></a>
-    <img src="https://img.shields.io/badge/Tests-100%25%20Passing-brightgreen?style=flat-square" alt="Tests">
+  </p>
+
+  <p>
+    <a href="https://github.com/kongusen/AutoReportAI/actions/workflows/ci-cd.yml"><img src="https://img.shields.io/github/actions/workflow/status/kongusen/AutoReportAI/ci-cd.yml?branch=main&label=CI%2FCD&style=flat-square" alt="CI/CD Pipeline"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/actions/workflows/quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/kongusen/AutoReportAI/quality.yml?branch=main&label=Quality%20Gate&style=flat-square" alt="Quality Gate"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/actions/workflows/unit-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/kongusen/AutoReportAI/unit-tests.yml?branch=main&label=Unit%20Tests&style=flat-square" alt="Unit Tests"></a>
+    <a href="https://github.com/kongusen/AutoReportAI/actions/workflows/integration-tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/kongusen/AutoReportAI/integration-tests.yml?branch=main&label=Integration%20Tests&style=flat-square" alt="Integration Tests"></a>
+    <a href="https://codecov.io/gh/kongusen/AutoReportAI"><img src="https://img.shields.io/codecov/c/github/kongusen/AutoReportAI?style=flat-square" alt="Code Coverage"></a>
   </p>
 
   <p>
@@ -153,7 +160,7 @@ This project uses a hybrid development model optimized for local development: da
 ### 1. Prerequisites
 
 - [Docker](https://www.docker.com/get-started/) & Docker Compose (v2.0+)
-- [Python 3.9+](https://www.python.org/downloads/) with pip
+- [Python 3.11+](https://www.python.org/downloads/) with pip
 - [Node.js 18+](https://nodejs.org/) & npm
 - [Git](https://git-scm.com/) for version control
 
@@ -191,20 +198,24 @@ This project uses a hybrid development model optimized for local development: da
 
 2.  **Install Dependencies**:
     ```bash
-    pip install -r backend/requirements.txt
+    cd backend
+    pip install -r requirements/development.txt  # For development
+    # OR pip install -r requirements/production.txt  # For production
     ```
 
 3.  **Initialize Database**:
     ```bash
-    cd backend
+    # Using Makefile (recommended)
+    make dev-setup  # Sets up everything: dependencies, database, initial data, tests
+    
+    # OR manually:
     alembic upgrade head
-    python initial_data.py  # Creates default admin user
-    cd ..
+    python scripts/init_db.py  # Creates default admin user
     ```
 
 4.  **Start API Server**:
     ```bash
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir ./backend
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ```
     *Backend API available at `http://localhost:8000` with auto-reload enabled.*
 
@@ -240,25 +251,80 @@ python scheduler/main.py
 - **Email**: `admin@example.com`
 - **Password**: `password`
 
-### 7. Running Tests
+### 7. Development Commands
 
-**Backend Tests**:
+The backend includes a comprehensive Makefile for common development tasks:
+
 ```bash
 cd backend
-pytest -v  # Run all backend tests
-pytest test_ci_cd.py -v  # Run CI/CD specific tests
+
+# Development setup (installs deps, migrates DB, runs tests)
+make dev-setup
+
+# Testing commands
+make test           # Run all tests
+make test-unit      # Run unit tests only (fast)
+make test-integration  # Run integration tests
+make test-e2e       # Run end-to-end tests
+make test-coverage  # Run tests with coverage report
+
+# Code quality
+make lint           # Run code linting
+make format         # Format code with black
+make prod-check     # Production readiness check
+
+# Database operations
+make migrate        # Run database migrations
+make reset-db       # Reset database (caution!)
+make init-db        # Initialize with sample data
+
+# Utilities
+make clean          # Clean temporary files
+make help           # Show all available commands
+```
+
+### 8. Running Tests
+
+Our testing strategy includes multiple test categories for comprehensive coverage:
+
+**Quick Unit Tests** (< 30 seconds):
+```bash
+cd backend
+make test-unit
+# OR: pytest tests/unit/ -v -m "not slow"
+```
+
+**Integration Tests** (< 5 minutes):
+```bash
+cd backend
+make test-integration
+# OR: pytest tests/integration/ -v
+```
+
+**End-to-End Tests** (< 15 minutes):
+```bash
+cd backend
+make test-e2e
+# OR: pytest tests/e2e/ -v
+```
+
+**All Tests with Coverage**:
+```bash
+cd backend
+make test-coverage
+# Generates HTML coverage report in htmlcov/
 ```
 
 **Frontend Tests**:
 ```bash
-npm test --prefix frontend  # Run frontend unit tests
-npm run test:coverage --prefix frontend  # With coverage report
+npm test --prefix frontend              # Run unit tests
+npm run test:coverage --prefix frontend # With coverage report
 ```
 
-**Integration Tests**:
+**Performance & Benchmarks**:
 ```bash
 cd backend
-python test_complex_scenarios.py  # Test complex workflows
+make perf-test  # Run performance benchmarks
 ```
 
 ## 📊 Project Status & CI/CD
@@ -353,15 +419,71 @@ python test_complex_scenarios.py  # Test complex workflows
   - [ ] Advanced security policies and encryption
   - [ ] Multi-tenant architecture support
 
+## 📁 Project Structure
+
+The project follows a clean, organized structure optimized for maintainability and scalability:
+
+```
+AutoReportAI/
+├── backend/                    # Backend API and services
+│   ├── app/                   # Main application code
+│   │   ├── api/              # API routes and endpoints
+│   │   ├── core/             # Core configuration and utilities
+│   │   ├── crud/             # Database CRUD operations
+│   │   ├── db/               # Database configuration
+│   │   ├── models/           # SQLAlchemy models
+│   │   ├── schemas/          # Pydantic schemas
+│   │   ├── services/         # Business logic services
+│   │   └── websocket/        # WebSocket handlers
+│   ├── tests/                # Comprehensive test suite
+│   │   ├── unit/            # Fast unit tests
+│   │   ├── integration/     # Integration tests
+│   │   ├── e2e/            # End-to-end tests
+│   │   └── test_data/      # Test fixtures and data
+│   ├── migrations/          # Database migrations
+│   ├── scripts/            # Utility scripts
+│   ├── requirements/       # Dependency management
+│   │   ├── base.txt       # Core dependencies
+│   │   ├── development.txt # Development dependencies
+│   │   ├── testing.txt    # Testing dependencies
+│   │   └── production.txt # Production dependencies
+│   ├── pyproject.toml     # Project configuration
+│   ├── pytest.ini        # Test configuration
+│   └── Makefile          # Development commands
+├── frontend/              # Next.js frontend application
+│   ├── src/
+│   │   ├── app/          # App router pages
+│   │   ├── components/   # React components
+│   │   ├── lib/         # Utilities and API clients
+│   │   └── types/       # TypeScript type definitions
+│   └── package.json     # Frontend dependencies
+├── scheduler/            # Task scheduling service
+├── .github/             # CI/CD workflows
+│   └── workflows/
+│       ├── ci-cd.yml           # Main CI/CD pipeline
+│       ├── quality.yml         # Code quality checks
+│       ├── unit-tests.yml      # Unit test execution
+│       └── integration-tests.yml # Integration test execution
+└── docker-compose.yml   # Development infrastructure
+```
+
+### Key Structure Benefits
+
+- **🔍 Clear Separation**: Application code, tests, and configuration are clearly separated
+- **📊 Test Organization**: Tests are categorized by type (unit, integration, e2e) for efficient execution
+- **⚙️ Modular Dependencies**: Requirements are split by environment for optimized deployments
+- **🚀 CI/CD Ready**: Structured for automated testing and deployment pipelines
+- **📚 Self-Documenting**: Directory structure makes the codebase easy to navigate and understand
+
 ## 🧪 Testing Strategy
 
 Our comprehensive testing approach ensures reliability and maintainability:
 
-- **Unit Tests**: Individual component testing with high coverage
-- **Integration Tests**: End-to-end workflow validation
+- **Unit Tests**: Individual component testing with high coverage (>90% target)
+- **Integration Tests**: End-to-end workflow validation with real database connections
 - **Performance Tests**: Load testing and optimization benchmarks
 - **Security Tests**: Authentication, authorization, and data protection
-- **CI/CD Pipeline**: Automated testing on every commit and deployment
+- **CI/CD Pipeline**: Automated testing on every commit and deployment with quality gates
 
 ## 🤝 Contributing
 

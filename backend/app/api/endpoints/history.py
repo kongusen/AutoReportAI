@@ -43,13 +43,13 @@ def read_report_history_item(
     history_item = crud.report_history.get(db=db, id=history_id)
     if not history_item:
         raise HTTPException(status_code=404, detail="Report history not found")
-    
+
     # Check permissions - users can only see history for their own tasks
     if not crud.user.is_superuser(current_user):
         task = crud.task.get(db=db, id=history_item.task_id)
         if not task or task.owner_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     return history_item
 
 
@@ -67,10 +67,10 @@ def read_task_history(
     task = crud.task.get(db=db, id=task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     if not crud.user.is_superuser(current_user) and task.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     # Get history for this task
     history = crud.report_history.get_by_task_id(db=db, task_id=task_id)
-    return history 
+    return history

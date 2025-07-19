@@ -1,8 +1,7 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import relationship
 
-from app.db.base import Base
+from app.db.base_class import Base
 
 
 class AnalyticsData(Base):
@@ -14,8 +13,8 @@ class AnalyticsData(Base):
     # E.g., a primary key, a unique hash, or a composite key.
     record_id = Column(String, index=True, nullable=False)
 
-    # The actual data record stored in a flexible JSONB format.
-    data = Column(JSONB, nullable=False)
+    # The actual data record stored in a flexible JSON format.
+    data = Column(JSON, nullable=False)
 
     # Timestamp indicating when the record was loaded into our system.
     created_at = Column(DateTime(timezone=True), server_default=func.now())

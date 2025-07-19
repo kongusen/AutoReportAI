@@ -1,7 +1,7 @@
 """create enhanced data source table
 
 Revision ID: 3f4a5b6c7d8e
-Revises: add_connection_string_to_data_source
+Revises: add_connection_string
 Create Date: 2025-07-14 14:50:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '3f4a5b6c7d8e'
-down_revision = 'add_connection_string_to_data_source'
+down_revision = 'add_connection_string'
 branch_labels = None
 depends_on = None
 

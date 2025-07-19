@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import api from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -59,26 +60,29 @@ export default function HistoryPage() {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch('/api/v1/history')
-      if (response.ok) {
-        const historyData: ReportHistory[] = await response.json()
-        setHistory(historyData)
-        
-        // Fetch task details for each unique task_id
-        const taskIds: number[] = [...new Set(historyData.map((h: ReportHistory) => h.task_id))]
-        const taskPromises = taskIds.map(id => 
-          fetch(`/api/v1/tasks/${id}`).then(res => res.ok ? res.json() : null)
-        )
-        
-        const taskResults = await Promise.all(taskPromises)
-        const taskMap: { [key: number]: Task } = {}
-        taskResults.forEach((task, index) => {
-          if (task && taskIds[index] !== undefined) {
-            taskMap[taskIds[index]] = task
-          }
-        })
-        setTasks(taskMap)
-      }
+      const response = await api.get('/history')
+      const historyData: ReportHistory[] = Array.isArray(response.data) ? response.data : (response.data.items || [])
+      setHistory(historyData)
+      
+      // Fetch task details for each unique task_id
+      const taskIds: number[] = [...new Set(historyData.map((h: ReportHistory) => h.task_id))]
+      const taskPromises = taskIds.map(async id => {
+        try {
+          const taskResponse = await api.get(`/tasks/${id}`)
+          return { id, task: taskResponse.data }
+        } catch {
+          return { id, task: null }
+        }
+      })
+      
+      const taskResults = await Promise.all(taskPromises)
+      const taskMap: { [key: number]: Task } = {}
+      taskResults.forEach(({ id, task }) => {
+        if (task) {
+          taskMap[id] = task
+        }
+      })
+      setTasks(taskMap)
     } catch (error) {
       console.error('Error fetching history:', error)
     } finally {
@@ -89,7 +93,7 @@ export default function HistoryPage() {
   const handleDownload = (filePath: string) => {
     // Extract filename from path
     const filename = filePath.split('/').pop()
-    window.open(`/api/v1/reports/download/${filename}`, '_blank')
+    window.open(`${api.defaults.baseURL}/reports/download/${filename}`, '_blank')
   }
 
   const formatDate = (dateString: string) => {

@@ -38,7 +38,7 @@ export default function AIProvidersPage() {
   }
 
   if (error) {
-    return <div className="text-center text-red-500">{error}</div>
+    return <div className="text-center text-red-500">{typeof error === 'string' ? error : (error as any).msg || JSON.stringify(error)}</div>
   }
 
   return (

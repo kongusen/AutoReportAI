@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 # Shared properties
 class ReportHistoryBase(BaseModel):
     task_id: int
+    user_id: UUID
     status: str
     file_path: Optional[str] = None
     error_message: Optional[str] = None

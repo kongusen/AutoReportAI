@@ -1,5 +1,6 @@
 import enum
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +10,7 @@ class DataSourceType(str, enum.Enum):
     csv = "csv"
     api = "api"
     push = "push"
+
 
 class SQLQueryType(str, enum.Enum):
     single_table = "single_table"
@@ -68,6 +70,7 @@ class EnhancedDataSourceUpdate(BaseModel):
 # Properties shared by models stored in DB
 class EnhancedDataSourceInDBBase(EnhancedDataSourceBase):
     id: int
+    user_id: UUID
 
     class Config:
         from_attributes = True

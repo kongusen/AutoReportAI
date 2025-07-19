@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.api import deps
-from app.services.etl_service import etl_service
+from app.services.data_processing.etl.etl_service import etl_service
 
 router = APIRouter()
 
@@ -126,13 +126,16 @@ def get_etl_job_status(
     Get the status of an ETL job.
     """
     try:
-        from app.services.etl_service import etl_service
+        from app.services.data_processing.etl.etl_service import etl_service
+
         status = etl_service.get_job_status(job_id=str(id))
         return status
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get job status: {str(e)}"
+        )
 
 
 @router.post("/{id}/validate", response_model=dict)
@@ -146,7 +149,8 @@ def validate_etl_job(
     Validate ETL job configuration.
     """
     try:
-        from app.services.etl_service import etl_service
+        from app.services.data_processing.etl.etl_service import etl_service
+
         validation_results = etl_service.validate_job_configuration(job_id=str(id))
         return validation_results
     except ValueError as e:
@@ -166,13 +170,16 @@ def dry_run_etl_job(
     Perform a dry run of an ETL job (validate without executing).
     """
     try:
-        from app.services.etl_service import etl_service
+        from app.services.data_processing.etl.etl_service import etl_service
+
         result = etl_service.run_job(job_id=str(id), dry_run=True)
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to perform dry run: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to perform dry run: {str(e)}"
+        )
 
 
 @router.get("/data-source/{data_source_id}/tables", response_model=dict)
@@ -186,7 +193,8 @@ def list_data_source_tables(
     List available tables/data from a data source.
     """
     try:
-        from app.services.etl_service import etl_service
+        from app.services.data_processing.etl.etl_service import etl_service
+
         tables = etl_service.list_available_tables(data_source_id=data_source_id)
         return tables
     except ValueError as e:

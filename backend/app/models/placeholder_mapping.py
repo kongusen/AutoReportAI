@@ -1,30 +1,46 @@
-import enum
+"""
+占位符映射数据模型
 
-from sqlalchemy import Column, Enum, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+用于存储占位符字段映射的历史记录和缓存信息
+"""
+
+from sqlalchemy import (
+    DECIMAL,
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
-from app.db.base import Base
-
-
-class PlaceholderType(str, enum.Enum):
-    text = "text"
-    chart = "chart"
-    table = "table"
+from ..db.base_class import Base
 
 
 class PlaceholderMapping(Base):
-    __tablename__ = "placeholder_mappings"
-    id = Column(Integer, primary_key=True, index=True)
-    template_id = Column(UUID(as_uuid=True), nullable=False)  # 临时移除外键约束以解决CI/CD问题
-    placeholder_name = Column(String, index=True, nullable=False)
-    placeholder_description = Column(String)
-    placeholder_type = Column(
-        Enum(PlaceholderType), nullable=False, default=PlaceholderType.text
-    )
+    """占位符映射表"""
 
-    data_source_id = Column(Integer, ForeignKey("data_sources.id"), nullable=True)
-    
-    # Relationships - 临时注释掉Template关系以解决CI/CD问题
-    data_source = relationship("DataSource", back_populates="placeholder_mappings")
-    # template = relationship("Template", back_populates="mappings")
+    __tablename__ = "placeholder_mapping_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    placeholder_signature = Column(String(255), unique=True, nullable=False, index=True)
+    data_source_id = Column(
+        Integer, ForeignKey("enhanced_data_sources.id"), nullable=False
+    )
+    matched_field = Column(String(255), nullable=False)
+    confidence_score = Column(DECIMAL(3, 2), nullable=False)
+    transformation_config = Column(JSON, nullable=True)
+    usage_count = Column(Integer, default=1, nullable=False)
+    last_used_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # 关系
+    data_source = relationship(
+        "EnhancedDataSource", back_populates="placeholder_mappings"
+    )

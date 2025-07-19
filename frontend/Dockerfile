@@ -1,44 +1,68 @@
-# Stage 1: Build stage
-FROM node:18-alpine AS builder
+# Multi-stage build for optimized production image
+# Stage 1: Dependencies stage
+FROM node:18-alpine AS deps
 
-# Set working directory
+# Install libc6-compat for Alpine compatibility
+RUN apk add --no-cache libc6-compat
+
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy package files
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm ci && npm cache clean --force
 
-# Copy the rest of the application source code
-COPY . .
+# Stage 2: Build stage
+FROM node:18-alpine AS builder
 
-# Build the Next.js application
-RUN npm run build
-
-# Stage 2: Production stage
-FROM node:18-alpine
-
-# Set working directory
 WORKDIR /app
 
-# Create a non-root user for security
-RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
 
-# Copy built assets from the builder stage
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+# Set environment for build
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# Set ownership for the app directory
-RUN chown -R nextjs:nextjs /app
+# Build the application
+RUN npm run build
 
-# Switch to the non-root user
+# Stage 3: Production stage
+FROM node:18-alpine AS production
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+WORKDIR /app
+
+# Set environment variables
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy built application and dependencies
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+
+# Copy and set up health check script
+COPY --chown=nextjs:nodejs ./scripts/healthcheck_frontend.sh /healthcheck.sh
+RUN chmod +x /healthcheck.sh
+
+# Switch to non-root user
 USER nextjs
 
-# Expose the port the app runs on
+# Expose port
 EXPOSE 3000
 
-# Command to run the app
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /healthcheck.sh
+
+# Start the application
 CMD ["npm", "start"] 

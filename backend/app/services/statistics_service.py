@@ -51,32 +51,32 @@ class StatisticsService:
         if previous_value == 0:
             return 0.0  # Avoid division by zero
         return ((current_value - previous_value) / previous_value) * 100
-    
+
     def get_basic_stats(self, df: pd.DataFrame) -> dict:
         """
         获取DataFrame的基础统计信息
-        
+
         :param df: pandas DataFrame
         :return: 基础统计信息字典
         """
         if df.empty:
             return {"error": "DataFrame is empty"}
-        
+
         numeric_columns = df.select_dtypes(include=[pd.np.number]).columns.tolist()
-        
+
         stats = {
             "shape": df.shape,
             "columns": df.columns.tolist(),
             "data_types": df.dtypes.astype(str).to_dict(),
             "memory_usage": df.memory_usage(deep=True).sum(),
-            "numeric_summary": {}
+            "numeric_summary": {},
         }
-        
+
         # 数值列的描述性统计
         if numeric_columns:
             describe_stats = df[numeric_columns].describe()
             stats["numeric_summary"] = describe_stats.to_dict()
-        
+
         return stats
 
 

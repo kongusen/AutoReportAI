@@ -1,0 +1,306 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Backend integration tests
+  backend-integration-tests:
+    name: Backend Integration Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: test_app
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/testing.txt
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-integration-${{ hashFiles('backend/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-integration-
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements/testing.txt
+    
+    - name: Run database migrations
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+      run: |
+        cd backend
+        alembic upgrade head
+    
+    - name: Run integration tests
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+        REDIS_URL: redis://localhost:6379
+      run: |
+        cd backend
+        echo "Running backend integration tests..."
+        pytest tests/integration/ \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-integration.xml \
+          --maxfail=5 \
+          --tb=short \
+          -v \
+          -m "integration"
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend-integration
+        name: backend-integration-coverage
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-integration-test-results
+        path: |
+          backend/junit-integration.xml
+          backend/htmlcov/
+        retention-days: 7
+
+  # End-to-end tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: test_app
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/testing.txt
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-e2e-${{ hashFiles('backend/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-e2e-
+          ${{ runner.os }}-pip-
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Cache Node.js dependencies
+      uses: actions/cache@v3
+      with:
+        path: frontend/node_modules
+        key: ${{ runner.os }}-node-e2e-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-e2e-
+          ${{ runner.os }}-node-
+    
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements/testing.txt
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Run database migrations
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+      run: |
+        cd backend
+        alembic upgrade head
+    
+    - name: Start backend server
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+        REDIS_URL: redis://localhost:6379
+      run: |
+        cd backend
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        sleep 10
+    
+    - name: Run E2E tests
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+        BACKEND_URL: http://localhost:8000
+      run: |
+        cd backend
+        echo "Running end-to-end tests..."
+        pytest tests/e2e/ \
+          --junit-xml=junit-e2e.xml \
+          --maxfail=3 \
+          --tb=short \
+          -v \
+          -m "e2e"
+    
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-results
+        path: backend/junit-e2e.xml
+        retention-days: 7
+
+  # Integration test summary
+  integration-test-summary:
+    name: Integration Test Summary
+    runs-on: ubuntu-latest
+    needs: [backend-integration-tests, e2e-tests]
+    if: always()
+    
+    steps:
+    - name: Check integration test results
+      run: |
+        echo "Integration Test Results Summary:"
+        echo "================================"
+        echo "Backend Integration Tests: ${{ needs.backend-integration-tests.result }}"
+        echo "End-to-End Tests: ${{ needs.e2e-tests.result }}"
+        
+        if [[ "${{ needs.backend-integration-tests.result }}" == "failure" || 
+              "${{ needs.e2e-tests.result }}" == "failure" ]]; then
+          echo "❌ Some integration tests failed!"
+          exit 1
+        else
+          echo "✅ All integration tests passed!"
+        fi
+    
+    - name: Comment PR with integration test results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const integrationResult = '${{ needs.backend-integration-tests.result }}';
+          const e2eResult = '${{ needs.e2e-tests.result }}';
+          
+          const integrationEmoji = integrationResult === 'success' ? '✅' : '❌';
+          const e2eEmoji = e2eResult === 'success' ? '✅' : '❌';
+          
+          const comment = `## 🔗 Integration Test Results
+          
+          ${integrationEmoji} **Backend Integration Tests**: ${integrationResult}
+          ${e2eEmoji} **End-to-End Tests**: ${e2eResult}
+          
+          **Overall Status**: ${integrationResult === 'success' && e2eResult === 'success' ? '✅ PASSED' : '❌ FAILED'}`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    
+    - name: Create status check
+      if: always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const integrationResult = '${{ needs.backend-integration-tests.result }}';
+          const e2eResult = '${{ needs.e2e-tests.result }}';
+          const allPassed = integrationResult === 'success' && e2eResult === 'success';
+          
+          const state = allPassed ? 'success' : 'failure';
+          const description = allPassed ? '✅ All integration tests passed' : '❌ Some integration tests failed';
+          
+          github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: state,
+            target_url: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+            description: description,
+            context: 'Integration Tests'
+          });

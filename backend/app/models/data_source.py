@@ -3,7 +3,7 @@ import enum
 from sqlalchemy import JSON, Column, Enum, Integer, String
 from sqlalchemy.orm import relationship
 
-from app.db.base import Base
+from app.db.base_class import Base
 
 
 class DataSourceType(str, enum.Enum):
@@ -32,5 +32,4 @@ class DataSource(Base):
     api_headers = Column(JSON, nullable=True)
     api_body = Column(JSON, nullable=True)
 
-    # 关系
-    placeholder_mappings = relationship("PlaceholderMapping", back_populates="data_source")
+    # Note: PlaceholderMapping relationships are with EnhancedDataSource, not DataSource

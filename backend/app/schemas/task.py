@@ -1,5 +1,6 @@
 import json
 from typing import List, Optional
+from uuid import UUID
 
 from cron_validator import CronValidator
 from pydantic import BaseModel, field_validator
@@ -8,7 +9,7 @@ from pydantic import BaseModel, field_validator
 class TaskBase(BaseModel):
     name: str
     description: Optional[str] = None
-    template_id: int
+    template_id: UUID
     data_source_id: int
     schedule: Optional[str] = None
     recipients: Optional[List[str]] = []
@@ -37,7 +38,7 @@ class TaskCreate(TaskBase):
 class TaskUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    template_id: Optional[int] = None
+    template_id: Optional[UUID] = None
     data_source_id: Optional[int] = None
     schedule: Optional[str] = None
     recipients: Optional[List[str]] = None
@@ -61,7 +62,7 @@ class TaskUpdate(BaseModel):
 
 class Task(TaskBase):
     id: int
-    owner_id: int
+    owner_id: UUID
 
     class Config:
         from_attributes = True
@@ -69,7 +70,8 @@ class Task(TaskBase):
 
 class TaskRead(TaskBase):
     id: int
-    owner_id: int
+    owner_id: UUID
+    is_active: bool
 
     class Config:
         from_attributes = True

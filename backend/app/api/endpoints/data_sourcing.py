@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api import deps
@@ -9,7 +10,12 @@ from app.services.data_retrieval_service import DataRetrievalService
 router = APIRouter()
 
 
-@router.post("/fetch-data/")
+class DataResponse(BaseModel):
+    data: Dict[str, Any]
+    error: str = None
+
+
+@router.post("/fetch-data/", response_model=DataResponse)
 def fetch_data(
     data_source_id: int,
     db: Session = Depends(deps.get_db),
@@ -17,6 +23,6 @@ def fetch_data(
     retrieval_service = DataRetrievalService(db)
     try:
         data = retrieval_service.get_data(data_source_id)
-        return {"data": data.to_dict()}
+        return DataResponse(data=data.to_dict())
     except Exception as e:
-        return {"error": str(e)}
+        return DataResponse(data={}, error=str(e))

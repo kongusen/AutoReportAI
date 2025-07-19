@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import api from '@/lib/api'
 import {
   Table,
   TableBody,
@@ -17,7 +18,16 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { MoreHorizontal } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Badge } from '@/components/ui/badge'
+import { MoreHorizontal, Plus, Play, TestTube } from 'lucide-react'
+import { ETLJobForm } from '@/components/forms'
 
 // Define the shape of an ETL Job object
 export type ETLJob = {
@@ -34,72 +44,139 @@ export default function ETLJobsPage() {
   const [jobs, setJobs] = useState<ETLJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [editingJob, setEditingJob] = useState<ETLJob | null>(null)
+  const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set())
+
+  const fetchJobs = async () => {
+    try {
+      setIsLoading(true)
+      const response = await api.get('/etl-jobs')
+      setJobs(Array.isArray(response.data) ? response.data : (response.data.items || []))
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message)
+      } else {
+        setError('An unknown error occurred')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   useEffect(() => {
-    async function fetchJobs() {
-      try {
-        setIsLoading(true)
-        // We'll need to handle authentication token properly later
-        const response = await fetch('/api/v1/etl-jobs')
-        if (!response.ok) {
-          throw new Error('Failed to fetch ETL jobs')
-        }
-        const data = await response.json()
-        setJobs(data)
-      } catch (err) {
-        if (err instanceof Error) {
-          setError(err.message)
-        } else {
-          setError('An unknown error occurred')
-        }
-      } finally {
-        setIsLoading(false)
-      }
-    }
     fetchJobs()
   }, [])
 
+  const handleCreateJob = async (values: any) => {
+    try {
+      await api.post('/etl-jobs', values)
+      fetchJobs()
+      setIsDialogOpen(false)
+    } catch (error) {
+      console.error('Failed to create ETL job:', error)
+      alert('Failed to create ETL job')
+    }
+  }
+
+  const handleEditJob = async (values: any) => {
+    if (!editingJob) return
+    
+    try {
+      await api.put(`/etl-jobs/${editingJob.id}`, values)
+      fetchJobs()
+      setIsDialogOpen(false)
+      setEditingJob(null)
+    } catch (error) {
+      console.error('Failed to edit ETL job:', error)
+      alert('Failed to edit ETL job')
+    }
+  }
+
   const handleEdit = (jobId: string) => {
-    // Placeholder for edit functionality
-    console.log('Edit job:', jobId)
+    const job = jobs.find(j => j.id === jobId)
+    if (job) {
+      setEditingJob(job)
+      setIsDialogOpen(true)
+    }
   }
 
   const handleDelete = async (jobId: string) => {
-    // Placeholder for delete functionality
-    if (confirm('Are you sure you want to delete this job?')) {
-      console.log('Delete job:', jobId)
-      // try {
-      //     await fetch(`/api/v1/etl-jobs/${jobId}`, { method: 'DELETE' });
-      //     setJobs(jobs.filter(job => job.id !== jobId));
-      // } catch (err) {
-      //     console.error("Failed to delete job", err);
-      // }
+    if (!confirm('Are you sure you want to delete this job?')) return
+    
+    try {
+      await api.delete(`/etl-jobs/${jobId}`)
+      setJobs(jobs.filter(job => job.id !== jobId))
+    } catch (err) {
+      console.error('Failed to delete job:', err)
+      alert('Failed to delete job')
     }
   }
 
   const handleRun = async (jobId: string) => {
-    // Placeholder for run functionality
-    console.log('Run job:', jobId)
-    // try {
-    //     await fetch(`/api/v1/etl-jobs/${jobId}/run`, { method: 'POST' });
-    //     alert("Job execution started.");
-    // } catch (err) {
-    //     console.error("Failed to run job", err);
-    //     alert("Failed to start job execution.");
-    // }
+    setRunningJobs(prev => new Set(prev).add(jobId))
+    try {
+      await api.post(`/etl-jobs/${jobId}/run`)
+      alert('Job execution started successfully')
+      fetchJobs() // 刷新状态
+    } catch (err) {
+      console.error('Failed to run job:', err)
+      alert('Failed to start job execution')
+    } finally {
+      setRunningJobs(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(jobId)
+        return newSet
+      })
+    }
+  }
+
+  const openCreateDialog = () => {
+    setEditingJob(null)
+    setIsDialogOpen(true)
+  }
+
+  if (error) {
+    return <div className="text-center text-red-500">{typeof error === 'string' ? error : (error as any).msg || JSON.stringify(error)}</div>
   }
 
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">ETL Jobs</h2>
-        <Button>Create New Job</Button>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={openCreateDialog}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create New Job
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>
+                {editingJob ? 'Edit ETL Job' : 'Create New ETL Job'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <ETLJobForm 
+                onSubmit={editingJob ? handleEditJob : handleCreateJob}
+                defaultValues={editingJob ? {
+                  name: editingJob.name,
+                  description: editingJob.description || '',
+                  schedule: editingJob.schedule || '',
+                  enabled: editingJob.enabled
+                } : undefined}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Description</TableHead>
               <TableHead>Schedule</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created At</TableHead>
@@ -110,25 +187,31 @@ export default function ETLJobsPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   Loading...
-                </TableCell>
-              </TableRow>
-            ) : error ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-red-500"
-                >
-                  {error}
                 </TableCell>
               </TableRow>
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 <TableRow key={job.id}>
                   <TableCell className="font-medium">{job.name}</TableCell>
-                  <TableCell>{job.schedule || 'Not scheduled'}</TableCell>
-                  <TableCell>{job.enabled ? 'Enabled' : 'Disabled'}</TableCell>
+                  <TableCell className="max-w-xs truncate">
+                    {job.description || 'No description'}
+                  </TableCell>
+                  <TableCell>
+                    {job.schedule ? (
+                      <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                        {job.schedule}
+                      </code>
+                    ) : (
+                      'Not scheduled'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={job.enabled ? 'default' : 'secondary'}>
+                      {job.enabled ? 'Enabled' : 'Disabled'}
+                    </Badge>
+                  </TableCell>
                   <TableCell>
                     {new Date(job.created_at).toLocaleString()}
                   </TableCell>
@@ -150,8 +233,12 @@ export default function ETLJobsPage() {
                         <DropdownMenuItem onClick={() => handleEdit(job.id)}>
                           Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleRun(job.id)}>
-                          Run Now
+                        <DropdownMenuItem 
+                          onClick={() => handleRun(job.id)}
+                          disabled={runningJobs.has(job.id)}
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          {runningJobs.has(job.id) ? 'Running...' : 'Run Now'}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
@@ -166,7 +253,7 @@ export default function ETLJobsPage() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
+                <TableCell colSpan={7} className="h-24 text-center">
                   No ETL jobs found.
                 </TableCell>
               </TableRow>

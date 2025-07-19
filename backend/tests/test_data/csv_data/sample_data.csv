@@ -1,0 +1,6 @@
+id,name,category,value,date,status
+1,Item A,Electronics,299.99,2024-01-15,active
+2,Item B,Books,19.99,2024-01-16,active
+3,Item C,Electronics,599.99,2024-01-17,inactive
+4,Item D,Clothing,49.99,2024-01-18,active
+5,Item E,Books,29.99,2024-01-19,active

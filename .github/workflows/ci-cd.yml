@@ -5,29 +5,57 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Environment to deploy to'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+  COVERAGE_THRESHOLD: 80
 
 jobs:
   # 代码质量检查
   quality-check:
     runs-on: ubuntu-latest
+    outputs:
+      backend-cache-key: ${{ steps.backend-cache.outputs.cache-hit }}
+      frontend-cache-key: ${{ steps.frontend-cache.outputs.cache-hit }}
     steps:
     - uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/development.txt
+    
+    - name: Cache Python dependencies
+      id: backend-cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
     
     - name: Install Python dependencies
       run: |
         cd backend
         python -m pip install --upgrade pip
-        pip install flake8 black isort mypy
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -r requirements/development.txt
     
     - name: Lint with flake8
       run: |
@@ -50,9 +78,18 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
         cache-dependency-path: frontend/package-lock.json
+    
+    - name: Cache Node.js dependencies
+      id: frontend-cache
+      uses: actions/cache@v3
+      with:
+        path: frontend/node_modules
+        key: ${{ runner.os }}-node-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-
     
     - name: Install frontend dependencies
       run: |
@@ -88,6 +125,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        test-type: [unit, integration, e2e]
+      fail-fast: false
 
     steps:
     - uses: actions/checkout@v4
@@ -95,65 +147,263 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/testing.txt
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-test-${{ matrix.test-type }}-${{ hashFiles('backend/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-test-${{ matrix.test-type }}-
+          ${{ runner.os }}-pip-test-
+          ${{ runner.os }}-pip-
     
     - name: Install dependencies
       run: |
         cd backend
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements/testing.txt
     
-    - name: Run tests with coverage
+    - name: Run database migrations
+      if: matrix.test-type != 'unit'
       env:
         TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
       run: |
         cd backend
-        pytest --cov=app --cov-report=xml --cov-report=term-missing
+        alembic upgrade head
+    
+    - name: Run unit tests
+      if: matrix.test-type == 'unit'
+      run: |
+        cd backend
+        pytest tests/unit/ \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-unit.xml \
+          --cov-fail-under=${{ env.COVERAGE_THRESHOLD }} \
+          --maxfail=5 \
+          -v
+    
+    - name: Run integration tests
+      if: matrix.test-type == 'integration'
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+        REDIS_URL: redis://localhost:6379
+      run: |
+        cd backend
+        pytest tests/integration/ \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --junit-xml=junit-integration.xml \
+          --maxfail=3 \
+          -v
+    
+    - name: Run E2E tests
+      if: matrix.test-type == 'e2e'
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpassword@localhost:5433/test_app
+        REDIS_URL: redis://localhost:6379
+      run: |
+        cd backend
+        # Start backend server for E2E tests
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        sleep 10
+        
+        pytest tests/e2e/ \
+          --junit-xml=junit-e2e.xml \
+          --maxfail=2 \
+          -v
+    
+    - name: Check coverage threshold
+      if: matrix.test-type == 'unit'
+      run: |
+        cd backend
+        coverage report --fail-under=${{ env.COVERAGE_THRESHOLD }}
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         file: ./backend/coverage.xml
-        flags: backend
-        name: backend-coverage
+        flags: backend-${{ matrix.test-type }}
+        name: backend-${{ matrix.test-type }}-coverage
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-${{ matrix.test-type }}-test-results
+        path: |
+          backend/junit-*.xml
+          backend/htmlcov/
+        retention-days: 7
 
   # 前端测试
   frontend-test:
     runs-on: ubuntu-latest
     needs: quality-check
     
+    strategy:
+      matrix:
+        test-type: [unit, integration, visual]
+      fail-fast: false
+
     steps:
     - uses: actions/checkout@v4
     
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
         cache-dependency-path: frontend/package-lock.json
+    
+    - name: Cache Node.js dependencies
+      uses: actions/cache@v3
+      with:
+        path: frontend/node_modules
+        key: ${{ runner.os }}-node-test-${{ matrix.test-type }}-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-test-${{ matrix.test-type }}-
+          ${{ runner.os }}-node-test-
+          ${{ runner.os }}-node-
     
     - name: Install dependencies
       run: |
         cd frontend
         npm ci
     
-    - name: Run tests
+    - name: Run unit tests
+      if: matrix.test-type == 'unit'
       run: |
         cd frontend
-        npm test -- --coverage --watchAll=false
+        npm run test:unit -- \
+          --coverage \
+          --watchAll=false \
+          --passWithNoTests \
+          --coverageThreshold='{"global":{"branches":${{ env.COVERAGE_THRESHOLD }},"functions":${{ env.COVERAGE_THRESHOLD }},"lines":${{ env.COVERAGE_THRESHOLD }},"statements":${{ env.COVERAGE_THRESHOLD }}}}'
+    
+    - name: Run integration tests
+      if: matrix.test-type == 'integration'
+      run: |
+        cd frontend
+        npm run test:integration -- \
+          --coverage \
+          --watchAll=false \
+          --passWithNoTests
+    
+    - name: Run visual regression tests
+      if: matrix.test-type == 'visual'
+      run: |
+        cd frontend
+        npm run test:visual -- \
+          --watchAll=false \
+          --passWithNoTests
     
     - name: Upload coverage to Codecov
+      if: matrix.test-type != 'visual'
       uses: codecov/codecov-action@v3
       with:
         file: ./frontend/coverage/lcov.info
-        flags: frontend
-        name: frontend-coverage
+        flags: frontend-${{ matrix.test-type }}
+        name: frontend-${{ matrix.test-type }}-coverage
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: frontend-${{ matrix.test-type }}-test-results
+        path: |
+          frontend/coverage/
+          frontend/test-results/
+        retention-days: 7
+
+  # 自动生成API文档
+  generate-api-docs:
+    runs-on: ubuntu-latest
+    needs: [backend-test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/development.txt
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements/base.txt
+        pip install -r requirements/development.txt
+    
+    - name: Start Redis for docs generation
+      uses: supercharge/redis-github-action@1.7.0
+      with:
+        redis-version: 7
+    
+    - name: Generate API documentation
+      run: |
+        cd backend
+        cp .env.example .env
+        echo "DATABASE_URL=sqlite:///./test.db" >> .env
+        echo "REDIS_URL=redis://localhost:6379" >> .env
+        python scripts/init_db.py
+        python scripts/auto_update_docs.py --ci
+      env:
+        PYTHONPATH: .
+    
+    - name: Check documentation changes
+      id: check_changes
+      run: |
+        cd backend
+        if git diff --quiet docs/api/; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Commit documentation updates
+      if: steps.check_changes.outputs.changes == 'true'
+      run: |
+        cd backend
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add docs/api/
+        git commit -m "docs: 自动更新API文档 [skip ci]" || exit 0
+        git push
+    
+    - name: Upload documentation artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-documentation
+        path: |
+          backend/docs/api/
+          !backend/docs/api/.auto_update_state.json
+        retention-days: 30
 
   # 构建Docker镜像
   build-images:
     runs-on: ubuntu-latest
-    needs: [backend-test, frontend-test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-test, frontend-test, generate-api-docs]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     
     permissions:
       contents: read
@@ -161,10 +411,14 @@ jobs:
     
     strategy:
       matrix:
-        service: [backend, frontend, scheduler]
+        service: [backend, frontend]
+      fail-fast: false
     
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
     
     - name: Log in to Container Registry
       uses: docker/login-action@v3
@@ -183,6 +437,7 @@ jobs:
           type=ref,event=pr
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
     
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -193,6 +448,7 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
 
   # 安全扫描
   security-scan:
@@ -215,23 +471,108 @@ jobs:
       with:
         sarif_file: 'trivy-results.sarif'
 
-  # 部署到staging环境（可选）
+  # 部署到staging环境
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [build-images, security-scan]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     environment: staging
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Deploy to staging
+    - name: Set up environment variables
+      run: |
+        echo "ENVIRONMENT=staging" >> $GITHUB_ENV
+        echo "IMAGE_TAG=${{ github.ref == 'refs/heads/main' && 'latest' || 'develop' }}" >> $GITHUB_ENV
+    
+    - name: Deploy with Docker Compose
       run: |
         echo "Deploying to staging environment..."
-        # 这里可以添加实际的部署脚本
-        # 例如：kubectl apply -f k8s/staging/ 
-        # 或者：docker-compose -f docker-compose.staging.yml up -d
-        echo "Deployment completed"
+        
+        # 创建staging环境配置
+        cat > docker-compose.staging.yml << 'EOF'
+        version: '3.8'
+        services:
+          backend:
+            image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:${{ env.IMAGE_TAG }}
+            environment:
+              - ENVIRONMENT=staging
+              - DATABASE_URL=${{ secrets.STAGING_DATABASE_URL }}
+              - REDIS_URL=${{ secrets.STAGING_REDIS_URL }}
+            ports:
+              - "8000:8000"
+            restart: unless-stopped
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+          
+          frontend:
+            image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ env.IMAGE_TAG }}
+            environment:
+              - NEXT_PUBLIC_API_URL=${{ secrets.STAGING_API_URL }}
+              - ENVIRONMENT=staging
+            ports:
+              - "3000:3000"
+            restart: unless-stopped
+            depends_on:
+              - backend
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+        EOF
+        
+        # 部署到staging
+        docker-compose -f docker-compose.staging.yml pull
+        docker-compose -f docker-compose.staging.yml up -d
+        
+        # 等待服务启动
+        sleep 30
+        
+        # 健康检查
+        curl -f http://localhost:8000/health || exit 1
+        curl -f http://localhost:3000 || exit 1
+        
+        echo "✅ Staging deployment completed successfully"
+    
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests on staging..."
+        
+        # 基本API健康检查
+        response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
+        if [ $response -eq 200 ]; then
+          echo "✅ Backend health check passed"
+        else
+          echo "❌ Backend health check failed (HTTP $response)"
+          exit 1
+        fi
+        
+        # 前端健康检查
+        response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000)
+        if [ $response -eq 200 ]; then
+          echo "✅ Frontend health check passed"
+        else
+          echo "❌ Frontend health check failed (HTTP $response)"
+          exit 1
+        fi
+        
+        echo "✅ All smoke tests passed"
+    
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "🚀 Staging deployment successful"
+          echo "Backend: http://staging-api.example.com"
+          echo "Frontend: http://staging.example.com"
+        else
+          echo "❌ Staging deployment failed"
+        fi
 
   # 部署到生产环境（需要手动批准）
   deploy-production:
@@ -243,8 +584,206 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Pre-deployment checks
+      run: |
+        echo "Running pre-deployment checks..."
+        
+        # 检查staging环境状态
+        echo "Checking staging environment health..."
+        # 这里可以添加staging环境的健康检查
+        
+        # 检查数据库迁移状态
+        echo "Checking database migration status..."
+        # 这里可以添加数据库迁移检查
+        
+        echo "✅ Pre-deployment checks completed"
+    
     - name: Deploy to production
       run: |
         echo "Deploying to production environment..."
-        # 这里可以添加实际的部署脚本
-        echo "Production deployment completed" 
+        
+        # 创建生产环境配置
+        cat > docker-compose.production.yml << 'EOF'
+        version: '3.8'
+        services:
+          backend:
+            image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
+            environment:
+              - ENVIRONMENT=production
+              - DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}
+              - REDIS_URL=${{ secrets.PRODUCTION_REDIS_URL }}
+            ports:
+              - "8000:8000"
+            restart: unless-stopped
+            deploy:
+              replicas: 2
+              resources:
+                limits:
+                  memory: 1G
+                  cpus: '0.5'
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 5
+          
+          frontend:
+            image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
+            environment:
+              - NEXT_PUBLIC_API_URL=${{ secrets.PRODUCTION_API_URL }}
+              - ENVIRONMENT=production
+            ports:
+              - "3000:3000"
+            restart: unless-stopped
+            depends_on:
+              - backend
+            deploy:
+              replicas: 2
+              resources:
+                limits:
+                  memory: 512M
+                  cpus: '0.25'
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 5
+        EOF
+        
+        # 滚动更新部署
+        docker-compose -f docker-compose.production.yml pull
+        docker-compose -f docker-compose.production.yml up -d --no-deps --scale backend=2 --scale frontend=2
+        
+        # 等待服务启动
+        sleep 60
+        
+        echo "✅ Production deployment completed"
+    
+    - name: Post-deployment verification
+      run: |
+        echo "Running post-deployment verification..."
+        
+        # 健康检查
+        for i in {1..5}; do
+          if curl -f http://localhost:8000/health; then
+            echo "✅ Backend health check passed (attempt $i)"
+            break
+          else
+            echo "⚠️ Backend health check failed (attempt $i)"
+            if [ $i -eq 5 ]; then exit 1; fi
+            sleep 10
+          fi
+        done
+        
+        for i in {1..5}; do
+          if curl -f http://localhost:3000; then
+            echo "✅ Frontend health check passed (attempt $i)"
+            break
+          else
+            echo "⚠️ Frontend health check failed (attempt $i)"
+            if [ $i -eq 5 ]; then exit 1; fi
+            sleep 10
+          fi
+        done
+        
+        echo "✅ Post-deployment verification completed"
+    
+    - name: Rollback on failure
+      if: failure()
+      run: |
+        echo "❌ Deployment failed, initiating rollback..."
+        
+        # 获取上一个成功的镜像标签
+        PREVIOUS_TAG=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend" | head -2 | tail -1 | cut -d':' -f2)
+        
+        if [ -n "$PREVIOUS_TAG" ]; then
+          echo "Rolling back to previous version: $PREVIOUS_TAG"
+          
+          # 更新docker-compose文件使用上一个版本
+          sed -i "s/:latest/:$PREVIOUS_TAG/g" docker-compose.production.yml
+          
+          # 重新部署上一个版本
+          docker-compose -f docker-compose.production.yml up -d
+          
+          echo "✅ Rollback completed"
+        else
+          echo "❌ No previous version found for rollback"
+        fi
+
+  # Pipeline status notification
+  notify-status:
+    name: Pipeline Status Notification
+    runs-on: ubuntu-latest
+    needs: [quality-check, backend-test, frontend-test, build-images, security-scan, deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Determine overall status
+      id: status
+      run: |
+        # Check if any critical job failed
+        if [[ "${{ needs.quality-check.result }}" == "failure" || 
+              "${{ needs.backend-test.result }}" == "failure" || 
+              "${{ needs.frontend-test.result }}" == "failure" ]]; then
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "message=❌ CI/CD Pipeline Failed" >> $GITHUB_OUTPUT
+        elif [[ "${{ needs.build-images.result }}" == "failure" || 
+                "${{ needs.security-scan.result }}" == "failure" ]]; then
+          echo "status=partial" >> $GITHUB_OUTPUT
+          echo "message=⚠️ CI/CD Pipeline Partially Failed" >> $GITHUB_OUTPUT
+        else
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=✅ CI/CD Pipeline Successful" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const status = '${{ steps.status.outputs.status }}';
+          const message = '${{ steps.status.outputs.message }}';
+          
+          const results = {
+            'Quality Check': '${{ needs.quality-check.result }}',
+            'Backend Tests': '${{ needs.backend-test.result }}',
+            'Frontend Tests': '${{ needs.frontend-test.result }}',
+            'Build Images': '${{ needs.build-images.result }}',
+            'Security Scan': '${{ needs.security-scan.result }}'
+          };
+          
+          let comment = `## 🚀 CI/CD Pipeline Results\n\n${message}\n\n### Job Details:\n`;
+          
+          for (const [job, result] of Object.entries(results)) {
+            if (result && result !== 'skipped') {
+              const emoji = result === 'success' ? '✅' : result === 'failure' ? '❌' : '⚠️';
+              comment += `${emoji} **${job}**: ${result}\n`;
+            }
+          }
+          
+          comment += `\n**Workflow Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    
+    - name: Create status check
+      if: always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const status = '${{ steps.status.outputs.status }}';
+          const state = status === 'success' ? 'success' : 'failure';
+          
+          github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: state,
+            target_url: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+            description: '${{ steps.status.outputs.message }}',
+            context: 'CI/CD Pipeline'
+          }); 

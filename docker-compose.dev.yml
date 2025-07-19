@@ -1,0 +1,87 @@
+# Development override for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # Database with development settings
+  db:
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=autoreport_dev
+    ports:
+      - "5432:5432"
+
+  # Redis with development settings
+  redis:
+    ports:
+      - "6379:6379"
+
+  # Backend with development configuration
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/autoreport_dev
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - SECRET_KEY=dev-secret-key
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    volumes:
+      - ./backend:/app
+      - backend_dev_logs:/app/logs
+    command: >
+      sh -c "
+        echo 'Installing development dependencies...' &&
+        pip install -r requirements/development.txt &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting development server...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+      "
+    ports:
+      - "8000:8000"
+      - "5678:5678"  # Debug port
+
+  # Frontend with development configuration
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: deps  # Use deps stage for development
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: >
+      sh -c "
+        echo 'Installing dependencies...' &&
+        npm ci &&
+        echo 'Starting development server...' &&
+        npm run dev
+      "
+    ports:
+      - "3000:3000"
+
+  # Development tools
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: autoreport_mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - autoreport-network
+    profiles:
+      - dev-tools
+
+volumes:
+  backend_dev_logs:
+    driver: local

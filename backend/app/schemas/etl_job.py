@@ -61,6 +61,7 @@ class ETLJobUpdate(BaseModel):
 # Properties shared by models stored in DB
 class ETLJobInDBBase(ETLJobBase):
     id: uuid.UUID
+    user_id: uuid.UUID
 
     class Config:
         from_attributes = True

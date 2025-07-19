@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_limiter.depends import RateLimiter
 from sqlalchemy.orm import Session
 
-from app import crud
+from app import crud, schemas
 from app.api import deps
 from app.core import security
 from app.core.config import settings
@@ -14,7 +14,8 @@ from app.core.security_logging import get_client_ip, get_user_agent, security_lo
 router = APIRouter()
 
 
-@router.post("/access-token")
+# 只保留标准 OAuth2 登录接口
+@router.post("/access-token", response_model=schemas.Token)
 def login_access_token(
     request: Request,
     db: Session = Depends(deps.get_db),
@@ -58,10 +59,10 @@ def login_access_token(
         user_agent=user_agent,
     )
 
-    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
         "access_token": security.create_access_token(
-            user.id, expires_delta=access_token_expires
+            user.username, expires_delta=access_token_expires
         ),
         "token_type": "bearer",
     }

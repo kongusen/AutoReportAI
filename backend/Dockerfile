@@ -1,31 +1,71 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+# Multi-stage build for optimized production image
+# Stage 1: Build stage
+FROM python:3.11-slim AS builder
 
-# Set environment variables for better container operation
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Create a non-root user and group
-RUN addgroup --system app && adduser --system --group app
+# Install system dependencies for building
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy and install dependencies first to leverage Docker layer caching
-COPY ./requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
+# Copy requirements files
+COPY ./requirements/ /app/requirements/
 
-# Copy the rest of the application code
-COPY . /app
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Grant ownership of the app directory to the non-root user
-RUN chown -R app:app /app
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/requirements/production.txt
 
-# Switch to the non-root user
+# Stage 2: Production stage
+FROM python:3.11-slim AS production
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+RUN addgroup --system --gid 1001 app && \
+    adduser --system --uid 1001 --gid 1001 app
+
+# Copy virtual environment from builder stage
+COPY --from=builder /opt/venv /opt/venv
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code
+COPY --chown=app:app . /app
+
+# Copy and set up health check script
+COPY --chown=app:app ./scripts/healthcheck_backend.sh /healthcheck.sh
+RUN chmod +x /healthcheck.sh
+
+# Switch to non-root user
 USER app
 
-# Expose port 8000 for the API
+# Expose port
 EXPOSE 8000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /healthcheck.sh
+
 # Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

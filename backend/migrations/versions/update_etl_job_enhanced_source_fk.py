@@ -1,7 +1,7 @@
 """update_etl_job_enhanced_source_fk
 
 Revision ID: 3e4f5a6b7c8d
-Revises: create_enhanced_data_source
+Revises: 3f4a5b6c7d8e
 Create Date: 2025-07-14 15:20:00
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '3e4f5a6b7c8d'
-down_revision = 'create_enhanced_data_source'
+down_revision = '3f4a5b6c7d8e'
 branch_labels = None
 depends_on = None
 

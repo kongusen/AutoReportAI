@@ -1,4 +1,5 @@
 from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -28,7 +29,9 @@ def update_user_profile(
     """更新当前用户的配置"""
     profile = crud.user_profile.get_by_user_id(db, user_id=current_user.id)
     if not profile:
-        profile = crud.user_profile.create(db, obj_in=profile_in, user_id=current_user.id)
+        profile = crud.user_profile.create(
+            db, obj_in=profile_in, user_id=current_user.id
+        )
     else:
         profile = crud.user_profile.update(db, db_obj=profile, obj_in=profile_in)
     return profile
@@ -44,9 +47,6 @@ def create_user_profile(
     """创建当前用户的配置"""
     profile = crud.user_profile.get_by_user_id(db, user_id=current_user.id)
     if profile:
-        raise HTTPException(
-            status_code=400,
-            detail="User profile already exists"
-        )
+        raise HTTPException(status_code=400, detail="User profile already exists")
     profile = crud.user_profile.create(db, obj_in=profile_in, user_id=current_user.id)
     return profile

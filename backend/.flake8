@@ -1,15 +1,43 @@
 [flake8]
+# Maximum line length
 max-line-length = 88
-extend-ignore = E203, E266, E501, W503, F403, F401
-max-complexity = 18
-select = B,C,E,F,W,T4,B9
+
+# Error codes to ignore
+extend-ignore = 
+    # E203: whitespace before ':' (conflicts with black)
+    E203,
+    # W503: line break before binary operator (conflicts with black)
+    W503,
+    # E501: line too long (handled by black)
+    E501
+
+# Directories to exclude
 exclude = 
     .git,
     __pycache__,
-    .pytest_cache,
-    .venv,
-    venv,
     migrations,
+    venv,
+    .venv,
     build,
     dist,
-    *.egg-info 
+    .eggs,
+    *.egg-info,
+    .pytest_cache,
+    .mypy_cache,
+    htmlcov
+
+# Files to exclude
+per-file-ignores =
+    # Ignore unused imports in __init__.py files
+    __init__.py:F401
+    # Ignore complexity in test files
+    tests/*:C901
+    # Ignore line length in migration files
+    migrations/*:E501
+
+# Maximum complexity
+max-complexity = 10
+
+# Import order checking
+import-order-style = google
+application-import-names = app

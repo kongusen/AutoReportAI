@@ -1,7 +1,8 @@
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
-from app.db.base import Base
+from app.db.base_class import Base
 
 
 class ReportHistory(Base):
@@ -24,5 +25,9 @@ class ReportHistory(Base):
     # Foreign key to link this history record back to the task that triggered it.
     task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
 
-    # Relationship to the Task model
+    # Foreign key to link this history record to the user who generated it.
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    # Relationships
     task = relationship("Task")
+    user = relationship("User", back_populates="report_histories")

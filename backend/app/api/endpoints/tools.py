@@ -51,7 +51,7 @@ async def retrieve_data(
 
 # --- Chart Generation Tool ---
 from app.api.endpoints.ai import ChartRequest, ChartResponse, get_ai_service
-from app.services.ai_service import AIService
+from app.services.ai_integration import AIService
 
 
 @router.post("/generate-chart", response_model=ChartResponse)

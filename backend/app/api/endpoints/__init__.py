@@ -9,9 +9,9 @@ from app.api.endpoints import (
     report_generation,
     tasks,
     template_analysis,
-    users,
-    user_profile,
     templates,
+    user_profile,
+    users,
 )
 
 __all__ = [

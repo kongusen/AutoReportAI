@@ -1,4 +1,4 @@
-from app.services.ai_service import AIService
+from app.services.ai_integration import AIService
 from app.services.data_retrieval_service import DataRetrievalService
 from app.services.statistics_service import StatisticsService
 

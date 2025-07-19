@@ -1,0 +1,31 @@
+{
+  "info": {
+    "name": "AutoReportAI API",
+    "description": "\n        ## AutoReportAI 智能报告生成系统API\n\n        这是一个基于AI的智能报告生成系统，提供以下核心功能：\n        \n        ### 🔐 认证与授权\n        * 用户注册、登录、密码重置\n        * JWT token认证\n        * 角色权限管理\n        \n        ### 📊 数据源管理\n        * 多种数据源连接（数据库、API、文件）\n        * 数据源配置与验证\n        * 数据预处理和清洗\n        \n        ### 🤖 AI服务集成\n        * 多AI提供商支持（OpenAI、Claude、本地模型）\n        * 智能数据分析\n        * 自动图表生成\n        \n        ### 📝 报告生成\n        * 模板化报告生成\n        * 智能占位符匹配\n        * 多格式输出支持\n        \n        ### 🔄 ETL任务管理\n        * 数据提取、转换、加载\n        * 任务调度与监控\n        * 数据质量检查\n        \n        ## 🚀 快速开始\n        \n        1. 获取API访问令牌\n        2. 配置数据源\n        3. 创建报告模板\n        4. 生成报告\n        \n        ## 📋 API版本\n        \n        当前版本：v1.0.0\n        \n        ## 🔗 相关链接\n        \n        * [GitHub仓库](https://github.com/your-org/AutoReportAI)\n        * [用户指南](https://docs.autoreportai.com)\n        * [API最佳实践](https://docs.autoreportai.com/api/best-practices)\n        ",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": []
+}

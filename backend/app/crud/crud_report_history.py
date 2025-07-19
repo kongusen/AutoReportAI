@@ -1,4 +1,5 @@
 from typing import List
+
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
@@ -11,8 +12,13 @@ from app.schemas.report_history import ReportHistoryCreate
 class CRUDReportHistory(CRUDBase[ReportHistory, ReportHistoryCreate, None]):
     def get_by_task_id(self, db: Session, *, task_id: int) -> List[ReportHistory]:
         """Get all report history entries for a specific task."""
-        return db.query(self.model).filter(ReportHistory.task_id == task_id).order_by(ReportHistory.generated_at.desc()).all()
-    
+        return (
+            db.query(self.model)
+            .filter(ReportHistory.task_id == task_id)
+            .order_by(ReportHistory.generated_at.desc())
+            .all()
+        )
+
     def get_multi_by_owner(
         self, db: Session, *, owner_id: int, skip: int = 0, limit: int = 100
     ) -> List[ReportHistory]:

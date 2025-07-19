@@ -9,9 +9,12 @@ from app.schemas.ai_provider import AIProviderCreate, AIProviderUpdate
 
 
 class CRUDAIProvider(CRUDBase[AIProvider, AIProviderCreate, AIProviderUpdate]):
-    def create(self, db: Session, *, obj_in: AIProviderCreate) -> AIProvider:
+    def create(self, db: Session, *, obj_in: AIProviderCreate, **extra_data) -> AIProvider:
         # Convert the Pydantic model to a dictionary
         obj_in_data = obj_in.model_dump()
+        
+        # Add extra data (like user_id)
+        obj_in_data.update(extra_data)
 
         # Convert HttpUrl to string if present
         if "api_base_url" in obj_in_data and obj_in_data["api_base_url"]:
@@ -51,7 +54,7 @@ class CRUDAIProvider(CRUDBase[AIProvider, AIProviderCreate, AIProviderUpdate]):
         return super().update(db, db_obj=db_obj, obj_in=update_data)
 
     def get_active(self, db: Session) -> AIProvider | None:
-        return db.query(self.model).filter(self.model.is_active == 1).first()
+        return db.query(self.model).filter(self.model.is_active == True).first()
 
     def get_by_provider_name(self, db: Session, *, name: str) -> AIProvider | None:
         return db.query(self.model).filter(self.model.provider_name == name).first()

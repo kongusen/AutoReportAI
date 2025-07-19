@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api import deps
-from app.services.ai_service import AIService
+from app.services.ai_integration import AIService
 
 router = APIRouter()
 

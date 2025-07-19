@@ -101,26 +101,30 @@ test*.sh
 
 # Templates folder - contains sensitive documents
 templates/
-backend/test_*
-backend/test*.py
-backend/app/tests/
-backend/pytest_cache/
+
+# Backend test artifacts
 backend/.coverage
 backend/htmlcov/
 backend/coverage.xml
 backend/.pytest_cache/
-backend/test_data.*
-backend/test_relationships.py
-backend/test_ci_cd.py
-backend/test_complex_scenarios.py
-backend/system_test.py
-backend/pytest.ini
 backend/test_template.txt
+
+# Generated reports and test outputs
 generated_reports/test_*
-frontend/src/app/__tests__/
+
+# Frontend test artifacts
 frontend/coverage/
 frontend/jest_cache/
 frontend/test-results/
-frontend/jest.config.js
-frontend/jest.setup.js
+
+# Test configuration files
 docker-compose.test.yml
+
+# Temporary files and system files
+.DS_Store
+*.tmp
+*.temp
+
+# IDE and editor files
+.vscode/settings.json
+.idea/workspace.xml

@@ -1,48 +1,59 @@
-from enum import Enum
-from typing import Optional
+"""
+占位符映射Pydantic模式
+"""
 
-from pydantic import BaseModel, field_validator
+from datetime import datetime
+from typing import Any, Dict, Optional
 
-from app.models.placeholder_mapping import PlaceholderType as ModelPlaceholderType
-
-
-class PlaceholderType(str, Enum):
-    TEXT = "text"
-    IMAGE = "image"
-    TABLE = "table"
-    CHART = "chart"
-
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v: str):
-        if v not in {item.value for item in ModelPlaceholderType}:
-            raise ValueError(f"Invalid placeholder type: {v}")
-        return v
+from pydantic import BaseModel, Field
 
 
 class PlaceholderMappingBase(BaseModel):
-    placeholder_key: str
-    placeholder_type: PlaceholderType
-    description: Optional[str] = None
-    sample_data: Optional[str] = None
+    """占位符映射基础模式"""
+
+    placeholder_signature: str = Field(..., description="占位符签名")
+    data_source_id: int = Field(..., description="数据源ID")
+    matched_field: str = Field(..., description="匹配的字段名")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="置信度分数")
+    transformation_config: Optional[Dict[str, Any]] = Field(
+        None, description="转换配置"
+    )
 
 
 class PlaceholderMappingCreate(PlaceholderMappingBase):
-    pass
+    """创建占位符映射"""
+
+    usage_count: int = Field(1, description="使用次数")
 
 
 class PlaceholderMappingUpdate(BaseModel):
-    description: Optional[str] = None
-    sample_data: Optional[str] = None
+    """更新占位符映射"""
+
+    matched_field: Optional[str] = None
+    confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    transformation_config: Optional[Dict[str, Any]] = None
+    usage_count: Optional[int] = None
 
 
-class PlaceholderMapping(PlaceholderMappingBase):
+class PlaceholderMappingInDBBase(PlaceholderMappingBase):
+    """数据库中的占位符映射基础模式"""
+
     id: int
-    template_id: int
-    owner_id: int
+    usage_count: int
+    last_used_at: datetime
+    created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class PlaceholderMapping(PlaceholderMappingInDBBase):
+    """占位符映射完整模式"""
+
+    pass
+
+
+class PlaceholderMappingInDB(PlaceholderMappingInDBBase):
+    """数据库中的占位符映射"""
+
+    pass

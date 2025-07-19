@@ -1,0 +1,324 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Backend unit tests
+  backend-unit-tests:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+        test-group: [services, models, api, core]
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-path: |
+          backend/requirements/base.txt
+          backend/requirements/testing.txt
+    
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-unit-py${{ matrix.python-version }}-${{ matrix.test-group }}-${{ hashFiles('backend/requirements/*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-unit-py${{ matrix.python-version }}-${{ matrix.test-group }}-
+          ${{ runner.os }}-pip-unit-py${{ matrix.python-version }}-
+          ${{ runner.os }}-pip-unit-
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements/testing.txt
+    
+    - name: Run services unit tests
+      if: matrix.test-group == 'services'
+      run: |
+        cd backend
+        echo "Running services unit tests..."
+        pytest tests/unit/ \
+          -k "service" \
+          --cov=app/services \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-unit-services-py${{ matrix.python-version }}.xml \
+          --cov-fail-under=75 \
+          --maxfail=10 \
+          --tb=short \
+          -v
+    
+    - name: Run models unit tests
+      if: matrix.test-group == 'models'
+      run: |
+        cd backend
+        echo "Running models unit tests..."
+        pytest tests/unit/ \
+          -k "model" \
+          --cov=app/models \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-unit-models-py${{ matrix.python-version }}.xml \
+          --cov-fail-under=80 \
+          --maxfail=10 \
+          --tb=short \
+          -v
+    
+    - name: Run API unit tests
+      if: matrix.test-group == 'api'
+      run: |
+        cd backend
+        echo "Running API unit tests..."
+        pytest tests/unit/ \
+          -k "api" \
+          --cov=app/api \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-unit-api-py${{ matrix.python-version }}.xml \
+          --cov-fail-under=70 \
+          --maxfail=10 \
+          --tb=short \
+          -v
+    
+    - name: Run core unit tests
+      if: matrix.test-group == 'core'
+      run: |
+        cd backend
+        echo "Running core unit tests..."
+        pytest tests/unit/ \
+          -k "core or basic or exception" \
+          --cov=app/core \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --junit-xml=junit-unit-core-py${{ matrix.python-version }}.xml \
+          --cov-fail-under=85 \
+          --maxfail=10 \
+          --tb=short \
+          -v
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend-unit-${{ matrix.test-group }}-py${{ matrix.python-version }}
+        name: backend-unit-${{ matrix.test-group }}-py${{ matrix.python-version }}
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-unit-test-results-${{ matrix.test-group }}-py${{ matrix.python-version }}
+        path: |
+          backend/junit-unit-${{ matrix.test-group }}-py${{ matrix.python-version }}.xml
+          backend/htmlcov/
+        retention-days: 7
+
+  # Frontend unit tests
+  frontend-unit-tests:
+    name: Frontend Unit Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+        test-group: [components, hooks, utils, pages]
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Cache Node.js dependencies
+      uses: actions/cache@v3
+      with:
+        path: frontend/node_modules
+        key: ${{ runner.os }}-node-unit-${{ matrix.node-version }}-${{ matrix.test-group }}-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-unit-${{ matrix.node-version }}-${{ matrix.test-group }}-
+          ${{ runner.os }}-node-unit-${{ matrix.node-version }}-
+          ${{ runner.os }}-node-unit-
+          ${{ runner.os }}-node-
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run components unit tests
+      if: matrix.test-group == 'components'
+      run: |
+        cd frontend
+        echo "Running components unit tests..."
+        npm test -- \
+          --testPathPattern="components.*test" \
+          --coverage \
+          --collectCoverageFrom="src/components/**/*.{ts,tsx}" \
+          --coverageThreshold='{"global":{"branches":75,"functions":75,"lines":75,"statements":75}}' \
+          --watchAll=false \
+          --passWithNoTests \
+          --testResultsProcessor=jest-junit \
+          --coverageReporters=text-lcov \
+          --coverageReporters=html \
+          --coverageReporters=cobertura
+      env:
+        JEST_JUNIT_OUTPUT_DIR: ./test-results
+        JEST_JUNIT_OUTPUT_NAME: junit-unit-components-node${{ matrix.node-version }}.xml
+    
+    - name: Run hooks unit tests
+      if: matrix.test-group == 'hooks'
+      run: |
+        cd frontend
+        echo "Running hooks unit tests..."
+        npm test -- \
+          --testPathPattern="hooks.*test" \
+          --coverage \
+          --collectCoverageFrom="src/lib/hooks/**/*.{ts,tsx}" \
+          --coverageThreshold='{"global":{"branches":80,"functions":80,"lines":80,"statements":80}}' \
+          --watchAll=false \
+          --passWithNoTests \
+          --testResultsProcessor=jest-junit \
+          --coverageReporters=text-lcov \
+          --coverageReporters=html \
+          --coverageReporters=cobertura
+      env:
+        JEST_JUNIT_OUTPUT_DIR: ./test-results
+        JEST_JUNIT_OUTPUT_NAME: junit-unit-hooks-node${{ matrix.node-version }}.xml
+    
+    - name: Run utils unit tests
+      if: matrix.test-group == 'utils'
+      run: |
+        cd frontend
+        echo "Running utils unit tests..."
+        npm test -- \
+          --testPathPattern="(lib|utils).*test" \
+          --coverage \
+          --collectCoverageFrom="src/lib/**/*.{ts,tsx}" \
+          --coverageThreshold='{"global":{"branches":85,"functions":85,"lines":85,"statements":85}}' \
+          --watchAll=false \
+          --passWithNoTests \
+          --testResultsProcessor=jest-junit \
+          --coverageReporters=text-lcov \
+          --coverageReporters=html \
+          --coverageReporters=cobertura
+      env:
+        JEST_JUNIT_OUTPUT_DIR: ./test-results
+        JEST_JUNIT_OUTPUT_NAME: junit-unit-utils-node${{ matrix.node-version }}.xml
+    
+    - name: Run pages unit tests
+      if: matrix.test-group == 'pages'
+      run: |
+        cd frontend
+        echo "Running pages unit tests..."
+        npm test -- \
+          --testPathPattern="(app|pages).*test" \
+          --coverage \
+          --collectCoverageFrom="src/app/**/*.{ts,tsx}" \
+          --coverageThreshold='{"global":{"branches":70,"functions":70,"lines":70,"statements":70}}' \
+          --watchAll=false \
+          --passWithNoTests \
+          --testResultsProcessor=jest-junit \
+          --coverageReporters=text-lcov \
+          --coverageReporters=html \
+          --coverageReporters=cobertura
+      env:
+        JEST_JUNIT_OUTPUT_DIR: ./test-results
+        JEST_JUNIT_OUTPUT_NAME: junit-unit-pages-node${{ matrix.node-version }}.xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./frontend/coverage/lcov.info
+        flags: frontend-unit-${{ matrix.test-group }}-node${{ matrix.node-version }}
+        name: frontend-unit-${{ matrix.test-group }}-node${{ matrix.node-version }}
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: frontend-unit-test-results-${{ matrix.test-group }}-node${{ matrix.node-version }}
+        path: |
+          frontend/test-results/
+          frontend/coverage/
+        retention-days: 7
+
+  # Unit test summary
+  unit-test-summary:
+    name: Unit Test Summary
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, frontend-unit-tests]
+    if: always()
+    
+    steps:
+    - name: Check unit test results
+      run: |
+        echo "Unit Test Results Summary:"
+        echo "========================="
+        echo "Backend Unit Tests: ${{ needs.backend-unit-tests.result }}"
+        echo "Frontend Unit Tests: ${{ needs.frontend-unit-tests.result }}"
+        
+        if [[ "${{ needs.backend-unit-tests.result }}" == "failure" || 
+              "${{ needs.frontend-unit-tests.result }}" == "failure" ]]; then
+          echo "❌ Some unit tests failed!"
+          exit 1
+        else
+          echo "✅ All unit tests passed!"
+        fi
+    
+    - name: Comment PR with unit test results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const backendResult = '${{ needs.backend-unit-tests.result }}';
+          const frontendResult = '${{ needs.frontend-unit-tests.result }}';
+          
+          const backendEmoji = backendResult === 'success' ? '✅' : '❌';
+          const frontendEmoji = frontendResult === 'success' ? '✅' : '❌';
+          
+          const comment = `## 🧪 Unit Test Results
+          
+          ${backendEmoji} **Backend Unit Tests**: ${backendResult}
+          ${frontendEmoji} **Frontend Unit Tests**: ${frontendResult}
+          
+          **Overall Status**: ${backendResult === 'success' && frontendResult === 'success' ? '✅ PASSED' : '❌ FAILED'}`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

@@ -21,7 +21,7 @@ import {
   Loader2
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
-import apiClient from '@/lib/api-client'
+import { httpClient } from '@/lib/api/client'
 
 // Types
 interface Message {
@@ -40,7 +40,7 @@ interface AIAssistantProps {
   context?: {
     templateId?: string
     dataSourceId?: number
-    placeholders?: any[]
+    placeholders?: unknown[]
     currentTask?: string
   }
   onSuggestionApply?: (suggestion: string) => void
@@ -113,7 +113,7 @@ export function AIAssistant({ context, onSuggestionApply }: AIAssistantProps) {
       }
 
       setMessages(prev => [...prev, assistantMessage])
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Failed to get AI response:', error)
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -129,7 +129,7 @@ export function AIAssistant({ context, onSuggestionApply }: AIAssistantProps) {
   }
 
   // Generate AI response (mock implementation)
-  const generateAIResponse = async (userMessage: string, context?: any) => {
+  const generateAIResponse = async (userMessage: string, context?: unknown) => {
     // This would be replaced with actual AI API call
     const responses = {
       "如何优化占位符的匹配准确率？": {

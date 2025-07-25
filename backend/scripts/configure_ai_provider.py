@@ -47,8 +47,11 @@ def create_ai_provider(token):
         f"{BASE_URL}/ai-providers/", headers=headers, json=ai_provider_data
     )
 
+    print("AI Provider API返回:", response.json())  # 调试用
+
     if response.status_code == 200:
-        provider = response.json()
+        resp = response.json()
+        provider = resp.get("data", resp)
         print(
             f"✅ AI Provider创建成功: {provider['provider_name']} (ID: {provider['id']})"
         )

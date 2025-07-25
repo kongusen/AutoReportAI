@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -20,17 +20,16 @@ import {
   Database,
   FileText,
   User,
-  Calendar,
-  AlertCircle,
-  CheckCircle,
-  Info,
-  Settings,
   Filter,
   Columns,
-  Hash
+  AlertCircle,
+  Info,
+  Hash,
+  Settings
 } from 'lucide-react'
 import { formatFileSize, getStatusColor, getStatusIcon } from '@/lib/export-config'
 import api from '@/lib/api'
+import axios from 'axios';
 
 interface ExportHistoryItem {
   id: string
@@ -49,7 +48,7 @@ interface ExportHistoryItem {
     source_name?: string
     source_type?: string
     columns?: string[]
-    filters?: Record<string, any>
+    filters?: Record<string, { operator: string; value: string }>
     limit?: number
     user_id?: string
     user_name?: string
@@ -86,11 +85,16 @@ export function ExportHistoryDetail({
     setError(null)
     
     try {
-      const response = await api.get(`/data-export/history/${exportId}`)
+      const response = await api.get(`/v1/data-export/history/${exportId}`)
       setExportDetail(response.data.export)
-    } catch (err: any) {
-      console.error('Failed to fetch export detail:', err)
-      setError(err.response?.data?.detail || 'Failed to fetch export details')
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        setError(err.response?.data?.detail || 'Failed to fetch export details')
+      } else if (err instanceof Error) {
+        setError(err.message || 'Failed to fetch export details')
+      } else {
+        setError('Failed to fetch export details')
+      }
     } finally {
       setLoading(false)
     }
@@ -100,7 +104,7 @@ export function ExportHistoryDetail({
     if (!exportDetail?.download_url) return
 
     try {
-      const response = await api.get(`/data-export/download/${exportDetail.id}`, {
+      const response = await api.get(`/v1/data-export/download/${exportDetail.id}`, {
         responseType: 'blob'
       })
       
@@ -115,7 +119,7 @@ export function ExportHistoryDetail({
       window.URL.revokeObjectURL(url)
       
       onDownload?.(exportDetail.id)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Download failed:', err)
       alert('Download failed')
     }
@@ -342,11 +346,11 @@ export function ExportHistoryDetail({
                         'Applied Filters',
                         <Filter className="h-4 w-4 text-orange-500" />,
                         <div className="space-y-2">
-                          {Object.entries(exportDetail.metadata.filters).map(([column, filter]: [string, any]) => (
+                          {Object.entries(exportDetail.metadata.filters).map(([column, filter]: [string, { operator: string; value: string }]) => (
                             <div key={column} className="flex items-center space-x-2">
                               <Badge variant="outline">{column}</Badge>
                               <span className="text-sm">
-                                {filter.operator} "{filter.value}"
+                                {filter.operator} &quot;{filter.value}&quot;
                               </span>
                             </div>
                           ))}

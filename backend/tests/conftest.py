@@ -1,165 +1,129 @@
 """
-Global test configuration and fixtures for the AutoReportAI backend.
-
-This module provides shared fixtures and configuration for all test categories:
-- Unit tests: Fast, isolated tests with mocked dependencies
-- Integration tests: Tests with real database connections and service integrations
-- End-to-end tests: Full system tests with external dependencies
+Global test configuration and fixtures for all test types
 """
 
 import os
 import tempfile
-from typing import Any, Dict, Generator
-
+from typing import Generator, Any
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import sessionmaker, Session
 
-from app.api.deps import get_db
-from app.api.router import api_router
-from app.core.config import settings
+from app.main import app
 from app.db.base import Base
+from app.db.session import get_db
+from app.core.config import settings
 
-# Test configuration
-TEST_DATABASE_URL = "sqlite:///./test.db"
-
+# Test database configuration
+@pytest.fixture(scope="session")
+def test_db_path():
+    """Create a temporary database file for testing"""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    yield path
+    # Cleanup after tests
+    if os.path.exists(path):
+        os.unlink(path)
 
 @pytest.fixture(scope="session")
-def test_app() -> FastAPI:
-    """Create a test FastAPI app without startup events"""
-    app = FastAPI(title=f"{settings.PROJECT_NAME} Test")
-    app.include_router(api_router, prefix=settings.API_V1_STR)
-
-    @app.get("/")
-    def read_root():
-        return {"message": f"Welcome to {settings.PROJECT_NAME} Test"}
-
-    return app
-
-
-@pytest.fixture(scope="session")
-def engine():
-    """Create a test database engine"""
+def test_engine(test_db_path):
+    """Create test database engine"""
+    database_url = f"sqlite:///{test_db_path}"
     engine = create_engine(
-        TEST_DATABASE_URL,
+        database_url,
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
         pool_pre_ping=True,
     )
-    return engine
-
-
-@pytest.fixture(scope="session")
-def tables(engine):
-    """Create all database tables for testing"""
     Base.metadata.create_all(bind=engine)
-    yield
+    yield engine
     Base.metadata.drop_all(bind=engine)
 
-
-@pytest.fixture
-def db_session(engine, tables) -> Generator[Session, None, None]:
-    """
-    Returns an sqlalchemy session with automatic rollback after each test.
-    This ensures test isolation by rolling back all changes.
-    """
-    connection = engine.connect()
+@pytest.fixture(scope="function")
+def db_session(test_engine) -> Generator[Session, None, None]:
+    """Create a database session for each test"""
+    connection = test_engine.connect()
     transaction = connection.begin()
-    session = sessionmaker(autocommit=False, autoflush=False, bind=connection)()
+    
+    SessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=connection
+    )
+    session = SessionLocal()
+    
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
 
-    yield session
-
-    session.close()
-    transaction.rollback()
-    connection.close()
-
-
-@pytest.fixture
-def client(test_app: FastAPI, db_session: Session) -> Generator[TestClient, None, None]:
-    """
-    Returns a TestClient for API testing.
-    The database dependency is overridden to use the test database session.
-    """
-
+@pytest.fixture(scope="function")
+def client(db_session: Session) -> Generator[TestClient, None, None]:
+    """Create a test client with overridden database dependency"""
     def override_get_db():
         try:
             yield db_session
         finally:
-            pass  # Session cleanup handled by db_session fixture
-
-    test_app.dependency_overrides[get_db] = override_get_db
-
-    with TestClient(test_app) as test_client:
+            pass
+    
+    app.dependency_overrides[get_db] = override_get_db
+    
+    with TestClient(app) as test_client:
         yield test_client
+    
+    app.dependency_overrides.clear()
 
-    # Clean up dependency overrides
-    test_app.dependency_overrides.clear()
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for async tests"""
+    import asyncio
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
-
+# Common test data fixtures
 @pytest.fixture
-def temp_file() -> Generator[str, None, None]:
-    """Create a temporary file for testing file operations"""
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        yield tmp.name
-    os.unlink(tmp.name)
-
-
-@pytest.fixture
-def temp_dir() -> Generator[str, None, None]:
-    """Create a temporary directory for testing"""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        yield tmp_dir
-
-
-@pytest.fixture
-def sample_user_data() -> Dict[str, Any]:
+def sample_user_data():
     """Sample user data for testing"""
     return {
         "username": "testuser",
-        "password": "testpassword123",
-        "is_superuser": False,
+        "email": "test@example.com",
+        "password": "TestPass123!",
+        "full_name": "Test User"
     }
 
-
 @pytest.fixture
-def sample_superuser_data() -> Dict[str, Any]:
-    """Sample superuser data for testing"""
-    return {"username": "admin", "password": "adminpassword123", "is_superuser": True}
-
-
-@pytest.fixture
-def sample_data_source_data() -> Dict[str, Any]:
+def sample_data_source_data():
     """Sample data source data for testing"""
     return {
         "name": "Test Data Source",
-        "description": "A test data source",
         "source_type": "database",
         "connection_string": "sqlite:///test.db",
-        "is_active": True,
+        "description": "Test data source for testing",
+        "config": {
+            "host": "localhost",
+            "port": 5432,
+            "database": "testdb"
+        }
     }
 
-
 @pytest.fixture
-def sample_template_data() -> Dict[str, Any]:
+def sample_template_data():
     """Sample template data for testing"""
     return {
         "name": "Test Template",
-        "description": "A test template",
+        "description": "Test template for testing",
         "content": "This is a test template with {{placeholder}}",
-        "is_active": True,
+        "is_active": True
     }
 
-
-# Test markers for different test categories
-def pytest_configure(config):
-    """Configure pytest markers"""
-    config.addinivalue_line("markers", "unit: Unit tests - fast, isolated tests")
-    config.addinivalue_line(
-        "markers",
-        "integration: Integration tests - tests with database/service integration",
-    )
-    config.addinivalue_line("markers", "e2e: End-to-end tests - full system tests")
-    config.addinivalue_line("markers", "slow: Slow running tests")
+@pytest.fixture
+def sample_task_data():
+    """Sample task data for testing"""
+    return {
+        "name": "Test Task",
+        "description": "Test task for testing",
+        "schedule": "0 0 * * *"
+    }

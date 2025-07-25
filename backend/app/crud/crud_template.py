@@ -62,6 +62,9 @@ class CRUDTemplate:
         db.refresh(db_obj)
         return db_obj
 
+    def create_with_user(self, db: Session, *, obj_in: TemplateCreate, user_id) -> Template:
+        return self.create(db, obj_in=obj_in, user_id=user_id)
+
     def update(self, db: Session, db_obj: Template, obj_in: TemplateUpdate) -> Template:
         """更新模板"""
         update_data = obj_in.model_dump(exclude_unset=True)

@@ -1,7 +1,6 @@
 from .ai_provider import AIProvider
 from .analytics_data import AnalyticsData
 from .data_source import DataSource
-from .enhanced_data_source import EnhancedDataSource
 from .etl_job import ETLJob
 from .learning_data import (
     ErrorLog,
@@ -23,9 +22,8 @@ __all__ = [
     "User",
     "UserProfile",
     "Template",
-    "EnhancedDataSource",
-    "ETLJob",
     "DataSource",
+    "ETLJob",
     "ReportHistory",
     "AIProvider",
     "AnalyticsData",

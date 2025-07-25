@@ -42,12 +42,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>('light')
   const [language, setLanguage] = useState<Language>('zh-CN')
   const [isDark, setIsDark] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
   const t = (key: string) => {
     return translations[language][key as keyof typeof translations['zh-CN']] || key
   }
 
   useEffect(() => {
+    setMounted(true)
     // 从localStorage加载设置
     const savedTheme = localStorage.getItem('theme') as Theme
     const savedLanguage = localStorage.getItem('language') as Language
@@ -57,6 +59,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
+    if (!mounted) return
+    
     // 保存设置到localStorage
     localStorage.setItem('theme', theme)
     localStorage.setItem('language', language)
@@ -68,7 +72,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     
     setIsDark(isDarkMode)
     root.classList.toggle('dark', isDarkMode)
-  }, [theme, language])
+  }, [theme, language, mounted])
 
   const handleSetTheme = (newTheme: Theme) => {
     setTheme(newTheme)

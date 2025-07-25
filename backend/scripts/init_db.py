@@ -18,7 +18,6 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.models.ai_provider import AIProvider
 from app.models.data_source import DataSource
-from app.models.enhanced_data_source import EnhancedDataSource
 from app.models.etl_job import ETLJob
 from app.models.report_history import ReportHistory
 from app.models.task import Task
@@ -64,7 +63,10 @@ def init_database():
         )
         if not sample_source:
             sample_source = DataSource(
-                name="Sample CSV", file_path="./sample_data.csv", source_type="csv"
+                name="Sample CSV", 
+                connection_string="./sample_data.csv", 
+                source_type="csv",
+                user_id=admin_user.id
             )
             db.add(sample_source)
             db.commit()

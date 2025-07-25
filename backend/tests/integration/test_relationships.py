@@ -17,7 +17,7 @@ from app.db.base import Base
 from app.models.data_source import DataSource
 
 # 导入所有模型，确保关系能够正确解析
-from app.models.enhanced_data_source import EnhancedDataSource
+from app.models.data_source import DataSource
 from app.models.etl_job import ETLJob
 from app.models.placeholder_mapping import PlaceholderMapping
 from app.models.template import Template

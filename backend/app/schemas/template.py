@@ -46,6 +46,11 @@ class Template(TemplateBase):
     user_id: UUID
     created_at: datetime
     updated_at: Optional[datetime] = None
+    unique_id: str
+
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
 
     class Config:
         from_attributes = True

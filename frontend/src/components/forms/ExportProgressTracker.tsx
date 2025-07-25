@@ -13,8 +13,7 @@ import {
   Clock,
   Loader2,
   X,
-  RefreshCw,
-  Eye
+  RefreshCw
 } from 'lucide-react'
 import api from '@/lib/api'
 
@@ -63,12 +62,11 @@ export function ExportProgressTracker({
 
   const fetchExportJobs = async () => {
     try {
-      const response = await api.get('/data-export/active-jobs')
-      setExportJobs(response.data?.jobs || response.jobs || [])
+      const response = await api.get('/v1/data-export/active-jobs')
+      setExportJobs(response.data?.jobs || [])
       setError(null)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to fetch export jobs:', err)
-      // 设置空数组而不是错误，避免显示错误信息
       setExportJobs([])
       setError(null)
     } finally {
@@ -78,9 +76,9 @@ export function ExportProgressTracker({
 
   const cancelExport = async (jobId: string) => {
     try {
-      await api.post(`/data-export/cancel/${jobId}`)
+      await api.post(`/v1/data-export/cancel/${jobId}`)
       await fetchExportJobs()
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to cancel export:', err)
       alert('Failed to cancel export')
     }
@@ -90,10 +88,9 @@ export function ExportProgressTracker({
     if (!job.download_url) return
 
     try {
-      const response = await api.get(`/data-export/download/${job.id}`, {
+      const response = await api.get(`/v1/data-export/download/${job.id}`, {
         responseType: 'blob'
       })
-      
       const blob = new Blob([response.data])
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -103,7 +100,7 @@ export function ExportProgressTracker({
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Download failed:', err)
       alert('Download failed')
     }

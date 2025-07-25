@@ -3,13 +3,14 @@ from typing import Any, Dict, Optional
 
 from cron_validator import CronValidator
 from pydantic import BaseModel, Field, field_validator
+from uuid import UUID
 
 
 # Shared properties
 class ETLJobBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    enhanced_source_id: int
+    data_source_id: UUID
     destination_table_name: str = Field(
         ..., pattern=r"^[a-zA-Z0-9_]+$", min_length=1, max_length=63
     )
@@ -38,7 +39,7 @@ class ETLJobCreate(ETLJobBase):
 class ETLJobUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
-    enhanced_source_id: Optional[int] = None
+    data_source_id: Optional[UUID] = None
     destination_table_name: Optional[str] = Field(
         None, pattern=r"^[a-zA-Z0-9_]+$", min_length=1, max_length=63
     )
@@ -62,6 +63,11 @@ class ETLJobUpdate(BaseModel):
 class ETLJobInDBBase(ETLJobBase):
     id: uuid.UUID
     user_id: uuid.UUID
+    unique_id: str
+
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
 
     class Config:
         from_attributes = True
@@ -75,3 +81,7 @@ class ETLJob(ETLJobInDBBase):
 # Properties stored in DB
 class ETLJobInDB(ETLJobInDBBase):
     pass
+
+
+# Alias for API response compatibility
+ETLJobResponse = ETLJob

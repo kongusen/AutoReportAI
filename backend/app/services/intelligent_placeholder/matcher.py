@@ -52,7 +52,9 @@ from sqlalchemy.orm import Session
 
 from ...core.config import settings
 from ...crud.crud_placeholder_mapping import crud_placeholder_mapping
-from ...db.session import get_db_session, get_db
+from ...db.session import get_db_session
+# 避免循环导入，直接使用 SessionLocal
+from ...db.session import SessionLocal
 from ...models.placeholder_mapping import PlaceholderMapping
 
 logger = logging.getLogger(__name__)

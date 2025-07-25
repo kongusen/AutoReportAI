@@ -101,7 +101,7 @@ interface TemplateVersion {
 
 interface AdvancedTemplateEditorProps {
   templateId?: string
-  onSave?: (template: any) => void
+  onSave?: (template: unknown) => void
   onCancel?: () => void
 }
 
@@ -457,8 +457,8 @@ export function AdvancedTemplateEditor({ templateId, onSave, onCancel }: Advance
                             <Label>Type</Label>
                             <Select
                               value={selectedPlaceholder.type}
-                              onValueChange={(value: any) => {
-                                const updated = { ...selectedPlaceholder, type: value }
+                              onValueChange={(value: unknown) => {
+                                const updated = { ...selectedPlaceholder, type: value as AdvancedPlaceholder['type'] }
                                 setSelectedPlaceholder(updated)
                                 setTemplate(prev => ({
                                   ...prev,

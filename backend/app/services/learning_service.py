@@ -23,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..db.session import get_db_session
-from ..models.enhanced_data_source import EnhancedDataSource
+from ..models.data_source import DataSource
 from ..models.placeholder_mapping import PlaceholderMapping
 from ..models.user import User
 

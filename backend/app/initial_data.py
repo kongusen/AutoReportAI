@@ -4,7 +4,6 @@ from app.crud.crud_user import user as crud_user
 from app.db.base import Base  # noqa: F401
 from app.db.session import SessionLocal, engine
 from app.models.ai_provider import AIProvider  # noqa: F401
-from app.models.data_source import DataSource  # noqa: F401
 from app.models.placeholder_mapping import PlaceholderMapping  # noqa: F401
 
 # Import all models here so that Base has them registered
@@ -19,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 def init_db():
     db = SessionLocal()
-    logger.info("Creating initial database tables")
-    Base.metadata.create_all(bind=engine)
+    logger.info("Skip direct table creation, use Alembic migrations instead.")
+    # Base.metadata.create_all(bind=engine)  # 不再直接建表
 
     # Create a first superuser
     user = crud_user.get_by_username(db, username="admin")

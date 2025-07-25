@@ -17,10 +17,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from ....core.config import settings
-from ....crud.crud_enhanced_data_source import crud_enhanced_data_source
+from ....crud.crud_data_source import crud_data_source
 from ....db.session import get_db_session
-from ....models.enhanced_data_source import EnhancedDataSource
-from ...enhanced_data_source_service import EnhancedDataSourceService
+from ....models.data_source import DataSource
+from ...data_source_service import DataSourceService
 from ...intelligent_placeholder.matcher import FieldMatchingResult
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ class IntelligentETLExecutor:
     """智能ETL执行器"""
 
     def __init__(self):
-        self.data_source_service = EnhancedDataSourceService()
+        self.data_source_service = DataSourceService()
 
     async def execute_etl(
         self,
@@ -116,7 +116,7 @@ class IntelligentETLExecutor:
 
             # 1. 获取数据源信息
             with get_db_session() as db:
-                data_source = crud_enhanced_data_source.get(db, id=data_source_id)
+                data_source = crud_data_source.get(db, id=data_source_id)
                 if not data_source:
                     raise ValueError(f"数据源 {data_source_id} 不存在")
 
@@ -187,13 +187,13 @@ class IntelligentETLExecutor:
     async def _generate_dynamic_query(
         self,
         instructions: ETLInstructions,
-        data_source: EnhancedDataSource,
+        data_source: DataSource,
         task_config: Optional[Dict[str, Any]] = None,
     ) -> str:
         """生成动态查询"""
 
         # 基础查询构建
-        if data_source.source_type.value == "sql":
+        if data_source.source_type == "sql":
             return await self._generate_sql_query(
                 instructions, data_source, task_config
             )
@@ -206,7 +206,7 @@ class IntelligentETLExecutor:
     async def _generate_sql_query(
         self,
         instructions: ETLInstructions,
-        data_source: EnhancedDataSource,
+        data_source: DataSource,
         task_config: Optional[Dict[str, Any]] = None,
     ) -> str:
         """生成SQL查询"""
@@ -297,7 +297,7 @@ class IntelligentETLExecutor:
     async def _generate_pandas_operations(
         self,
         instructions: ETLInstructions,
-        data_source: EnhancedDataSource,
+        data_source: DataSource,
         task_config: Optional[Dict[str, Any]] = None,
     ) -> str:
         """为非SQL数据源生成pandas操作指令"""
@@ -305,9 +305,9 @@ class IntelligentETLExecutor:
         operations = []
 
         # 1. 数据加载
-        if data_source.source_type.value == "csv":
-            operations.append(f"df = pd.read_csv('{data_source.file_path}')")
-        elif data_source.source_type.value == "api":
+        if data_source.source_type == "csv":
+            operations.append(f"df = pd.read_csv('{data_source.connection_string}')")
+        elif data_source.source_type == "api":
             operations.append(f"df = fetch_api_data('{data_source.api_url}')")
 
         # 2. 字段选择
@@ -317,7 +317,7 @@ class IntelligentETLExecutor:
 
         # 3. 过滤条件
         for filter_config in instructions.filters:
-            condition = self._build_pandas_filter(filter_config)
+            condition = self._build_filter_condition(filter_config)
             if condition:
                 operations.append(f"df = df[{condition}]")
 
@@ -546,10 +546,10 @@ class IntelligentETLExecutor:
 
         return "; ".join(operations)
 
-    async def _execute_query(self, query: str, data_source: EnhancedDataSource) -> Any:
+    async def _execute_query(self, query: str, data_source: DataSource) -> Any:
         """执行查询"""
 
-        if data_source.source_type.value == "sql":
+        if data_source.source_type == "sql":
             # SQL查询
             engine = create_engine(data_source.connection_string)
             return pd.read_sql(text(query), engine)
@@ -559,7 +559,7 @@ class IntelligentETLExecutor:
             return await self._execute_pandas_operations(query, data_source)
 
     async def _execute_pandas_operations(
-        self, operations: str, data_source: EnhancedDataSource
+        self, operations: str, data_source: DataSource
     ) -> pd.DataFrame:
         """执行pandas操作"""
 

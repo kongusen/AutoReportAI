@@ -99,9 +99,7 @@ class ErrorLog(Base):
     placeholder_description = Column(Text, nullable=True)
     context_before = Column(Text, nullable=True)
     context_after = Column(Text, nullable=True)
-    data_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=True
-    )
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     session_id = Column(String(255), nullable=True)
     stack_trace = Column(Text, nullable=True)
@@ -112,7 +110,7 @@ class ErrorLog(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
     # 关系
-    data_source = relationship("EnhancedDataSource", back_populates="error_logs")
+    data_source = relationship("DataSource", back_populates="error_logs")
     user = relationship("User", back_populates="error_logs")
     feedbacks = relationship("UserFeedback", back_populates="error_log")
 
@@ -157,9 +155,7 @@ class LearningRule(Base):
     success_count = Column(Integer, default=0, nullable=False)
     success_rate = Column(DECIMAL(3, 2), nullable=False, default=0.0)
     created_from_feedback = Column(Boolean, default=False, nullable=False)
-    data_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=True
-    )
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
     rule_metadata = Column(JSON, nullable=True)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -168,7 +164,7 @@ class LearningRule(Base):
     )
 
     # 关系
-    data_source = relationship("EnhancedDataSource", back_populates="learning_rules")
+    data_source = relationship("DataSource", back_populates="learning_rules")
 
 
 class KnowledgeBase(Base):
@@ -186,7 +182,7 @@ class KnowledgeBase(Base):
     confidence_metrics = Column(JSON, nullable=True)
     usage_statistics = Column(JSON, nullable=True)
     data_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=True
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_updated = Column(
@@ -194,7 +190,7 @@ class KnowledgeBase(Base):
     )
 
     # 关系
-    data_source = relationship("EnhancedDataSource", back_populates="knowledge_entries")
+    data_source = relationship("DataSource", back_populates="knowledge_entries")
 
 
 class LLMCallLog(Base):
@@ -232,9 +228,7 @@ class FieldMappingCache(Base):
     placeholder_signature = Column(
         String(255), nullable=False, index=True
     )  # hash of type+description+context
-    data_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=False
-    )
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
     matched_field = Column(String(255), nullable=False)
     confidence_score = Column(DECIMAL(3, 2), nullable=False)
     transformation_config = Column(JSON, nullable=True)
@@ -244,7 +238,7 @@ class FieldMappingCache(Base):
 
     # 关系
     data_source = relationship(
-        "EnhancedDataSource", back_populates="field_mapping_cache"
+        "DataSource", back_populates="field_mapping_cache"
     )
 
 

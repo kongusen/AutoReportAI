@@ -5,8 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { 
   Dialog, 
@@ -14,7 +12,6 @@ import {
   DialogHeader, 
   DialogTitle, 
   DialogTrigger,
-  DialogFooter 
 } from '@/components/ui/dialog'
 import { 
   Select,
@@ -26,28 +23,19 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { 
   Download, 
-  FileText, 
-  Database, 
-  Filter, 
-  Settings,
-  Loader2,
-  CheckCircle,
-  AlertCircle,
+  Loader2, 
+  Plus, 
+  Eye, 
+  X, 
   Package,
-  Plus,
   Trash2,
-  Calendar,
-  Clock,
   Search,
-  X,
-  Eye,
-  Save,
   Upload
 } from 'lucide-react'
 import api from '@/lib/api'
+import axios from 'axios';
 
 interface ExportFormat {
   name: string
@@ -64,7 +52,7 @@ interface ExportItem {
   source_id: number
   name: string
   export_format: string
-  filters?: Record<string, any>
+  filters?: Record<string, { operator: string; value: string }>
   columns?: string[]
   limit?: number
   date_range?: {
@@ -93,7 +81,7 @@ interface EnhancedDataExportDialogProps {
   defaultType?: 'data_source' | 'task' | 'history'
   defaultSourceId?: number
   defaultSourceName?: string
-  onExportComplete?: (result: any) => void
+  onExportComplete?: (result: unknown) => void
 }
 
 export function EnhancedDataExportDialog({ 
@@ -126,8 +114,8 @@ export function EnhancedDataExportDialog({
   const [exportStatus, setExportStatus] = useState<string>('')
   const [availableColumns, setAvailableColumns] = useState<string[]>([])
   const [selectedColumns, setSelectedColumns] = useState<string[]>([])
-  const [filters, setFilters] = useState<Record<string, any>>({})
-  const [previewData, setPreviewData] = useState<any[]>([])
+  const [filters, setFilters] = useState<Record<string, { operator: string; value: string }>>({})
+  const [previewData, setPreviewData] = useState<Record<string, unknown>[]>([])
   const [showPreview, setShowPreview] = useState(false)
   
   // 模板相关状态
@@ -157,9 +145,9 @@ export function EnhancedDataExportDialog({
     setLoading(true)
     try {
       const [formatsRes, sourcesRes, templatesRes] = await Promise.all([
-        api.get('/data-export/export-formats'),
+        api.get('/v1/data-export/export-formats'),
         api.get('/enhanced-data-sources'),
-        api.get('/data-export/templates').catch(() => ({ data: { templates: [] } }))
+        api.get('/v1/data-export/templates').catch(() => ({ data: { templates: [] } }))
       ])
       
       setExportFormats(formatsRes.data.formats || [])
@@ -174,7 +162,7 @@ export function EnhancedDataExportDialog({
 
   const fetchAvailableColumns = async (sourceId: number) => {
     try {
-      const response = await api.get(`/enhanced-data-sources/${sourceId}/preview?limit=1`)
+      const response = await api.get(`/v1/enhanced-data-sources/${sourceId}/preview?limit=1`)
       setAvailableColumns(response.data.columns || [])
     } catch (error) {
       console.error('Failed to fetch columns:', error)
@@ -192,7 +180,7 @@ export function EnhancedDataExportDialog({
         ...(Object.keys(filters).length > 0 && { filters: JSON.stringify(filters) })
       })
 
-      const response = await api.get(`/enhanced-data-sources/${currentItem.source_id}/preview?${params}`)
+      const response = await api.get(`/v1/enhanced-data-sources/${currentItem.source_id}/preview?${params}`)
       setPreviewData(response.data.data || [])
       setShowPreview(true)
     } catch (error) {
@@ -282,7 +270,7 @@ export function EnhancedDataExportDialog({
       }, 200)
 
       setExportStatus('正在导出数据...')
-      const response = await api.post('/data-export/export-data', exportData, {
+      const response = await api.post('/v1/data-export/export-data', exportData, {
         responseType: 'blob'
       })
 
@@ -313,10 +301,16 @@ export function EnhancedDataExportDialog({
 
       onExportComplete?.(response.data)
       setOpen(false)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Export failed:', error)
       setExportStatus('导出失败')
-      alert(error.response?.data?.detail || 'Export failed')
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Export failed')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Export failed')
+      } else {
+        alert('Export failed')
+      }
     } finally {
       setExporting(false)
       setExportProgress(0)
@@ -350,7 +344,7 @@ export function EnhancedDataExportDialog({
       }, 300)
 
       setExportStatus('正在批量导出数据...')
-      const response = await api.post('/data-export/bulk-export', bulkData, {
+      const response = await api.post('/v1/data-export/bulk-export', bulkData, {
         responseType: 'blob'
       })
 
@@ -370,10 +364,16 @@ export function EnhancedDataExportDialog({
 
       onExportComplete?.(response.data)
       setOpen(false)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Bulk export failed:', error)
       setExportStatus('批量导出失败')
-      alert(error.response?.data?.detail || 'Bulk export failed')
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Bulk export failed')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Bulk export failed')
+      } else {
+        alert('Bulk export failed')
+      }
     } finally {
       setExporting(false)
       setExportProgress(0)
@@ -392,18 +392,24 @@ export function EnhancedDataExportDialog({
         items: exportItems
       }
 
-      await api.post('/data-export/templates', templateData)
+      await api.post('/v1/data-export/templates', templateData)
       
       // 重新获取模板列表
-      const response = await api.get('/data-export/templates')
+      const response = await api.get('/v1/data-export/templates')
       setExportTemplates(response.data.templates || [])
       
       setTemplateName('')
       setTemplateDescription('')
       alert('模板保存成功！')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to save template:', error)
-      alert(error.response?.data?.detail || 'Failed to save template')
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Failed to save template')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Failed to save template')
+      } else {
+        alert('Failed to save template')
+      }
     } finally {
       setSavingTemplate(false)
     }
@@ -582,7 +588,8 @@ export function EnhancedDataExportDialog({
                           <div className="flex items-center space-x-2 mb-2">
                             <Checkbox
                               checked={selectedColumns.length === availableColumns.length}
-                              onCheckedChange={(checked) => {
+                              onChange={(e) => {
+                                const checked = (e.target as HTMLInputElement).checked
                                 if (checked) {
                                   setSelectedColumns([...availableColumns])
                                 } else {
@@ -596,7 +603,8 @@ export function EnhancedDataExportDialog({
                             <div key={column} className="flex items-center space-x-2">
                               <Checkbox
                                 checked={selectedColumns.includes(column)}
-                                onCheckedChange={(checked) => {
+                                onChange={(e) => {
+                                  const checked = (e.target as HTMLInputElement).checked
                                   if (checked) {
                                     setSelectedColumns(prev => [...prev, column])
                                   } else {
@@ -665,7 +673,7 @@ export function EnhancedDataExportDialog({
                             <div className="flex items-center space-x-2">
                               <Badge variant="outline">{column}</Badge>
                               <Badge variant="secondary">
-                                {filter.operator} "{filter.value}"
+                                {filter.operator} &quot;{filter.value}&quot;
                               </Badge>
                             </div>
                             <Button
@@ -736,7 +744,7 @@ export function EnhancedDataExportDialog({
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b">
-                              {Object.keys(previewData[0] || {}).map((key) => (
+                              {previewData[0] && Object.keys(previewData[0] as Record<string, unknown>).map((key) => (
                                 <th key={key} className="text-left p-2 font-medium">
                                   {key}
                                 </th>
@@ -746,7 +754,7 @@ export function EnhancedDataExportDialog({
                           <tbody>
                             {previewData.map((row, index) => (
                               <tr key={index} className="border-b">
-                                {Object.values(row).map((value: any, cellIndex) => (
+                                {Object.values(row).map((value: unknown, cellIndex) => (
                                   <td key={cellIndex} className="p-2">
                                     {String(value)}
                                   </td>
@@ -912,7 +920,7 @@ export function EnhancedDataExportDialog({
                         </>
                       ) : (
                         <>
-                          <Save className="mr-2 h-4 w-4" />
+                          <span className="mr-2 h-4 w-4">💾</span>
                           Save Template
                         </>
                       )}

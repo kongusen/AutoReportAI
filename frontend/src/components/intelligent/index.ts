@@ -5,8 +5,7 @@
  */
 
 // Main intelligent components
-export { IntelligentPlaceholderManager } from './IntelligentPlaceholderManager'
-export { IntelligentReportGenerator } from './IntelligentReportGenerator'
+// export { IntelligentPlaceholderManager } from './IntelligentPlaceholderManager'
 
 // Modular sub-components
 export { PlaceholderAnalyzer } from './PlaceholderAnalyzer'

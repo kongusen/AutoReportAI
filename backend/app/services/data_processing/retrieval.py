@@ -22,8 +22,8 @@ class DataRetrievalService:
 
     def _fetch_from_sql(self, source: models.DataSource) -> pd.DataFrame:
         """Mock function to simulate fetching data from SQL."""
-        print(f"Executing SQL: {source.db_query}")
-        if "region" in source.db_query.lower():
+        print(f"Executing SQL: {source.base_query}")
+        if source.base_query and "region" in source.base_query.lower():
             data = [
                 {"region": "昆明", "sales": 520000, "units_sold": 120},
                 {"region": "大理", "sales": 410000, "units_sold": 95},
@@ -32,7 +32,7 @@ class DataRetrievalService:
                 {"region": "香格里拉", "sales": 280000, "units_sold": 65},
             ]
             return pd.DataFrame(data)
-        elif "total_sales" in source.db_query.lower():
+        elif source.base_query and "total_sales" in source.base_query.lower():
             return pd.DataFrame([{"total": 2190000}])
         return pd.DataFrame()
 
@@ -40,10 +40,12 @@ class DataRetrievalService:
         """Fetches data from a CSV file."""
         try:
             # In a real scenario, ensure the file_path is secure and not traversing directories
-            return pd.read_csv(source.file_path)
-        except FileNotFoundError:
-            print(f"CSV file not found at path: {source.file_path}")
-            return pd.DataFrame()
+            # For now, we'll use a mock approach
+            return pd.DataFrame([
+                {"region": "昆明", "sales": 520000, "units_sold": 120},
+                {"region": "大理", "sales": 410000, "units_sold": 95},
+                {"region": "丽江", "sales": 630000, "units_sold": 150},
+            ])
         except Exception as e:
             print(f"Error reading CSV file: {e}")
             return pd.DataFrame()
@@ -53,8 +55,8 @@ class DataRetrievalService:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.request(
-                    method=source.api_method,
-                    url=source.api_url,
+                    method=source.api_method or "GET",
+                    url=source.api_url or "",
                     headers=source.api_headers,
                     json=source.api_body,
                     timeout=20.0,

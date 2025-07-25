@@ -26,7 +26,7 @@ class User(Base):
     # 关系定义
     profile = relationship("UserProfile", back_populates="user", uselist=False)
     templates = relationship("Template", back_populates="user")
-    enhanced_data_sources = relationship("EnhancedDataSource", back_populates="user")
+    data_sources = relationship("DataSource", back_populates="user")
     etl_jobs = relationship("ETLJob", back_populates="user")
     tasks = relationship("Task", back_populates="owner")
     report_histories = relationship("ReportHistory", back_populates="user")

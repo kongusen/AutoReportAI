@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
 
 from ..db.base_class import Base
 
@@ -28,9 +29,7 @@ class PlaceholderMapping(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     placeholder_signature = Column(String(255), unique=True, nullable=False, index=True)
-    data_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=False
-    )
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
     matched_field = Column(String(255), nullable=False)
     confidence_score = Column(DECIMAL(3, 2), nullable=False)
     transformation_config = Column(JSON, nullable=True)
@@ -42,5 +41,5 @@ class PlaceholderMapping(Base):
 
     # 关系
     data_source = relationship(
-        "EnhancedDataSource", back_populates="placeholder_mappings"
+        "DataSource", back_populates="placeholder_mappings"
     )

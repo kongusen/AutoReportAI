@@ -5,7 +5,7 @@ import { Database, FileText, Users } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/components/providers/I18nProvider'
 
 interface DashboardStats {
   totalReports: number
@@ -56,15 +56,15 @@ export function OverviewStats() {
   }
 
   const statCards = [
-    { title: t('overview.totalReports'), value: stats.totalReports, icon: FileText },
-    { title: t('overview.dataSources'), value: stats.totalDataSources, icon: Database },
-    { title: t('overview.templates'), value: stats.totalTemplates, icon: FileText },
-    { title: t('overview.tasks'), value: stats.totalTasks, icon: Users }
+    { title: t('dashboard.totalReports'), value: stats.totalReports, icon: FileText },
+    { title: t('dashboard.dataSources'), value: stats.totalDataSources, icon: Database },
+    { title: t('dashboard.templates'), value: stats.totalTemplates, icon: FileText },
+    { title: t('dashboard.activeTasks'), value: stats.totalTasks, icon: Users }
   ]
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('overview.title')}</h2>
+      <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('dashboard.title')}</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {statCards.map((stat) => {
           const Icon = stat.icon
@@ -88,7 +88,7 @@ export function OverviewStats() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="border-gray-200 dark:border-gray-700">
           <CardHeader>
-            <CardTitle className="text-gray-900 dark:text-gray-100">{t('overview.quickCreate')}</CardTitle>
+            <CardTitle className="text-gray-900 dark:text-gray-100">{t('dashboard.createReport')}</CardTitle>
             <p className="text-sm text-gray-600 dark:text-gray-400">
               开始创建新的报告任务
             </p>
@@ -99,21 +99,21 @@ export function OverviewStats() {
                 className="w-full bg-gray-900 hover:bg-gray-800 text-white dark:bg-gray-100 dark:hover:bg-gray-200 dark:text-gray-900"
                 onClick={() => window.location.href = '/data-sources'}
               >
-                {t('overview.createDataSource')}
+                {t('dashboard.manageDataSources')}
               </Button>
               <Button 
                 variant="outline" 
                 className="w-full"
                 onClick={() => window.location.href = '/templates'}
               >
-                {t('overview.uploadTemplate')}
+                {t('dashboard.manageTemplates')}
               </Button>
             </div>
           </CardContent>
         </Card>
         <Card className="border-gray-200 dark:border-gray-700">
           <CardHeader>
-            <CardTitle className="text-gray-900 dark:text-gray-100">{t('overview.recentActivity')}</CardTitle>
+            <CardTitle className="text-gray-900 dark:text-gray-100">{t('dashboard.recentActivity')}</CardTitle>
             <p className="text-sm text-gray-600 dark:text-gray-400">
               查看最近的报告生成记录
             </p>
@@ -130,7 +130,7 @@ export function OverviewStats() {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-gray-500 dark:text-gray-400">暂无最近活动</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{t('common.noData')}</p>
               )}
             </div>
           </CardContent>

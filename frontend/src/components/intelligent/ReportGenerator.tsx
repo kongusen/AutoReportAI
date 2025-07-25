@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
-import apiClient from '@/lib/api-client'
+import { httpClient } from '@/lib/api/client'
 
 // Types
 interface Template {
@@ -65,7 +65,7 @@ interface GeneratedReport {
   file_size: number
   generation_time: number
   quality_score: number
-  metadata: Record<string, any>
+  metadata: Record<string, unknown>
   preview_content?: string
 }
 
@@ -122,7 +122,7 @@ export function ReportGenerator({
 
   const loadTemplates = async () => {
     try {
-      const response = await apiClient.get('/templates/')
+      const response = await httpClient.get('/templates/')
       setTemplates(response.data)
     } catch (error) {
       console.error('Failed to load templates:', error)
@@ -131,7 +131,7 @@ export function ReportGenerator({
 
   const loadDataSources = async () => {
     try {
-      const response = await apiClient.get('/enhanced-data-sources/')
+      const response = await httpClient.get('/enhanced-data-sources/')
       setDataSources(response.data)
     } catch (error) {
       console.error('Failed to load data sources:', error)
@@ -150,8 +150,8 @@ export function ReportGenerator({
     setCurrentStage('初始化...')
 
     try {
-      // Start the intelligent report generation
-      const response = await apiClient.post('/intelligent-placeholders/generate-report', {
+      // Start the report generation
+      const response = await httpClient.post('/v1/reports', {
         template_id: selectedTemplate,
         data_source_id: selectedDataSource,
         processing_config: processingConfig,
@@ -162,16 +162,11 @@ export function ReportGenerator({
           include_summary: true
         } : null
       })
-
-      const taskId = response.data.task_id
-      
-      // Poll for progress updates
+      const taskId = response.data.data.task_id
       await pollGenerationProgress(taskId)
-      
-    } catch (error: any) {
-      console.error('Report generation failed:', error)
-      alert(error.response?.data?.detail || '报告生成失败')
+    } catch {
       setIsGenerating(false)
+      alert('报告生成失败')
     }
   }
 
@@ -179,44 +174,41 @@ export function ReportGenerator({
   const pollGenerationProgress = async (taskId: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        const response = await apiClient.get(`/intelligent-placeholders/task/${taskId}/status`)
+        const response = await httpClient.get(`/v1/reports/${taskId}/status`)
         const status = response.data
-        
-        setGenerationProgress(status.progress || 0)
-        setCurrentStage(status.message || '')
-        
-        if (status.status === 'completed') {
+        setGenerationProgress(status.data.progress || 0)
+        setCurrentStage(status.data.message || '')
+        if (status.data.status === 'completed') {
           clearInterval(pollInterval)
           setIsGenerating(false)
           setGenerationProgress(100)
           setCurrentStage('完成')
-          
-          // Mock generated report data
-          const mockReport: GeneratedReport = {
+          setGeneratedReport({
             id: taskId,
-            file_path: '/reports/generated_report.docx',
-            file_size: 1024 * 1024, // 1MB
-            generation_time: 120, // 2 minutes
-            quality_score: 0.92,
-            metadata: {
-              placeholders_processed: 15,
-              llm_provider: processingConfig.llm_provider,
-              generation_timestamp: new Date().toISOString()
-            }
-          }
-          
-          setGeneratedReport(mockReport)
-          
+            file_path: status.data.file_path,
+            file_size: status.data.file_size,
+            generation_time: status.data.generation_time,
+            quality_score: status.data.quality_score,
+            metadata: status.data.metadata || {},
+            preview_content: status.data.preview_content || ''
+          })
           if (onReportGenerated) {
-            onReportGenerated(mockReport)
+            onReportGenerated({
+              id: taskId,
+              file_path: status.data.file_path,
+              file_size: status.data.file_size,
+              generation_time: status.data.generation_time,
+              quality_score: status.data.quality_score,
+              metadata: status.data.metadata || {},
+              preview_content: status.data.preview_content || ''
+            })
           }
-        } else if (status.status === 'failed') {
+        } else if (status.data.status === 'failed') {
           clearInterval(pollInterval)
           setIsGenerating(false)
           alert('报告生成失败')
         }
-      } catch (error) {
-        console.error('Failed to get progress:', error)
+      } catch {
         clearInterval(pollInterval)
         setIsGenerating(false)
       }
@@ -252,12 +244,18 @@ export function ReportGenerator({
   // Download report
   const downloadReport = async () => {
     if (!generatedReport) return
-    
     try {
-      // Mock download functionality
-      alert(`下载报告: ${generatedReport.file_path}`)
-    } catch (error) {
-      console.error('Failed to download report:', error)
+      const response = await httpClient.get(generatedReport.file_path, { responseType: 'blob' })
+      const blob = response.data
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = generatedReport.file_path.split('/').pop() || 'report.docx'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch {
       alert('下载失败')
     }
   }
@@ -542,7 +540,7 @@ export function ReportGenerator({
                 </div>
                 <div className="text-center p-3 bg-orange-50 rounded">
                   <p className="text-2xl font-bold text-orange-600">
-                    {generatedReport.metadata.placeholders_processed}
+                    {String(generatedReport.metadata.placeholders_processed)}
                   </p>
                   <p className="text-sm text-gray-600">处理占位符</p>
                 </div>

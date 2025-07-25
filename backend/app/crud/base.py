@@ -15,12 +15,27 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         self.model = model
 
     def get(self, db: Session, id: Union[int, str]) -> Optional[ModelType]:
-        return db.query(self.model).filter(self.model.id == id).first()
+        import uuid
+        print(f"[DEBUG] CRUDBase.get: input id={id}, type={type(id)}")
+        pk_type = self.model.id.type.python_type
+        if pk_type is uuid.UUID and isinstance(id, str):
+            try:
+                id = uuid.UUID(id)
+            except Exception:
+                pass
+        print(f"[DEBUG] CRUDBase.get: after convert id={id}, type={type(id)}")
+        result = db.query(self.model).filter(self.model.id == id).first()
+        print(f"[DEBUG] CRUDBase.get: result user.id={getattr(result, 'id', None)}, type={type(getattr(result, 'id', None))}")
+        return result
 
     def get_multi(
         self, db: Session, *, skip: int = 0, limit: int = 100
     ) -> List[ModelType]:
         return db.query(self.model).offset(skip).limit(limit).all()
+
+    def count(self, db: Session) -> int:
+        """Get total count of records."""
+        return db.query(self.model).count()
 
     def create(
         self, db: Session, *, obj_in: CreateSchemaType, **extra_data

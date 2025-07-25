@@ -9,43 +9,55 @@ from typing import Any, Dict, Generator
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
+from app.main import app
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
-from app.models.enhanced_data_source import EnhancedDataSource
+from app.models.data_source import DataSource
 from app.models.etl_job import ETLJob
 from app.models.template import Template
 from app.models.user import User
 
 
 @pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
 def test_user(db_session: Session) -> User:
-    """Create a test user in the database"""
-    user_data = {
-        "username": "testuser_integration",
-        "email": "testuser@example.com",
-        "password": "testpassword123",
-        "is_superuser": False,
-    }
-    user = crud.user.create(db_session, obj_in=schemas.UserCreate(**user_data))
+    """使用真实admin用户作为测试用户"""
+    user = crud.user.get_by_username(db_session, username="admin")
+    if user is None:
+        user_data = {
+            "username": "admin",
+            "email": "admin@example.com",
+            "password": "password",
+            "is_superuser": True,
+        }
+        user = crud.user.create(db_session, obj_in=schemas.UserCreate(**user_data))
     return user
 
 
 @pytest.fixture
 def test_superuser(db_session: Session) -> User:
-    """Create a test superuser in the database"""
-    user_data = {
-        "username": "admin_integration",
-        "email": "admin@example.com",
-        "password": "adminpassword123",
-        "is_superuser": True,
-    }
-    user = crud.user.create(db_session, obj_in=schemas.UserCreate(**user_data))
+    """使用真实admin用户作为超级用户"""
+    user = crud.user.get_by_username(db_session, username="admin")
+    if user is None:
+        user_data = {
+            "username": "admin",
+            "email": "admin@example.com",
+            "password": "password",
+            "is_superuser": True,
+        }
+        user = crud.user.create(db_session, obj_in=schemas.UserCreate(**user_data))
     return user
 
 
 @pytest.fixture
-def test_data_source(db_session: Session, test_user: User) -> EnhancedDataSource:
+def test_data_source(db_session: Session, test_user: User) -> DataSource:
     """Create a test data source in the database"""
     data_source_data = {
         "name": "Integration Test Data Source",
@@ -55,8 +67,8 @@ def test_data_source(db_session: Session, test_user: User) -> EnhancedDataSource
         "is_active": True,
         "user_id": test_user.id,
     }
-    data_source = crud.enhanced_data_source.create(
-        db_session, obj_in=schemas.EnhancedDataSourceCreate(**data_source_data)
+    data_source = crud.data_source.create(
+        db_session, obj_in=schemas.DataSourceCreate(**data_source_data)
     )
     return data_source
 
@@ -79,7 +91,7 @@ def test_template(db_session: Session, test_user: User) -> Template:
 
 @pytest.fixture
 def test_etl_job(
-    db_session: Session, test_user: User, test_data_source: EnhancedDataSource
+    db_session: Session, test_user: User, test_data_source: DataSource
 ) -> ETLJob:
     """Create a test ETL job in the database"""
     etl_job_data = {
@@ -98,13 +110,16 @@ def test_etl_job(
 
 @pytest.fixture
 def authenticated_client(client, test_user: User):
-    """Create an authenticated test client"""
-    # Login to get access token
-    login_data = {"username": test_user.username, "password": "testpassword123"}
-    response = client.post("/api/auth/access-token", data=login_data)
+    """Create an authenticated test client using admin/password"""
+    print("TEST ROUTES:", [route.path for route in client.app.routes])
+    login_data = {"username": "admin", "password": "password"}
+    response = client.post(
+        "/api/v1/auth/access-token",
+        data=login_data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    print("LOGIN RESPONSE:", response.json())
     token = response.json()["access_token"]
-
-    # Set authorization header
     client.headers.update({"Authorization": f"Bearer {token}"})
     return client
 
@@ -181,22 +196,20 @@ def integration_test_db(db_session: Session):
 @pytest.fixture
 def mock_external_services():
     """Mock external services for integration tests"""
-    with patch('app.services.ai_integration.llm_service.LLMService') as mock_llm, \
+    from unittest.mock import patch
+    with patch('app.services.ai_integration.llm_service.AIService') as mock_ai, \
          patch('app.services.notification.email_service.EmailService') as mock_email:
-        
         # Configure default mock behaviors
-        mock_llm.return_value.generate_content.return_value = {
+        mock_ai.return_value.generate_content.return_value = {
             "content": "Mock AI generated content",
             "confidence": 0.85
         }
-        
         mock_email.return_value.send_email.return_value = {
             "status": "sent",
             "message_id": "mock_message_id"
         }
-        
         yield {
-            "llm_service": mock_llm,
+            "ai_service": mock_ai,
             "email_service": mock_email
         }
 

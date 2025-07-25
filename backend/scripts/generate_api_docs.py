@@ -61,38 +61,38 @@ class APIDocGenerator:
     
     def generate_postman_collection(self, spec: Dict[str, Any]) -> None:
         """生成Postman集合"""
-        collection = {
-            "info": {
+    collection = {
+        "info": {
                 "name": spec["info"]["title"],
                 "description": spec["info"]["description"],
                 "version": spec["info"]["version"],
-                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-            },
-            "auth": {
-                "type": "bearer",
-                "bearer": [
-                    {
-                        "key": "token",
-                        "value": "{{access_token}}",
-                        "type": "string"
-                    }
-                ]
-            },
-            "variable": [
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "auth": {
+            "type": "bearer",
+            "bearer": [
                 {
-                    "key": "baseUrl",
-                    "value": "http://localhost:8000",
-                    "type": "string"
-                },
-                {
-                    "key": "access_token",
-                    "value": "",
+                    "key": "token",
+                    "value": "{{access_token}}",
                     "type": "string"
                 }
-            ],
-            "item": []
-        }
-        
+            ]
+        },
+        "variable": [
+            {
+                    "key": "baseUrl",
+                "value": "http://localhost:8000",
+                "type": "string"
+            },
+            {
+                "key": "access_token",
+                "value": "",
+                "type": "string"
+            }
+        ],
+        "item": []
+    }
+    
         # 生成请求项
         for path, methods in spec["paths"].items():
             for method, operation in methods.items():
@@ -111,35 +111,35 @@ class APIDocGenerator:
         """创建Postman请求项"""
         item = {
             "name": operation.get("summary", f"{method.upper()} {path}"),
-            "request": {
-                "method": method.upper(),
-                "header": [
-                    {
-                        "key": "Content-Type",
-                        "value": "application/json",
-                        "type": "text"
-                    }
-                ],
-                "url": {
+                    "request": {
+                        "method": method.upper(),
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
                     "raw": "{{baseUrl}}" + path,
                     "host": ["{{baseUrl}}"],
-                    "path": path.strip("/").split("/")
-                },
+                            "path": path.strip("/").split("/")
+                        },
                 "description": operation.get("description", "")
-            }
-        }
-        
-        # 添加请求体示例
+                    }
+                }
+                
+                # 添加请求体示例
         if "requestBody" in operation:
             content = operation["requestBody"].get("content", {})
-            if "application/json" in content:
-                schema = content["application/json"].get("schema", {})
-                if "example" in schema:
+                    if "application/json" in content:
+                        schema = content["application/json"].get("schema", {})
+                        if "example" in schema:
                     item["request"]["body"] = {
-                        "mode": "raw",
-                        "raw": json.dumps(schema["example"], indent=2)
-                    }
-        
+                                "mode": "raw",
+                                "raw": json.dumps(schema["example"], indent=2)
+                            }
+                
         return item
     
     def generate_api_guide(self, spec: Dict[str, Any]) -> None:

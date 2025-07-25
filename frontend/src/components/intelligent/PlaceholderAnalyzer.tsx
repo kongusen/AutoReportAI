@@ -30,7 +30,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import apiClient from '@/lib/api-client'
+import { httpClient } from '@/lib/api/client'
+import axios from 'axios';
 
 // Types
 interface PlaceholderInfo {
@@ -48,8 +49,8 @@ interface PlaceholderAnalysisResponse {
   placeholders: PlaceholderInfo[]
   total_count: number
   type_distribution: Record<string, number>
-  validation_result: Record<string, any>
-  processing_errors: Array<Record<string, any>>
+  validation_result: Record<string, unknown>
+  processing_errors: Array<Record<string, unknown>>
   estimated_processing_time: number
 }
 
@@ -104,7 +105,7 @@ export function PlaceholderAnalyzer({
 
   const loadDataSources = async () => {
     try {
-      const response = await apiClient.get('/enhanced-data-sources/')
+      const response = await httpClient.get('/enhanced-data-sources/')
       setDataSources(response.data)
     } catch (error) {
       console.error('Failed to load data sources:', error)
@@ -113,7 +114,7 @@ export function PlaceholderAnalyzer({
 
   const loadTemplate = async (id: string) => {
     try {
-      const response = await apiClient.get(`/templates/${id}`)
+      const response = await httpClient.get(`/templates/${id}`)
       const templateData = response.data
       setTemplate(templateData)
       setTemplateContent(templateData.content || '')
@@ -131,7 +132,7 @@ export function PlaceholderAnalyzer({
 
     setAnalyzing(true)
     try {
-      const response = await apiClient.post('/intelligent-placeholders/analyze', {
+      const response = await httpClient.post('/intelligent-placeholders/analyze', {
         template_content: templateContent,
         template_id: templateId,
         data_source_id: selectedDataSource,
@@ -147,9 +148,15 @@ export function PlaceholderAnalyzer({
       if (onAnalysisComplete) {
         onAnalysisComplete(response.data)
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Placeholder analysis failed:', error)
-      alert(error.response?.data?.detail || '占位符分析失败')
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || '占位符分析失败')
+      } else if (error instanceof Error) {
+        alert(error.message || '占位符分析失败')
+      } else {
+        alert('占位符分析失败')
+      }
     } finally {
       setAnalyzing(false)
     }
@@ -401,11 +408,11 @@ export function PlaceholderAnalyzer({
                   {analysisResult.processing_errors.map((error, index) => (
                     <div key={index} className="p-3 bg-red-50 border border-red-200 rounded">
                       <p className="text-sm text-red-800">
-                        <strong>{error.error_type}:</strong> {error.message}
+                        <strong>{String(error.error_type)}:</strong> {String(error.message)}
                       </p>
-                      {error.suggestion && (
+                      {typeof error.suggestion === 'string' && error.suggestion && (
                         <p className="text-sm text-red-600 mt-1">
-                          <strong>建议:</strong> {error.suggestion}
+                          <strong>建议:</strong> {String(error.suggestion)}
                         </p>
                       )}
                     </div>

@@ -16,7 +16,9 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         return db.query(User).filter(User.email == email).first()
 
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
+        import uuid
         db_obj = User(
+            id=uuid.uuid4(),
             username=obj_in.username,
             email=obj_in.email,
             full_name=obj_in.full_name,
@@ -27,6 +29,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+        print(f"[DEBUG] Created user.id={db_obj.id}, type={type(db_obj.id)}")
         return db_obj
 
     def update(
@@ -59,6 +62,21 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
 
     def is_superuser(self, user: User) -> bool:
         return user.is_superuser
+
+    def update_password(self, db: Session, *, user_id: str, new_password: str) -> User:
+        """更新用户密码"""
+        import uuid
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        
+        user_obj = db.query(User).filter(User.id == user_id).first()
+        if not user_obj:
+            raise ValueError("用户不存在")
+        
+        user_obj.hashed_password = get_password_hash(new_password)
+        db.commit()
+        db.refresh(user_obj)
+        return user_obj
 
 
 user = CRUDUser(User)

@@ -3,15 +3,10 @@
 from app.db.base_class import Base
 from app.models.ai_provider import AIProvider  # noqa
 from app.models.analytics_data import AnalyticsData  # noqa
-from app.models.data_source import (  # noqa  # DataSource必须在PlaceholderMapping之前
-    DataSource,
-)
-from app.models.enhanced_data_source import (  # noqa  # EnhancedDataSource必须在ETLJob之前
-    EnhancedDataSource,
-)
-from app.models.etl_job import ETLJob  # noqa  # 依赖EnhancedDataSource
+from app.models.data_source import DataSource  # noqa  # DataSource必须在ETLJob之前
+from app.models.etl_job import ETLJob  # noqa  # 依赖DataSource
 
-# 学习数据模型 - 依赖User, Template, EnhancedDataSource
+# 学习数据模型 - 依赖User, Template, DataSource
 from app.models.learning_data import (  # noqa
     ErrorLog,
     FieldMappingCache,

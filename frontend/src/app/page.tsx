@@ -1,112 +1,84 @@
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { isAuthenticated } from '@/lib/auth'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ArrowRight, Zap } from 'lucide-react'
 import Link from 'next/link'
-import { LanguageSwitcher, UserProfile } from '@/components/layout'
-import { AuthGuard } from '@/components/providers'
-import { BarChart3, Database, FileText, Settings, Users } from 'lucide-react'
-import HomePage from './(app)/page'
 
-const menuItems = [
-  { id: 'overview', label: '总览', icon: BarChart3, href: '/' },
-  { id: 'data-sources', label: '数据源', icon: Database, href: '/data-sources' },
-  { id: 'templates', label: '模板', icon: FileText, href: '/templates' },
-  { id: 'tasks', label: '任务', icon: Users, href: '/tasks' },
-  { id: 'settings', label: '设置', icon: Settings, href: '/settings' },
-]
-
-export default function RootPage() {
-  const router = useRouter()
-  const [isClient, setIsClient] = useState(false)
-  const [authChecked, setAuthChecked] = useState(false)
-
-  useEffect(() => {
-    // 标记为客户端渲染
-    setIsClient(true)
-    
-    // 检查认证状态
-    const checkAuth = () => {
-      if (!isAuthenticated()) {
-        console.log('用户未登录，重定向到登录页')
-        router.replace('/login')
-      } else {
-        console.log('用户已登录，显示主页')
-        setAuthChecked(true)
-      }
-    }
-
-    // 延迟检查以避免 hydration 问题
-    const timer = setTimeout(checkAuth, 100)
-    return () => clearTimeout(timer)
-  }, [router])
-
-  // 服务端渲染时显示加载状态
-  if (!isClient) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-lg">Loading...</div>
-      </div>
-    )
-  }
-
-  // 客户端渲染但认证未检查完成
-  if (!authChecked) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-900"></div>
-      </div>
-    )
-  }
-
-  // 已认证，显示主页内容
+export default function HomePage() {
   return (
-    <AuthGuard>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-        <div className="flex flex-col lg:flex-row">
-          {/* 侧边栏 - 响应式设计 */}
-          <div className="w-full lg:w-64 bg-white dark:bg-gray-800 border-b lg:border-r lg:border-b-0 border-gray-200 dark:border-gray-700 flex flex-col">
-            <div className="p-4 lg:p-6 flex justify-between items-center">
-              <h1 className="text-lg lg:text-xl font-bold text-gray-900 dark:text-gray-100">AutoReportAI</h1>
-              <LanguageSwitcher />
-            </div>
-            <nav className="px-4 pb-4 lg:pb-6 flex-1">
-              <div className="flex lg:flex-col space-x-2 lg:space-x-0 lg:space-y-1 overflow-x-auto lg:overflow-x-visible">
-                {menuItems.map((item) => {
-                  const Icon = item.icon
-                  const isActive = item.href === '/'
-                  return (
-                    <Link
-                      key={item.id}
-                      href={item.href}
-                      className={`
-                        flex items-center space-x-3 px-3 lg:px-4 py-2 lg:py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap
-                        ${isActive
-                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                          : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                        }
-                      `}
-                    >
-                      <Icon className="h-4 w-4 lg:h-5 lg:w-5 flex-shrink-0" />
-                      <span className="hidden sm:inline">{item.label}</span>
-                    </Link>
-                  )
-                })}
-              </div>
-            </nav>
-            <div className="mt-auto p-4 lg:p-0">
-              <UserProfile />
-            </div>
-          </div>
-          {/* 主内容区 - 响应式设计 */}
-          <div className="flex-1 p-4 lg:p-8 overflow-x-hidden">
-            <div className="max-w-7xl mx-auto">
-              <HomePage />
-            </div>
+    <div>
+      {/* Header */}
+      <header className="container flex items-center justify-between py-6">
+        <div className="text-2xl font-bold tracking-tight">AutoReport AI</div>
+        <nav className="flex gap-6 text-muted-foreground">
+          <a href="#features" className="hover:text-foreground transition-colors">Features</a>
+          <a href="#about" className="hover:text-foreground transition-colors">About</a>
+          <Link href="/login" className="hover:text-foreground transition-colors">Sign In</Link>
+        </nav>
+      </header>
+
+      {/* Hero Section */}
+      <section className="py-24 px-4">
+        <div className="container text-center">
+          <Badge variant="secondary" className="mb-6">
+            <Zap className="h-3 w-3 mr-1" />
+            AI-Powered Reporting
+          </Badge>
+          <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
+            <span className="text-gradient">Intelligent</span> Report<br /> Generation
+          </h1>
+          <p className="text-lg text-muted-foreground mb-8">
+            Create insightful reports effortlessly with our AI-driven platform.
+          </p>
+          <Button size="lg">
+            Get Started
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section id="features" className="py-24 px-4 bg-muted">
+        <div className="container">
+          <h2 className="text-3xl font-bold text-center mb-12">Features</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <Card>
+              <CardHeader>
+                <CardTitle>Automated Insights</CardTitle>
+                <CardDescription>Get real-time insights generated automatically.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p>Utilize AI to analyze data and generate reports without manual input.</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Customizable Templates</CardTitle>
+                <CardDescription>Choose from a variety of templates to suit your needs.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p>Personalize your reports with our easy-to-use template editor.</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Collaboration Tools</CardTitle>
+                <CardDescription>Work together with your team seamlessly.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p>Share reports and collaborate in real-time with your colleagues.</p>
+              </CardContent>
+            </Card>
           </div>
         </div>
-      </div>
-    </AuthGuard>
+      </section>
+
+      {/* Footer */}
+      <footer className="py-12 bg-background">
+        <div className="container text-center">
+          <p className="text-sm text-muted-foreground">© 2023 AutoReport AI. All rights reserved.</p>
+        </div>
+      </footer>
+    </div>
   )
 }

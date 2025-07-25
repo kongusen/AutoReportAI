@@ -37,6 +37,7 @@ apscheduler>=3.10.0
 
 # Authentication and security
 passlib[bcrypt]>=1.7.4
+bcrypt>=3.2.0,<4.0.0  # 固定版本以避免 passlib 兼容性问题
 python-jose[cryptography]>=3.3.0
 
 # Validation utilities

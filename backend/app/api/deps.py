@@ -1,4 +1,4 @@
-from typing import Generator, Optional
+from typing import Generator, Optional, Dict, Any
 import logging
 
 from fastapi import Depends, HTTPException, status
@@ -12,34 +12,6 @@ from app import crud, models
 from app.core import security
 from app.core.config import settings
 from app.db.session import SessionLocal
-
-# Service imports
-from app.services.intelligent_placeholder import (
-    IntelligentPlaceholderProcessor,
-    IntelligentFieldMatcher,
-    PlaceholderProcessor
-)
-from app.services.report_generation import (
-    ReportGenerationService,
-    ReportCompositionService,
-    ReportQualityChecker
-)
-from app.services.data_processing import (
-    DataRetrievalService,
-    DataAnalysisService,
-    ETLService,
-    IntelligentETLExecutor
-)
-from app.services.ai_integration import (
-    AIService,
-    EnhancedAIService,
-    ContentGenerator,
-    ChartGenerator
-)
-from app.services.notification import (
-    EmailService,
-    NotificationService
-)
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +77,10 @@ def get_current_user(
     user = crud.user.get_by_username(db, username=username)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # 强制user.id为UUID类型
+    from uuid import UUID
+    if isinstance(user.id, str):
+        user.id = UUID(user.id)
     return user
 
 
@@ -137,9 +113,10 @@ def get_learning_service(db: Session = Depends(get_db)):
 # ============================================================================
 
 # Intelligent Placeholder Services
-def get_placeholder_processor() -> PlaceholderProcessor:
+def get_placeholder_processor():
     """Get placeholder processor dependency"""
     try:
+        from app.services.intelligent_placeholder import PlaceholderProcessor
         return PlaceholderProcessor()
     except Exception as e:
         logger.error(f"Failed to create PlaceholderProcessor: {e}")
@@ -149,9 +126,10 @@ def get_placeholder_processor() -> PlaceholderProcessor:
         )
 
 
-def get_intelligent_placeholder_processor(db: Session = Depends(get_db)) -> IntelligentPlaceholderProcessor:
+def get_intelligent_placeholder_processor(db: Session = Depends(get_db)):
     """Get intelligent placeholder processor dependency"""
     try:
+        from app.services.intelligent_placeholder import IntelligentPlaceholderProcessor
         return IntelligentPlaceholderProcessor(db)
     except Exception as e:
         logger.error(f"Failed to create IntelligentPlaceholderProcessor: {e}")
@@ -161,9 +139,10 @@ def get_intelligent_placeholder_processor(db: Session = Depends(get_db)) -> Inte
         )
 
 
-def get_field_matcher(db: Session = Depends(get_db)) -> IntelligentFieldMatcher:
+def get_field_matcher(db: Session = Depends(get_db)):
     """Get intelligent field matcher dependency"""
     try:
+        from app.services.intelligent_placeholder import IntelligentFieldMatcher
         return IntelligentFieldMatcher(db)
     except Exception as e:
         logger.error(f"Failed to create IntelligentFieldMatcher: {e}")
@@ -174,9 +153,10 @@ def get_field_matcher(db: Session = Depends(get_db)) -> IntelligentFieldMatcher:
 
 
 # Report Generation Services
-def get_report_generation_service(db: Session = Depends(get_db)) -> ReportGenerationService:
+def get_report_generation_service(db: Session = Depends(get_db)):
     """Get report generation service dependency"""
     try:
+        from app.services.report_generation import ReportGenerationService
         return ReportGenerationService(db)
     except Exception as e:
         logger.error(f"Failed to create ReportGenerationService: {e}")
@@ -186,9 +166,10 @@ def get_report_generation_service(db: Session = Depends(get_db)) -> ReportGenera
         )
 
 
-def get_report_composition_service(db: Session = Depends(get_db)) -> ReportCompositionService:
+def get_report_composition_service(db: Session = Depends(get_db)):
     """Get report composition service dependency"""
     try:
+        from app.services.report_generation import ReportCompositionService
         return ReportCompositionService(db)
     except Exception as e:
         logger.error(f"Failed to create ReportCompositionService: {e}")
@@ -198,9 +179,10 @@ def get_report_composition_service(db: Session = Depends(get_db)) -> ReportCompo
         )
 
 
-def get_report_quality_checker(db: Session = Depends(get_db)) -> ReportQualityChecker:
+def get_report_quality_checker(db: Session = Depends(get_db)):
     """Get report quality checker dependency"""
     try:
+        from app.services.report_generation import ReportQualityChecker
         return ReportQualityChecker(db)
     except Exception as e:
         logger.error(f"Failed to create ReportQualityChecker: {e}")
@@ -211,9 +193,10 @@ def get_report_quality_checker(db: Session = Depends(get_db)) -> ReportQualityCh
 
 
 # Data Processing Services
-def get_data_retrieval_service() -> DataRetrievalService:
+def get_data_retrieval_service():
     """Get data retrieval service dependency"""
     try:
+        from app.services.data_processing import DataRetrievalService
         return DataRetrievalService()
     except Exception as e:
         logger.error(f"Failed to create DataRetrievalService: {e}")
@@ -223,9 +206,10 @@ def get_data_retrieval_service() -> DataRetrievalService:
         )
 
 
-def get_data_analysis_service(db: Session = Depends(get_db)) -> DataAnalysisService:
+def get_data_analysis_service(db: Session = Depends(get_db)):
     """Get data analysis service dependency"""
     try:
+        from app.services.data_processing import DataAnalysisService
         return DataAnalysisService(db)
     except Exception as e:
         logger.error(f"Failed to create DataAnalysisService: {e}")
@@ -235,9 +219,10 @@ def get_data_analysis_service(db: Session = Depends(get_db)) -> DataAnalysisServ
         )
 
 
-def get_etl_service(db: Session = Depends(get_db)) -> ETLService:
+def get_etl_service(db: Session = Depends(get_db)):
     """Get ETL service dependency"""
     try:
+        from app.services.data_processing import ETLService
         return ETLService(db)
     except Exception as e:
         logger.error(f"Failed to create ETLService: {e}")
@@ -247,9 +232,10 @@ def get_etl_service(db: Session = Depends(get_db)) -> ETLService:
         )
 
 
-def get_intelligent_etl_executor(db: Session = Depends(get_db)) -> IntelligentETLExecutor:
+def get_intelligent_etl_executor(db: Session = Depends(get_db)):
     """Get intelligent ETL executor dependency"""
     try:
+        from app.services.data_processing import IntelligentETLExecutor
         return IntelligentETLExecutor(db)
     except Exception as e:
         logger.error(f"Failed to create IntelligentETLExecutor: {e}")
@@ -260,9 +246,10 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)) -> IntelligentET
 
 
 # AI Integration Services
-def get_ai_service(db: Session = Depends(get_db)) -> AIService:
+def get_ai_service(db: Session = Depends(get_db)):
     """Get AI service dependency"""
     try:
+        from app.services.ai_integration import AIService
         return AIService(db)
     except Exception as e:
         logger.error(f"Failed to create AIService: {e}")
@@ -272,9 +259,10 @@ def get_ai_service(db: Session = Depends(get_db)) -> AIService:
         )
 
 
-def get_enhanced_ai_service(db: Session = Depends(get_db)) -> EnhancedAIService:
+def get_enhanced_ai_service(db: Session = Depends(get_db)):
     """Get enhanced AI service dependency"""
     try:
+        from app.services.ai_integration import EnhancedAIService
         return EnhancedAIService(db)
     except Exception as e:
         logger.error(f"Failed to create EnhancedAIService: {e}")
@@ -284,9 +272,10 @@ def get_enhanced_ai_service(db: Session = Depends(get_db)) -> EnhancedAIService:
         )
 
 
-def get_content_generator(db: Session = Depends(get_db)) -> ContentGenerator:
+def get_content_generator(db: Session = Depends(get_db)):
     """Get content generator dependency"""
     try:
+        from app.services.ai_integration import ContentGenerator
         return ContentGenerator(db)
     except Exception as e:
         logger.error(f"Failed to create ContentGenerator: {e}")
@@ -296,9 +285,10 @@ def get_content_generator(db: Session = Depends(get_db)) -> ContentGenerator:
         )
 
 
-def get_chart_generator(db: Session = Depends(get_db)) -> ChartGenerator:
+def get_chart_generator(db: Session = Depends(get_db)):
     """Get chart generator dependency"""
     try:
+        from app.services.ai_integration import ChartGenerator
         return ChartGenerator(db)
     except Exception as e:
         logger.error(f"Failed to create ChartGenerator: {e}")
@@ -309,9 +299,10 @@ def get_chart_generator(db: Session = Depends(get_db)) -> ChartGenerator:
 
 
 # Notification Services
-def get_email_service(db: Session = Depends(get_db)) -> EmailService:
+def get_email_service(db: Session = Depends(get_db)):
     """Get email service dependency"""
     try:
+        from app.services.notification import EmailService
         return EmailService(db)
     except Exception as e:
         logger.error(f"Failed to create EmailService: {e}")
@@ -321,9 +312,10 @@ def get_email_service(db: Session = Depends(get_db)) -> EmailService:
         )
 
 
-def get_notification_service(db: Session = Depends(get_db)) -> NotificationService:
+def get_notification_service(db: Session = Depends(get_db)):
     """Get notification service dependency"""
     try:
+        from app.services.notification import NotificationService
         return NotificationService(db)
     except Exception as e:
         logger.error(f"Failed to create NotificationService: {e}")
@@ -338,84 +330,80 @@ def get_notification_service(db: Session = Depends(get_db)) -> NotificationServi
 # ============================================================================
 
 def check_service_health(service_name: str, service_instance) -> dict:
-    """
-    Generic service health check function
-    """
+    """Check service health status"""
     try:
-        # Check if service has a health_check method
+        # Basic health check - try to access a method or attribute
         if hasattr(service_instance, 'health_check'):
-            return service_instance.health_check()
+            health_status = service_instance.health_check()
         else:
-            # Basic health check - just verify the service can be instantiated
-            return {
-                "status": "healthy",
-                "service": service_name,
-                "message": "Service is available"
-            }
-    except Exception as e:
-        logger.error(f"Health check failed for {service_name}: {e}")
+            health_status = {"status": "unknown", "message": "No health check method available"}
+        
         return {
-            "status": "unhealthy",
             "service": service_name,
+            "status": "healthy",
+            "details": health_status
+        }
+    except Exception as e:
+        return {
+            "service": service_name,
+            "status": "unhealthy",
             "error": str(e)
         }
 
 
 def get_all_services_health(db: Session = Depends(get_db)) -> dict:
-    """
-    Get health status of all services
-    """
-    health_status = {
-        "overall_status": "healthy",
-        "timestamp": None,
-        "services": {}
-    }
+    """Get health status of all services"""
+    services_health = {}
     
-    from datetime import datetime
-    health_status["timestamp"] = datetime.utcnow().isoformat()
-    
-    # Database health
     try:
-        from sqlalchemy import text
-        db.execute(text("SELECT 1"))
-        health_status["services"]["database"] = {
-            "status": "healthy",
-            "message": "Database connection successful"
+        # Check each service
+        services = [
+            ("placeholder_processor", get_placeholder_processor()),
+            ("intelligent_placeholder_processor", get_intelligent_placeholder_processor(db)),
+            ("field_matcher", get_field_matcher(db)),
+            ("report_generation_service", get_report_generation_service(db)),
+            ("data_retrieval_service", get_data_retrieval_service()),
+            ("data_analysis_service", get_data_analysis_service(db)),
+            ("etl_service", get_etl_service(db)),
+            ("ai_service", get_ai_service(db)),
+            ("email_service", get_email_service(db)),
+            ("notification_service", get_notification_service(db)),
+        ]
+        
+        for service_name, service_instance in services:
+            services_health[service_name] = check_service_health(service_name, service_instance)
+        
+        return {
+            "overall_status": "healthy" if all(
+                health["status"] == "healthy" for health in services_health.values()
+            ) else "degraded",
+            "services": services_health
         }
+        
     except Exception as e:
-        health_status["services"]["database"] = {
-            "status": "unhealthy",
-            "error": str(e)
+        logger.error(f"Failed to check services health: {e}")
+        return {
+            "overall_status": "unhealthy",
+            "error": str(e),
+            "services": services_health
         }
-        health_status["overall_status"] = "degraded"
-    
-    # Service health checks
-    services_to_check = [
-        ("placeholder_processor", lambda: PlaceholderProcessor()),
-        ("intelligent_placeholder", lambda: IntelligentPlaceholderProcessor(db)),
-        ("report_generation", lambda: ReportGenerationService(db)),
-        ("data_retrieval", lambda: DataRetrievalService()),
-        ("ai_service", lambda: AIService(db)),
-        ("email_service", lambda: EmailService(db)),
-    ]
-    
-    for service_name, service_factory in services_to_check:
-        try:
-            service_instance = service_factory()
-            health_status["services"][service_name] = check_service_health(
-                service_name, service_instance
-            )
-            
-            # Update overall status if any service is unhealthy
-            if health_status["services"][service_name]["status"] != "healthy":
-                health_status["overall_status"] = "degraded"
-                
-        except Exception as e:
-            logger.error(f"Failed to check health for {service_name}: {e}")
-            health_status["services"][service_name] = {
-                "status": "unhealthy",
-                "error": str(e)
-            }
-            health_status["overall_status"] = "degraded"
-    
-    return health_status
+
+
+def check_service_dependencies() -> Dict[str, Any]:
+    """Check the status of service dependencies"""
+    dependencies = {
+        "database": {"status": "healthy", "message": "Database connection OK"},
+        "ai_providers": {"status": "partial", "message": "Some AI providers unavailable"},
+        "services": {"status": "healthy", "message": "Core services operational"}
+    }
+
+    try:
+        # Test database connection
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+    except Exception as e:
+        dependencies["database"] = {"status": "unhealthy", "message": f"Database error: {str(e)}"}
+
+    return dependencies

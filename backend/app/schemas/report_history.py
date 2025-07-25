@@ -31,3 +31,7 @@ class ReportHistoryInDBBase(ReportHistoryBase):
 # Properties to return to client
 class ReportHistory(ReportHistoryInDBBase):
     pass
+
+
+# Alias for API response compatibility
+ReportHistoryResponse = ReportHistory

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { EnhancedDataExportDialog } from './EnhancedDataExportDialog'
 import api from '@/lib/api'
+import axios from 'axios';
 
 interface QuickExportButtonProps {
   sourceId?: number
@@ -55,7 +56,7 @@ export function QuickExportButton({
         limit: 1000
       }
 
-      const response = await api.post('/data-export/export-data', exportData, {
+      const response = await api.post('/v1/data-export/export-data', exportData, {
         responseType: 'blob'
       })
 
@@ -79,9 +80,14 @@ export function QuickExportButton({
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-    } catch (error: any) {
-      console.error('Quick export failed:', error)
-      alert(error.response?.data?.detail || 'Export failed')
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Export failed')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Export failed')
+      } else {
+        alert('Export failed')
+      }
     } finally {
       setExporting(false)
     }

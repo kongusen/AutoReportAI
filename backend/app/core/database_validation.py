@@ -53,7 +53,7 @@ class DatabaseSchemaValidator:
                 ("template_id", "templates", "id"),
             ],
             "templates": [("user_id", "users", "id")],
-            "etl_jobs": [("enhanced_source_id", "enhanced_data_sources", "id")],
+            "etl_jobs": [("data_source_id", "data_sources", "id")],
             "analytics_data": [("data_source_id", "data_sources", "id")],
             "report_history": [("task_id", "tasks", "id")],
             "user_profiles": [("user_id", "users", "id")],
@@ -82,7 +82,6 @@ class DatabaseSchemaValidator:
         expected_unique = {
             "users": ["email", "username"],
             "data_sources": ["name"],
-            "enhanced_data_sources": ["name"],
             "ai_providers": ["provider_name"],
             "templates": [],  # 模板名称可以重复
             "user_profiles": ["user_id"],
@@ -122,12 +121,11 @@ class DatabaseSchemaValidator:
             "users": ["email", "hashed_password"],
             "templates": ["name", "user_id"],
             "data_sources": ["name", "source_type"],
-            "enhanced_data_sources": ["name", "source_type"],
             "ai_providers": ["provider_name", "provider_type"],
             "tasks": ["name", "owner_id", "data_source_id", "template_id"],
             "etl_jobs": [
                 "name",
-                "enhanced_source_id",
+                "data_source_id",
                 "destination_table_name",
                 "source_query",
             ],
@@ -188,7 +186,7 @@ class DatabaseSchemaValidator:
             },
             "etl_jobs": {
                 "id": "UUID",
-                "enhanced_source_id": "INTEGER",
+                "data_source_id": "INTEGER",
                 "enabled": "BOOLEAN",
             },
             "ai_providers": {"id": "INTEGER", "is_active": "BOOLEAN"},
@@ -218,7 +216,6 @@ class DatabaseSchemaValidator:
         expected_indexes = {
             "users": ["email", "username"],
             "data_sources": ["name"],
-            "enhanced_data_sources": ["name"],
             "ai_providers": ["provider_name"],
             "templates": ["name"],
             "tasks": ["name"],

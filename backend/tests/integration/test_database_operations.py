@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app import crud, schemas
 from app.models.user import User
 from app.models.template import Template
-from app.models.enhanced_data_source import EnhancedDataSource
+from app.models.data_source import DataSource
 from app.models.etl_job import ETLJob
 from app.models.placeholder_mapping import PlaceholderMapping
 from app.models.report_history import ReportHistory

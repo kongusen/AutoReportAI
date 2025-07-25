@@ -76,6 +76,8 @@ def run_migrations_online() -> None:
             connection=connection, 
             target_metadata=target_metadata,
             # process_revision_directives=process_revision_directives,
+            version_table_schema=None,
+            version_table="alembic_version",
             **config.get_section(config.config_ini_section),
         )
 

@@ -10,7 +10,7 @@ class TaskBase(BaseModel):
     name: str
     description: Optional[str] = None
     template_id: UUID
-    data_source_id: int
+    data_source_id: UUID
     schedule: Optional[str] = None
     recipients: Optional[List[str]] = []
 
@@ -39,7 +39,7 @@ class TaskUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     template_id: Optional[UUID] = None
-    data_source_id: Optional[int] = None
+    data_source_id: Optional[UUID] = None
     schedule: Optional[str] = None
     recipients: Optional[List[str]] = None
 
@@ -63,6 +63,11 @@ class TaskUpdate(BaseModel):
 class Task(TaskBase):
     id: int
     owner_id: UUID
+    unique_id: str
+
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
 
     class Config:
         from_attributes = True
@@ -72,6 +77,11 @@ class TaskRead(TaskBase):
     id: int
     owner_id: UUID
     is_active: bool
+    unique_id: str
+
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
 
     class Config:
         from_attributes = True

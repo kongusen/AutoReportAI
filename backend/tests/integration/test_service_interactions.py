@@ -15,7 +15,7 @@ from app.services.data_processing.retrieval import DataRetrievalService
 from app.services.ai_integration.llm_service import LLMProviderManager
 from app.models.user import User
 from app.models.template import Template
-from app.models.enhanced_data_source import EnhancedDataSource
+from app.models.data_source import DataSource
 
 
 class TestIntelligentPlaceholderServiceIntegration:
@@ -26,7 +26,7 @@ class TestIntelligentPlaceholderServiceIntegration:
         db_session: Session,
         test_user: User,
         test_template: Template,
-        test_data_source: EnhancedDataSource
+        test_data_source: DataSource
     ):
         """Test placeholder processing integrated with data retrieval"""
         # Mock dependencies

@@ -12,7 +12,8 @@ import {
   AlertCircle,
   XCircle
 } from 'lucide-react'
-import apiClient from '@/lib/api-client'
+import { httpClient } from '@/lib/api/client'
+import axios from 'axios';
 
 // Types
 interface PlaceholderInfo {
@@ -35,11 +36,11 @@ interface FieldSuggestion {
 
 interface FieldMatchingResponse {
   success: boolean
-  placeholder_understanding: Record<string, any>
+  placeholder_understanding: Record<string, unknown>
   field_suggestions: FieldSuggestion[]
   best_match?: FieldSuggestion
   confidence_score: number
-  processing_metadata: Record<string, any>
+  processing_metadata: Record<string, unknown>
 }
 
 interface FieldMatcherProps {
@@ -66,7 +67,7 @@ export function FieldMatcher({
     setMatchingField(true)
     
     try {
-      const response = await apiClient.post('/intelligent-placeholders/field-matching', {
+      const response = await httpClient.post('/intelligent-placeholders/field-matching', {
         placeholder_text: placeholder.placeholder_text,
         placeholder_type: placeholder.placeholder_type,
         description: placeholder.description,
@@ -82,9 +83,15 @@ export function FieldMatcher({
       if (onMatchingComplete) {
         onMatchingComplete(response.data)
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Field matching failed:', error)
-      alert(error.response?.data?.detail || '字段匹配失败')
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || '字段匹配失败')
+      } else if (error instanceof Error) {
+        alert(error.message || '字段匹配失败')
+      } else {
+        alert('字段匹配失败')
+      }
     } finally {
       setMatchingField(false)
     }
@@ -252,26 +259,26 @@ export function FieldMatcher({
                     <div>
                       <p className="text-sm font-medium">语义理解:</p>
                       <p className="text-sm text-gray-700">
-                        {fieldMatchingResult.placeholder_understanding.semantic_meaning}
+                        {String(fieldMatchingResult.placeholder_understanding.semantic_meaning)}
                       </p>
                     </div>
                     <div>
                       <p className="text-sm font-medium">数据类型:</p>
                       <Badge variant="outline">
-                        {fieldMatchingResult.placeholder_understanding.data_type}
+                        {String(fieldMatchingResult.placeholder_understanding.data_type)}
                       </Badge>
                     </div>
                     <div>
                       <p className="text-sm font-medium">需要计算:</p>
                       <Badge variant={fieldMatchingResult.placeholder_understanding.calculation_needed ? "default" : "secondary"}>
-                        {fieldMatchingResult.placeholder_understanding.calculation_needed ? "是" : "否"}
+                        {String(fieldMatchingResult.placeholder_understanding.calculation_needed)}
                       </Badge>
                     </div>
-                    {fieldMatchingResult.placeholder_understanding.aggregation_type && (
+                    {typeof fieldMatchingResult.placeholder_understanding.aggregation_type === 'string' && fieldMatchingResult.placeholder_understanding.aggregation_type && (
                       <div>
                         <p className="text-sm font-medium">聚合类型:</p>
                         <Badge className="bg-purple-100 text-purple-800">
-                          {fieldMatchingResult.placeholder_understanding.aggregation_type}
+                          {String(fieldMatchingResult.placeholder_understanding.aggregation_type)}
                         </Badge>
                       </div>
                     )}
@@ -284,13 +291,13 @@ export function FieldMatcher({
                 <h3 className="font-semibold mb-2">处理信息</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <strong>LLM提供商:</strong> {fieldMatchingResult.processing_metadata.llm_provider}
+                    <strong>LLM提供商:</strong> {String(fieldMatchingResult.processing_metadata.llm_provider)}
                   </div>
                   <div>
-                    <strong>处理时间:</strong> {fieldMatchingResult.processing_metadata.processing_time}ms
+                    <strong>处理时间:</strong> {String(fieldMatchingResult.processing_metadata.processing_time)}ms
                   </div>
                   <div>
-                    <strong>数据源字段数:</strong> {fieldMatchingResult.processing_metadata.data_source_fields}
+                    <strong>数据源字段数:</strong> {String(fieldMatchingResult.processing_metadata.data_source_fields)}
                   </div>
                 </div>
               </div>

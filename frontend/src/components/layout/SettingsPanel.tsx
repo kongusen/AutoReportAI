@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/components/providers/I18nProvider'
 import { AIProviderForm } from '../forms/AIProviderForm'
 
 export function SettingsPanel() {

@@ -45,7 +45,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         router.push('/login')
       } else {
         console.log('AuthGuard: token有效, 设置认证状态为true')
-        setIsAuthenticated(true)
+      setIsAuthenticated(true)
       }
     } catch (error) {
       console.log('AuthGuard: token解析失败:', error)

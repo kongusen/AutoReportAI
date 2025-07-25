@@ -33,5 +33,18 @@ class CRUDReportHistory(CRUDBase[ReportHistory, ReportHistoryCreate, None]):
             .all()
         )
 
+    def count(self, db: Session) -> int:
+        """Get total count of report history entries."""
+        return db.query(self.model).count()
+
+    def get_recent(self, db: Session, *, limit: int = 10) -> List[ReportHistory]:
+        """Get recent report history entries."""
+        return (
+            db.query(self.model)
+            .order_by(ReportHistory.generated_at.desc())
+            .limit(limit)
+            .all()
+        )
+
 
 report_history = CRUDReportHistory(ReportHistory)

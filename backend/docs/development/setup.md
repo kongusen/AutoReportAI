@@ -60,8 +60,8 @@ pip install -r requirements/development.txt
 
 2.  **编辑 `.env` 文件**:
     打开 `.env` 文件并根据您的本地环境进行配置。至少需要配置 `POSTGRES_PASSWORD` 和 `SECRET_KEY`。
-    
-    ```dotenv
+
+```dotenv
     # .env
     
     # 数据库配置
@@ -75,7 +75,7 @@ pip install -r requirements/development.txt
     SECRET_KEY=a_very_secret_key_that_is_long_and_random # 使用 openssl rand -hex 32 生成
     
     # ...其他配置...
-    ```
+```
 
 ### 3.5 启动数据库
 我们使用Docker Compose来管理数据库服务。
@@ -108,9 +108,9 @@ python app/initial_data.py
 ### 3.8 运行后端开发服务器
 现在可以启动FastAPI应用了。
 
-```bash
+   ```bash
 # 在 backend 目录下运行
-uvicorn app.main:app --reload
+   uvicorn app.main:app --reload
 ```
 服务器将在 `http://localhost:8000` 上运行。您可以在 `http://localhost:8000/docs` 查看API文档。
 
@@ -141,7 +141,7 @@ npm install
 
 ### 4.2 配置环境变量
 1.  **复制示例文件**:
-    ```bash
+```bash
     cp .env.local.example .env.local
     ```
 

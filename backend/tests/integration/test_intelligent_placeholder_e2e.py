@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.enhanced_data_source import EnhancedDataSource
+from app.models.data_source import DataSource
 from app.models.template import Template
 from app.models.user import User
 from app.services.ai_integration.llm_service import AIService

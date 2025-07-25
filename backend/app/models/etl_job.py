@@ -15,9 +15,7 @@ class ETLJob(Base):
     name = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
 
-    enhanced_source_id = Column(
-        Integer, ForeignKey("enhanced_data_sources.id"), nullable=False
-    )
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     destination_table_name = Column(String, nullable=False, index=True)
@@ -36,4 +34,4 @@ class ETLJob(Base):
 
     # 关联关系
     user = relationship("User", back_populates="etl_jobs")
-    enhanced_source = relationship("EnhancedDataSource", back_populates="etl_jobs")
+    data_source = relationship("DataSource", back_populates="etl_jobs")

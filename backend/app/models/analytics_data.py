@@ -1,5 +1,6 @@
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base_class import Base
 
@@ -20,7 +21,7 @@ class AnalyticsData(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Foreign key to link this data record back to its source.
-    data_source_id = Column(Integer, ForeignKey("data_sources.id"), nullable=False)
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
 
     # Relationship to the DataSource model
     data_source = relationship("DataSource")

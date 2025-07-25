@@ -1,25 +1,19 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
-from app import crud, models, schemas
-from app.api import deps
+from typing import Any
+from app.db.session import get_db
+from app.core.dependencies import get_current_user
+from app.models.user import User
 from app.services.notification.email_service import EmailService
 
 router = APIRouter()
 
-
 @router.get("/email-settings")
-def get_email_settings(
-    db: Session = Depends(deps.get_db),
-    current_user: models.User = Depends(deps.get_current_active_user),
+async def get_email_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
-    """
-    Get user email settings.
-    """
-    # 这里可以从用户配置或系统配置中获取邮件设置
-    # 为了安全，不返回密码
+    # TODO: 从数据库获取用户邮件设置
     return {
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
@@ -29,32 +23,21 @@ def get_email_settings(
         "sender_name": "AutoReportAI",
     }
 
-
 @router.put("/email-settings")
-def update_email_settings(
-    *,
-    db: Session = Depends(deps.get_db),
+async def update_email_settings(
     email_settings: dict,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
-    """
-    Update user email settings.
-    """
-    # 这里应该将邮件设置保存到数据库
-    # 为了演示，我们只返回成功消息
+    # TODO: 保存邮件设置到数据库
     return {"msg": "Email settings updated successfully"}
 
-
 @router.post("/test-email")
-def test_email_connection(
-    *,
-    db: Session = Depends(deps.get_db),
+async def test_email_connection(
     email_settings: dict,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
-    """
-    Test email connection with provided settings.
-    """
     try:
         email_service = EmailService(
             smtp_server=email_settings.get("smtp_server"),
@@ -65,31 +48,21 @@ def test_email_connection(
             sender_email=email_settings.get("sender_email"),
             sender_name=email_settings.get("sender_name"),
         )
-
         if email_service.test_connection():
             return {"msg": "Email connection test successful"}
         else:
             raise HTTPException(status_code=400, detail="Email connection test failed")
-
     except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"Email connection test failed: {str(e)}"
-        )
-
+        raise HTTPException(status_code=400, detail=f"Email connection test failed: {str(e)}")
 
 @router.post("/send-test-email")
-def send_test_email(
-    *,
-    db: Session = Depends(deps.get_db),
+async def send_test_email(
     test_data: dict,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Any:
-    """
-    Send a test email.
-    """
     try:
         email_service = EmailService()
-
         success = email_service.send_email(
             to_emails=[current_user.email],
             subject="AutoReportAI Test Email",
@@ -106,13 +79,9 @@ def send_test_email(
             </html>
             """,
         )
-
         if success:
             return {"msg": "Test email sent successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to send test email")
-
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to send test email: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to send test email: {str(e)}") 

@@ -39,6 +39,7 @@ import {
   Trash2
 } from 'lucide-react'
 import api from '@/lib/api'
+import axios from 'axios';
 
 interface ExportFormat {
   name: string
@@ -53,7 +54,7 @@ interface ExportItem {
   source_id: number
   name: string
   export_format: string
-  filters?: Record<string, any>
+  filters?: Record<string, unknown>
   columns?: string[]
   limit?: number
 }
@@ -88,7 +89,7 @@ export function DataExportDialog({
   const [exporting, setExporting] = useState(false)
   const [availableColumns, setAvailableColumns] = useState<string[]>([])
   const [selectedColumns, setSelectedColumns] = useState<string[]>([])
-  const [filters, setFilters] = useState<Record<string, any>>({})
+  const [filters, setFilters] = useState<Record<string, unknown>>({})
   const [bulkExport, setBulkExport] = useState(false)
 
   useEffect(() => {
@@ -102,7 +103,7 @@ export function DataExportDialog({
 
   const fetchExportFormats = async () => {
     try {
-      const response = await api.get('/data-export/export-formats')
+      const response = await api.get('/v1/data-export/export-formats')
       setExportFormats(response.data.formats || [])
     } catch (error) {
       console.error('Failed to fetch export formats:', error)
@@ -111,7 +112,7 @@ export function DataExportDialog({
 
   const fetchAvailableColumns = async (sourceId: number) => {
     try {
-      const response = await api.get(`/enhanced-data-sources/${sourceId}/preview?limit=1`)
+      const response = await api.get(`/v1/enhanced-data-sources/${sourceId}/preview?limit=1`)
       setAvailableColumns(response.data.columns || [])
     } catch (error) {
       console.error('Failed to fetch columns:', error)
@@ -163,7 +164,7 @@ export function DataExportDialog({
         limit: currentItem.limit
       }
 
-      const response = await api.post('/data-export/export-data', exportData, {
+      const response = await api.post('/v1/data-export/export-data', exportData, {
         responseType: 'blob'
       })
 
@@ -190,9 +191,14 @@ export function DataExportDialog({
       window.URL.revokeObjectURL(url)
 
       setOpen(false)
-    } catch (error: any) {
-      console.error('Export failed:', error)
-      alert(error.response?.data?.detail || 'Export failed')
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Export failed')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Export failed')
+      } else {
+        alert('Export failed')
+      }
     } finally {
       setExporting(false)
     }
@@ -215,7 +221,7 @@ export function DataExportDialog({
         include_metadata: true
       }
 
-      const response = await api.post('/data-export/bulk-export', bulkData, {
+      const response = await api.post('/v1/data-export/bulk-export', bulkData, {
         responseType: 'blob'
       })
 
@@ -231,9 +237,14 @@ export function DataExportDialog({
       window.URL.revokeObjectURL(url)
 
       setOpen(false)
-    } catch (error: any) {
-      console.error('Bulk export failed:', error)
-      alert(error.response?.data?.detail || 'Bulk export failed')
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        alert(error.response?.data?.detail || 'Bulk export failed')
+      } else if (error instanceof Error) {
+        alert(error.message || 'Bulk export failed')
+      } else {
+        alert('Bulk export failed')
+      }
     } finally {
       setExporting(false)
     }
@@ -290,7 +301,7 @@ export function DataExportDialog({
                     <Label>Export Type</Label>
                     <Select
                       value={currentItem.type}
-                      onValueChange={(value: any) => setCurrentItem(prev => ({ ...prev, type: value }))}
+                      onValueChange={(value: string) => setCurrentItem(prev => ({ ...prev, type: value as 'data_source' | 'task' | 'history' }))}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -364,7 +375,8 @@ export function DataExportDialog({
                           <div key={column} className="flex items-center space-x-2">
                             <Checkbox
                               checked={selectedColumns.includes(column)}
-                              onCheckedChange={(checked) => {
+                              onChange={(e) => {
+                                const checked = (e.target as HTMLInputElement).checked
                                 if (checked) {
                                   setSelectedColumns(prev => [...prev, column])
                                 } else {
@@ -386,7 +398,7 @@ export function DataExportDialog({
                         <div key={column} className="flex items-center space-x-2">
                           <Badge variant="outline">{column}</Badge>
                           <Badge variant="secondary">
-                            {filter.operator} {filter.value}
+                            {(filter as Record<string, string>).operator} {(filter as Record<string, string>).value}
                           </Badge>
                           <Button
                             size="sm"
@@ -444,7 +456,7 @@ export function DataExportDialog({
                     <Label>Type</Label>
                     <Select
                       value={currentItem.type}
-                      onValueChange={(value: any) => setCurrentItem(prev => ({ ...prev, type: value }))}
+                      onValueChange={(value: string) => setCurrentItem(prev => ({ ...prev, type: value as 'data_source' | 'task' | 'history' }))}
                     >
                       <SelectTrigger>
                         <SelectValue />

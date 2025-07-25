@@ -26,7 +26,7 @@ def create_application() -> FastAPI:
         ## AutoReportAI 智能报告生成系统API
 
         这是一个基于AI的智能报告生成系统，提供以下核心功能：
-        
+
         ### 🔐 认证与授权
         * 用户注册、登录、密码重置
         * JWT token认证
@@ -68,7 +68,7 @@ def create_application() -> FastAPI:
         * [GitHub仓库](https://github.com/your-org/AutoReportAI)
         * [用户指南](https://docs.autoreportai.com)
         * [API最佳实践](https://docs.autoreportai.com/api/best-practices)
-        """,
+    """,
         version="1.0.0",
         contact={
             "name": "AutoReportAI Team",
@@ -392,7 +392,7 @@ async def startup():
 
 
 # All API routes are handled by the api_router
-app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router)
 
 # WebSocket routes
 app.include_router(websocket_router)

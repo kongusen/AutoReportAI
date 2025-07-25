@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { wsManager, NotificationMessage } from '@/lib/websocket'
+import { httpClient } from '@/lib/api/client';
 
 interface NotificationContextType {
   notifications: NotificationMessage[]
@@ -62,23 +63,12 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
 
   const sendTestNotification = async () => {
     try {
-      const response = await fetch('/api/v1/notifications/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-        },
-        body: JSON.stringify({
-          type: 'info',
-          title: 'Test Notification',
-          message: 'This is a test notification to verify the system is working.',
-          data: { test: true }
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to send test notification')
-      }
+      await httpClient.post('/v1/notifications/send', {
+        type: 'info',
+        title: 'Test Notification',
+        message: 'This is a test notification to verify the system is working.',
+        data: { test: true }
+      });
     } catch (error) {
       console.error('Error sending test notification:', error)
     }

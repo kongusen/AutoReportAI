@@ -51,7 +51,7 @@ export const useAuthStore = create<AuthState>()(
             },
           })
 
-          const { access_token, user } = response
+          const { access_token, user } = response.data
           
           // 更新状态
           set({

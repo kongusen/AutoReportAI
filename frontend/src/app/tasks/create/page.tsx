@@ -15,8 +15,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Tabs, TabPanel, useTabsContext } from '@/components/ui/Tabs'
 import { Switch } from '@/components/ui/Switch'
 import { CronEditor } from '@/components/forms/CronEditor'
-import { useTaskStore } from '@/stores/taskStore'
-import { useDataSourceStore } from '@/stores/dataSourceStore'
+import { useTaskStore } from '@/features/tasks/taskStore'
+import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
+import { useTemplateStore } from '@/features/templates/templateStore'
+import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { TaskCreate } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
 
@@ -52,6 +54,8 @@ export default function CreateTaskPage() {
   const router = useRouter()
   const { createTask, loading } = useTaskStore()
   const { dataSources, fetchDataSources } = useDataSourceStore()
+  const { templates, fetchTemplates } = useTemplateStore()
+  const { dataSources, fetchDataSources } = useDataSourceStore()
   const [recipientInput, setRecipientInput] = useState('')
 
   const {
@@ -74,6 +78,9 @@ export default function CreateTaskPage() {
   const watchedSchedule = watch('schedule') || ''
 
   useEffect(() => {
+    fetchDataSources()
+    fetchTemplates()
+  }, [fetchDataSources, fetchTemplates])
     fetchDataSources()
   }, [fetchDataSources])
 
@@ -114,18 +121,16 @@ export default function CreateTaskPage() {
     }
   }
 
+
   const dataSourceOptions = dataSources.map(ds => ({
     label: ds.display_name || ds.name,
     value: ds.id,
   }))
 
-  // 模拟模板选项，实际应该从API获取
-  const templateOptions = [
-    { label: '销售报告模板', value: 'template-1' },
-    { label: '用户分析模板', value: 'template-2' },
-    { label: '财务汇总模板', value: 'template-3' },
-    { label: '运营数据模板', value: 'template-4' },
-  ]
+  const templateOptions = templates.map(template => ({
+    label: template.name,
+    value: template.id,
+  }))
 
   const tabItems = [
     { key: 'basic', label: '基本信息' },
@@ -379,3 +384,4 @@ function TaskTabs({
     </>
   )
 }
+

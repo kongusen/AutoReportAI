@@ -9,13 +9,10 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
-import { useAuthStore } from '@/stores/authStore'
+import { useAuthStore } from '@/features/auth/authStore'
+import { loginSchema } from '@/features/auth/validations'
 import { LoginForm } from '@/types'
 
-const loginSchema = z.object({
-  username: z.string().min(1, '请输入用户名或邮箱'),
-  password: z.string().min(1, '请输入密码'),
-})
 
 export default function LoginPage() {
   const router = useRouter()

@@ -1,44 +1,43 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { useAuthStore } from '@/stores/authStore'
-import { getWebSocketManager } from '@/lib/websocket'
+import { useEffect, useRef, useState } from 'react'
+import { useAuthStore } from '@/features/auth/authStore'
+import { getWebSocketManager, WebSocketManager, ConnectionState } from '@/lib/websocket'
 
-export function useWebSocketManager() {
+export function useWebSocketManager(): { wsManager: WebSocketManager | null; connectionState: ConnectionState | null } {
   const { token, isAuthenticated } = useAuthStore()
-  const wsManagerRef = useRef<ReturnType<typeof getWebSocketManager> | null>(null)
+  const wsManagerRef = useRef<WebSocketManager | null>(null)
+  const [connectionState, setConnectionState] = useState<ConnectionState | null>(null)
 
   useEffect(() => {
     if (isAuthenticated && token) {
-      // 创建WebSocket连接
       if (!wsManagerRef.current) {
         wsManagerRef.current = getWebSocketManager()
       }
-
       const wsManager = wsManagerRef.current
 
-      // 连接WebSocket
-      wsManager.connect(token)
-        .then(() => {
-          console.log('WebSocket connected successfully')
-        })
-        .catch((error) => {
-          console.error('Failed to connect WebSocket:', error)
-        })
+      const handleStateChange = (state: ConnectionState) => {
+        setConnectionState(state)
+      }
+      wsManager.onConnectionStateChange(handleStateChange)
 
-      // 清理函数
+      if (wsManager.connectionState !== ConnectionState.OPEN && 
+          wsManager.connectionState !== ConnectionState.CONNECTING) {
+        wsManager.connect(token).catch(err => {
+          console.error('WebSocket connection failed on hook mount', err)
+        })
+      }
+
       return () => {
-        if (wsManager) {
-          wsManager.disconnect()
-        }
+        wsManager.offConnectionStateChange(handleStateChange)
       }
     } else {
-      // 用户未认证，断开WebSocket连接
-      if (wsManagerRef.current) {
+      if (wsManagerRef.current && wsManagerRef.current.connectionState === ConnectionState.OPEN) {
         wsManagerRef.current.disconnect()
+        setConnectionState(ConnectionState.CLOSED)
       }
     }
   }, [isAuthenticated, token])
 
-  return wsManagerRef.current
+  return { wsManager: wsManagerRef.current, connectionState }
 }

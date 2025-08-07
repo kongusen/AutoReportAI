@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/Input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Tabs, TabPanel, useTabsContext } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
-import { useTemplateStore } from '@/stores/templateStore'
+import { useTemplateStore } from '@/features/templates/templateStore'
 import { cn } from '@/utils'
 
 interface TemplateEditorProps {

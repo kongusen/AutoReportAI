@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Empty } from '@/components/ui/Empty'
-import { useDataSourceStore } from '@/stores/dataSourceStore'
+import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { getDataSourceTypeName, formatRelativeTime } from '@/utils'
 import { DataSource } from '@/types'
 

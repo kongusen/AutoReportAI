@@ -3,7 +3,7 @@
 import React from 'react'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
-import { useAuthStore } from '@/stores/authStore'
+import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'

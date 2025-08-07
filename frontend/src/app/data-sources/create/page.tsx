@@ -13,52 +13,10 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Tabs, TabPanel, useTabsContext } from '@/components/ui/Tabs'
-import { useDataSourceStore } from '@/stores/dataSourceStore'
+import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { DataSourceCreate, DataSourceType } from '@/types'
 
-const dataSourceSchema = z.object({
-  name: z.string().min(1, '数据源名称不能为空'),
-  display_name: z.string().optional(),
-  source_type: z.enum(['sql', 'csv', 'api', 'push', 'doris']),
-  
-  // SQL数据库字段
-  connection_string: z.string().optional(),
-  sql_query_type: z.enum(['single_table', 'multi_table', 'custom_view']).default('single_table'),
-  base_query: z.string().optional(),
-  
-  // API字段
-  api_url: z.string().optional(),
-  api_method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).default('GET'),
-  api_headers: z.string().optional(),
-  api_body: z.string().optional(),
-  
-  // Doris字段
-  doris_fe_hosts: z.string().optional(),
-  doris_http_port: z.number().min(1).max(65535).default(8030),
-  doris_query_port: z.number().min(1).max(65535).default(9030),
-  doris_database: z.string().optional(),
-  doris_username: z.string().optional(),
-  doris_password: z.string().optional(),
-  
-  // 推送数据源字段
-  push_endpoint: z.string().optional(),
-  
-  is_active: z.boolean().default(true),
-}).refine((data) => {
-  if (data.source_type === 'sql' && !data.connection_string) {
-    return false
-  }
-  if (data.source_type === 'api' && !data.api_url) {
-    return false
-  }
-  if (data.source_type === 'doris' && (!data.doris_fe_hosts || !data.doris_username)) {
-    return false
-  }
-  return true
-}, {
-  message: '请填写必填字段',
-  path: ['source_type']
-})
+import { dataSourceSchema } from '@/features/data-sources/validations'
 
 type FormData = z.infer<typeof dataSourceSchema>
 

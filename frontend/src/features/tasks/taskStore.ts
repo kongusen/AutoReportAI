@@ -104,7 +104,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const updatedTask = response.data || response
       
       get().updateTaskInList(updatedTask)
-      if (get().currentTask?.id === parseInt(id)) {
+      if (get().currentTask?.id.toString() === id) {
         set({ currentTask: updatedTask })
       }
       toast.success('任务更新成功')
@@ -125,7 +125,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       await api.delete(`/tasks/${id}`)
       
       get().removeTask(id)
-      if (get().currentTask?.id === parseInt(id)) {
+      if (get().currentTask?.id.toString() === id) {
         set({ currentTask: null })
       }
       toast.success('任务删除成功')
@@ -248,7 +248,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   
   removeTask: (id: string) => {
     const { tasks } = get()
-    const filteredList = tasks.filter(task => task.id !== parseInt(id))
+    const filteredList = tasks.filter(task => task.id.toString() !== id)
     set({ tasks: filteredList })
   },
 

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuthStore } from '@/stores/authStore'
+import { useAuthStore } from '@/features/auth/authStore'
 
 interface AuthProviderProps {
   children: React.ReactNode

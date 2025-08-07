@@ -2,8 +2,8 @@
 
 import { useEffect } from 'react'
 import { useWebSocket } from '@/components/providers/WebSocketProvider'
-import { useTaskStore } from '@/stores/taskStore'
-import { useReportStore } from '@/stores/reportStore'
+import { useTaskStore } from '@/features/tasks/taskStore'
+import { useReportStore } from '@/features/reports/reportStore'
 import { TaskProgress, SystemNotificationMessage, ReportCompletedMessage } from '@/types'
 import toast from 'react-hot-toast'
 

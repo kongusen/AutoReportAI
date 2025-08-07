@@ -6,6 +6,7 @@ import { Header } from './Header'
 import { useAuthStore } from '@/stores/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
+import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 
 interface AppLayoutProps {
   children: React.ReactNode
@@ -46,6 +47,9 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </main>
       </div>
+      
+      {/* 连接状态指示器 */}
+      <ConnectionStatusIndicator />
     </div>
   )
 }

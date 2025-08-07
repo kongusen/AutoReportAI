@@ -37,7 +37,7 @@ def create_ai_provider(token):
     ai_provider_data = {
         "provider_name": "GPT-4o-mini",
         "provider_type": "openai",
-        "api_key": "sk-MQWe6wOtgq75cQpK2gGwV9Ninqc5jrxBBWDETRCI8h7PzTkb",
+        "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "api_base_url": "https://xiaoai.plus/v1",
         "default_model_name": "gpt-4o-mini",
         "is_active": 1,

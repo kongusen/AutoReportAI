@@ -44,7 +44,7 @@ async def test_id_system():
             host="192.168.61.30",
             port=9030,
             username="root", 
-            password="yjg@123456",
+            password="xxxxxxxx",
             database="doris",
             description="用于测试用户友好ID系统的Doris数据源",
             slug="test-doris-db",

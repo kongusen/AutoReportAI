@@ -59,7 +59,7 @@ class AIProviderConfigurator:
             "provider_name": f"xiaoai_{unique_id}",
             "provider_type": "openai",  # 使用openai类型，因为小爱使用OpenAI兼容的API
             "api_base_url": "https://xiaoai.com/api/v1/chat/completions",
-            "api_key": "sk-7J3mcoQBWDG85CFYxDJtNzZoglnOA2tibKCTi7HLROIVPii2",
+            "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             "default_model_name": "gpt-4o-mini",
             "is_active": True
         }

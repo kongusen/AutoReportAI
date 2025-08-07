@@ -9,7 +9,7 @@ from typing import Dict, Any
 # AI供应商配置
 AI_PROVIDER_CONFIG = {
     "api_base_url": "https://xiaoai.plus/v1/chat/completions",
-    "api_key": "sk-7J3mcoQBWDG85CFYxDJtNzZoglnOA2tibKCTi7HLROIVPii2",
+    "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "model": "gpt-4o-mini",
     "max_tokens": 4000,
     "temperature": 0.3,

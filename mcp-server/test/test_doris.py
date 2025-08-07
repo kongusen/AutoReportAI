@@ -38,7 +38,7 @@ async def test_doris_workflow():
             host="192.168.61.30",
             port=9030,
             username="root",
-            password="yjg@123456",
+            password="xxxxxxxx",
             database="doris",
             description="用于测试的Doris数据源连接"
         )
@@ -104,7 +104,7 @@ def print_doris_connection_info():
     print("    host='192.168.61.30',")
     print("    port=9030,")
     print("    username='root',")
-    print("    password='yjg@123456',")
+    print("    password='xxxxxxxx',")
     print("    database='doris'")
     print(")")
 

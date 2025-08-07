@@ -100,7 +100,7 @@ def test_core_functionality():
                 ai_data = {
                     "provider_name": f"test_ai_{unique_id}",
                     "provider_type": "openai",
-                    "api_key": "sk-test123456789012345678901234567890123456789012345678901234567890",
+                    "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
                     "api_base_url": "https://api.openai.com/v1",
                     "default_model_name": "gpt-3.5-turbo",
                     "is_active": True

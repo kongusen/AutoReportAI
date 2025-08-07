@@ -36,7 +36,7 @@ async def test_updated_api():
             host="192.168.61.30",
             port=9030,
             username="root", 
-            password="yjg@123456",
+            password="xxxxxxxx",
             database="doris",
             description="测试用户友好ID系统的API端点",
             slug="test-doris-api",

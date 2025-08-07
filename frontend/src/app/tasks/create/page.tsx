@@ -18,7 +18,6 @@ import { CronEditor } from '@/components/forms/CronEditor'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTemplateStore } from '@/features/templates/templateStore'
-import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { TaskCreate } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
 
@@ -55,7 +54,6 @@ export default function CreateTaskPage() {
   const { createTask, loading } = useTaskStore()
   const { dataSources, fetchDataSources } = useDataSourceStore()
   const { templates, fetchTemplates } = useTemplateStore()
-  const { dataSources, fetchDataSources } = useDataSourceStore()
   const [recipientInput, setRecipientInput] = useState('')
 
   const {
@@ -81,8 +79,6 @@ export default function CreateTaskPage() {
     fetchDataSources()
     fetchTemplates()
   }, [fetchDataSources, fetchTemplates])
-    fetchDataSources()
-  }, [fetchDataSources])
 
   const onSubmit = async (data: FormData) => {
     try {

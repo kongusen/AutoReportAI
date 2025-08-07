@@ -46,8 +46,9 @@ export const useTemplateStore = create<TemplateState>()((set, get) => ({
   fetchTemplates: async () => {
     try {
       set({ loading: true, error: null })
-      const response = await api.get<ApiResponse<Template[]>>('/templates')
-      set({ templates: response.data || [], loading: false })
+      const response = await api.get<ApiResponse<any>>('/templates')
+      const templates = response.data?.items || []
+      set({ templates, loading: false })
     } catch (error: any) {
       console.error('Failed to fetch templates:', error)
       set({ error: error.message || '获取模板失败', loading: false })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
+import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration.tsx'
 import { ConnectionState } from '@/lib/websocket'
 import { 
   SignalIcon, 

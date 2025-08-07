@@ -33,7 +33,8 @@ export default function LoginPage() {
       await login(data)
       router.push('/dashboard')
     } catch (err: any) {
-      setError(err.response?.data?.detail || '登录失败，请检查用户名和密码')
+      const errorMessage = err.response?.data?.message || err.response?.data?.error || err.response?.data?.detail || '登录失败，请检查用户名和密码'
+      setError(errorMessage)
     }
   }
 

@@ -88,7 +88,7 @@ export const useAuthStore = create<AuthState>()(
           const response = await api.post('/auth/register', registerData)
 
           set({ isLoading: false })
-          toast.success('注册成功，请登录')
+          toast.success(response.data.message || '注册成功，请登录')
         } catch (error: any) {
           console.error('Registration failed:', error)
           set({ isLoading: false })

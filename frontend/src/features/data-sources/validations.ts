@@ -4,7 +4,7 @@ import { DataSourceType } from '@/types'
 // 数据源表单验证
 export const dataSourceSchema = z.object({
   name: z.string().min(1, '数据源名称不能为空').max(100, '数据源名称最多100个字符'),
-  source_type: z.nativeEnum(DataSourceType),
+  source_type: z.enum(['sql', 'csv', 'api', 'push', 'doris']),
   is_active: z.boolean(),
   
   // SQL数据库配置

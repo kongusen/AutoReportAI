@@ -17,7 +17,7 @@ from app.schemas.token import Token
 router = APIRouter()
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=ApiResponse)
 async def register(
     user_data: UserCreate,
     db: Session = Depends(get_db)
@@ -44,10 +44,14 @@ async def register(
     user_schema = UserSchema.model_validate(user_obj)
     user_dict = user_schema.model_dump()
     user_dict['unique_id'] = str(user_dict.get('id'))
-    return {"id": user_dict["id"], "user": user_dict}
+    return ApiResponse(
+        success=True,
+        data={"id": user_dict["id"], "user": user_dict},
+        message="用户注册成功"
+    )
 
 
-@router.post("/login", status_code=status.HTTP_200_OK)
+@router.post("/login", status_code=status.HTTP_200_OK, response_model=ApiResponse)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
@@ -76,7 +80,11 @@ async def login(
     user_schema = UserSchema.model_validate(user_obj)
     user_dict = user_schema.model_dump()
     user_dict['unique_id'] = str(user_dict.get('id'))
-    return {"access_token": access_token, "token_type": "bearer", "user": user_dict}
+    return ApiResponse(
+        success=True,
+        data={"access_token": access_token, "token_type": "bearer", "user": user_dict},
+        message="登录成功"
+    )
 
 
 @router.post("/logout")
@@ -101,7 +109,7 @@ async def read_users_me(current_user: ORMUser = Depends(get_current_user)):
     return current_user
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=ApiResponse)
 async def refresh_token(
     current_user: ORMUser = Depends(get_current_user)
 ):

@@ -5,7 +5,7 @@ import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
+import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration.tsx'
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 
 interface AppLayoutProps {

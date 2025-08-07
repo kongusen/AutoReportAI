@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react'
 import { useEffect } from 'react'
 import { useWebSocket } from '@/components/providers/WebSocketProvider'
 import { useTaskStore } from '@/features/tasks/taskStore'

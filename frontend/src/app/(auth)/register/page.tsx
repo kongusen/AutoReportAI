@@ -38,7 +38,7 @@ export default function RegisterPage() {
         router.push('/auth/login')
       }, 2000)
     } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || '注册失败，请稍后重试'
+      const errorMessage = err.response?.data?.message || err.response?.data?.error || err.response?.data?.detail || '注册失败，请稍后重试'
       setError(typeof errorMessage === 'string' ? errorMessage : '注册失败')
     }
   }

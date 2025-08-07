@@ -1,52 +1,42 @@
 'use client'
 
-import React from 'react'
-import { LoadingProvider } from './LoadingProvider'
-import { ErrorNotificationProvider } from './ErrorNotificationProvider'
-import AuthProvider from './AuthProvider'
-import { NotificationProvider } from './NotificationProvider'
-import { I18nProvider } from './I18nProvider'
-import { ThemeProvider } from '@/components/ui/ThemeProvider'
+import { Toaster } from 'react-hot-toast'
+import { AuthProvider } from './AuthProvider'
+import { WebSocketProvider } from './WebSocketProvider'
 
 interface AppProvidersProps {
   children: React.ReactNode
-  locale?: string
 }
 
-export function AppProviders({ children, locale }: AppProvidersProps) {
+export function AppProviders({ children }: AppProvidersProps) {
   return (
-    <ThemeProvider>
-      <I18nProvider initialLocale={locale === 'en-US' ? 'en-US' : 'zh-CN'}>
-        <AuthProvider>
-          <LoadingProvider maxConcurrentLoading={3}>
-            <ErrorNotificationProvider 
-              maxNotifications={5}
-              defaultPosition="top-right"
-            >
-              <NotificationProvider>
-                {children}
-              </NotificationProvider>
-            </ErrorNotificationProvider>
-          </LoadingProvider>
-        </AuthProvider>
-      </I18nProvider>
-    </ThemeProvider>
+    <AuthProvider>
+      <WebSocketProvider>
+        {children}
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
+            style: {
+              background: '#fff',
+              color: '#000',
+              border: '1px solid #e5e5e5',
+              borderRadius: '8px',
+              fontSize: '14px',
+            },
+            success: {
+              style: {
+                border: '1px solid #22c55e',
+              },
+            },
+            error: {
+              style: {
+                border: '1px solid #ef4444',
+              },
+            },
+          }}
+        />
+      </WebSocketProvider>
+    </AuthProvider>
   )
 }
-
-// Export individual providers for selective use
-export {
-  LoadingProvider,
-  ErrorNotificationProvider,
-  AuthProvider,
-  NotificationProvider,
-  I18nProvider,
-  ThemeProvider,
-}
-
-// Export hooks for easy access
-export { useLoading } from './LoadingProvider'
-export { useErrorNotification, useApiErrorHandler, useFormErrorHandler } from './ErrorNotificationProvider'
-export { default as useAuth } from './AuthProvider'
-export { useNotificationContext as useNotification } from './NotificationProvider'
-export { useI18n } from './I18nProvider'

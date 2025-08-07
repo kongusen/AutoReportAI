@@ -64,10 +64,24 @@ class CRUDTemplate:
 
     def create_with_user(self, db: Session, *, obj_in: TemplateCreate, user_id) -> Template:
         return self.create(db, obj_in=obj_in, user_id=user_id)
+    
+    def get_user_template(self, db: Session, *, template_id: str, user_id) -> Template:
+        """获取用户的特定模板"""
+        return db.query(Template).filter(
+            Template.id == template_id,
+            Template.user_id == user_id,
+            Template.is_active == True
+        ).first()
 
-    def update(self, db: Session, db_obj: Template, obj_in: TemplateUpdate) -> Template:
+    def update(self, db: Session, db_obj: Template, obj_in) -> Template:
         """更新模板"""
-        update_data = obj_in.model_dump(exclude_unset=True)
+        if hasattr(obj_in, 'model_dump'):
+            # Pydantic model
+            update_data = obj_in.model_dump(exclude_unset=True)
+        else:
+            # 字典
+            update_data = obj_in
+        
         for field, value in update_data.items():
             setattr(db_obj, field, value)
         db.add(db_obj)
@@ -94,4 +108,4 @@ class CRUDTemplate:
         )
 
 
-template = CRUDTemplate()
+crud_template = CRUDTemplate()

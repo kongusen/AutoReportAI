@@ -13,7 +13,6 @@ from app.core.dependencies import get_current_user
 from app.models.user import User as ORMUser
 from app.schemas.user import UserCreate, UserSchema
 from app.schemas.token import Token
-from app.core.dependencies import get_current_user
 
 router = APIRouter()
 

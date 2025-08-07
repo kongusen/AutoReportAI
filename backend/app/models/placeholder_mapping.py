@@ -26,6 +26,7 @@ class PlaceholderMapping(Base):
     """占位符映射表"""
 
     __tablename__ = "placeholder_mapping_cache"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     placeholder_signature = Column(String(255), unique=True, nullable=False, index=True)

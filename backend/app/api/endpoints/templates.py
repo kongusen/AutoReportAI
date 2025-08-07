@@ -12,7 +12,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema
-from app.crud.crud_template import template as crud_template
+from app.crud import template as crud_template
 from app.services.template_parser_service import template_parser
 import re
 
@@ -194,39 +194,52 @@ async def duplicate_template(
     )
 
 
-@router.post("/upload", response_model=ApiResponse)
+@router.put("/{template_id}/upload", response_model=ApiResponse)
 async def upload_template_file(
+    template_id: str,
     file: UploadFile = File(...),
-    name: str = Query(..., description="模板名称"),
-    description: Optional[str] = Query(None, description="模板描述"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """上传模板文件"""
-    # 这里应该实现文件上传和处理逻辑
-    # 暂时返回模拟结果
+    """上传模板文件内容到已创建的模板"""
+    # 验证模板存在且属于当前用户
+    template = crud_template.get_user_template(db, template_id=template_id, user_id=current_user.id)
+    if not template:
+        raise HTTPException(
+            status_code=404,
+            detail="模板不存在或无权限访问"
+        )
+    
+    # 读取文件内容
     content = await file.read()
     
-    template_data = TemplateCreate(
-        name=name,
-        description=description,
-        template_type="word",
-        content=content.decode('utf-8'),
-        original_filename=file.filename,
-        file_size=len(content),
-        is_public=False,
-        is_active=True
-    )
+    # 根据文件扩展名确定模板类型
+    file_extension = file.filename.split('.')[-1].lower() if file.filename else 'txt'
+    template_type_map = {
+        'docx': 'docx',
+        'doc': 'docx',
+        'xlsx': 'xlsx',
+        'xls': 'xlsx',
+        'html': 'html',
+        'htm': 'html',
+        'pdf': 'pdf',
+        'txt': 'text'
+    }
+    template_type = template_type_map.get(file_extension, 'text')
     
-    template_obj = crud_template.create_with_user(
-        db, 
-        obj_in=template_data, 
-        user_id=current_user.id
-    )
+    # 更新模板内容
+    update_data = {
+        "content": content.decode('utf-8') if template_type in ['text', 'html'] else content.hex(),
+        "template_type": template_type,
+        "original_filename": file.filename,
+        "file_size": len(content)
+    }
+    
+    updated_template = crud_template.update(db, db_obj=template, obj_in=update_data)
     
     return ApiResponse(
         success=True,
-        data=template_obj,
+        data=updated_template,
         message="模板文件上传成功"
     )
 

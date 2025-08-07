@@ -4,8 +4,28 @@
 
 from datetime import datetime
 from typing import Any, Dict, Optional
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class PlaceholderType(str, Enum):
+    """占位符类型枚举"""
+    SIMPLE = "simple"
+    AGGREGATE = "aggregate"
+    COMPLEX = "complex"
+    LIST = "list"
+    CONDITIONAL = "conditional"
+
+
+class PlaceholderMatch(BaseModel):
+    """占位符匹配结果"""
+    name: str = Field(..., description="占位符名称")
+    description: str = Field(..., description="占位符描述")
+    placeholder_type: PlaceholderType = Field(..., description="占位符类型")
+    required_fields: list[str] = Field(default_factory=list, description="需要的字段")
+    sql_pattern: Optional[str] = Field(None, description="SQL模式")
+    confidence: float = Field(default=0.0, description="匹配置信度")
 
 
 class PlaceholderMappingBase(BaseModel):

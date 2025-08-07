@@ -8,10 +8,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-autoreport}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoreport}"]
       interval: 10s
@@ -27,7 +26,7 @@ services:
     image: redis:7-alpine
     container_name: autoreport_redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -73,32 +72,53 @@ services:
           memory: 512M
         reservations:
           memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # Frontend web service
-  frontend:
+  # MCP Server service  
+  mcp-server:
     build:
-      context: ./frontend
+      context: ./mcp-server
       dockerfile: Dockerfile
-      target: production
-    container_name: autoreport_frontend
+    container_name: autoreport_mcp
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${MCP_SERVER_PORT:-8001}:8001"
     environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8001
+      - BACKEND_BASE_URL=http://backend:8000/api/v1
+      - BACKEND_TIMEOUT=30
+      - DEFAULT_ADMIN_USERNAME=admin
+      - DEFAULT_ADMIN_PASSWORD=password
+      - SESSION_TIMEOUT=3600
+      - MAX_SESSIONS=100
+      - LOG_LEVEL=INFO
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - autoreport-network
+    volumes:
+      - mcp_logs:/app/logs
     deploy:
       resources:
         limits:
           memory: 256M
         reservations:
           memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Frontend service removed - using MCP interface only
 
   # Database administration (optional)
   pgadmin:
@@ -131,11 +151,10 @@ volumes:
     driver: local
   backend_logs:
     driver: local
+  mcp_logs:
+    driver: local
 
 # Custom network for service communication
 networks:
   autoreport-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16 
+    driver: bridge 

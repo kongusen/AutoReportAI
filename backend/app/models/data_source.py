@@ -26,9 +26,12 @@ class DataSource(Base):
     """数据源模型，支持复杂SQL配置"""
 
     __tablename__ = "data_sources"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, index=True, unique=True, nullable=False)
+    slug = Column(String, index=True, nullable=True)  # 用户友好的ID，如 "my-doris-db"
+    display_name = Column(String, index=True, nullable=True)  # 显示名称，如 "我的Doris数据库"
     source_type = Column(Enum(DataSourceType), nullable=False)
 
     # SQL配置增强

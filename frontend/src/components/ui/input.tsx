@@ -1,21 +1,78 @@
+'use client'
+
 import * as React from 'react'
+import { cva, type VariantProps } from 'class-variance-authority'
+import { cn } from '@/utils'
 
-import { cn } from '@/lib/utils'
+const inputVariants = cva(
+  'flex w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+  {
+    variants: {
+      variant: {
+        default: 'border-gray-300',
+        error: 'border-red-500 focus-visible:ring-red-400',
+      },
+      size: {
+        sm: 'h-9 px-3 py-1 text-sm',
+        default: 'h-10 px-3 py-2',
+        lg: 'h-11 px-4 py-3 text-base',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+      size: 'default',
+    },
+  }
+)
 
-function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
-  return (
-    <input
-      type={type}
-      data-slot="input"
-      className={cn(
-        'file:text-foreground placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground dark:bg-input/30 border-input flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
-        'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-        'aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive',
-        className
-      )}
-      {...props}
-    />
-  )
+export interface InputProps
+  extends React.InputHTMLAttributes<HTMLInputElement>,
+    VariantProps<typeof inputVariants> {
+  error?: boolean
+  leftIcon?: React.ReactNode
+  rightIcon?: React.ReactNode
 }
 
-export { Input }
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, variant, size, error, leftIcon, rightIcon, ...props }, ref) => {
+    const inputVariant = error ? 'error' : variant
+
+    if (leftIcon || rightIcon) {
+      return (
+        <div className="relative">
+          {leftIcon && (
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+              {leftIcon}
+            </div>
+          )}
+          <input
+            className={cn(
+              inputVariants({ variant: inputVariant, size }),
+              leftIcon && 'pl-10',
+              rightIcon && 'pr-10',
+              className
+            )}
+            ref={ref}
+            {...props}
+          />
+          {rightIcon && (
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+              {rightIcon}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <input
+        className={cn(inputVariants({ variant: inputVariant, size }), className)}
+        ref={ref}
+        {...props}
+      />
+    )
+  }
+)
+Input.displayName = 'Input'
+
+export { Input, inputVariants }

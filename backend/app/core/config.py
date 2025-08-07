@@ -1,5 +1,5 @@
 import os
-from typing import Dict
+from typing import Dict, List
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
@@ -26,11 +26,6 @@ class Settings(BaseSettings):
     # Redis configuration for rate limiting
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-    # Service URLs for FastMCP
-    SERVICE_URLS: Dict[str, str] = {
-        "ai_service": os.getenv("AI_SERVICE_URL", "http://localhost:8000/api/v1/ai"),
-        # We can add other services here in the future
-    }
 
     # Email settings
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
@@ -79,6 +74,77 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = os.getenv(
         "ENCRYPTION_KEY", "DO2E-DOAveBMXpu1xMTl9fRjehX_1pbDnVZkuFRDA14="
     )
+
+    # Celery配置
+    CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+    CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
+    CELERY_TASK_SERIALIZER: str = "json"
+    CELERY_RESULT_SERIALIZER: str = "json"
+    CELERY_ACCEPT_CONTENT: List[str] = ["json"]
+    CELERY_TIMEZONE: str = "UTC"
+    CELERY_ENABLE_UTC: bool = True
+    CELERY_WORKER_PREFETCH_MULTIPLIER: int = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", 1))
+    CELERY_TASK_ACKS_LATE: bool = True
+    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = int(os.getenv("CELERY_WORKER_MAX_TASKS_PER_CHILD", 1000))
+
+    # 监控配置
+    ENABLE_MONITORING: bool = os.getenv("ENABLE_MONITORING", "true").lower() == "true"
+    MONITORING_CHECK_INTERVAL: int = int(os.getenv("MONITORING_CHECK_INTERVAL", 300))  # 5分钟
+    
+    # 告警阈值配置
+    ALERT_FAILURE_RATE_WARNING: float = float(os.getenv("ALERT_FAILURE_RATE_WARNING", 0.1))  # 10%
+    ALERT_FAILURE_RATE_CRITICAL: float = float(os.getenv("ALERT_FAILURE_RATE_CRITICAL", 0.2))  # 20%
+    ALERT_AVG_TIME_WARNING: int = int(os.getenv("ALERT_AVG_TIME_WARNING", 600))  # 10分钟
+    ALERT_ERROR_COUNT_WARNING: int = int(os.getenv("ALERT_ERROR_COUNT_WARNING", 50))  # 每小时50次
+    
+    # 管理员邮件配置
+    ADMIN_EMAILS: List[str] = os.getenv("ADMIN_EMAILS", "admin@autoreportai.com").split(",")
+    
+    # AI服务配置
+    DEFAULT_AI_MODEL: str = os.getenv("DEFAULT_AI_MODEL", "gpt-3.5-turbo")
+    AI_REQUEST_TIMEOUT: int = int(os.getenv("AI_REQUEST_TIMEOUT", 300))  # 5分钟
+    AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", 3))
+    
+    # ETL配置
+    ETL_BATCH_SIZE: int = int(os.getenv("ETL_BATCH_SIZE", 10000))
+    ETL_QUERY_TIMEOUT: int = int(os.getenv("ETL_QUERY_TIMEOUT", 900))  # 15分钟
+    
+    # 缓存配置
+    CACHE_DEFAULT_EXPIRE: int = int(os.getenv("CACHE_DEFAULT_EXPIRE", 3600))  # 1小时
+    CACHE_AI_RESPONSE_EXPIRE: int = int(os.getenv("CACHE_AI_RESPONSE_EXPIRE", 3600))  # 1小时
+    
+    # 文件存储配置
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
+    REPORT_OUTPUT_DIR: str = os.getenv("REPORT_OUTPUT_DIR", "./reports")
+    MAX_UPLOAD_SIZE: int = int(os.getenv("MAX_UPLOAD_SIZE", 100 * 1024 * 1024))  # 100MB
+    
+    # MinIO配置
+    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport")
+    MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    
+    # 本地存储配置
+    LOCAL_STORAGE_PATH: str = os.getenv("LOCAL_STORAGE_PATH", "./storage")
+    FORCE_LOCAL_STORAGE: bool = os.getenv("FORCE_LOCAL_STORAGE", "false").lower() == "true"
+    
+    # API基础URL配置
+    API_BASE_URL: str = os.getenv("API_BASE_URL", "http://localhost:8000")
+    
+    # 日志配置
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FORMAT: str = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    
+    # 部署环境配置
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    
+    # API限流配置
+    API_RATE_LIMIT: str = os.getenv("API_RATE_LIMIT", "100/minute")
+    
+    # 健康检查配置
+    HEALTH_CHECK_ENABLED: bool = os.getenv("HEALTH_CHECK_ENABLED", "true").lower() == "true"
 
     class Config:
         case_sensitive = True

@@ -5,7 +5,7 @@ from .crud_etl_job import etl_job
 from .crud_placeholder_mapping import crud_placeholder_mapping as placeholder_mapping
 from .crud_report_history import report_history
 from .crud_task import task
-from .crud_template import template
+from .crud_template import crud_template as template
 from .crud_user import user
 from .crud_user_profile import user_profile
 

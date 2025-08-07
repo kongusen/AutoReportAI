@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.core.security_utils import decrypt_data
 from app.schemas.ai_provider import AIProvider
-from ..mcp_client import mcp_client
+mcp_client = None
 
 logger = logging.getLogger(__name__)
 
@@ -546,3 +546,192 @@ class EnhancedAIService:
         self.provider = crud.ai_provider.get_active(self.db)
         self._initialize_client()
         logger.info("AI provider configuration refreshed")
+
+    async def analyze_placeholder_requirements(
+        self, 
+        placeholder_data: Dict[str, Any], 
+        data_source_id: str
+    ) -> Dict[str, Any]:
+        """
+        分析占位符需求并生成ETL指令
+        这是核心的智能占位符分析功能
+        """
+        placeholder_name = placeholder_data.get('name', '')
+        placeholder_type = placeholder_data.get('type', 'text')
+        placeholder_description = placeholder_data.get('description', '')
+        
+        logger.info(f"开始分析占位符需求: {placeholder_name}")
+        
+        try:
+            # 获取数据源信息
+            data_source = crud.data_source.get(self.db, id=data_source_id)
+            if not data_source:
+                raise ValueError(f"数据源 {data_source_id} 不存在")
+            
+            # 构建分析提示词
+            system_prompt = f"""
+            你是一个智能数据分析助手，负责分析报告模板中的占位符并生成相应的ETL指令。
+            
+            数据源信息:
+            - 类型: {data_source.source_type}
+            - 数据库: {getattr(data_source, 'doris_database', 'unknown')}
+            - 主机: {getattr(data_source, 'doris_fe_hosts', ['unknown'])}
+            
+            你需要根据占位符的名称、类型和描述，生成准确的SQL查询或数据处理指令。
+            
+            占位符类型说明:
+            - 统计: 需要计算数值统计 (如总数、平均值、最大最小值等)
+            - 区域: 需要按地理位置分组分析
+            - 周期: 需要按时间维度分析 (日、周、月、年)
+            - 图表: 需要为可视化准备数据
+            - 排行: 需要按某个指标排序
+            - 比较: 需要对比不同维度的数据
+            
+            请返回JSON格式的ETL指令，包含:
+            {{
+                "query_type": "sql|aggregation|groupby",
+                "sql_query": "具体的SQL查询语句",
+                "aggregation": "sum|count|avg|max|min",
+                "group_by": ["字段1", "字段2"],
+                "order_by": {{"field": "字段名", "direction": "asc|desc"}},
+                "limit": 数量限制,
+                "filters": [
+                    {{"field": "字段名", "operator": "=|>|<|like", "value": "值"}}
+                ],
+                "description": "查询说明"
+            }}
+            """
+            
+            user_prompt = f"""
+            请分析以下占位符并生成ETL指令:
+            
+            占位符名称: {placeholder_name}
+            占位符类型: {placeholder_type}
+            占位符描述: {placeholder_description}
+            
+            根据占位符的语义含义，生成合适的数据查询指令。请特别注意:
+            1. 如果是"总数"、"数量"相关，使用COUNT聚合
+            2. 如果是"平均"、"均值"相关，使用AVG聚合  
+            3. 如果是"最大"、"最小"相关，使用MAX/MIN聚合
+            4. 如果是"地区"、"区域"相关，按地理字段分组
+            5. 如果是"月份"、"季度"、"年度"相关，按时间字段分组
+            6. 如果是"排行"、"榜单"相关，添加排序和限制条数
+            
+            请返回完整的JSON格式ETL指令。
+            """
+            
+            request = AIRequest(
+                model=self.provider.default_model_name or "gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.1
+            )
+            
+            response = await self.chat_completion(request)
+            
+            # 尝试解析JSON响应
+            try:
+                etl_instruction = json.loads(response.content)
+                
+                # 验证必要字段
+                if not etl_instruction.get('query_type'):
+                    etl_instruction['query_type'] = 'sql'
+                
+                if not etl_instruction.get('description'):
+                    etl_instruction['description'] = f"查询{placeholder_name}的数据"
+                
+                logger.info(f"占位符分析完成: {placeholder_name}")
+                
+                return {
+                    "placeholder": placeholder_data,
+                    "etl_instruction": etl_instruction,
+                    "data_source_id": data_source_id,
+                    "analysis_time": datetime.now().isoformat()
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"AI响应JSON解析失败: {e}, 使用默认ETL指令")
+                
+                # 生成默认ETL指令
+                default_etl = self._generate_default_etl_instruction(
+                    placeholder_name, placeholder_type, data_source
+                )
+                
+                return {
+                    "placeholder": placeholder_data,
+                    "etl_instruction": default_etl,
+                    "data_source_id": data_source_id,
+                    "analysis_time": datetime.now().isoformat(),
+                    "fallback": True
+                }
+                
+        except Exception as e:
+            logger.error(f"占位符分析失败: {placeholder_name}, 错误: {str(e)}")
+            raise ValueError(f"占位符分析失败: {str(e)}")
+
+    def _generate_default_etl_instruction(
+        self, 
+        placeholder_name: str, 
+        placeholder_type: str,
+        data_source
+    ) -> Dict[str, Any]:
+        """生成默认ETL指令"""
+        
+        # 根据占位符名称推测查询类型
+        name_lower = placeholder_name.lower()
+        
+        if any(keyword in name_lower for keyword in ['总数', '数量', '个数', '总计']):
+            return {
+                "query_type": "sql",
+                "sql_query": "SELECT COUNT(*) as total FROM your_table",
+                "aggregation": "count",
+                "description": f"统计{placeholder_name}"
+            }
+        elif any(keyword in name_lower for keyword in ['平均', '均值', '平均数']):
+            return {
+                "query_type": "sql", 
+                "sql_query": "SELECT AVG(value_column) as average FROM your_table",
+                "aggregation": "avg",
+                "description": f"计算{placeholder_name}"
+            }
+        elif any(keyword in name_lower for keyword in ['最大', '最高', '峰值']):
+            return {
+                "query_type": "sql",
+                "sql_query": "SELECT MAX(value_column) as maximum FROM your_table", 
+                "aggregation": "max",
+                "description": f"获取{placeholder_name}"
+            }
+        elif any(keyword in name_lower for keyword in ['最小', '最低', '最少']):
+            return {
+                "query_type": "sql",
+                "sql_query": "SELECT MIN(value_column) as minimum FROM your_table",
+                "aggregation": "min", 
+                "description": f"获取{placeholder_name}"
+            }
+        elif any(keyword in name_lower for keyword in ['地区', '区域', '城市', '省份']):
+            return {
+                "query_type": "groupby",
+                "sql_query": "SELECT region, COUNT(*) as count FROM your_table GROUP BY region",
+                "group_by": ["region"],
+                "aggregation": "count",
+                "description": f"按地区统计{placeholder_name}"
+            }
+        elif any(keyword in name_lower for keyword in ['排行', '榜单', '排名', 'top']):
+            return {
+                "query_type": "sql",
+                "sql_query": "SELECT name, value FROM your_table ORDER BY value DESC LIMIT 10",
+                "order_by": {"field": "value", "direction": "desc"},
+                "limit": 10,
+                "description": f"获取{placeholder_name}排行榜"
+            }
+        else:
+            # 默认查询
+            return {
+                "query_type": "sql",
+                "sql_query": "SELECT * FROM your_table LIMIT 100",
+                "limit": 100,
+                "description": f"查询{placeholder_name}相关数据"
+            }

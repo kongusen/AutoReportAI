@@ -17,9 +17,46 @@ from app.models.task import Task
 from app.models.report_history import ReportHistory
 from app.models.etl_job import ETLJob
 from app.models.ai_provider import AIProvider
-from app.core.dependencies import get_current_user
 
 router = APIRouter()
+
+
+@router.get("/", response_model=ApiResponse)
+async def get_dashboard_overview(
+    db: Session = Depends(get_db)
+):
+    """
+    获取仪表盘概览（无需认证）
+    """
+    # 系统总体统计（不涉及用户数据）
+    total_users = db.query(User).count()
+    total_data_sources = db.query(DataSource).count() 
+    total_templates = db.query(Template).count()
+    total_tasks = db.query(Task).count()
+    
+    return ApiResponse(
+        success=True,
+        data={
+            "system_stats": {
+                "total_users": total_users,
+                "total_data_sources": total_data_sources,
+                "total_templates": total_templates,
+                "total_tasks": total_tasks,
+                "status": "operational"
+            },
+            "system_info": {
+                "version": "v1.0.0",
+                "uptime": "系统运行中",
+                "features": [
+                    "AI报告生成",
+                    "智能数据处理", 
+                    "多数据源支持",
+                    "模板管理"
+                ]
+            }
+        },
+        message="系统概览获取成功"
+    )
 
 
 @router.get("/stats", response_model=ApiResponse)

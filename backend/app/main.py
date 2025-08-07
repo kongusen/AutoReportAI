@@ -392,7 +392,7 @@ async def startup():
 
 
 # All API routes are handled by the api_router
-app.include_router(api_router)
+app.include_router(api_router, prefix="/api")
 
 # WebSocket routes
 app.include_router(websocket_router)

@@ -12,7 +12,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.template import Template
 from app.models.data_source import DataSource
-from app.crud.crud_template import template as crud_template
+from app.crud import template as crud_template
 from app.crud.crud_data_source import crud_data_source
 
 router = APIRouter()
@@ -20,7 +20,7 @@ router = APIRouter()
 
 @router.post("/analyze", response_model=ApiResponse)
 async def analyze_template_placeholders(
-    template_id: str,
+    template_id: str = Query(..., description="模板ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -91,9 +91,9 @@ async def analyze_template_placeholders(
 
 @router.post("/field-matching", response_model=ApiResponse)
 async def match_placeholder_fields(
-    template_id: str,
-    data_source_id: str,
-    placeholder_name: str,
+    template_id: str = Query(..., description="模板ID"),
+    data_source_id: str = Query(..., description="数据源ID"),
+    placeholder_name: str = Query(..., description="占位符名称"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

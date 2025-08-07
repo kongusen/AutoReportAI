@@ -1,13 +1,19 @@
 # Multi-stage build for optimized production image
 # Stage 1: Build stage
-FROM python:3.11-slim AS builder
+FROM docker.io/python:3.11-slim AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Configure apt to use IPv4 only and disable parallel downloads
+RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::BrokenProxy    "true";' >> /etc/apt/apt.conf.d/99force-ipv4
+
 # Install system dependencies for building
-RUN apt-get update && apt-get install -y \
+RUN apt-get update --fix-missing && apt-get install -y \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -23,8 +29,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /app/requirements/production.txt
+RUN pip install --no-cache-dir --upgrade pip --trusted-host pypi.org --trusted-host files.pythonhosted.org && \
+    pip install --no-cache-dir -r /app/requirements/production.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
 
 # Stage 2: Production stage
 FROM python:3.11-slim AS production
@@ -34,8 +40,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Configure apt to use IPv4 only and disable parallel downloads
+RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::BrokenProxy    "true";' >> /etc/apt/apt.conf.d/99force-ipv4
+
 # Install only runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update --fix-missing && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean

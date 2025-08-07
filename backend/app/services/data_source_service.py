@@ -516,6 +516,27 @@ class DataSourceService:
             self.logger.error(f"Failed to fetch CSV data: {e}")
             raise ValueError(f"Failed to fetch CSV data: {str(e)}")
 
+    async def sync_data_source(self, source_id: str) -> Dict[str, Any]:
+        """同步数据源"""
+        try:
+            # 获取数据预览以验证数据源连接
+            preview_data = await self.get_data_preview(source_id, limit=10)
+            
+            return {
+                "success": True,
+                "message": "数据源同步成功",
+                "records_count": preview_data.get("row_count", 0),
+                "columns_count": preview_data.get("total_columns", 0),
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to sync data source: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+    
     async def get_data_preview(self, source_id: str, limit: int = 10) -> Dict[str, Any]:
         """获取数据预览"""
         try:

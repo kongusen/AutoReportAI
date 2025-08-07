@@ -17,6 +17,30 @@ from app.core.dependencies import get_current_user
 router = APIRouter()
 
 
+@router.get("/", response_model=ApiResponse)
+async def get_system_info():
+    """获取系统基本信息"""
+    return ApiResponse(
+        success=True,
+        data={
+            "system_name": "AutoReportAI",
+            "version": "v1.0.0",
+            "description": "智能报告生成系统",
+            "features": [
+                "AI驱动的报告生成",
+                "多数据源支持",
+                "智能模板处理",
+                "实时任务监控",
+                "邮件通知系统"
+            ],
+            "api_version": "v1",
+            "supported_versions": ["v1", "v2"],
+            "status": "operational"
+        },
+        message="系统信息获取成功"
+    )
+
+
 @router.get("/health", response_model=ApiResponse)
 async def get_system_health(
     db: Session = Depends(get_db)

@@ -15,6 +15,7 @@ class AIProviderType(str, enum.Enum):
 
 class AIProvider(Base):
     __tablename__ = "ai_providers"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     provider_name = Column(String, index=True, unique=True, nullable=False)

@@ -33,7 +33,15 @@ test-integration:
 
 # 运行端到端测试
 test-e2e:
-	python test_backend_final.py
+	python tests/scripts/test_backend_final.py
+
+# 运行API测试套件
+test-api:
+	python3 tests/run_api_tests.py
+
+# 运行核心功能测试
+test-core:
+	python3 tests/final_api_test_summary.py
 
 # CI环境测试
 test-ci:

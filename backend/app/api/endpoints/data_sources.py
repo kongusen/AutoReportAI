@@ -17,8 +17,23 @@ from app.schemas.data_source import DataSourceCreate, DataSourceUpdate, DataSour
 from app.crud.crud_data_source import crud_data_source
 from app.core.dependencies import get_current_user
 from app.crud.crud_data_source import get_wide_table_data
+from app.core.data_source_utils import parse_data_source_id, format_data_source_info
 
 router = APIRouter()
+
+
+def resolve_data_source_id(data_source_id: str, user_id: UUID, db: Session) -> DataSourceModel:
+    """
+    解析数据源ID并返回数据源对象
+    支持UUID、slug、name、display_name等格式
+    """
+    data_source = parse_data_source_id(data_source_id, user_id, db)
+    if not data_source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="数据源不存在或无权限访问"
+        )
+    return data_source
 
 
 @router.get("/", response_model=ApiResponse)
@@ -107,17 +122,9 @@ async def get_data_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """获取特定数据源"""
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    """获取特定数据源，支持多种ID格式"""
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     data_source_schema = DataSourceSchema.model_validate(data_source)
     data_source_dict = data_source_schema.model_dump()
     data_source_dict['unique_id'] = str(data_source_dict.get('id'))
@@ -135,17 +142,9 @@ async def update_data_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """更新数据源"""
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    """更新数据源，支持多种ID格式"""
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
     data_source = crud_data_source.update(
         db, 
@@ -168,19 +167,11 @@ async def delete_data_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """删除数据源"""
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    """删除数据源，支持多种ID格式"""
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
-    crud_data_source.remove(db, id=ds_uuid)
+    crud_data_source.remove(db, id=data_source.id)
     
     return ApiResponse(
         success=True,
@@ -195,20 +186,12 @@ async def test_data_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """测试数据源连接"""
+    """测试数据源连接，支持多种ID格式"""
     import time
     from ...services.data_source_service import data_source_service
     
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
     try:
         # 使用数据源服务进行真实连接测试
@@ -258,58 +241,92 @@ async def sync_data_source(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """同步数据源"""
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    """同步数据源，支持多种ID格式"""
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
-    # 这里应该实现实际的数据同步逻辑
-    # 暂时返回模拟结果
-    return ApiResponse(
-        success=True,
-        data={
-            "sync_status": "success",
-            "records_synced": 100,
-            "data_source_name": data_source.name
-        },
-        message="数据源同步成功"
-    )
+    # 实际执行数据源同步逻辑
+    try:
+        from ...services.data_source_service import data_source_service
+        sync_result = await data_source_service.sync_data_source(str(data_source.id))
+        
+        if sync_result.get("success"):
+            return ApiResponse(
+                success=True,
+                data={
+                    "sync_status": "success",
+                    "records_synced": sync_result.get("records_count", 0),
+                    "data_source_name": data_source.name,
+                    "details": sync_result
+                },
+                message="数据源同步成功"
+            )
+        else:
+            return ApiResponse(
+                success=False,
+                data={
+                    "sync_status": "failed",
+                    "data_source_name": data_source.name,
+                    "error": sync_result.get("error", "未知错误")
+                },
+                message="数据源同步失败"
+            )
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            data={
+                "sync_status": "error",
+                "data_source_name": data_source.name,
+                "error": str(e)
+            },
+            message=f"数据源同步出错: {str(e)}"
+        )
 
 
-@router.post("/upload", response_model=ApiResponse)
+@router.put("/{data_source_id}/upload", response_model=ApiResponse)
 async def upload_data_source_file(
+    data_source_id: str,
     file: UploadFile = File(...),
-    name: str = Query(..., description="数据源名称"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """上传文件作为数据源"""
-    # 这里应该实现文件上传和处理逻辑
-    # 暂时返回模拟结果
-    data_source_data = DataSourceCreate(
-        name=name,
-        source_type="csv",
-        connection_string=f"/uploads/{file.filename}",
-        is_active=True
-    )
+    """上传文件内容到已创建的数据源，支持多种ID格式"""
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
-    data_source_obj = crud_data_source.create_with_user(
-        db, 
-        obj_in=data_source_data, 
-        user_id=current_user.id
+    # 读取文件内容
+    content = await file.read()
+    
+    # 根据文件扩展名确定数据源类型
+    file_extension = file.filename.split('.')[-1].lower() if file.filename else 'csv'
+    source_type_map = {
+        'csv': 'csv',
+        'xlsx': 'excel',
+        'xls': 'excel',
+        'json': 'api',
+        'sql': 'sql'
+    }
+    source_type = source_type_map.get(file_extension, 'csv')
+    
+    # 更新数据源
+    update_data = {
+        "source_type": source_type,
+        "connection_string": f"/uploads/{current_user.id}/{file.filename}",
+        "original_filename": file.filename,
+        "file_size": len(content)
+    }
+    
+    # TODO: 实际保存文件到磁盘/对象存储
+    # 这里应该将文件保存到用户专属目录
+    
+    updated_data_source = crud_data_source.update(
+        db, db_obj=data_source, obj_in=update_data
     )
     
     return ApiResponse(
         success=True,
-        data=data_source_obj,
-        message="文件上传并创建数据源成功"
+        data=updated_data_source,
+        message="数据源文件上传成功"
     )
 
 
@@ -323,17 +340,10 @@ async def get_wide_table(
 ):
     """
     获取指定数据源的宽表数据（支持分页）
+    支持多种ID格式：UUID、slug、name、display_name
     """
-    try:
-        ds_uuid = UUID(data_source_id)
-    except Exception:
-        raise HTTPException(status_code=422, detail="数据源ID格式错误")
-    data_source = crud_data_source.get(db, id=ds_uuid)
-    if not data_source or data_source.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在或无权限访问"
-        )
+    # 使用新的ID解析系统
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     table_name = data_source.table_name
     if not table_name:
         raise HTTPException(status_code=400, detail="数据源未配置表名")

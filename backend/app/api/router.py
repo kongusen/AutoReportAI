@@ -11,9 +11,8 @@ from app.api.endpoints import (
     dashboard,
     system,
     auth,
-    email_settings,
+    files,
     history,
-    user_profile,
     intelligent_placeholders,
     health,
     # 如有其它业务模块可继续添加
@@ -37,7 +36,6 @@ api_router.include_router(ai_providers.router, prefix="/v1/ai-providers", tags=[
 api_router.include_router(dashboard.router, prefix="/v1/dashboard", tags=["仪表盘"])
 api_router.include_router(system.router, prefix="/v1/system", tags=["系统管理"])
 api_router.include_router(auth.router, prefix="/v1/auth", tags=["认证"])
-api_router.include_router(email_settings.router, prefix="/v1/email-settings", tags=["邮件设置"])
+api_router.include_router(files.router, prefix="/v1/files", tags=["文件管理"])
 api_router.include_router(history.router, prefix="/v1/history", tags=["历史记录"])
-api_router.include_router(user_profile.router, prefix="/v1/user-profile", tags=["用户配置"])
 api_router.include_router(intelligent_placeholders.router, prefix="/v1/intelligent-placeholders", tags=["智能占位符"])

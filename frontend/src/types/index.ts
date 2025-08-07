@@ -1,0 +1,223 @@
+// 基础类型定义
+export interface ApiResponse<T = any> {
+  success: boolean
+  data?: T
+  message?: string
+  errors?: string[]
+}
+
+// 用户相关类型
+export interface User {
+  id: string
+  username: string
+  email: string
+  is_active: boolean
+  is_superuser: boolean
+  created_at: string
+  updated_at?: string
+}
+
+export interface UserProfile {
+  id: string
+  user_id: string
+  full_name?: string
+  bio?: string
+  avatar_url?: string
+  created_at: string
+  updated_at?: string
+}
+
+// 数据源类型
+export type DataSourceType = 'sql' | 'csv' | 'api' | 'push' | 'doris'
+
+export interface DataSource {
+  id: string
+  user_id: string
+  name: string
+  slug?: string
+  display_name?: string
+  source_type: DataSourceType
+  
+  // SQL数据库配置
+  connection_string?: string
+  sql_query_type: 'single_table' | 'multi_table' | 'custom_view'
+  base_query?: string
+  join_config?: Record<string, any>
+  column_mapping?: Record<string, any>
+  where_conditions?: Record<string, any>
+  wide_table_name?: string
+  wide_table_schema?: Record<string, any>
+  
+  // API数据源配置
+  api_url?: string
+  api_method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  api_headers?: Record<string, string>
+  api_body?: Record<string, any>
+  
+  // 推送数据源配置
+  push_endpoint?: string
+  push_auth_config?: Record<string, any>
+  
+  // Doris数据库配置
+  doris_fe_hosts?: string[]
+  doris_be_hosts?: string[]
+  doris_http_port: number
+  doris_query_port: number
+  doris_database?: string
+  doris_username?: string
+  doris_password?: string
+  
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+export interface DataSourceCreate extends Omit<DataSource, 'id' | 'user_id' | 'created_at' | 'updated_at'> {}
+export interface DataSourceUpdate extends Partial<DataSourceCreate> {}
+
+// 模板类型
+export interface Template {
+  id: string
+  owner_id: string
+  name: string
+  description?: string
+  content: string
+  template_type: string
+  variables?: Record<string, any>
+  created_at: string
+  updated_at?: string
+}
+
+export interface TemplateCreate extends Omit<Template, 'id' | 'owner_id' | 'created_at' | 'updated_at'> {}
+export interface TemplateUpdate extends Partial<TemplateCreate> {}
+
+// 任务类型
+export interface Task {
+  id: number
+  owner_id: string
+  unique_id: string
+  name: string
+  description?: string
+  template_id: string
+  data_source_id: string
+  schedule?: string
+  recipients?: string[]
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+export interface TaskCreate extends Omit<Task, 'id' | 'owner_id' | 'unique_id' | 'created_at' | 'updated_at'> {}
+export interface TaskUpdate extends Partial<TaskCreate> {}
+
+// 任务进度类型
+export interface TaskProgress {
+  task_id: string
+  progress: number
+  status: 'running' | 'completed' | 'failed' | 'pending'
+  message?: string
+  estimated_time?: number
+}
+
+// 报告类型
+export interface Report {
+  id: string
+  task_id: string
+  name: string
+  file_path: string
+  file_size: number
+  status: 'generating' | 'completed' | 'failed'
+  created_at: string
+}
+
+// AI提供商类型
+export interface AIProvider {
+  id: string
+  name: string
+  provider_type: string
+  config: Record<string, any>
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+// 系统信息类型
+export interface SystemInfo {
+  version: string
+  uptime: string
+  features: string[]
+}
+
+export interface SystemStats {
+  total_users: number
+  total_data_sources: number
+  total_templates: number
+  total_tasks: number
+  status: 'operational'
+}
+
+export interface DashboardStats {
+  system_stats: SystemStats
+  system_info: SystemInfo
+}
+
+// WebSocket消息类型
+export interface WebSocketMessage {
+  type: 'task_progress' | 'system_notification' | 'report_completed'
+  payload: any
+  timestamp: string
+  user_id?: string
+}
+
+export interface TaskProgressMessage extends WebSocketMessage {
+  type: 'task_progress'
+  payload: TaskProgress
+}
+
+export interface SystemNotificationMessage extends WebSocketMessage {
+  type: 'system_notification'
+  payload: {
+    title: string
+    message: string
+    level: 'info' | 'warning' | 'error' | 'success'
+    action?: {
+      label: string
+      url: string
+    }
+  }
+}
+
+export interface ReportCompletedMessage extends WebSocketMessage {
+  type: 'report_completed'
+  payload: Report
+}
+
+// 表单类型
+export interface LoginForm {
+  username: string
+  password: string
+}
+
+export interface RegisterForm {
+  username: string
+  email: string
+  password: string
+  confirmPassword: string
+}
+
+// UI状态类型
+export interface UIState {
+  sidebarOpen: boolean
+  theme: 'light' | 'dark'
+  loading: boolean
+}
+
+// 通知类型
+export interface Notification {
+  id: string
+  type: 'success' | 'error' | 'warning' | 'info'
+  title: string
+  message: string
+  timestamp: string
+  read: boolean
+}

@@ -10,7 +10,7 @@ import uuid
 import time
 
 # 测试配置
-BASE_URL = "http://localhost:8000/api/v2"
+BASE_URL = "http://localhost:8000/api/v1"
 HEADERS = {"Content-Type": "application/json"}
 
 def test_backend_endpoints():

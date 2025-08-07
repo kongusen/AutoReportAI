@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Dict, Any
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
-from app.api.deps import get_db, check_service_dependencies
+from app.api.deps import get_db, get_all_services_health
 from app.core.config import settings
 
 router = APIRouter()
@@ -45,15 +45,16 @@ async def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # Service dependencies check
     try:
-        dependencies = check_service_dependencies()
-        health_data["checks"]["dependencies"] = {
-            "status": "healthy",
-            "details": dependencies
+        services_health = get_all_services_health(db)
+        status = "healthy" if services_health["overall_status"] == "healthy" else "degraded"
+        health_data["checks"]["services"] = {
+            "status": status,
+            "details": services_health
         }
     except Exception as e:
-        health_data["checks"]["dependencies"] = {
+        health_data["checks"]["services"] = {
             "status": "degraded",
-            "message": f"Dependencies check failed: {str(e)}"
+            "message": f"Services check failed: {str(e)}"
         }
     
     # Memory and performance check
@@ -155,16 +156,14 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
         
         # Check performance components
         from app.services.data_processing.query_optimizer import QueryOptimizer
-        from app.services.async_mcp_client import AsyncMCPClient
         
         optimizer = QueryOptimizer()
-        client = AsyncMCPClient()
         
         health_data["checks"]["performance_components"] = {
             "status": "healthy",
             "components": {
                 "query_optimizer": "available",
-                "async_mcp_client": "available",
+                "async_mcp_client": "disabled",  # 临时禁用
                 "batch_processor": "available"
             }
         }

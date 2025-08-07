@@ -1,86 +1,86 @@
-#!/usr/bin/env python3
-"""
-Database initialization script for AutoReportAI
-This script will create all necessary database tables and initial data
-"""
-
+import logging
 import os
 import sys
-from pathlib import Path
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
-# Add parent directory to path to import app modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add the project root to the Python path
+# This allows running the script from the 'scripts' directory
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.core.config import settings
-from app.core.security import get_password_hash
-from app.db.base import Base
+from app.db.session import SessionLocal
 from app.models.ai_provider import AIProvider
-from app.models.data_source import DataSource
-from app.models.etl_job import ETLJob
-from app.models.report_history import ReportHistory
-from app.models.task import Task
-from app.models.template import Template
 from app.models.user import User
+from app.core.security import get_password_hash
 
 
-def init_database():
-    """Initialize database with all tables and initial data"""
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-    # Create database engine
-    engine = create_engine(settings.DATABASE_URL)
 
-    # Create all tables
-    print("Creating database tables...")
-    Base.metadata.create_all(bind=engine)
-    print("All tables created successfully!")
-
-    # Create session
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-
-    try:
-        # Check if admin user exists
-        admin_user = db.query(User).filter(User.email == "admin@example.com").first()
-        if not admin_user:
-            # Create admin user
-            admin_user = User(
-                email="admin@example.com",
-                username="admin",
-                hashed_password=get_password_hash("admin123"),
-                full_name="Administrator",
-                is_active=True,
-                is_superuser=True,
-            )
-            db.add(admin_user)
-            db.commit()
-            print("Admin user created: admin@example.com / admin123")
-
-        # Create sample data source
-        sample_source = (
-            db.query(DataSource).filter(DataSource.name == "Sample CSV").first()
+def init_db(db_session):
+    """
+    Initialize the database with initial data.
+    """
+    # Check if user already exists
+    user = db_session.query(User).filter(User.username == settings.FIRST_SUPERUSER).first()
+    if not user:
+        # Create user
+        logger.info(f"Creating superuser: {settings.FIRST_SUPERUSER}")
+        user = User(
+            username=settings.FIRST_SUPERUSER,
+            email=settings.FIRST_SUPERUSER_EMAIL,
+            password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+            is_superuser=True,
+            is_active=True,
         )
-        if not sample_source:
-            sample_source = DataSource(
-                name="Sample CSV", 
-                connection_string="./sample_data.csv", 
-                source_type="csv",
-                user_id=admin_user.id
-            )
-            db.add(sample_source)
-            db.commit()
-            print("Sample data source created")
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        logger.info(f"Superuser {settings.FIRST_SUPERUSER} created successfully.")
+    else:
+        logger.info(f"Superuser {settings.FIRST_SUPERUSER} already exists in the database.")
 
-        db.close()
-        print("Database initialization completed successfully!")
+    # Check if AI provider already exists
+    provider = (
+        db_session.query(AIProvider)
+        .filter(AIProvider.name == settings.DEFAULT_AI_PROVIDER_NAME)
+        .first()
+    )
+    if not provider:
+        # Create AI provider
+        logger.info(f"Creating default AI provider: {settings.DEFAULT_AI_PROVIDER_NAME}")
+        provider = AIProvider(
+            name=settings.DEFAULT_AI_PROVIDER_NAME,
+            api_base_url=settings.DEFAULT_AI_PROVIDER_API_BASE,
+            api_key=settings.DEFAULT_AI_PROVIDER_API_KEY,
+            models=settings.DEFAULT_AI_PROVIDER_MODELS,
+            is_default=True,
+        )
+        db_session.add(provider)
+        db_session.commit()
+        db_session.refresh(provider)
+        logger.info(f"AI provider {settings.DEFAULT_AI_PROVIDER_NAME} created successfully.")
+    else:
+        logger.info(
+            f"AI provider {settings.DEFAULT_AI_PROVIDER_NAME} already exists in the database."
+        )
 
+
+def main():
+    """
+    Main function to initialize the database.
+    """
+    logger.info("--- Starting Database Initialization ---")
+    try:
+        db_session = SessionLocal()
+        init_db(db_session)
     except Exception as e:
-        print(f"Error during database initialization: {e}")
-        db.rollback()
-        db.close()
-        raise
+        logger.error(f"An error occurred during database initialization: {e}")
+    finally:
+        if 'db_session' in locals() and db_session:
+            db_session.close()
+    logger.info("--- Database Initialization Finished ---")
 
 
 if __name__ == "__main__":
-    init_database()
+    main()

@@ -61,6 +61,7 @@ class PlaceholderProcessingHistory(Base):
     """占位符处理历史表"""
 
     __tablename__ = "placeholder_processing_history"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id"), nullable=True)
@@ -88,6 +89,7 @@ class ErrorLog(Base):
     """错误日志表"""
 
     __tablename__ = "error_logs"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     error_id = Column(String(32), unique=True, nullable=False, index=True)
@@ -119,6 +121,7 @@ class UserFeedback(Base):
     """用户反馈表"""
 
     __tablename__ = "user_feedbacks"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     feedback_id = Column(String(32), unique=True, nullable=False, index=True)
@@ -145,6 +148,7 @@ class LearningRule(Base):
     """学习规则表"""
 
     __tablename__ = "learning_rules"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     rule_id = Column(String(32), unique=True, nullable=False, index=True)
@@ -171,6 +175,7 @@ class KnowledgeBase(Base):
     """知识库表"""
 
     __tablename__ = "knowledge_base"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     entry_id = Column(String(32), unique=True, nullable=False, index=True)
@@ -197,6 +202,7 @@ class LLMCallLog(Base):
     """LLM调用日志表"""
 
     __tablename__ = "llm_call_logs"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     request_type = Column(
@@ -223,6 +229,7 @@ class FieldMappingCache(Base):
     """字段映射缓存表"""
 
     __tablename__ = "field_mapping_cache"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     placeholder_signature = Column(
@@ -246,6 +253,7 @@ class ReportQualityScore(Base):
     """报告质量评分表"""
 
     __tablename__ = "report_quality_scores"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     report_id = Column(String(255), nullable=False, index=True)

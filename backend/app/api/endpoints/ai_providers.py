@@ -41,10 +41,22 @@ async def get_ai_providers(
     total = query.count()
     ai_providers = query.offset(skip).limit(limit).all()
     
+    # 转换为响应模型列表
+    response_items = []
+    for provider in ai_providers:
+        response_items.append(AIProviderResponse(
+            id=provider.id,
+            provider_name=provider.provider_name,
+            provider_type=provider.provider_type,
+            api_base_url=provider.api_base_url,
+            default_model_name=provider.default_model_name,
+            is_active=provider.is_active
+        ))
+    
     return ApiResponse(
         success=True,
         data=PaginatedResponse(
-            items=ai_providers,
+            items=response_items,
             total=total,
             page=skip // limit + 1,
             size=limit,
@@ -68,9 +80,19 @@ async def create_ai_provider(
         user_id=current_user.id
     )
     
+    # 转换为响应模型
+    response_data = AIProviderResponse(
+        id=ai_provider_obj.id,
+        provider_name=ai_provider_obj.provider_name,
+        provider_type=ai_provider_obj.provider_type,
+        api_base_url=ai_provider_obj.api_base_url,
+        default_model_name=ai_provider_obj.default_model_name,
+        is_active=ai_provider_obj.is_active
+    )
+    
     return ApiResponse(
         success=True,
-        data=ai_provider_obj,
+        data=response_data,
         message="AI提供商创建成功"
     )
 

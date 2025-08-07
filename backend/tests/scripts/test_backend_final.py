@@ -11,7 +11,7 @@ import time
 import sys
 
 # 测试配置
-BASE_URL = "http://localhost:8000/api/v2"
+BASE_URL = "http://localhost:8000/api/v1"
 
 class BackendTester:
     def __init__(self):

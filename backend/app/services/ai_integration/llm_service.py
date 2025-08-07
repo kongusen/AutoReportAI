@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.core.security_utils import decrypt_data
 from app.schemas.ai_provider import AIProvider
-from ..mcp_client import mcp_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -813,7 +812,7 @@ class AIService:
         except Exception as e:
             raise ValueError(f"Failed to generate report content: {str(e)}")
 
-    def generate_chart_from_description(
+    async def generate_chart_from_description(
         self, data: List[Dict[str, Any]], description: str
     ) -> str:
         """
@@ -873,35 +872,65 @@ class AIService:
         except json.JSONDecodeError:
             raise ValueError("Failed to decode AI chart spec response as JSON")
 
-        mcp_payload = {"chart_spec": chart_spec, "data": data}
-
-        # The 'self' service will be configured to point to the backend's own URL.
-        response_payload = mcp_client.post("self", "/tools/generate-chart", mcp_payload)
-
-        if response_payload and "image_base64" in response_payload:
-            return response_payload["image_base64"]
-        else:
-            raise ValueError(
-                "Failed to generate chart via MCP or the response was invalid."
+        
+        """
+        使用内部图表生成器生成图表
+        """
+        try:
+            from ..ai_integration.chart_generator import ChartGenerator, ChartConfig
+            
+            chart_generator = ChartGenerator()
+            
+            # 从 chart_spec 中提取配置
+            chart_type = chart_spec.get('type', 'bar')
+            title = chart_spec.get('title', '')
+            
+            config = ChartConfig(
+                chart_type=chart_type,
+                title=title,
+                x_label=chart_spec.get('x_label', ''),
+                y_label=chart_spec.get('y_label', ''),
+                width=chart_spec.get('width', 800),
+                height=chart_spec.get('height', 600)
             )
+            
+            # 生成图表并返回base64编码
+            result = await chart_generator.generate_chart_async(data, config)
+            return result.image_base64
+            
+        except Exception as e:
+            logger.error(f"图表生成失败: {e}")
+            # 返回模拟图表作为后备
+            return self._generate_mock_chart(chart_spec, data)
 
-    def generate_text_summary(self, context_data: Dict[str, Any]) -> str:
+    async def generate_text_summary(self, context_data: Dict[str, Any]) -> str:
         """
         Generates a text summary by calling an external text generation service via MCP.
         """
-        mcp_payload = {"context_data": context_data}
-
-        # The 'self' service will be configured to point to the backend's own URL.
-        response_payload = mcp_client.post(
-            "self", "/tools/generate-text-summary", mcp_payload
-        )
-
-        if response_payload and "summary" in response_payload:
-            return response_payload["summary"]
-        else:
-            raise ValueError(
-                "Failed to generate text summary via MCP or the response was invalid."
-            )
+        
+        """
+        使用内部AI服务生成文本摘要
+        """
+        try:
+            from ..ai_integration.ai_service_enhanced import AIServiceEnhanced
+            from ...db.session import get_db_session
+            
+            # 获取数据库会话
+            async with get_db_session() as db:
+                ai_service = AIServiceEnhanced(db)
+                
+                # 使用AI服务生成洞察或摘要
+                summary = await ai_service.generate_insights(
+                    data_summary=context_data,
+                    context="生成数据摘要"
+                )
+                
+                return summary
+                
+        except Exception as e:
+            logger.error(f"文本摘要生成失败: {e}")
+            # 返回简单的数据摘要作为后备
+            return self._generate_simple_summary(context_data)
 
     # Enhanced LLM Integration Methods for Intelligent Placeholder Processing
 
@@ -1170,3 +1199,57 @@ class AIService:
     def refresh_llm_providers(self):
         """Refresh LLM provider configurations"""
         self.llm_manager._load_providers()
+    
+    def _generate_mock_chart(self, chart_spec: Dict[str, Any], data: List[Dict[str, Any]]) -> str:
+        """生成模拟图表的base64编码"""
+        import base64
+        
+        # 简单的SVG图表模拟
+        chart_type = chart_spec.get('type', 'bar')
+        title = chart_spec.get('title', '数据图表')
+        
+        svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+    <rect width="400" height="300" fill="white" stroke="black"/>
+    <text x="200" y="30" text-anchor="middle" font-family="Arial" font-size="16">{title}</text>
+    <text x="200" y="150" text-anchor="middle" font-family="Arial" font-size="12">
+        {chart_type.upper()} 图表 ({len(data)} 个数据点)
+    </text>
+    <text x="200" y="200" text-anchor="middle" font-family="Arial" font-size="10">
+        图表生成器暂不可用，显示模拟图表
+    </text>
+</svg>'''
+        
+        # 转换为base64
+        svg_bytes = svg_content.encode('utf-8')
+        return base64.b64encode(svg_bytes).decode('utf-8')
+    
+    def _generate_simple_summary(self, context_data: Dict[str, Any]) -> str:
+        """生成简单的数据摘要"""
+        try:
+            summary_parts = []
+            
+            # 基本数据统计
+            if 'records_count' in context_data:
+                summary_parts.append(f"数据记录总数: {context_data['records_count']}")
+            
+            if 'fields' in context_data:
+                fields = context_data['fields']
+                if isinstance(fields, list):
+                    summary_parts.append(f"包含字段: {', '.join(fields[:5])}")
+                    if len(fields) > 5:
+                        summary_parts.append(f"等共{len(fields)}个字段")
+            
+            if 'date_range' in context_data:
+                date_range = context_data['date_range'] 
+                summary_parts.append(f"时间范围: {date_range}")
+            
+            # 如果没有任何数据，返回默认摘要
+            if not summary_parts:
+                summary_parts = ["数据摘要生成中，AI服务暂时不可用"]
+            
+            return "。".join(summary_parts) + "。"
+            
+        except Exception as e:
+            logger.error(f"简单摘要生成失败: {e}")
+            return "数据摘要生成失败，请检查输入数据格式。"

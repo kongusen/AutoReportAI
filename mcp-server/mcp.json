@@ -1,0 +1,281 @@
+{
+  "mcpServers": {
+    "autoreport": {
+      "command": "python",
+      "args": ["-m", "mcp-server.mcp_sse_server"],
+      "env": {
+        "PYTHONPATH": ".",
+        "BACKEND_BASE_URL": "http://localhost:8000/api/v1",
+        "DEFAULT_ADMIN_USERNAME": "admin",
+        "DEFAULT_ADMIN_PASSWORD": "password",
+        "SESSION_TIMEOUT": "3600",
+        "MCP_SERVER_HOST": "localhost",
+        "MCP_SERVER_PORT": "8001",
+        "LOG_LEVEL": "INFO"
+      },
+      "description": "AutoReportAI MCP Server with unified SSE support for intelligent report generation",
+      "version": "1.0.0",
+      "capabilities": {
+        "tools": true,
+        "resources": false,
+        "prompts": false
+      },
+      "settings": {
+        "default_report_format": "comprehensive",
+        "enable_cache": true,
+        "cache_ttl": 3600,
+        "max_concurrent_requests": 10,
+        "supported_languages": ["zh-CN", "en"],
+        "timezone": "Asia/Shanghai"
+      },
+      "tools": {
+        "mcp_login": {
+          "description": "用户登录AutoReportAI系统",
+          "parameters": {
+            "username": {
+              "type": "string",
+              "description": "用户名"
+            },
+            "password": {
+              "type": "string",
+              "description": "密码"
+            }
+          }
+        },
+        "mcp_logout": {
+          "description": "用户登出系统",
+          "parameters": {
+            "session_id": {
+              "type": "string",
+              "description": "会话ID"
+            }
+          }
+        },
+        "list_data_sources": {
+          "description": "列出所有数据源",
+          "parameters": {}
+        },
+        "create_sql_data_source": {
+          "description": "创建SQL数据源",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "数据源名称"
+            },
+            "connection_string": {
+              "type": "string",
+              "description": "SQL连接字符串"
+            }
+          }
+        },
+        "create_doris_data_source": {
+          "description": "创建Doris数据源",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "数据源名称"
+            },
+            "fe_hosts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "FE主机列表"
+            },
+            "username": {
+              "type": "string",
+              "description": "用户名"
+            },
+            "password": {
+              "type": "string",
+              "description": "密码"
+            },
+            "database": {
+              "type": "string",
+              "description": "数据库名"
+            }
+          }
+        },
+        "list_templates": {
+          "description": "列出所有报告模板",
+          "parameters": {}
+        },
+        "create_text_template": {
+          "description": "创建文本模板",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "模板名称"
+            },
+            "content": {
+              "type": "string",
+              "description": "模板内容"
+            },
+            "description": {
+              "type": "string",
+              "description": "模板描述"
+            }
+          }
+        },
+        "generate_report": {
+          "description": "生成报告",
+          "parameters": {
+            "template_id": {
+              "type": "string",
+              "description": "模板ID"
+            },
+            "data_source_id": {
+              "type": "string",
+              "description": "数据源ID"
+            },
+            "parameters": {
+              "type": "object",
+              "description": "报告参数"
+            }
+          }
+        },
+        "list_tasks": {
+          "description": "列出所有任务",
+          "parameters": {}
+        },
+        "create_task": {
+          "description": "创建任务",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "任务名称"
+            },
+            "template_id": {
+              "type": "string",
+              "description": "模板ID"
+            },
+            "data_source_id": {
+              "type": "string",
+              "description": "数据源ID"
+            },
+            "schedule": {
+              "type": "string",
+              "description": "任务调度表达式"
+            }
+          }
+        },
+        "run_task": {
+          "description": "运行任务",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "description": "任务ID"
+            }
+          }
+        }
+      },
+      "examples": {
+        "basic_login": {
+          "description": "基础登录",
+          "request": {
+            "username": "admin",
+            "password": "password"
+          }
+        },
+        "create_doris_source": {
+          "description": "创建Doris数据源",
+          "request": {
+            "name": "MyDorisDB",
+            "fe_hosts": ["192.168.1.100"],
+            "username": "root",
+            "password": "password",
+            "database": "test_db"
+          }
+        },
+        "generate_simple_report": {
+          "description": "生成简单报告",
+          "request": {
+            "template_id": "template_123",
+            "data_source_id": "datasource_456",
+            "parameters": {
+              "title": "月度报告",
+              "date": "2024-01"
+            }
+          }
+        },
+        "create_scheduled_task": {
+          "description": "创建定时任务",
+          "request": {
+            "name": "月度报告任务",
+            "template_id": "template_123",
+            "data_source_id": "datasource_456",
+            "schedule": "0 0 1 * *"
+          }
+        }
+      },
+      "documentation": {
+        "homepage": "https://github.com/kongusen/AutoReportAI",
+        "api_docs": "https://github.com/kongusen/AutoReportAI#api-documentation",
+        "examples": "https://github.com/kongusen/AutoReportAI#examples",
+        "troubleshooting": "https://github.com/kongusen/AutoReportAI#troubleshooting"
+      },
+      "support": {
+        "email": "support@autoreportai.com",
+        "issues": "https://github.com/kongusen/AutoReportAI/issues",
+        "discussions": "https://github.com/kongusen/AutoReportAI/discussions"
+      }
+    }
+  },
+  "globalSettings": {
+    "defaultLanguage": "zh-CN",
+    "timezone": "Asia/Shanghai",
+    "dateFormat": "YYYY-MM-DD HH:mm:ss",
+    "enableLogging": true,
+    "logLevel": "INFO",
+    "cacheEnabled": true,
+    "cacheTTL": 3600,
+    "maxConcurrentRequests": 10,
+    "requestTimeout": 30000
+  },
+  "ui": {
+    "theme": "modern",
+    "colorScheme": {
+      "primary": "#2563eb",
+      "secondary": "#4b5563",
+      "accent": "#0ea5e9",
+      "background": "#f9fafb",
+      "text": "#111827"
+    },
+    "localization": {
+      "zh-CN": {
+        "name": "AutoReportAI",
+        "description": "智能报告生成系统",
+        "tools": {
+          "mcp_login": "用户登录",
+          "mcp_logout": "用户登出",
+          "list_data_sources": "列出数据源",
+          "create_sql_data_source": "创建SQL数据源",
+          "create_doris_data_source": "创建Doris数据源",
+          "list_templates": "列出模板",
+          "create_text_template": "创建文本模板",
+          "generate_report": "生成报告",
+          "list_tasks": "列出任务",
+          "create_task": "创建任务",
+          "run_task": "运行任务"
+        }
+      },
+      "en": {
+        "name": "AutoReportAI",
+        "description": "Intelligent Report Generation System",
+        "tools": {
+          "mcp_login": "User Login",
+          "mcp_logout": "User Logout",
+          "list_data_sources": "List Data Sources",
+          "create_sql_data_source": "Create SQL Data Source",
+          "create_doris_data_source": "Create Doris Data Source",
+          "list_templates": "List Templates",
+          "create_text_template": "Create Text Template",
+          "generate_report": "Generate Report",
+          "list_tasks": "List Tasks",
+          "create_task": "Create Task",
+          "run_task": "Run Task"
+        }
+      }
+    }
+  }
+}

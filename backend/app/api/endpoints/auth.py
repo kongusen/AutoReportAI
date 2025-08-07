@@ -23,7 +23,7 @@ async def register(
     db: Session = Depends(get_db)
 ):
     """用户注册"""
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     
     # 检查邮箱是否已存在
     if crud_user.get_by_email(db, email=user_data.email):
@@ -57,7 +57,7 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """用户登录"""
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     # 验证用户
     user_obj = crud_user.authenticate(
         db, 
@@ -131,7 +131,7 @@ async def forgot_password(
     db: Session = Depends(get_db)
 ):
     """请求密码重置"""
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     
     user_obj = crud_user.get_by_email(db, email=email)
     if not user_obj:
@@ -174,7 +174,7 @@ async def change_password(
     db: Session = Depends(get_db)
 ):
     """修改密码"""
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     
     # 验证当前密码
     if not verify_password(current_password, current_user.hashed_password):

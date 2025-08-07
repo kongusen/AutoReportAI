@@ -14,4 +14,4 @@ class CRUDETLJob(CRUDBase[ETLJob, ETLJobCreate, ETLJobUpdate]):
         return db_obj
 
 
-etl_job = CRUDETLJob(ETLJob)
+crud_etl_job = CRUDETLJob(ETLJob)

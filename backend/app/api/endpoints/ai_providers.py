@@ -11,7 +11,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.ai_provider import AIProvider
 from app.schemas.ai_provider import AIProviderCreate, AIProviderUpdate, AIProviderResponse
-from app.crud.crud_ai_provider import ai_provider as crud_ai_provider
+from app.crud.crud_ai_provider import crud_ai_provider
 
 router = APIRouter()
 

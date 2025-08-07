@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate, User
-from app.crud.crud_user import user as crud_user
+from app.crud.crud_user import crud_user
 from app.core.dependencies import get_current_user
 
 router = APIRouter()

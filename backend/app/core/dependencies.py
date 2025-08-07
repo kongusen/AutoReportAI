@@ -30,7 +30,7 @@ def get_current_user(
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     user = crud_user.get(db, id=user_id)
     print(f"[DEBUG] get_current_user: user.id={getattr(user, 'id', None)}, type={type(getattr(user, 'id', None))}")
     if user is None:

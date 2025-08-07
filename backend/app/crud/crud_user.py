@@ -79,4 +79,4 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         return user_obj
 
 
-user = CRUDUser(User)
+crud_user = CRUDUser(User)

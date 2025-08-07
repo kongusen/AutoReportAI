@@ -7,6 +7,7 @@ import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration.tsx'
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 interface AppLayoutProps {
   children: React.ReactNode
@@ -31,25 +32,29 @@ export function AppLayout({ children }: AppLayoutProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 侧边栏 */}
-      <Sidebar />
-      
-      {/* 主内容区域 */}
-      <div className="lg:pl-64">
-        {/* 顶部导航栏 */}
-        <Header />
+    <ErrorBoundary>
+      <div className="min-h-screen bg-gray-50">
+        {/* 侧边栏 */}
+        <Sidebar />
         
-        {/* 页面内容 */}
-        <main className="py-6">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            {children}
-          </div>
-        </main>
+        {/* 主内容区域 */}
+        <div className="lg:pl-64">
+          {/* 顶部导航栏 */}
+          <Header />
+          
+          {/* 页面内容 */}
+          <main className="py-6">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <ErrorBoundary>
+                {children}
+              </ErrorBoundary>
+            </div>
+          </main>
+        </div>
+        
+        {/* 连接状态指示器 */}
+        <ConnectionStatusIndicator />
       </div>
-      
-      {/* 连接状态指示器 */}
-      <ConnectionStatusIndicator />
-    </div>
+    </ErrorBoundary>
   )
 }

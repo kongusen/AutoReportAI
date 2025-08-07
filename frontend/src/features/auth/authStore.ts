@@ -51,7 +51,9 @@ export const useAuthStore = create<AuthState>()(
             },
           })
 
-          const { access_token, user } = response.data
+          // 处理后端API响应格式
+          const responseData = response.data || response
+          const { access_token, user } = responseData
           
           // 更新状态
           set({
@@ -88,7 +90,9 @@ export const useAuthStore = create<AuthState>()(
           const response = await api.post('/auth/register', registerData)
 
           set({ isLoading: false })
-          toast.success(response.data.message || '注册成功，请登录')
+          // 处理后端API响应格式
+          const responseData = response.data || response
+          toast.success(responseData.message || response.message || '注册成功，请登录')
         } catch (error: any) {
           console.error('Registration failed:', error)
           set({ isLoading: false })

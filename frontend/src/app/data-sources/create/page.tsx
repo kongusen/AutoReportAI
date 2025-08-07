@@ -68,12 +68,32 @@ export default function CreateDataSourcePage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      // 处理JSON字段
+      // 处理JSON字段和数据转换
       const processedData: DataSourceCreate = {
         ...data,
-        api_headers: data.api_headers ? JSON.parse(data.api_headers) : undefined,
-        api_body: data.api_body ? JSON.parse(data.api_body) : undefined,
-        doris_fe_hosts: data.doris_fe_hosts ? data.doris_fe_hosts.split(',').map(h => h.trim()) : undefined,
+        // 确保必填字段有默认值
+        sql_query_type: data.sql_query_type || 'single_table',
+        api_method: data.api_method || 'GET',
+        is_active: data.is_active !== undefined ? data.is_active : true,
+        // 处理JSON字段
+        api_headers: data.api_headers ? (() => {
+          try {
+            return JSON.parse(data.api_headers)
+          } catch {
+            return {}
+          }
+        })() : undefined,
+        api_body: data.api_body ? (() => {
+          try {
+            return JSON.parse(data.api_body)
+          } catch {
+            return {}
+          }
+        })() : undefined,
+        // 处理Doris主机列表
+        doris_fe_hosts: data.doris_fe_hosts ? 
+          data.doris_fe_hosts.split(',').map(h => h.trim()).filter(h => h.length > 0) : 
+          undefined,
       }
 
       await createDataSource(processedData)

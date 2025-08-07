@@ -3,7 +3,22 @@ export interface ApiResponse<T = any> {
   success: boolean
   data?: T
   message?: string
+  error?: string
   errors?: string[]
+  timestamp?: string
+  request_id?: string
+  version?: string
+}
+
+// 分页响应类型
+export interface PaginatedResponse<T = any> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  pages: number
+  has_next: boolean
+  has_prev: boolean
 }
 
 // 用户相关类型
@@ -61,8 +76,8 @@ export interface DataSource {
   // Doris数据库配置
   doris_fe_hosts?: string[]
   doris_be_hosts?: string[]
-  doris_http_port: number
-  doris_query_port: number
+  doris_http_port?: number
+  doris_query_port?: number
   doris_database?: string
   doris_username?: string
   doris_password?: string
@@ -70,6 +85,10 @@ export interface DataSource {
   is_active: boolean
   created_at: string
   updated_at?: string
+  
+  // 新增与后端一致的字段
+  unique_id?: string
+  table_name?: string
 }
 
 export interface DataSourceCreate extends Omit<DataSource, 'id' | 'user_id' | 'created_at' | 'updated_at'> {}

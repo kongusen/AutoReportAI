@@ -29,7 +29,7 @@ def init_db(db_session):
         user = User(
             username=settings.FIRST_SUPERUSER,
             email=settings.FIRST_SUPERUSER_EMAIL,
-            password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+            hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
             is_superuser=True,
             is_active=True,
         )
@@ -43,18 +43,21 @@ def init_db(db_session):
     # Check if AI provider already exists
     provider = (
         db_session.query(AIProvider)
-        .filter(AIProvider.name == settings.DEFAULT_AI_PROVIDER_NAME)
+        .filter(AIProvider.provider_name == settings.DEFAULT_AI_PROVIDER_NAME)
         .first()
     )
     if not provider:
         # Create AI provider
         logger.info(f"Creating default AI provider: {settings.DEFAULT_AI_PROVIDER_NAME}")
+        from app.models.ai_provider import AIProviderType
         provider = AIProvider(
-            name=settings.DEFAULT_AI_PROVIDER_NAME,
+            provider_name=settings.DEFAULT_AI_PROVIDER_NAME,
+            provider_type=AIProviderType.openai,
             api_base_url=settings.DEFAULT_AI_PROVIDER_API_BASE,
             api_key=settings.DEFAULT_AI_PROVIDER_API_KEY,
-            models=settings.DEFAULT_AI_PROVIDER_MODELS,
-            is_default=True,
+            default_model_name=settings.DEFAULT_AI_PROVIDER_MODELS[0],
+            is_active=True,
+            user_id=user.id,
         )
         db_session.add(provider)
         db_session.commit()

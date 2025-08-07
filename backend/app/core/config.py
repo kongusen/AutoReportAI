@@ -145,6 +145,17 @@ class Settings(BaseSettings):
     
     # 健康检查配置
     HEALTH_CHECK_ENABLED: bool = os.getenv("HEALTH_CHECK_ENABLED", "true").lower() == "true"
+    
+    # 用户初始化配置
+    FIRST_SUPERUSER: str = os.getenv("FIRST_SUPERUSER", "admin")
+    FIRST_SUPERUSER_EMAIL: str = os.getenv("FIRST_SUPERUSER_EMAIL", "admin@autoreportai.com")
+    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "password")
+    
+    # AI Provider初始化配置
+    DEFAULT_AI_PROVIDER_NAME: str = os.getenv("DEFAULT_AI_PROVIDER_NAME", "OpenAI")
+    DEFAULT_AI_PROVIDER_API_BASE: str = os.getenv("DEFAULT_AI_PROVIDER_API_BASE", "https://api.openai.com/v1")
+    DEFAULT_AI_PROVIDER_API_KEY: str = os.getenv("DEFAULT_AI_PROVIDER_API_KEY", "sk-your-api-key")
+    DEFAULT_AI_PROVIDER_MODELS: List[str] = os.getenv("DEFAULT_AI_PROVIDER_MODELS", "gpt-3.5-turbo,gpt-4").split(",")
 
     class Config:
         case_sensitive = True

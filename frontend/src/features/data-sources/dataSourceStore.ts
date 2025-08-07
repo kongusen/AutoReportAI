@@ -37,8 +37,19 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     try {
       set({ loading: true })
       const response = await api.get('/data-sources')
-      const dataSources = response.data || response
-      set({ dataSources: Array.isArray(dataSources) ? dataSources : [] })
+      // 处理后端返回的ApiResponse和PaginatedResponse格式
+      let dataSources = []
+      if (response.data?.items) {
+        // 处理分页响应
+        dataSources = response.data.items
+      } else if (response.data && Array.isArray(response.data)) {
+        // 处理数组响应
+        dataSources = response.data
+      } else if (Array.isArray(response)) {
+        // 处理直接数组响应
+        dataSources = response
+      }
+      set({ dataSources })
     } catch (error: any) {
       console.error('Failed to fetch data sources:', error)
       toast.error('获取数据源列表失败')
@@ -53,6 +64,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     try {
       set({ loading: true })
       const response = await api.get(`/data-sources/${id}`)
+      // 处理后端返回的ApiResponse格式
       const dataSource = response.data || response
       set({ currentDataSource: dataSource })
       return dataSource
@@ -70,6 +82,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     try {
       set({ loading: true })
       const response = await api.post('/data-sources', data)
+      // 处理后端返回的数据源对象（可能直接返回或在data字段中）
       const newDataSource = response.data || response
       
       get().addDataSource(newDataSource)
@@ -130,12 +143,15 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
   testConnection: async (id: string) => {
     try {
       const response = await api.post(`/data-sources/${id}/test`)
-      const success = response.success !== false
+      // 处理后端ApiResponse格式的success字段
+      const success = response.success !== false && response.data?.connection_status !== 'failed'
       
       if (success) {
-        toast.success('连接测试成功')
+        const message = response.message || response.data?.message || '连接测试成功'
+        toast.success(message)
       } else {
-        toast.error('连接测试失败')
+        const errorMessage = response.message || response.data?.error || '连接测试失败'
+        toast.error(errorMessage)
       }
       return success
     } catch (error: any) {

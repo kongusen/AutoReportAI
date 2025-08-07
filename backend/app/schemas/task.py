@@ -85,3 +85,19 @@ class TaskRead(TaskBase):
 
     class Config:
         from_attributes = True
+
+
+class TaskResponse(TaskBase):
+    id: int
+    owner_id: UUID
+    is_active: bool = True
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
+
+    model_config = {
+        "from_attributes": True
+    }

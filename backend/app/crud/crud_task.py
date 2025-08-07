@@ -36,5 +36,9 @@ class CRUDTask(CRUDBase[Task, TaskCreate, TaskUpdate]):
         db.refresh(db_obj)
         return db_obj
 
+    def create_with_user(self, db: Session, *, obj_in: TaskCreate, user_id) -> Task:
+        """创建任务，关联用户"""
+        return self.create_with_owner(db, obj_in=obj_in, owner_id=user_id)
 
-task = CRUDTask(Task)
+
+crud_task = CRUDTask(Task)

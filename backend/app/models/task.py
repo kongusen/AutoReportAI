@@ -17,6 +17,7 @@ class Task(Base):
     recipients = Column(JSON, nullable=True)  # Store list of emails as JSON
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=True)
 
     # Foreign key relationships
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

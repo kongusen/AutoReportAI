@@ -79,15 +79,46 @@ export default function DashboardPage() {
         setLoading(true)
         
         // 并行获取仪表板数据
-        const [statsResponse, tasksResponse, reportsResponse] = await Promise.all([
-          api.get('/dashboard'),
-          api.get('/tasks?limit=5'),
-          api.get('/reports?limit=5'),
-        ])
+        const promises = [
+          api.get('/dashboard').catch(err => {
+            console.error('Dashboard API failed:', err)
+            return { data: null }
+          }),
+          api.get('/tasks?limit=5').catch(err => {
+            console.error('Tasks API failed:', err) 
+            return { data: { items: [] } }
+          }),
+          api.get('/reports?limit=5').catch(err => {
+            console.error('Reports API failed:', err)
+            return { data: { items: [] } }
+          })
+        ]
+        const [statsResponse, tasksResponse, reportsResponse] = await Promise.all(promises)
 
+        // 处理后端返回的ApiResponse格式
         setStats(statsResponse.data || statsResponse)
-        setRecentTasks(tasksResponse.data?.data || tasksResponse.data || [])
-        setRecentReports(reportsResponse.data?.data || reportsResponse.data || [])
+        
+        // 处理任务数据（可能是分页响应）
+        let tasks = []
+        if (tasksResponse.data?.items) {
+          tasks = tasksResponse.data.items
+        } else if (tasksResponse.data && Array.isArray(tasksResponse.data)) {
+          tasks = tasksResponse.data
+        } else if (Array.isArray(tasksResponse)) {
+          tasks = tasksResponse
+        }
+        setRecentTasks(tasks)
+        
+        // 处理报告数据（可能是分页响应）
+        let reports = []
+        if (reportsResponse.data?.items) {
+          reports = reportsResponse.data.items
+        } else if (reportsResponse.data && Array.isArray(reportsResponse.data)) {
+          reports = reportsResponse.data
+        } else if (Array.isArray(reportsResponse)) {
+          reports = reportsResponse
+        }
+        setRecentReports(reports)
       } catch (err: any) {
         console.error('Failed to fetch dashboard data:', err)
         setError('加载仪表板数据失败')

@@ -49,8 +49,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       set({ loading: true })
       const response = await api.get('/tasks')
-      const tasks = response.data || response
-      set({ tasks: Array.isArray(tasks) ? tasks : [] })
+      // 处理后端返回的ApiResponse和PaginatedResponse格式
+      let tasks = []
+      if (response.data?.items) {
+        // 处理分页响应
+        tasks = response.data.items
+      } else if (response.data && Array.isArray(response.data)) {
+        // 处理数组响应
+        tasks = response.data
+      } else if (Array.isArray(response)) {
+        // 处理直接数组响应
+        tasks = response
+      }
+      set({ tasks })
     } catch (error: any) {
       console.error('Failed to fetch tasks:', error)
       toast.error('获取任务列表失败')

@@ -1,6 +1,6 @@
 import logging
 
-from app.crud.crud_user import user as crud_user
+from app.crud.crud_user import crud_user
 from app.db.base import Base  # noqa: F401
 from app.db.session import SessionLocal, engine
 from app.models.ai_provider import AIProvider  # noqa: F401

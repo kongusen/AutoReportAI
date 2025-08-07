@@ -20,7 +20,7 @@ async def read_report_history(
     user_id = current_user.id
     
     # 检查是否为超级用户
-    from app.crud.crud_user import user as crud_user
+    from app.crud.crud_user import crud_user
     if crud_user.is_superuser(current_user):
         history = crud.report_history.get_multi(db, skip=skip, limit=limit)
     else:

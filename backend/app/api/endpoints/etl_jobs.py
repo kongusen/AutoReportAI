@@ -11,7 +11,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.etl_job import ETLJob
 from app.schemas.etl_job import ETLJobCreate, ETLJobUpdate, ETLJobResponse
-from app.crud.crud_etl_job import etl_job as crud_etl_job
+from app.crud.crud_etl_job import crud_etl_job
 
 router = APIRouter()
 

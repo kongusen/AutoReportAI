@@ -16,4 +16,4 @@ class CRUDAIProvider(CRUDBase[AIProvider, AIProviderCreate, AIProviderUpdate]):
         return db_obj
 
 
-ai_provider = CRUDAIProvider(AIProvider)
+crud_ai_provider = CRUDAIProvider(AIProvider)

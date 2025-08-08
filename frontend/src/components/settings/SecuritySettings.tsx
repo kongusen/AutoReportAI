@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useToast } from '@/hooks/useToast'
+import toast from 'react-hot-toast'
 import { SettingsService } from '@/services/settingsService'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 
@@ -19,18 +19,17 @@ export function SecuritySettings() {
     confirm: false
   })
   const [isChangingPassword, setIsChangingPassword] = useState(false)
-  const { showToast } = useToast()
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      showToast('新密码确认不匹配', 'error')
+      toast.error('新密码确认不匹配')
       return
     }
 
     if (passwordForm.new_password.length < 8) {
-      showToast('密码长度至少8位', 'error')
+      toast.error('密码长度至少8位')
       return
     }
 
@@ -41,14 +40,14 @@ export function SecuritySettings() {
         current_password: passwordForm.current_password,
         new_password: passwordForm.new_password
       })
-      showToast('密码修改成功', 'success')
+      toast.success('密码修改成功')
       setPasswordForm({
         current_password: '',
         new_password: '',
         confirm_password: ''
       })
     } catch (error) {
-      showToast('密码修改失败', 'error')
+      toast.error('密码修改失败')
     } finally {
       setIsChangingPassword(false)
     }
@@ -66,18 +65,18 @@ export function SecuritySettings() {
     
     try {
       await SettingsService.logoutAllDevices()
-      showToast('已登出所有设备', 'success')
+      toast.success('已登出所有设备')
     } catch (error) {
-      showToast('操作失败', 'error')
+      toast.error('操作失败')
     }
   }
 
   const downloadAccountData = async () => {
     try {
       await SettingsService.exportAccountData()
-      showToast('数据导出请求已提交，完成后将通过邮件发送下载链接', 'success')
+      toast.success('数据导出请求已提交，完成后将通过邮件发送下载链接')
     } catch (error) {
-      showToast('导出失败', 'error')
+      toast.error('导出失败')
     }
   }
 
@@ -87,9 +86,9 @@ export function SecuritySettings() {
     
     try {
       await SettingsService.deleteAccount()
-      showToast('账户删除请求已提交', 'success')
+      toast.success('账户删除请求已提交')
     } catch (error) {
-      showToast('删除失败', 'error')
+      toast.error('删除失败')
     }
   }
 

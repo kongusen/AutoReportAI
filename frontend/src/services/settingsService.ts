@@ -37,34 +37,29 @@ export interface UserProfileUpdate {
 }
 
 export interface AIProvider {
-  id: string
-  user_id: string
-  name: string
+  id: number
+  provider_name: string
   provider_type: string
-  api_key: string
-  api_endpoint?: string
-  model_name?: string
+  api_base_url?: string
+  default_model_name?: string
   is_active: boolean
-  is_default: boolean
-  created_at: string
-  updated_at: string
 }
 
 export interface AIProviderCreate {
-  name: string
+  provider_name: string
   provider_type: string
   api_key: string
-  api_endpoint?: string
-  model_name?: string
+  api_base_url?: string
+  default_model_name?: string
   is_active?: boolean
 }
 
 export interface AIProviderUpdate {
-  name?: string
+  provider_name?: string
   provider_type?: string
   api_key?: string
-  api_endpoint?: string
-  model_name?: string
+  api_base_url?: string
+  default_model_name?: string
   is_active?: boolean
 }
 
@@ -82,26 +77,42 @@ export class SettingsService {
 
   // AI提供商管理
   static async getAIProviders(): Promise<AIProvider[]> {
-    const response = await api.get<AIProvider[]>('/settings/ai-providers')
-    return response.data
+    console.log('正在请求AI提供商列表...')
+    const response = await api.get('/ai-providers/')
+    console.log('API响应:', response)
+    // api.get已经返回了response.data，所以这里的response就是后端的ApiResponse
+    const items = response.data?.items || []
+    console.log('提取的items:', items)
+    return items // 从PaginatedResponse中提取items
   }
 
   static async createAIProvider(data: AIProviderCreate): Promise<AIProvider> {
-    const response = await api.post<AIProvider>('/settings/ai-providers', data)
-    return response.data
+    const response = await api.post('/ai-providers/', data)
+    return response.data // api.post已经返回了response.data，这里的response是ApiResponse
   }
 
   static async updateAIProvider(id: string, data: AIProviderUpdate): Promise<AIProvider> {
-    const response = await api.patch<AIProvider>(`/settings/ai-providers/${id}`, data)
-    return response.data
+    const response = await api.put(`/ai-providers/${id}`, data)
+    return response.data // 从ApiResponse中提取data字段
   }
 
   static async deleteAIProvider(id: string): Promise<void> {
-    await api.delete(`/settings/ai-providers/${id}`)
+    await api.delete(`/ai-providers/${id}`)
   }
 
-  static async setDefaultAIProvider(id: string): Promise<void> {
-    await api.post(`/settings/ai-providers/${id}/set-default`)
+  static async testAIProvider(id: string): Promise<any> {
+    const response = await api.post(`/ai-providers/${id}/test`)
+    return response.data // 从ApiResponse中提取data字段
+  }
+
+  static async enableAIProvider(id: string): Promise<AIProvider> {
+    const response = await api.post(`/ai-providers/${id}/enable`)
+    return response.data // 从ApiResponse中提取data字段
+  }
+
+  static async disableAIProvider(id: string): Promise<AIProvider> {
+    const response = await api.post(`/ai-providers/${id}/disable`)
+    return response.data // 从ApiResponse中提取data字段
   }
 
   // 密码管理

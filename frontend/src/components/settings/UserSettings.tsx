@@ -3,14 +3,13 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useToast } from '@/hooks/useToast'
+import toast from 'react-hot-toast'
 import { SettingsService, UserProfile, UserProfileUpdate } from '@/services/settingsService'
 
 export function UserSettings() {
   const [profile, setProfile] = useState<Partial<UserProfile>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const { showToast } = useToast()
 
   useEffect(() => {
     loadProfile()
@@ -22,7 +21,7 @@ export function UserSettings() {
       const data = await SettingsService.getUserProfile()
       setProfile(data)
     } catch (error) {
-      showToast('加载用户设置失败', 'error')
+      toast.error('加载用户设置失败')
       // 设置默认值
       setProfile({
         language: 'zh',
@@ -59,9 +58,9 @@ export function UserSettings() {
         date_format: profile.date_format,
       }
       await SettingsService.updateUserProfile(updateData)
-      showToast('设置已保存', 'success')
+      toast.success('设置已保存')
     } catch (error) {
-      showToast('保存设置失败', 'error')
+      toast.error('保存设置失败')
     } finally {
       setIsSaving(false)
     }

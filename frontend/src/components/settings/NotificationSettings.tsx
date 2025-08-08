@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useToast } from '@/hooks/useToast'
+import toast from 'react-hot-toast'
 import { SettingsService, UserProfileUpdate } from '@/services/settingsService'
 
 export function NotificationSettings() {
@@ -17,7 +17,6 @@ export function NotificationSettings() {
     marketing_emails: false
   })
   const [isSaving, setIsSaving] = useState(false)
-  const { showToast } = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -30,9 +29,9 @@ export function NotificationSettings() {
         system_notifications: settings.system_notifications
       }
       await SettingsService.updateUserProfile(updateData)
-      showToast('通知设置已保存', 'success')
+      toast.success('通知设置已保存')
     } catch (error) {
-      showToast('保存通知设置失败', 'error')
+      toast.error('保存通知设置失败')
     } finally {
       setIsSaving(false)
     }

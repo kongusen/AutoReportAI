@@ -54,7 +54,11 @@ async def get_reports(
     return ApiResponse(
         success=True,
         data=PaginatedResponse(
-            items=reports,
+            items=[{
+                **ReportHistoryResponse.model_validate(report).model_dump(),
+                "name": f"报告 #{report.id}",  # 添加默认名称
+                "file_size": 0,  # 添加默认文件大小
+            } for report in reports],
             total=total,
             page=skip // limit + 1,
             size=limit,
@@ -133,23 +137,19 @@ async def generate_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到匹配的任务"
         )
-    # 创建报告历史记录（仅作示例，实际生成后再插入更合理）
-    task_data = ReportHistoryCreate(
-        task_id=task.id,
-        user_id=user_id,
-        status="pending"
-    )
+    
     # 在后台生成报告
     background_tasks.add_task(
         generate_report_task,
         template_id=str(tpl_uuid),
         data_source_id=str(ds_uuid),
-        user_id=str(user_id)
+        user_id=str(user_id),
+        task_id=task.id
     )
     return ApiResponse(
         success=True,
         data={
-            "task_id": task_data.task_id,
+            "task_id": task.id,
             "status": "pending",
             "message": "报告生成任务已提交"
         },
@@ -278,7 +278,11 @@ async def get_report(
     
     return ApiResponse(
         success=True,
-        data=report,
+        data={
+            **ReportHistoryResponse.model_validate(report).model_dump(),
+            "name": f"报告 #{report.id}",
+            "file_size": 0,
+        },
         message="获取报告成功"
     )
 
@@ -404,10 +408,27 @@ async def download_report(
 async def generate_report_task(
     template_id: str,
     data_source_id: str,
-    user_id: str
+    user_id: str,
+    task_id: int
 ):
     """后台生成报告任务 - 使用智能报告服务"""
     try:
+        # 首先创建报告历史记录
+        from app.db.session import get_db_session
+        with get_db_session() as db:
+            from app.schemas.report_history import ReportHistoryCreate
+            from uuid import UUID
+            from app.crud.crud_report_history import report_history
+            
+            # 创建报告历史记录
+            report_data = ReportHistoryCreate(
+                task_id=task_id,
+                user_id=UUID(user_id),
+                status="pending"
+            )
+            report_record = report_history.create(db=db, obj_in=report_data)
+            db.commit()
+        
         # 初始化智能报告服务
         intelligent_report_service = IntelligentReportService()
         
@@ -421,26 +442,15 @@ async def generate_report_task(
         # 更新报告状态
         from app.db.session import get_db_session
         with get_db_session() as db:
-            # 根据task_id查找报告历史记录并更新
-            from app.models.task import Task
-            from uuid import UUID
+            report = db.query(ReportHistory).filter(
+                ReportHistory.task_id == task_id
+            ).order_by(ReportHistory.id.desc()).first()
             
-            task = db.query(Task).filter(
-                Task.owner_id == UUID(user_id),
-                Task.template_id == UUID(template_id),
-                Task.data_source_id == UUID(data_source_id)
-            ).order_by(Task.id.desc()).first()
-            
-            if task:
-                report = db.query(ReportHistory).filter(
-                    ReportHistory.task_id == task.id
-                ).order_by(ReportHistory.id.desc()).first()
-                
-                if report:
-                    report.status = "completed"
-                    report.result = result.get("filled_template", "")
-                    report.metadata = result.get("processing_metadata", {})
-                    db.commit()
+            if report:
+                report.status = "completed"
+                report.result = result.get("filled_template", "")
+                report.metadata = result.get("processing_metadata", {})
+                db.commit()
         
         return result
         
@@ -448,24 +458,14 @@ async def generate_report_task(
         # 更新报告状态为失败
         from app.db.session import get_db_session
         with get_db_session() as db:
-            from app.models.task import Task
-            from uuid import UUID
+            report = db.query(ReportHistory).filter(
+                ReportHistory.task_id == task_id
+            ).order_by(ReportHistory.id.desc()).first()
             
-            task = db.query(Task).filter(
-                Task.owner_id == UUID(user_id),
-                Task.template_id == UUID(template_id),
-                Task.data_source_id == UUID(data_source_id)
-            ).order_by(Task.id.desc()).first()
-            
-            if task:
-                report = db.query(ReportHistory).filter(
-                    ReportHistory.task_id == task.id
-                ).order_by(ReportHistory.id.desc()).first()
-                
-                if report:
-                    report.status = "failed"
-                    report.error_message = str(e)
-                    db.commit()
+            if report:
+                report.status = "failed"
+                report.error_message = str(e)
+                db.commit()
         
         raise e
 

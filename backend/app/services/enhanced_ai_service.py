@@ -376,16 +376,16 @@ class EnhancedAIService:
             type_name = placeholder.type.value
             analysis["type_distribution"][type_name] = analysis["type_distribution"].get(type_name, 0) + 1
         
-        # 计算复杂度分数
+        # 计算复杂度分数 - 使用中文枚举值
         complexity_factors = {
-            PlaceholderType.STATISTIC: 1,
-            PlaceholderType.CHART: 2,
-            PlaceholderType.PERIOD: 2,
-            PlaceholderType.REGION: 1
+            "统计": 1,  # PlaceholderType.STATISTIC
+            "图表": 2,  # PlaceholderType.CHART  
+            "周期": 2,  # PlaceholderType.PERIOD
+            "区域": 1   # PlaceholderType.REGION
         }
         
         for placeholder in placeholders:
-            analysis["complexity_score"] += complexity_factors.get(placeholder.type, 1)
+            analysis["complexity_score"] += complexity_factors.get(placeholder.type.value, 1)
         
         # 提供优化建议
         if analysis["complexity_score"] > 10:

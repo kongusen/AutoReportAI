@@ -86,6 +86,72 @@ def check_dependencies():
     print("✅ 依赖包检查完成")
     return True
 
+def start_celery_worker():
+    """启动Celery worker"""
+    print("🔄 启动Celery worker...")
+    
+    try:
+        # 设置环境变量
+        env = os.environ.copy()
+        env['PYTHONPATH'] = str(Path(__file__).parent)
+        
+        # 构建Celery启动命令
+        cmd = [
+            sys.executable, "-m", "celery", 
+            "-A", "app.core.worker.celery_app",
+            "worker",
+            "--loglevel=info",
+            "--concurrency=2",
+            "--without-heartbeat",
+            "--without-gossip"
+        ]
+        
+        # 启动Celery worker作为后台进程
+        celery_process = subprocess.Popen(
+            cmd, 
+            cwd=Path(__file__).parent,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        # 等待一秒检查是否启动成功
+        time.sleep(1)
+        
+        if celery_process.poll() is None:
+            print("✅ Celery worker启动成功")
+            return celery_process
+        else:
+            print("❌ Celery worker启动失败")
+            # 输出错误信息
+            stdout, stderr = celery_process.communicate()
+            if stderr:
+                print(f"错误信息: {stderr.decode()}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Celery worker启动异常: {e}")
+        return None
+
+def check_redis_connection():
+    """检查Redis连接"""
+    print("🔍 检查Redis连接...")
+    
+    try:
+        import redis
+        from app.core.config import settings
+        
+        # 尝试连接Redis
+        r = redis.from_url(settings.REDIS_URL)
+        r.ping()
+        print("✅ Redis连接正常")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Redis连接失败: {e}")
+        print("💡 请确保Redis服务正在运行")
+        return False
+
 def run_database_migrations():
     """运行数据库迁移"""
     print("🗄️  检查数据库迁移...")
@@ -105,7 +171,7 @@ def run_database_migrations():
         print(f"⚠️  无法检查数据库迁移: {e}")
 
 def start_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
-    """启动服务器"""
+    """启动服务器和Celery worker"""
     print("🚀 启动 AutoReportAI 后端服务...")
     print(f"📂 工作目录: {Path(__file__).parent}")
     print(f"🌐 服务地址: http://{host}:{port}")
@@ -115,10 +181,17 @@ def start_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
     print("🔧 管理界面: http://localhost:8000/api/v1/dashboard")
     print("-" * 60)
     
+    # 检查Redis连接
+    if not check_redis_connection():
+        print("⚠️  Redis连接失败，Celery功能可能无法正常工作")
+    
+    # 启动Celery worker
+    celery_process = start_celery_worker()
+    
     # 设置环境变量
     os.environ['PYTHONPATH'] = str(Path(__file__).parent)
     
-    # 构建启动命令
+    # 构建FastAPI启动命令
     cmd = [
         sys.executable, "-m", "uvicorn", 
         "app.main:app",
@@ -130,31 +203,53 @@ def start_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
     if reload:
         cmd.append("--reload")
     
+    api_process = None
+    
     try:
-        # 启动服务器
-        process = subprocess.Popen(cmd, cwd=Path(__file__).parent)
+        # 启动FastAPI服务器
+        api_process = subprocess.Popen(cmd, cwd=Path(__file__).parent)
         
         # 等待服务器启动
         time.sleep(2)
         
-        if process.poll() is None:
-            print("✅ 服务器启动成功！")
-            print("🛑 按 Ctrl+C 停止服务器")
+        if api_process.poll() is None:
+            print("✅ FastAPI服务器启动成功！")
+            if celery_process:
+                print("✅ Celery worker运行中")
+            print("🛑 按 Ctrl+C 停止所有服务")
             
             # 等待进程结束
-            process.wait()
+            api_process.wait()
         else:
-            print("❌ 服务器启动失败")
+            print("❌ FastAPI服务器启动失败")
             return False
             
     except KeyboardInterrupt:
-        print("\n👋 正在停止服务器...")
-        if 'process' in locals():
-            process.terminate()
-            process.wait()
-        print("✅ 服务器已停止")
+        print("\n👋 正在停止所有服务...")
+        
+        # 停止FastAPI服务器
+        if api_process and api_process.poll() is None:
+            print("🛑 停止FastAPI服务器...")
+            api_process.terminate()
+            api_process.wait()
+        
+        # 停止Celery worker
+        if celery_process and celery_process.poll() is None:
+            print("🛑 停止Celery worker...")
+            celery_process.terminate()
+            celery_process.wait()
+        
+        print("✅ 所有服务已停止")
+        
     except Exception as e:
         print(f"❌ 启动失败: {e}")
+        
+        # 清理进程
+        if api_process and api_process.poll() is None:
+            api_process.terminate()
+        if celery_process and celery_process.poll() is None:
+            celery_process.terminate()
+        
         return False
     
     return True
@@ -183,7 +278,7 @@ def main():
     # 检查数据库迁移
     run_database_migrations()
     
-    # 启动服务器
+    # 启动服务器（包含Celery worker）
     success = start_server()
     
     if not success:

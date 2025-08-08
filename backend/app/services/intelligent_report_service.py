@@ -97,12 +97,13 @@ class IntelligentReportService:
             
             for instruction in etl_instructions:
                 etl_start = time.time()
-                result = await self._get_etl_executor(self.db).execute_etl(instruction, data_source_id, task_config)
+                # instruction 已经是字典格式，直接使用
+                result = self._get_etl_executor(self.db).execute_instruction(instruction, data_source_id)
                 etl_time = time.time() - etl_start
                 total_etl_time += etl_time
                 
-                etl_results[instruction.instruction_id] = result
-                logger.info(f"ETL指令 {instruction.instruction_id} 执行完成，耗时: {etl_time:.2f}秒")
+                etl_results[instruction["instruction_id"]] = result
+                logger.info(f"ETL指令 {instruction['instruction_id']} 执行完成，耗时: {etl_time:.2f}秒")
             
             # 5. 填充模板
             logger.info("步骤 5/6: 填充模板")
@@ -117,8 +118,8 @@ class IntelligentReportService:
                     "placeholder_count": len(placeholders),
                     "etl_operations_count": len(etl_instructions),
                     "total_processing_time": time.time() - start_time,
-                    "success_count": len([r for r in etl_results.values() if r.processed_value is not None]),
-                    "failed_count": len([r for r in etl_results.values() if r.processed_value is None])
+                    "success_count": len([r for r in etl_results.values() if r.get("status") == "success"]),
+                    "failed_count": len([r for r in etl_results.values() if r.get("status") == "error"])
                 }
             }
             
@@ -407,9 +408,14 @@ class IntelligentReportService:
         
         try:
             # 1. 获取模板和数据源
+            from uuid import UUID
             with get_db_session() as db:
-                template = db.query(Template).filter(Template.id == template_id).first()
-                data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+                # 转换UUID类型
+                template_uuid = UUID(template_id) if isinstance(template_id, str) else template_id
+                data_source_uuid = UUID(data_source_id) if isinstance(data_source_id, str) else data_source_id
+                
+                template = db.query(Template).filter(Template.id == template_uuid).first()
+                data_source = db.query(DataSource).filter(DataSource.id == data_source_uuid).first()
                 
                 if not template:
                     raise ValueError(f"模板不存在: {template_id}")
@@ -432,7 +438,7 @@ class IntelligentReportService:
             logger.info("步骤 3/6: 智能ETL规划")
             if use_ai_optimization:
                 etl_instructions = await self.enhanced_ai_service.generate_etl_plan_with_llm(
-                    template.content, int(data_source_id), placeholders
+                    template.content, str(data_source_uuid), placeholders
                 )
             else:
                 etl_instructions = await self.etl_planner.plan_etl_operations(
@@ -445,14 +451,16 @@ class IntelligentReportService:
             etl_results = {}
             total_etl_time = 0
             
-            for instruction in etl_instructions:
-                etl_start = time.time()
-                result = await self._get_etl_executor(self.db).execute_etl(instruction, int(data_source_id), task_config)
-                etl_time = time.time() - etl_start
-                total_etl_time += etl_time
-                
-                etl_results[instruction.instruction_id] = result
-                logger.info(f"ETL指令 {instruction.instruction_id} 执行完成，耗时: {etl_time:.2f}秒")
+            with get_db_session() as etl_db:
+                for instruction in etl_instructions:
+                    etl_start = time.time()
+                    # instruction 已经是字典格式，直接使用
+                    result = self._get_etl_executor(etl_db).execute_instruction(instruction, str(data_source_uuid))
+                    etl_time = time.time() - etl_start
+                    total_etl_time += etl_time
+                    
+                    etl_results[instruction["instruction_id"]] = result
+                    logger.info(f"ETL指令 {instruction['instruction_id']} 执行完成，耗时: {etl_time:.2f}秒")
             
             # 6. 填充模板
             logger.info("步骤 5/6: 填充模板")
@@ -467,8 +475,8 @@ class IntelligentReportService:
                     "placeholder_count": len(placeholders),
                     "etl_operations_count": len(etl_instructions),
                     "total_processing_time": time.time() - start_time,
-                    "success_count": len([r for r in etl_results.values() if r.processed_value is not None]),
-                    "failed_count": len([r for r in etl_results.values() if r.processed_value is None])
+                    "success_count": len([r for r in etl_results.values() if r.get("status") == "success"]),
+                    "failed_count": len([r for r in etl_results.values() if r.get("status") == "error"])
                 }
             }
             

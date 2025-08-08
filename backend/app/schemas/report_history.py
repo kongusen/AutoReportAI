@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -12,6 +12,8 @@ class ReportHistoryBase(BaseModel):
     status: str
     file_path: Optional[str] = None
     error_message: Optional[str] = None
+    result: Optional[str] = None
+    processing_metadata: Optional[Dict[str, Any]] = None
 
 
 # Properties to receive on creation

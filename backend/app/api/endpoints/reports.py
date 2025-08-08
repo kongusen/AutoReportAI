@@ -282,6 +282,7 @@ async def get_report(
             **ReportHistoryResponse.model_validate(report).model_dump(),
             "name": f"报告 #{report.id}",
             "file_size": 0,
+            "content": report.result if report.status == "completed" else None,
         },
         message="获取报告成功"
     )
@@ -362,6 +363,46 @@ async def regenerate_report(
             "message": "报告重新生成任务已提交"
         },
         message="报告重新生成任务已提交"
+    )
+
+
+@router.get("/{report_id}/content", response_model=ApiResponse)
+async def get_report_content(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取报告内容"""
+    user_id = current_user.id
+    if isinstance(user_id, str):
+        user_id = UUID(user_id)
+    report = db.query(ReportHistory).join(
+        ReportHistory.task
+    ).filter(
+        ReportHistory.id == report_id,
+        ReportHistory.task.has(owner_id=user_id)
+    ).first()
+    
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="报告不存在或无权限访问"
+        )
+    
+    if report.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="报告尚未完成生成"
+        )
+    
+    return ApiResponse(
+        success=True,
+        data={
+            "content": report.result or "报告内容为空",
+            "status": report.status,
+            "generated_at": report.generated_at.isoformat() if report.generated_at else None
+        },
+        message="获取报告内容成功"
     )
 
 
@@ -449,7 +490,7 @@ async def generate_report_task(
             if report:
                 report.status = "completed"
                 report.result = result.get("filled_template", "")
-                report.metadata = result.get("processing_metadata", {})
+                report.processing_metadata = result.get("processing_metadata", {})
                 db.commit()
         
         return result
@@ -527,7 +568,7 @@ async def generate_intelligent_report_task(
                 if report:
                     report.status = "completed"
                     report.result = result.get("filled_template", "")
-                    report.metadata = {
+                    report.processing_metadata = {
                         **result.get("processing_metadata", {}),
                         "optimization_level": optimization_level,
                         "batch_size": batch_size,
@@ -558,7 +599,7 @@ async def generate_intelligent_report_task(
                 if report:
                     report.status = "failed"
                     report.error_message = str(e)
-                    report.metadata = {
+                    report.processing_metadata = {
                         "optimization_level": optimization_level,
                         "batch_size": batch_size,
                         "error_type": type(e).__name__

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -18,7 +18,7 @@ import { CronEditor } from '@/components/forms/CronEditor'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTemplateStore } from '@/features/templates/templateStore'
-import { TaskCreate } from '@/types'
+import { TaskUpdate } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
 
 const taskSchema = z.object({
@@ -49,12 +49,15 @@ const taskSchema = z.object({
 
 type FormData = z.infer<typeof taskSchema>
 
-export default function CreateTaskPage() {
+export default function EditTaskPage() {
   const router = useRouter()
-  const { createTask, loading } = useTaskStore()
+  const params = useParams()
+  const taskId = params.id as string
+  const { getTask, updateTask, loading } = useTaskStore()
   const { dataSources, fetchDataSources } = useDataSourceStore()
   const { templates, fetchTemplates } = useTemplateStore()
   const [recipientInput, setRecipientInput] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
 
   const {
     register,
@@ -63,6 +66,7 @@ export default function CreateTaskPage() {
     watch,
     setValue,
     getValues,
+    reset,
   } = useForm<FormData>({
     resolver: zodResolver(taskSchema),
     defaultValues: {
@@ -76,16 +80,41 @@ export default function CreateTaskPage() {
   const watchedSchedule = watch('schedule') || ''
 
   useEffect(() => {
-    fetchDataSources()
-    fetchTemplates()
-  }, [fetchDataSources, fetchTemplates])
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchDataSources(),
+          fetchTemplates()
+        ])
+        
+        const task = await getTask(taskId)
+        if (task) {
+          reset({
+            name: task.name,
+            description: task.description || '',
+            template_id: task.template_id,
+            data_source_id: task.data_source_id,
+            schedule: task.schedule || '',
+            recipients: task.recipients || [],
+            is_active: task.is_active,
+          })
+        }
+      } catch (error) {
+        console.error('Failed to load task data:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
+  }, [taskId, fetchDataSources, fetchTemplates, getTask, reset])
 
   const onSubmit = async (data: FormData) => {
     try {
-      await createTask({
+      await updateTask(taskId, {
         ...data,
-        template_id: data.template_id as any, // UUID类型转换
-        data_source_id: data.data_source_id as any, // UUID类型转换
+        template_id: data.template_id as any,
+        data_source_id: data.data_source_id as any,
         schedule: data.schedule || undefined,
         recipients: data.recipients || [],
       })
@@ -117,7 +146,6 @@ export default function CreateTaskPage() {
     }
   }
 
-
   const dataSourceOptions = dataSources.map(ds => ({
     label: ds.display_name || ds.name,
     value: ds.id,
@@ -134,14 +162,24 @@ export default function CreateTaskPage() {
     { key: 'notification', label: '通知配置' },
   ]
 
+  if (isLoading) {
+    return (
+      <AppLayout>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-lg">加载中...</div>
+        </div>
+      </AppLayout>
+    )
+  }
+
   return (
     <AppLayout>
       <PageHeader
-        title="创建任务"
-        description="创建新的定时任务"
+        title="编辑任务"
+        description="编辑现有的定时任务"
         breadcrumbs={[
           { label: '任务管理', href: '/tasks' },
-          { label: '创建任务' },
+          { label: '编辑任务' },
         ]}
       />
 
@@ -173,7 +211,7 @@ export default function CreateTaskPage() {
             取消
           </Button>
           <Button type="submit" loading={loading}>
-            创建任务
+            保存更改
           </Button>
         </div>
       </form>
@@ -271,6 +309,7 @@ function TaskTabs({
                 <Select
                   options={templateOptions}
                   placeholder="选择报告模板"
+                  value={getValues('template_id')}
                   onChange={(value) => setValue('template_id', value)}
                 />
                 {errors.template_id && (
@@ -285,6 +324,7 @@ function TaskTabs({
                 <Select
                   options={dataSourceOptions}
                   placeholder="选择数据源"
+                  value={getValues('data_source_id')}
                   onChange={(value) => setValue('data_source_id', value)}
                 />
                 {errors.data_source_id && (
@@ -380,4 +420,3 @@ function TaskTabs({
     </>
   )
 }
-

@@ -15,6 +15,7 @@ from app.api.endpoints import (
     history,
     intelligent_placeholders,
     health,
+    settings,
     # 如有其它业务模块可继续添加
 )
 
@@ -39,3 +40,4 @@ api_router.include_router(auth.router, prefix="/v1/auth", tags=["认证"])
 api_router.include_router(files.router, prefix="/v1/files", tags=["文件管理"])
 api_router.include_router(history.router, prefix="/v1/history", tags=["历史记录"])
 api_router.include_router(intelligent_placeholders.router, prefix="/v1/intelligent-placeholders", tags=["智能占位符"])
+api_router.include_router(settings.router, prefix="/v1/settings", tags=["用户设置"])

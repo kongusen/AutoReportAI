@@ -46,7 +46,7 @@ export default function DataSourcesPage() {
   })
 
   // 获取数据源类型列表
-  const dataSourceTypes = [...new Set(dataSources.map(ds => ds.source_type))]
+  const dataSourceTypes = Array.from(new Set(dataSources.map(ds => ds.source_type)))
 
   const handleDeleteConfirm = async () => {
     if (!selectedDataSource) return

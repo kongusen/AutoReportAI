@@ -143,8 +143,9 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
   testConnection: async (id: string) => {
     try {
       const response = await api.post(`/data-sources/${id}/test`)
-      // 处理后端ApiResponse格式的success字段
-      const success = response.success !== false && response.data?.connection_status !== 'failed'
+      
+      // 处理后端ApiResponse格式，检查success字段
+      const success = response.success === true
       
       if (success) {
         const message = response.message || response.data?.message || '连接测试成功'
@@ -156,7 +157,9 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       return success
     } catch (error: any) {
       console.error('Connection test failed:', error)
-      toast.error('连接测试失败')
+      // 从错误响应中提取错误信息
+      const errorMessage = error?.response?.data?.message || error?.message || '连接测试失败'
+      toast.error(errorMessage)
       return false
     }
   },

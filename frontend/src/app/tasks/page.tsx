@@ -59,7 +59,7 @@ export default function TasksPage() {
 
   // 过滤任务
   const filteredTasks = tasks.filter(task => {
-    const matchesSearch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = task.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          task.description?.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesStatus = statusFilter === 'all' || 
                          (statusFilter === 'active' && task.is_active) ||
@@ -67,7 +67,8 @@ export default function TasksPage() {
     return matchesSearch && matchesStatus
   })
 
-  const handleSelectTask = (taskId: string, checked: boolean) => {
+  const handleSelectTask = (taskId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked
     if (checked) {
       setSelectedTasks([...selectedTasks, taskId])
     } else {
@@ -75,7 +76,8 @@ export default function TasksPage() {
     }
   }
 
-  const handleSelectAll = (checked: boolean) => {
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked
     if (checked) {
       setSelectedTasks(filteredTasks.map(task => task.id.toString()))
     } else {
@@ -159,18 +161,12 @@ export default function TasksPage() {
   const columns = [
     {
       key: 'selection',
-      title: (
-        <Checkbox
-          checked={selectedTasks.length === filteredTasks.length && filteredTasks.length > 0}
-          indeterminate={selectedTasks.length > 0 && selectedTasks.length < filteredTasks.length}
-          onChange={handleSelectAll}
-        />
-      ),
+      title: '',
       width: 50,
       render: (_: any, record: Task) => (
         <Checkbox
           checked={selectedTasks.includes(record.id.toString())}
-          onChange={(checked) => handleSelectTask(record.id.toString(), checked)}
+          onChange={(e) => handleSelectTask(record.id.toString(), e)}
         />
       ),
     },
@@ -375,11 +371,26 @@ export default function TasksPage() {
           }
         />
       ) : (
-        <Table
-          columns={columns}
-          dataSource={filteredTasks}
-          rowKey="id"
-        />
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <Checkbox
+              checked={selectedTasks.length === filteredTasks.length && filteredTasks.length > 0}
+              indeterminate={selectedTasks.length > 0 && selectedTasks.length < filteredTasks.length}
+              onChange={handleSelectAll}
+              label="全选"
+            />
+            {selectedTasks.length > 0 && (
+              <span className="text-sm text-gray-600">
+                已选择 {selectedTasks.length} 项
+              </span>
+            )}
+          </div>
+          <Table
+            columns={columns}
+            dataSource={filteredTasks}
+            rowKey="id"
+          />
+        </div>
       )}
 
       {/* 删除确认对话框 */}

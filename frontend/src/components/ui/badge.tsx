@@ -15,6 +15,7 @@ const badgeVariants = cva(
         success: 'bg-green-500 text-gray-50 hover:bg-green-500/80',
         warning: 'bg-yellow-500 text-gray-50 hover:bg-yellow-500/80',
         info: 'bg-blue-500 text-gray-50 hover:bg-blue-500/80',
+        purple: 'bg-purple-500 text-gray-50 hover:bg-purple-500/80',
         outline: 'border-gray-200 text-gray-950 hover:bg-gray-100',
       },
       size: {

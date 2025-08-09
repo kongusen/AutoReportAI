@@ -146,6 +146,7 @@ export interface Report {
   file_path: string
   file_size: number
   status: 'generating' | 'completed' | 'failed'
+  content?: string  // 报告内容 (HTML/markdown)
   created_at: string
 }
 

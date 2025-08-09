@@ -11,8 +11,18 @@ export function cn(...inputs: ClassValue[]) {
 /**
  * 格式化日期
  */
-export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
+export function formatDate(date: string | Date | null | undefined, options?: Intl.DateTimeFormatOptions): string {
+  if (!date) {
+    return '未知日期'
+  }
+
   const d = typeof date === 'string' ? new Date(date) : date
+  
+  // 检查日期是否有效
+  if (isNaN(d.getTime())) {
+    return '无效日期'
+  }
+
   const defaultOptions: Intl.DateTimeFormatOptions = {
     year: 'numeric',
     month: 'short',
@@ -26,9 +36,19 @@ export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOpt
 /**
  * 格式化相对时间
  */
-export function formatRelativeTime(date: string | Date): string {
+export function formatRelativeTime(date: string | Date | null | undefined): string {
+  if (!date) {
+    return '未知时间'
+  }
+
   const now = new Date()
   const target = typeof date === 'string' ? new Date(date) : date
+  
+  // 检查日期是否有效
+  if (isNaN(target.getTime())) {
+    return '无效时间'
+  }
+
   const diffInMs = now.getTime() - target.getTime()
   const diffInSeconds = Math.floor(diffInMs / 1000)
   const diffInMinutes = Math.floor(diffInSeconds / 60)

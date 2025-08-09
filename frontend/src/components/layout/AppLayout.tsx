@@ -4,7 +4,7 @@ import React from 'react'
 import { Sidebar } from './Sidebar'
 import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration.tsx'
+import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 

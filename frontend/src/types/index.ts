@@ -94,21 +94,43 @@ export interface DataSource {
 export interface DataSourceCreate extends Omit<DataSource, 'id' | 'user_id' | 'created_at' | 'updated_at'> {}
 export interface DataSourceUpdate extends Partial<DataSourceCreate> {}
 
-// 模板类型
-export interface Template {
-  id: string
-  owner_id: string
-  name: string
-  description?: string
-  content: string
-  template_type: string
-  variables?: Record<string, any>
-  created_at: string
-  updated_at?: string
+// 模板占位符类型
+export interface Placeholder {
+  type: '统计' | '图表' | '文本' | string;
+  description: string;
+  placeholder_text: string;
+  requirements?: Record<string, any>;
 }
 
-export interface TemplateCreate extends Omit<Template, 'id' | 'owner_id' | 'created_at' | 'updated_at'> {}
-export interface TemplateUpdate extends Partial<TemplateCreate> {}
+// 模板预览响应类型
+export interface TemplatePreview {
+  template_type: string;
+  placeholders: Placeholder[];
+  total_count: number;
+  stats_count: number;
+  chart_count: number;
+}
+
+
+// 模板类型
+export interface Template {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string;
+  content: string;
+  template_type: string;
+  variables?: Record<string, any>;
+  created_at: string;
+  updated_at?: string;
+  original_filename?: string;
+  file_size?: number;
+}
+
+export interface TemplateCreate extends Omit<Template, 'id' | 'user_id' | 'created_at' | 'updated_at'> {
+  file?: File;
+}
+export interface TemplateUpdate extends Partial<Omit<TemplateCreate, 'file'>> {}
 
 // 任务类型
 export interface Task {
@@ -152,10 +174,12 @@ export interface Report {
 
 // AI提供商类型
 export interface AIProvider {
-  id: string
-  name: string
+  id: number
+  user_id: string
+  provider_name: string
   provider_type: string
-  config: Record<string, any>
+  api_base_url?: string
+  default_model_name?: string
   is_active: boolean
   created_at: string
   updated_at?: string

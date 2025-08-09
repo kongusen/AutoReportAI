@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from app.core.architecture import ApiResponse, PaginatedResponse
@@ -250,25 +250,281 @@ async def preview_template(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """获取模板内容和占位符分布"""
+    """获取模板内容和占位符分布（支持DOC格式）"""
     template = crud_template.get(db, id=template_id)
     if not template or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
         )
+    
     content = template.content or ''
-    # 提取 {{name}} 形式的占位符
-    placeholder_pattern = re.compile(r"{{\s*([\w\-]+)\s*}}")
-    found = set(m.group(1) for m in placeholder_pattern.finditer(content))
     placeholders = []
-    for name in found:
-        placeholders.append({"name": name, "found": True})
+    
+    # 根据模板类型解析占位符
+    if template.template_type == "docx" and template.original_filename:
+        try:
+            # 对于DOC模板，使用专门的解析器
+            import tempfile
+            import os
+            
+            # 创建临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
+                if content.startswith('<?xml') or content.startswith('PK'):
+                    # 二进制内容
+                    temp_file.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
+                else:
+                    # 文本内容
+                    temp_file.write(content.encode())
+                temp_path = temp_file.name
+            
+            try:
+                # 使用DOC占位符解析器
+                placeholder_data = template_parser.parse_doc_placeholders(temp_path)
+                
+                # 转换为统一格式
+                stats_placeholders = placeholder_data.get("stats_placeholders", [])
+                chart_placeholders = placeholder_data.get("chart_placeholders", [])
+                
+                for p in stats_placeholders:
+                    placeholders.append({
+                        "type": "统计",
+                        "description": p["description"],
+                        "placeholder_text": p["placeholder_text"],
+                        "requirements": p.get("analysis_requirements", {})
+                    })
+                
+                for p in chart_placeholders:
+                    placeholders.append({
+                        "type": "图表", 
+                        "description": p["description"],
+                        "placeholder_text": p["placeholder_text"],
+                        "requirements": p.get("chart_requirements", {})
+                    })
+                    
+            finally:
+                os.unlink(temp_path)
+                
+        except Exception as e:
+            # 降级到基本解析
+            placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+            for match in placeholder_pattern.finditer(content):
+                placeholders.append({
+                    "type": match.group(1).strip(),
+                    "description": match.group(2).strip(),
+                    "placeholder_text": match.group(0)
+                })
+    else:
+        # 传统占位符解析
+        placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+        for match in placeholder_pattern.finditer(content):
+            placeholders.append({
+                "type": match.group(1).strip(),
+                "description": match.group(2).strip(), 
+                "placeholder_text": match.group(0)
+            })
+        
+        # 兼容旧格式
+        old_pattern = re.compile(r"{{\s*([\w\-]+)\s*}}")
+        for match in old_pattern.finditer(content):
+            if not any(p["placeholder_text"] == match.group(0) for p in placeholders):
+                placeholders.append({
+                    "type": "文本",
+                    "description": match.group(1),
+                    "placeholder_text": match.group(0)
+                })
+    
     return ApiResponse(
         success=True,
         data={
-            "content": content,
-            "placeholders": placeholders
+            "template_type": template.template_type,
+            "placeholders": placeholders,
+            "total_count": len(placeholders),
+            "stats_count": len([p for p in placeholders if p["type"] == "统计"]),
+            "chart_count": len([p for p in placeholders if p["type"] == "图表"])
         },
         message="模板预览成功"
     )
+
+
+@router.post("/{template_id}/generate-report", response_model=ApiResponse)
+async def generate_report_from_template(
+    template_id: str,
+    data_source_id: str,
+    task_config: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """基于DOC模板生成报告"""
+    template = crud_template.get(db, id=template_id)
+    if not template or (template.user_id != current_user.id and not template.is_public):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="模板不存在或无权限访问"
+        )
+    
+    try:
+        import tempfile
+        import os
+        from datetime import datetime
+        
+        # 创建临时输入文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_input:
+            content = template.content or ''
+            if content.startswith('<?xml') or content.startswith('PK'):
+                temp_input.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
+            else:
+                temp_input.write(content.encode())
+            temp_input_path = temp_input.name
+        
+        # 创建输出文件路径
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_filename = f"report_{template.name}_{timestamp}.docx"
+        temp_output_path = os.path.join(tempfile.gettempdir(), output_filename)
+        
+        try:
+            # 使用智能模板处理器
+            result = await template_parser.process_template_with_intelligent_replacement(
+                temp_input_path,
+                temp_output_path, 
+                int(data_source_id),
+                task_config or {}
+            )
+            
+            if result.success:
+                # 读取生成的文件内容
+                with open(temp_output_path, 'rb') as f:
+                    output_content = f.read().hex()
+                
+                return ApiResponse(
+                    success=True,
+                    data={
+                        "report_content": output_content,
+                        "filename": output_filename,
+                        "processing_result": {
+                            "total_placeholders": result.total_placeholders,
+                            "successful_replacements": result.successful_replacements,
+                            "processing_time": result.processing_time,
+                            "replacements": [
+                                {
+                                    "placeholder": r.original_placeholder,
+                                    "success": r.success,
+                                    "content_type": r.content_type,
+                                    "error": r.error_message
+                                } for r in result.replacements or []
+                            ]
+                        }
+                    },
+                    message="报告生成成功"
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"报告生成失败: {result.error_message}"
+                )
+                
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(temp_input_path)
+                if os.path.exists(temp_output_path):
+                    os.unlink(temp_output_path)
+            except:
+                pass
+                
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"报告生成失败: {str(e)}"
+        )
+
+
+@router.post("/{template_id}/validate-placeholders", response_model=ApiResponse)
+async def validate_template_placeholders(
+    template_id: str,
+    data_source_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """验证模板占位符与数据源的匹配度"""
+    template = crud_template.get(db, id=template_id)
+    if not template or (template.user_id != current_user.id and not template.is_public):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="模板不存在或无权限访问"
+        )
+    
+    try:
+        # 获取模板占位符
+        content = template.content or ''
+        
+        if template.template_type == "docx":
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
+                if content.startswith('<?xml') or content.startswith('PK'):
+                    temp_file.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
+                else:
+                    temp_file.write(content.encode())
+                temp_path = temp_file.name
+            
+            try:
+                placeholder_data = template_parser.parse_doc_placeholders(temp_path)
+                placeholders = (
+                    placeholder_data.get("stats_placeholders", []) + 
+                    placeholder_data.get("chart_placeholders", [])
+                )
+            finally:
+                os.unlink(temp_path)
+        else:
+            # 基本解析
+            import re
+            placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+            placeholders = []
+            for match in placeholder_pattern.finditer(content):
+                placeholders.append({
+                    "placeholder_type": match.group(1).strip(),
+                    "description": match.group(2).strip(),
+                    "placeholder_text": match.group(0)
+                })
+        
+        # 验证每个占位符
+        validation_results = []
+        
+        for placeholder in placeholders:
+            validation_result = {
+                "placeholder": placeholder.get("placeholder_text", ""),
+                "type": placeholder.get("placeholder_type", ""),
+                "description": placeholder.get("description", ""),
+                "is_valid": True,
+                "confidence": 0.8,  # 默认置信度
+                "suggestions": []
+            }
+            
+            # 根据类型进行验证
+            if placeholder.get("placeholder_type") == "统计":
+                # 验证统计需求
+                validation_result["suggestions"].append("建议明确统计指标和计算方式")
+            elif placeholder.get("placeholder_type") == "图表":
+                # 验证图表需求
+                validation_result["suggestions"].append("建议指定图表类型和展示内容")
+            
+            validation_results.append(validation_result)
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "total_placeholders": len(placeholders),
+                "valid_placeholders": len([r for r in validation_results if r["is_valid"]]),
+                "validation_results": validation_results,
+                "overall_confidence": sum(r["confidence"] for r in validation_results) / len(validation_results) if validation_results else 0
+            },
+            message="占位符验证完成"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"占位符验证失败: {str(e)}"
+        )

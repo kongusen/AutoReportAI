@@ -243,7 +243,7 @@ function TaskTabs({
                 </label>
                 <Switch
                   checked={getValues('is_active')}
-                  onChange={(checked) => setValue('is_active', checked)}
+                  onChange={(checked: boolean) => setValue('is_active', checked)}
                   label="启用任务"
                   description="启用后任务将按调度自动执行"
                 />

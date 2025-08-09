@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from app.core.logging_config import get_module_logger, get_performance_logger
+from ..statistical_analysis_engine import statistical_engine
+from ..chart_generation_engine import chart_engine
 
 # Get module-specific logger
 logger = get_module_logger('intelligent_placeholder')
@@ -516,6 +518,215 @@ class PlaceholderProcessor:
             logger.error(f"错误恢复失败: {e}")
 
         return recovered_text
+
+    async def process_statistical_placeholder(
+        self, 
+        placeholder: PlaceholderMatch, 
+        data_source_id: int, 
+        data: Any = None
+    ) -> Dict[str, Any]:
+        """
+        处理统计类型占位符
+        
+        Args:
+            placeholder: 占位符匹配结果
+            data_source_id: 数据源ID
+            data: 输入数据（可选）
+            
+        Returns:
+            处理结果
+        """
+        try:
+            logger.info(f"处理统计占位符: {placeholder.description}")
+            
+            # 解析统计需求
+            from ..template_parser_service import template_parser
+            stats_requirements = template_parser._parse_stats_description(placeholder.description)
+            
+            # 如果没有提供数据，从数据源获取
+            if data is None:
+                data = await self._fetch_data_from_source(data_source_id)
+            
+            # 执行统计分析
+            result = await statistical_engine.analyze_data(data, stats_requirements)
+            
+            if result.get("success"):
+                return {
+                    "success": True,
+                    "processed_value": result.get("formatted_result"),
+                    "raw_value": result.get("raw_result"),
+                    "content_type": "statistical_result",
+                    "metadata": result.get("metadata", {})
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "统计分析失败"),
+                    "processed_value": placeholder.full_match,
+                    "content_type": "error"
+                }
+                
+        except Exception as e:
+            logger.error(f"统计占位符处理失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "processed_value": placeholder.full_match,
+                "content_type": "error"
+            }
+
+    async def process_chart_placeholder(
+        self, 
+        placeholder: PlaceholderMatch, 
+        data_source_id: int, 
+        data: Any = None,
+        output_dir: str = None
+    ) -> Dict[str, Any]:
+        """
+        处理图表类型占位符
+        
+        Args:
+            placeholder: 占位符匹配结果
+            data_source_id: 数据源ID
+            data: 输入数据（可选）
+            output_dir: 图表输出目录
+            
+        Returns:
+            处理结果
+        """
+        try:
+            logger.info(f"处理图表占位符: {placeholder.description}")
+            
+            # 解析图表需求
+            from ..template_parser_service import template_parser
+            chart_requirements = template_parser._parse_chart_description(placeholder.description)
+            
+            # 如果没有提供数据，从数据源获取
+            if data is None:
+                data = await self._fetch_data_from_source(data_source_id)
+            
+            # 生成图表
+            result = await chart_engine.generate_chart(data, chart_requirements, output_dir)
+            
+            if result.get("success"):
+                return {
+                    "success": True,
+                    "processed_value": result.get("description", ""),
+                    "chart_path": result.get("file_path"),
+                    "content_type": "chart_result",
+                    "chart_type": result.get("chart_type"),
+                    "metadata": result.get("metadata", {})
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "图表生成失败"),
+                    "processed_value": placeholder.full_match,
+                    "content_type": "error"
+                }
+                
+        except Exception as e:
+            logger.error(f"图表占位符处理失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "processed_value": placeholder.full_match,
+                "content_type": "error"
+            }
+
+    async def process_single_placeholder(
+        self, 
+        placeholder: PlaceholderMatch, 
+        data_source_id: int, 
+        task_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        处理单个占位符（新的统一入口方法）
+        
+        Args:
+            placeholder: 占位符匹配结果
+            data_source_id: 数据源ID
+            task_config: 任务配置
+            
+        Returns:
+            处理结果
+        """
+        try:
+            # 根据占位符类型选择处理方式
+            if placeholder.type == PlaceholderType.STATISTIC:
+                return await self.process_statistical_placeholder(
+                    placeholder, data_source_id
+                )
+            elif placeholder.type == PlaceholderType.CHART:
+                output_dir = task_config.get("output_dir") if task_config else None
+                return await self.process_chart_placeholder(
+                    placeholder, data_source_id, output_dir=output_dir
+                )
+            elif placeholder.type == PlaceholderType.PERIOD:
+                return await self._process_period_placeholder(placeholder, task_config)
+            elif placeholder.type == PlaceholderType.REGION:
+                return await self._process_region_placeholder(placeholder, task_config)
+            else:
+                return {
+                    "success": False,
+                    "error": f"不支持的占位符类型: {placeholder.type}",
+                    "processed_value": placeholder.full_match,
+                    "content_type": "error"
+                }
+                
+        except Exception as e:
+            logger.error(f"占位符处理失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "processed_value": placeholder.full_match,
+                "content_type": "error"
+            }
+
+    async def _fetch_data_from_source(self, data_source_id: int) -> Any:
+        """
+        从数据源获取数据
+        """
+        try:
+            # 这里需要调用数据源服务获取数据
+            # 暂时返回模拟数据
+            from ...services.data_source_service import data_source_service
+            return await data_source_service.get_data_by_source_id(data_source_id)
+        except Exception as e:
+            logger.error(f"数据获取失败: {e}")
+            return None
+
+    async def _process_period_placeholder(
+        self, 
+        placeholder: PlaceholderMatch, 
+        task_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """处理周期类型占位符"""
+        # 这里可以实现具体的周期处理逻辑
+        from datetime import datetime
+        current_time = datetime.now()
+        period_value = f"{current_time.year}年{current_time.month}月"
+        
+        return {
+            "success": True,
+            "processed_value": period_value,
+            "content_type": "period_result"
+        }
+
+    async def _process_region_placeholder(
+        self, 
+        placeholder: PlaceholderMatch, 
+        task_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """处理区域类型占位符"""
+        # 这里可以实现具体的区域处理逻辑
+        region_value = task_config.get("region", "全市") if task_config else "全市"
+        
+        return {
+            "success": True,
+            "processed_value": region_value,
+            "content_type": "region_result"
+        }
 
 
 # 便捷函数

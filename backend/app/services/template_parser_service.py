@@ -24,6 +24,7 @@ class ReplacementResult:
     replacement_content: str
     content_type: str
     error_message: Optional[str] = None
+    chart_path: Optional[str] = None  # 图表文件路径
 
 
 @dataclass
@@ -46,8 +47,12 @@ class TemplateParser:
         r"\[(?P<type>chart|table):(?P<name>[\w\s]+?)\s*(?:\s+\"(?P<ct_desc>.*?)\")?\s*\]"
     )
 
-    # 智能占位符正则表达式 {{类型:描述}}
+    # 统一的智能占位符正则表达式 {{类型:描述}}
     INTELLIGENT_PLACEHOLDER_REGEX = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+    
+    # 专用的统计和图表占位符正则表达式
+    STATS_PLACEHOLDER_REGEX = re.compile(r"\{\{统计\s*:\s*([^}]+)\}\}")
+    CHART_PLACEHOLDER_REGEX = re.compile(r"\{\{图表\s*:\s*([^}]+)\}\}")
 
     def __init__(self):
         self.format_config = FormatConfig()
@@ -132,6 +137,143 @@ class TemplateParser:
 
         return {"intelligent_placeholders": placeholders}
 
+    def parse_doc_placeholders(
+        self, file_path: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        专门解析DOC文件中的统计和图表占位符
+        支持格式：{{统计:描述}} 和 {{图表:描述}}
+        """
+        doc = docx.Document(file_path)
+        stats_placeholders = []
+        chart_placeholders = []
+        found_keys = set()
+
+        # 获取完整文本
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += "\n" + cell.text
+
+        # 查找统计占位符
+        for match in self.STATS_PLACEHOLDER_REGEX.finditer(full_text):
+            description = match.group(1).strip()
+            placeholder_text = match.group(0)
+
+            if placeholder_text not in found_keys:
+                stats_placeholders.append(
+                    {
+                        "placeholder_text": placeholder_text,
+                        "placeholder_type": "统计",
+                        "description": description,
+                        "position": match.start(),
+                        "analysis_requirements": self._parse_stats_description(description)
+                    }
+                )
+                found_keys.add(placeholder_text)
+
+        # 查找图表占位符
+        for match in self.CHART_PLACEHOLDER_REGEX.finditer(full_text):
+            description = match.group(1).strip()
+            placeholder_text = match.group(0)
+
+            if placeholder_text not in found_keys:
+                chart_placeholders.append(
+                    {
+                        "placeholder_text": placeholder_text,
+                        "placeholder_type": "图表",
+                        "description": description,
+                        "position": match.start(),
+                        "chart_requirements": self._parse_chart_description(description)
+                    }
+                )
+                found_keys.add(placeholder_text)
+
+        return {
+            "stats_placeholders": stats_placeholders,
+            "chart_placeholders": chart_placeholders,
+            "total_count": len(stats_placeholders) + len(chart_placeholders)
+        }
+
+    def _parse_stats_description(self, description: str) -> Dict[str, Any]:
+        """
+        解析统计描述，提取统计需求
+        """
+        requirements = {
+            "operation": "sum",  # 默认求和
+            "field_hints": [],
+            "groupby_hints": [],
+            "filter_hints": [],
+            "format_hints": {}
+        }
+        
+        desc_lower = description.lower()
+        
+        # 识别统计操作类型
+        if any(keyword in desc_lower for keyword in ["求和", "总和", "合计", "sum"]):
+            requirements["operation"] = "sum"
+        elif any(keyword in desc_lower for keyword in ["平均", "均值", "average", "avg"]):
+            requirements["operation"] = "avg"
+        elif any(keyword in desc_lower for keyword in ["计数", "数量", "count"]):
+            requirements["operation"] = "count"
+        elif any(keyword in desc_lower for keyword in ["最大", "最高", "max"]):
+            requirements["operation"] = "max"
+        elif any(keyword in desc_lower for keyword in ["最小", "最低", "min"]):
+            requirements["operation"] = "min"
+        elif any(keyword in desc_lower for keyword in ["占比", "比例", "percentage", "率"]):
+            requirements["operation"] = "percentage"
+            
+        # 识别分组字段
+        if any(keyword in desc_lower for keyword in ["按", "分组", "group by"]):
+            # 提取可能的分组字段提示
+            if "按" in description:
+                group_part = description.split("按")[1].split("的")[0] if "的" in description else description.split("按")[1]
+                requirements["groupby_hints"].append(group_part.strip())
+                
+        # 识别格式要求
+        if any(keyword in desc_lower for keyword in ["万", "千", "万元"]):
+            requirements["format_hints"]["unit"] = "万"
+        elif any(keyword in desc_lower for keyword in ["百分比", "%"]):
+            requirements["format_hints"]["format"] = "percentage"
+            
+        return requirements
+
+    def _parse_chart_description(self, description: str) -> Dict[str, Any]:
+        """
+        解析图表描述，提取图表需求
+        """
+        requirements = {
+            "chart_type": "auto",  # 自动选择
+            "x_field_hints": [],
+            "y_field_hints": [],
+            "groupby_hints": [],
+            "title_hints": "",
+            "style_hints": {}
+        }
+        
+        desc_lower = description.lower()
+        
+        # 识别图表类型
+        if any(keyword in desc_lower for keyword in ["柱状图", "条形图", "bar"]):
+            requirements["chart_type"] = "bar"
+        elif any(keyword in desc_lower for keyword in ["折线图", "线图", "line"]):
+            requirements["chart_type"] = "line"
+        elif any(keyword in desc_lower for keyword in ["饼图", "pie"]):
+            requirements["chart_type"] = "pie"
+        elif any(keyword in desc_lower for keyword in ["散点图", "scatter"]):
+            requirements["chart_type"] = "scatter"
+        elif any(keyword in desc_lower for keyword in ["趋势", "变化"]):
+            requirements["chart_type"] = "line"
+        elif any(keyword in desc_lower for keyword in ["分布", "构成"]):
+            requirements["chart_type"] = "pie"
+            
+        # 提取标题提示
+        if "图" in description:
+            requirements["title_hints"] = description
+            
+        return requirements
+
     async def process_template_with_intelligent_replacement(
         self,
         template_path: str,
@@ -187,6 +329,7 @@ class TemplateParser:
                             original_placeholder=placeholder["placeholder_text"],
                             replacement_content=str(result.get("processed_value", "")),
                             content_type=result.get("content_type", "text"),
+                            chart_path=result.get("chart_path")  # 添加图表路径
                         )
                         successful_count += 1
                     else:
@@ -256,22 +399,36 @@ class TemplateParser:
 
             # 替换段落中的占位符
             for paragraph in doc.paragraphs:
-                for placeholder, replacement in replacement_map.items():
+                for replacement in replacements:
+                    placeholder = replacement.original_placeholder
                     if placeholder in paragraph.text:
-                        paragraph.text = paragraph.text.replace(
-                            placeholder, replacement
-                        )
+                        if replacement.content_type == "chart_result" and hasattr(replacement, 'chart_path') and replacement.chart_path:
+                            # 处理图表替换
+                            self._replace_with_chart(paragraph, placeholder, replacement.chart_path)
+                        else:
+                            # 处理文本替换
+                            paragraph.text = paragraph.text.replace(
+                                placeholder, replacement.replacement_content
+                            )
 
             # 替换表格中的占位符
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:
-                        for paragraph in cell.paragraphs:
-                            for placeholder, replacement in replacement_map.items():
-                                if placeholder in paragraph.text:
-                                    paragraph.text = paragraph.text.replace(
-                                        placeholder, replacement
-                                    )
+                        for replacement in replacements:
+                            placeholder = replacement.original_placeholder
+                            cell_text = ''.join([p.text for p in cell.paragraphs])
+                            if placeholder in cell_text:
+                                if replacement.content_type == "chart_result" and hasattr(replacement, 'chart_path') and replacement.chart_path:
+                                    # 处理图表替换
+                                    self._replace_with_chart_in_cell(cell, placeholder, replacement.chart_path)
+                                else:
+                                    # 处理文本替换
+                                    for paragraph in cell.paragraphs:
+                                        if placeholder in paragraph.text:
+                                            paragraph.text = paragraph.text.replace(
+                                                placeholder, replacement.replacement_content
+                                            )
 
             # 保存文档
             doc.save(output_path)
@@ -408,6 +565,45 @@ class TemplateParser:
 
         except Exception as e:
             return {"valid": False, "error": f"模板验证失败: {str(e)}"}
+
+    def _replace_with_chart(self, paragraph, placeholder: str, chart_path: str):
+        """在段落中用图表替换占位符"""
+        try:
+            # 先清除占位符文本
+            paragraph.text = paragraph.text.replace(placeholder, "")
+            
+            # 添加图片
+            if os.path.exists(chart_path):
+                run = paragraph.runs[0] if paragraph.runs else paragraph.add_run()
+                
+                # 根据段落位置确定图片大小
+                from docx.shared import Inches
+                if "表格" in paragraph.text or paragraph._element.getparent().tag.endswith('tc'):
+                    # 在表格中，使用较小尺寸
+                    run.add_picture(chart_path, width=Inches(4))
+                else:
+                    # 在段落中，使用标准尺寸  
+                    run.add_picture(chart_path, width=Inches(6))
+                    
+                logger.info(f"图表已插入: {chart_path}")
+            else:
+                logger.warning(f"图表文件不存在: {chart_path}")
+                # 如果图表文件不存在，插入描述文本
+                paragraph.text = f"[图表: {placeholder}]"
+                
+        except Exception as e:
+            logger.error(f"图表插入失败: {e}")
+            paragraph.text = f"[图表插入失败: {placeholder}]"
+
+    def _replace_with_chart_in_cell(self, cell, placeholder: str, chart_path: str):
+        """在表格单元格中用图表替换占位符"""
+        try:
+            for paragraph in cell.paragraphs:
+                if placeholder in paragraph.text:
+                    self._replace_with_chart(paragraph, placeholder, chart_path)
+                    break
+        except Exception as e:
+            logger.error(f"表格单元格图表替换失败: {e}")
 
 
 template_parser = TemplateParser()

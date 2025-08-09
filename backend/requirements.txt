@@ -58,3 +58,7 @@ cron-validator
 unidecode
 structlog
 aiohttp
+matplotlib
+seaborn
+plotly
+kaleido

@@ -19,6 +19,7 @@ interface AuthState {
   logout: () => void
   refreshToken: () => Promise<void>
   updateUser: (userData: Partial<User>) => void
+  updateProfile: (userData: User) => void
   
   // 内部方法
   setLoading: (loading: boolean) => void
@@ -148,6 +149,12 @@ export const useAuthStore = create<AuthState>()(
           set({ user: updatedUser })
           localStorage.setItem('user', JSON.stringify(updatedUser))
         }
+      },
+
+      // 更新完整用户资料（包括profile）
+      updateProfile: (userData: User) => {
+        set({ user: userData })
+        localStorage.setItem('user', JSON.stringify(userData))
       },
 
       // 设置加载状态

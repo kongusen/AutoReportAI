@@ -188,7 +188,7 @@ export function Header() {
               >
                 <Avatar
                   size="sm"
-                  src={user?.avatar_url}
+                  src={(user as any)?.avatar_url || undefined}
                   fallback={user?.username || user?.email}
                 />
                 <span className="hidden lg:flex lg:items-center">

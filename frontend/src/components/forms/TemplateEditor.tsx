@@ -36,12 +36,15 @@ export function TemplateEditor({
 
   // 从模板内容中提取变量占位符
   const extractVariables = (templateContent: string): string[] => {
-    const variablePattern = /\{\{\s*(\w+)\s*\}\}/g
-    const matches = []
+    // Updated regex to match both {{ variable }} and {{统计:描述}} or {{图表:描述}} formats
+    const variablePattern = /\{\{\s*([^}]+?)\s*\}\}/g
+    const matches: string[] = []
     let match
     while ((match = variablePattern.exec(templateContent)) !== null) {
-      if (!matches.includes(match[1])) {
-        matches.push(match[1])
+      const placeholder = match[1].trim();
+      // For complex placeholders like {{统计:描述}}, we still want to track them
+      if (!matches.includes(placeholder)) {
+        matches.push(placeholder)
       }
     }
     return matches
@@ -52,7 +55,9 @@ export function TemplateEditor({
   useEffect(() => {
     // 自动添加新发现的变量到变量列表
     templateVariables.forEach(varName => {
-      if (!variables.hasOwnProperty(varName)) {
+      // For complex placeholders, we don't automatically add them as variables
+      // Only add simple variable names (no colons)
+      if (!varName.includes(':') && !variables.hasOwnProperty(varName)) {
         const updatedVariables = { ...variables, [varName]: '' }
         onVariablesChange?.(updatedVariables)
       }
@@ -108,6 +113,24 @@ export function TemplateEditor({
     }
   }
 
+  const insertComplexPlaceholder = (type: string) => {
+    if (editorRef.current) {
+      const editor = editorRef.current
+      const position = editor.getPosition()
+      const range = {
+        startLineNumber: position.lineNumber,
+        startColumn: position.column,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      }
+      editor.executeEdits('insert-placeholder', [{
+        range,
+        text: `{{${type}:请在此处描述需要生成的内容}}`,
+      }])
+      editor.focus()
+    }
+  }
+
   const tabItems = [
     { key: 'editor', label: '编辑器' },
     { key: 'variables', label: '变量管理' },
@@ -139,7 +162,7 @@ export function TemplateEditor({
         <div className="flex items-center space-x-2">
           {templateVariables.length > 0 && (
             <Badge variant="secondary">
-              {templateVariables.length} 个变量
+              {templateVariables.length} 个占位符
             </Badge>
           )}
           <span className="text-sm text-gray-500">
@@ -195,7 +218,7 @@ export function TemplateEditor({
                   {templateVariables.length > 0 && (
                     <div>
                       <h4 className="text-sm font-medium text-gray-700 mb-2">
-                        模板变量
+                        模板占位符
                       </h4>
                       <div className="space-y-2">
                         {templateVariables.map((varName) => (
@@ -203,12 +226,14 @@ export function TemplateEditor({
                             <label className="text-sm text-gray-600">
                               {varName}
                             </label>
-                            <Input
-                              size="sm"
-                              placeholder={`输入 ${varName} 的值`}
-                              value={variables[varName] || ''}
-                              onChange={(e) => handleVariableChange(varName, e.target.value)}
-                            />
+                            {!varName.includes(':') && (
+                              <Input
+                                size={'sm' as any}
+                                placeholder={`输入 ${varName} 的值`}
+                                value={variables[varName] || ''}
+                                onChange={(e) => handleVariableChange(varName, e.target.value)}
+                              />
+                            )}
                           </div>
                         ))}
                       </div>
@@ -222,19 +247,19 @@ export function TemplateEditor({
                     </h4>
                     <div className="space-y-2">
                       <Input
-                        size="sm"
+                        size={'sm' as any}
                         placeholder="变量名"
                         value={newVariableName}
                         onChange={(e) => setNewVariableName(e.target.value)}
                       />
                       <Input
-                        size="sm"
+                        size={'sm' as any}
                         placeholder="默认值"
                         value={newVariableValue}
                         onChange={(e) => setNewVariableValue(e.target.value)}
                       />
                       <Button
-                        size="sm"
+                        size={'sm' as any}
                         className="w-full"
                         onClick={addVariable}
                         disabled={!newVariableName.trim()}
@@ -245,25 +270,37 @@ export function TemplateEditor({
                   </div>
 
                   {/* 变量插入快捷按钮 */}
-                  {Object.keys(variables).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-700 mb-2">
-                        快速插入
-                      </h4>
-                      <div className="flex flex-wrap gap-1">
-                        {Object.keys(variables).map((varName) => (
-                          <Button
-                            key={varName}
-                            size="sm"
-                            variant="outline"
-                            onClick={() => insertVariable(varName)}
-                          >
-                            {varName}
-                          </Button>
-                        ))}
-                      </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">
+                      快速插入
+                    </h4>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.keys(variables).map((varName) => (
+                        <Button
+                          key={varName}
+                          size="sm"
+                          variant="outline"
+                          onClick={() => insertVariable(varName)}
+                        >
+                          {varName}
+                        </Button>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => insertComplexPlaceholder('统计')}
+                      >
+                        统计
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => insertComplexPlaceholder('图表')}
+                      >
+                        图表
+                      </Button>
                     </div>
-                  )}
+                  </div>
                 </CardContent>
               </Card>
             </TabPanel>
@@ -281,6 +318,17 @@ export function TemplateEditor({
                     <div className="text-sm text-gray-600 space-y-1">
                       <p><code className="bg-gray-100 px-1 rounded">{'{{ variable_name }}'}</code></p>
                       <p className="text-xs">使用双大括号包围变量名</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">
+                      智能占位符语法
+                    </h4>
+                    <div className="text-sm text-gray-600 space-y-1">
+                      <p><code className="bg-gray-100 px-1 rounded">{'{{统计:描述统计需求}}'}</code></p>
+                      <p><code className="bg-gray-100 px-1 rounded">{'{{图表:描述图表需求}}'}</code></p>
+                      <p className="text-xs">系统将根据描述自动生成统计分析或图表</p>
                     </div>
                   </div>
 

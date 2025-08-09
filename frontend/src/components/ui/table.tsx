@@ -5,7 +5,7 @@ import { cn } from '@/utils'
 
 interface Column<T = any> {
   key: string
-  title: string
+  title: string | React.ReactNode
   dataIndex?: string
   width?: string | number
   align?: 'left' | 'center' | 'right'

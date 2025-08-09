@@ -2,10 +2,10 @@
   <img src="https://raw.githubusercontent.com/user-attachments/assets/15ba393a-864a-4f1c-8af2-8b43834a3b04" width="150" alt="AutoReportAI Logo">
   <h1>AutoReportAI</h1>
   <p>
-    <b>An intelligent, AI-powered, and enterprise-ready automated report generation system.</b>
+    <b>智能化、AI驱动的企业级自动报告生成系统</b>
   </p>
   <p>
-    AutoReportAI transforms raw data into polished Word documents (`.docx`) through a fully automated, customizable workflow with advanced AI integration and comprehensive data analytics.
+    AutoReportAI 通过完全自动化、可定制的工作流程，结合先进的 AI 集成和全面的数据分析功能，将原始数据转换为精美的 Word 文档（`.docx`）报告。
   </p>
 
   <p>
@@ -24,26 +24,26 @@
   </p>
 
   <p>
-    <b>English</b> | <a href="./README_zh.md">简体中文</a>
+    <a href="./README_EN.md">English</a> | <b>简体中文</b>
   </p>
 </div>
 
 ---
 
-## ✨ Key Features
+## ✨ 核心特性
 
-AutoReportAI is a comprehensive automation platform that combines AI-powered intelligence with enterprise-grade reliability and modern user experience.
+AutoReportAI 是一个综合性自动化平台，将 AI 智能与企业级可靠性和现代化用户体验相结合。
 
-- **🤖 AI-Powered Analysis**: Integrated multiple AI providers (OpenAI, local models) for intelligent data analysis, content generation, and report composition with dynamic placeholder population.
-- **🕒 Advanced Task Scheduling**: Robust cron-based scheduling with `APScheduler` for automated task execution, comprehensive error handling, and execution history tracking.
-- **📊 Comprehensive ETL Pipeline**: Full-featured ETL engine that fetches data from multiple sources (databases, APIs, files), processes it through configurable transformations, and loads into analytics data marts.
-- **🎨 Dynamic Template System**: Smart template management with placeholder detection, variable substitution, and AI-powered content generation. Supports complex document structures and formatting.
-- **📈 Advanced Data Analytics**: Built-in statistical analysis, data visualization, growth calculation, and trend analysis with chart generation capabilities.
-- **🔌 Multi-Provider AI Integration**: Pluggable AI architecture supporting OpenAI, local models, and custom providers with intelligent fallback mechanisms.
-- **👥 User Management & Profiles**: Complete user authentication, role-based access control, user profiles, and personalized settings management.
-- **🗂️ Complete Audit Trail**: Comprehensive logging of all operations, task executions, errors, and system events with detailed history tracking and reporting.
-- **🌐 Modern Web Interface**: Beautiful, responsive UI built with Next.js, TypeScript, and Tailwind CSS featuring dark/light themes, dashboard analytics, and intuitive navigation.
-- **🔧 Enterprise-Ready**: Production-grade deployment with Docker containerization, CI/CD pipeline, comprehensive testing suite, and database migrations.
+- **🤖 AI 智能分析**: 集成多个 AI 提供商（OpenAI、本地模型），实现智能数据分析、内容生成和动态占位符填充的报告组合。
+- **🕒 高级任务调度**: 基于 `APScheduler` 的强大 cron 调度系统，支持自动化任务执行、全面的错误处理和执行历史跟踪。
+- **📊 全面 ETL 流水线**: 功能完整的 ETL 引擎，从多个数据源（数据库、API、文件）获取数据，通过可配置的转换处理并加载到分析数据仓库。
+- **🎨 动态模板系统**: 智能模板管理，支持占位符检测、变量替换和 AI 驱动的内容生成，支持复杂的文档结构和格式化。
+- **📈 高级数据分析**: 内置统计分析、数据可视化、增长计算和趋势分析，具备图表生成能力。
+- **🔌 多提供商 AI 集成**: 可插拔的 AI 架构，支持 OpenAI、本地模型和自定义提供商，具备智能故障转移机制。
+- **👥 用户管理与档案**: 完整的用户认证、基于角色的访问控制、用户档案和个性化设置管理。
+- **🗂️ 完整审计跟踪**: 全面记录所有操作、任务执行、错误和系统事件，提供详细的历史跟踪和报告。
+- **🌐 现代化 Web 界面**: 使用 Next.js、TypeScript 和 Tailwind CSS 构建的精美响应式 UI，支持深浅主题、仪表板分析和直观导航。
+- **🔧 企业就绪**: 生产级部署，包含 Docker 容器化、CI/CD 流水线、全面测试套件和数据库迁移。
 
 ## 🏛️ System Architecture
 

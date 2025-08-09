@@ -19,6 +19,11 @@ export function Header() {
   const { user, logout } = useAuthStore()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const [notifications, setNotifications] = useState([
+    { id: 1, title: '报告生成完成', message: '月度销售报告已生成', time: '2分钟前', read: false },
+    { id: 2, title: '数据源连接异常', message: 'MySQL数据源连接失败', time: '10分钟前', read: false },
+    { id: 3, title: '任务执行成功', message: '定时任务已成功执行', time: '1小时前', read: true },
+  ])
   const userMenuRef = useRef<HTMLDivElement>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
 
@@ -42,6 +47,16 @@ export function Header() {
     router.push('/login')
   }
 
+  // 标记通知为已读并从列表中移除
+  const markAsRead = (notificationId: number) => {
+    setNotifications(prev => prev.filter(n => n.id !== notificationId))
+  }
+
+  // 标记所有通知为已读
+  const markAllAsRead = () => {
+    setNotifications([])
+  }
+
   const userMenuItems = [
     {
       name: '个人资料',
@@ -61,14 +76,9 @@ export function Header() {
     },
   ]
 
-  // 模拟通知数据
-  const notifications = [
-    { id: 1, title: '报告生成完成', message: '月度销售报告已生成', time: '2分钟前', read: false },
-    { id: 2, title: '数据源连接异常', message: 'MySQL数据源连接失败', time: '10分钟前', read: false },
-    { id: 3, title: '任务执行成功', message: '定时任务已成功执行', time: '1小时前', read: true },
-  ]
-
-  const unreadCount = notifications.filter(n => !n.read).length
+  // 只显示未读通知
+  const unreadNotifications = notifications.filter(n => !n.read)
+  const unreadCount = unreadNotifications.length
 
   return (
     <div className="sticky top-0 z-40 lg:mx-auto lg:max-w-7xl lg:px-8">
@@ -107,18 +117,16 @@ export function Header() {
                     </div>
                   </div>
                   <div className="max-h-96 overflow-y-auto">
-                    {notifications.length === 0 ? (
+                    {unreadNotifications.length === 0 ? (
                       <div className="px-4 py-6 text-center text-sm text-gray-500">
                         暂无通知
                       </div>
                     ) : (
-                      notifications.map((notification) => (
+                      unreadNotifications.map((notification) => (
                         <div
                           key={notification.id}
-                          className={cn(
-                            'px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-b-0',
-                            !notification.read && 'bg-blue-50'
-                          )}
+                          className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-b-0 bg-blue-50 relative group"
+                          onClick={() => markAsRead(notification.id)}
                         >
                           <div className="flex items-start">
                             <div className="flex-1 min-w-0">
@@ -132,19 +140,39 @@ export function Header() {
                                 {notification.time}
                               </p>
                             </div>
-                            {!notification.read && (
-                              <div className="ml-2 w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-1"></div>
-                            )}
+                            <div className="ml-2 flex items-center gap-2">
+                              <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-1"></div>
+                              <button
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  markAsRead(notification.id)
+                                }}
+                              >
+                                已读
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))
                     )}
                   </div>
-                  <div className="px-4 py-2 border-t border-gray-100">
-                    <button className="text-sm text-blue-600 hover:text-blue-700">
-                      查看全部通知
-                    </button>
-                  </div>
+                  {unreadNotifications.length > 0 && (
+                    <div className="px-4 py-2 border-t border-gray-100 flex justify-between">
+                      <button 
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                        onClick={() => router.push('/notifications')}
+                      >
+                        查看全部通知
+                      </button>
+                      <button 
+                        className="text-sm text-gray-600 hover:text-gray-700"
+                        onClick={markAllAsRead}
+                      >
+                        全部已读
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

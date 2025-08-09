@@ -2,7 +2,6 @@
 
 import React from 'react'
 import { Sidebar } from './Sidebar'
-import { Header } from './Header'
 import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration.tsx'
@@ -39,9 +38,6 @@ export function AppLayout({ children }: AppLayoutProps) {
         
         {/* 主内容区域 */}
         <div className="lg:pl-64">
-          {/* 顶部导航栏 */}
-          <Header />
-          
           {/* 页面内容 */}
           <main className="py-6">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">

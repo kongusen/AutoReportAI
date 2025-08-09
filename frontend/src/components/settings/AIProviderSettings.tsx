@@ -74,7 +74,7 @@ export function AIProviderSettings() {
     if (!confirm('确定要删除这个AI提供商吗？')) return
     
     try {
-      await SettingsService.deleteAIProvider(id)
+      await SettingsService.deleteAIProvider(id.toString())
       toast.success('AI提供商已删除')
       loadProviders()
     } catch (error) {

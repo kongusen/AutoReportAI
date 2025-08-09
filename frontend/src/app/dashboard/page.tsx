@@ -6,13 +6,11 @@ import {
   DocumentTextIcon, 
   ClockIcon,
   DocumentArrowDownIcon,
-  ChartBarIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { Progress } from '@/components/ui/Progress'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { api } from '@/lib/api'
@@ -291,42 +289,8 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* 系统状态 */}
+      {/* 快速操作 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>系统概览</CardTitle>
-            <CardDescription>查看系统运行状态和资源使用情况</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">CPU使用率</span>
-                  <span className="text-sm text-gray-500">45%</span>
-                </div>
-                <Progress value={45} variant="info" />
-              </div>
-              
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">内存使用率</span>
-                  <span className="text-sm text-gray-500">67%</span>
-                </div>
-                <Progress value={67} variant="warning" />
-              </div>
-              
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">存储使用率</span>
-                  <span className="text-sm text-gray-500">34%</span>
-                </div>
-                <Progress value={34} variant="success" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
         <Card>
           <CardHeader>
             <CardTitle>快速操作</CardTitle>
@@ -345,10 +309,6 @@ export default function DashboardPage() {
               <Button className="w-full justify-start" variant="outline">
                 <ClockIcon className="mr-2 h-4 w-4" />
                 新建任务
-              </Button>
-              <Button className="w-full justify-start" variant="outline">
-                <ChartBarIcon className="mr-2 h-4 w-4" />
-                查看分析
               </Button>
             </div>
           </CardContent>

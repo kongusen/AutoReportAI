@@ -72,6 +72,10 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      target: production
+      args:
+        HTTP_PROXY: http://192.168.101.241:7890
+        HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -172,6 +176,9 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: http://192.168.101.241:7890
+        HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_frontend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
@@ -213,6 +220,10 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      target: production
+      args:
+        HTTP_PROXY: http://192.168.101.241:7890
+        HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_celery_worker
     environment:
       # Service Configuration
@@ -295,6 +306,10 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      target: production
+      args:
+        HTTP_PROXY: http://192.168.101.241:7890
+        HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_celery_beat
     environment:
       # Service Configuration
@@ -357,6 +372,10 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      target: production
+      args:
+        HTTP_PROXY: http://192.168.101.241:7890
+        HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_flower
     ports:
       - "${FLOWER_PORT:-5555}:5555"

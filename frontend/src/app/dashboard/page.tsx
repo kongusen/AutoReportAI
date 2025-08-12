@@ -8,12 +8,12 @@ import {
   DocumentArrowDownIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui'
+import { Badge } from '@/components/ui'
+import { Button } from '@/components/ui'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { api } from '@/lib/api'
+import { api } from '@/utils/api'
 import { formatRelativeTime, formatNumber } from '@/utils'
 import { DashboardStats, Task, Report } from '@/types'
 

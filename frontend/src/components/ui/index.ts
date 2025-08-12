@@ -1,6 +1,6 @@
 // UI组件统一导出管理
 export { Button, buttonVariants } from './Button'
-export { Input, inputVariants } from './Input'
+export { Input, inputVariants } from './input'
 export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent } from './Card'
 export { Badge, badgeVariants } from './Badge'
 export { LoadingSpinner } from './LoadingSpinner'

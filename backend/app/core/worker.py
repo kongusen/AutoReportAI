@@ -682,7 +682,7 @@ def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
     """
     智能占位符驱动的报告生成流水线
     """
-    from app.core.database import SessionLocal
+    from app.db.session import SessionLocal
     from app.models.task import Task
     from app.models.template import Template
     from app.models.data_source import DataSource

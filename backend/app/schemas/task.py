@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 from typing import List, Optional
 from uuid import UUID
@@ -91,8 +92,8 @@ class TaskResponse(TaskBase):
     id: int
     owner_id: UUID
     is_active: bool = True
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     @property
     def unique_id(self) -> str:

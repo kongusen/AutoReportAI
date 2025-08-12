@@ -34,7 +34,7 @@ HEADERS = {
 
 # Use existing IDs from the query results
 DATA_SOURCE_ID = "5f848786-bb94-4ec0-b2f7-fda8d84a820e"  # Test Doris for Intelligent WF
-TEMPLATE_ID = "a28c2983-f27d-41fe-aa44-a83dd859012c"  # 投诉数据分析报告 (实际ID)
+TEMPLATE_ID = "1ee49d77-a172-4c1a-ad51-d760b3642f9e"  # 投诉数据分析报告 (正确ID)
 
 def create_data_source():
     print("Attempting to find or create a test Doris data source...")

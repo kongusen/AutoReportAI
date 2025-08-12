@@ -1,5 +1,5 @@
 # Multi-stage build for optimized frontend
-FROM node:18-alpine AS base
+FROM --platform=linux/amd64 node:18-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -21,7 +21,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NODE_ENV production
 
-# Build application
+# Build application with platform-specific settings
 RUN npm run build
 
 # Production image, copy all the files and run next

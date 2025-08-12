@@ -72,7 +72,6 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-      target: production
     container_name: autoreport_backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -214,7 +213,6 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-      target: production
     container_name: autoreport_celery_worker
     environment:
       # Service Configuration
@@ -297,7 +295,6 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-      target: production
     container_name: autoreport_celery_beat
     environment:
       # Service Configuration
@@ -360,7 +357,6 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-      target: production
     container_name: autoreport_flower
     ports:
       - "${FLOWER_PORT:-5555}:5555"
@@ -457,8 +453,3 @@ volumes:
 networks:
   autoreport-network:
     driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1

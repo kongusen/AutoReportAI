@@ -1,6 +1,5 @@
-# Multi-stage build for optimized and stable production image
-# Stage 1: Base image with system dependencies
-FROM python:3.11-slim as base
+# Simple production image
+FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,16 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Configure apt for better reliability
-RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::http::No-Cache "true";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::BrokenProxy "true";' >> /etc/apt/apt.conf.d/99force-ipv4
-
-# Stage 2: Dependencies builder
-FROM base as builder
-
-# Install system dependencies required for building Python packages
+# Install system dependencies
 RUN apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -33,62 +23,26 @@ RUN apt-get update --fix-missing && \
         libffi-dev \
         libssl-dev \
         pkg-config \
-        git && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
-
-# Set working directory
-WORKDIR /app
-
-# Create and activate virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Upgrade pip and install wheel
-RUN pip install --no-cache-dir --upgrade \
-    pip==23.3.1 \
-    setuptools==69.0.2 \
-    wheel==0.42.0
-
-# Copy requirements file
-COPY requirements.txt /app/
-
-# Install Python dependencies with better error handling
-RUN pip install --no-cache-dir --timeout=300 \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    -r requirements.txt
-
-# Stage 3: Production runtime
-FROM base as production
-
-# Install only runtime dependencies
-RUN apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        wget \
-        libpq5 \
-        libffi8 \
-        libssl3 \
-        ca-certificates \
+        git \
         dumb-init \
         procps && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
-# Create app user and group with specific UID/GID for consistency
+# Create app user and group
 RUN groupadd --gid 1001 app && \
     useradd --uid 1001 --gid app --shell /bin/bash --create-home app
 
-# Copy virtual environment from builder
-COPY --from=builder --chown=app:app /opt/venv /opt/venv
-
-# Set PATH to use virtual environment
-ENV PATH="/opt/venv/bin:$PATH"
-
 # Set working directory
 WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    -r requirements.txt
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/reports /app/uploads /app/storage && \

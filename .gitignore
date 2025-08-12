@@ -256,4 +256,4 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-autoreporait-docker/data
+autoreporait-docker/databackend/celerybeat-schedule*

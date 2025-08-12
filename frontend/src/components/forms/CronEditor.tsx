@@ -422,7 +422,7 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
       const hour = parts.hour === '*' ? '9' : parts.hour
       const minute = parts.minute === '*' ? '0' : parts.minute
       
-      let scheduleType: 'once' | 'daily' | 'weekly' | 'monthly' = 'daily'
+      let scheduleType: 'daily' | 'weekly' | 'monthly' = 'daily'
       let weekdays: string[] = ['1', '2', '3', '4', '5']
       let monthDay = '1'
 
@@ -494,8 +494,6 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
     const { hour, minute } = time
     
     switch (scheduleType) {
-      case 'once':
-        return `${minute} ${hour} * * *`
       case 'daily':
         return `${minute} ${hour} * * *`
       case 'weekly':
@@ -528,15 +526,6 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-3">调度频率</label>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <Button
-            type="button"
-            variant={scheduleType === 'once' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setScheduleType('once')}
-            className="justify-center"
-          >
-            单次执行
-          </Button>
           <Button
             type="button"
             variant={scheduleType === 'daily' ? 'default' : 'outline'}

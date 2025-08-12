@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import toast from 'react-hot-toast'
-import { SettingsService, AIProvider, AIProviderCreate } from '@/services/settingsService'
+import { SettingsService, AIProviderCreate } from '@/services/settingsService'
+import { AIProvider } from '@/types'
 import { PlusIcon, TrashIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 
 export function AIProviderSettings() {
@@ -32,11 +33,14 @@ export function AIProviderSettings() {
       console.log('开始加载AI提供商列表...')
       const data = await SettingsService.getAIProviders()
       console.log('获取到的AI提供商数据:', data)
-      setProviders(data)
-      console.log('设置providers状态完成，providers数量:', data.length)
+      // 确保 providers 是数组
+      const providerList = Array.isArray(data) ? data : []
+      setProviders(providerList)
+      console.log('设置providers状态完成，providers数量:', providerList.length)
     } catch (error) {
       console.error('加载AI提供商失败:', error)
       toast.error('加载AI提供商失败')
+      setProviders([]) // 出错时设为空数组
     } finally {
       setIsLoading(false)
     }
@@ -246,7 +250,7 @@ export function AIProviderSettings() {
       {/* 已有提供商列表 */}
       <div className="bg-white shadow overflow-hidden sm:rounded-md">
         <ul className="divide-y divide-gray-200">
-          {providers.map((provider) => (
+          {Array.isArray(providers) && providers.map((provider) => (
             <li key={provider.id} className="px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1 min-w-0">
@@ -311,7 +315,7 @@ export function AIProviderSettings() {
           ))}
         </ul>
 
-        {providers.length === 0 && (
+        {(!Array.isArray(providers) || providers.length === 0) && (
           <div className="text-center py-6 text-gray-500">
             <p>还没有配置AI提供商</p>
             <p className="text-sm mt-1">点击上方按钮添加第一个AI提供商</p>

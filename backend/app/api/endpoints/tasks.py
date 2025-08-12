@@ -177,6 +177,7 @@ async def delete_task(
 @router.post("/{task_id}/execute", response_model=ApiResponse)
 async def execute_task(
     task_id: int,
+    use_intelligent_placeholders: bool = Query(False, description="使用智能占位符分析"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -191,17 +192,38 @@ async def execute_task(
 
     # 发送一个Celery任务来异步执行报告生成
     try:
-        task_result = celery_app.send_task(
-            "app.core.worker.generate_report_task", args=[task.id]
-        )
+        # 在Redis中保存任务所有者信息以便进度通知
+        from app.core.config import settings
+        import redis.asyncio as redis
+        
+        redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+        import asyncio
+        asyncio.create_task(redis_client.set(f"report_task:{task.id}:owner", str(user_id), ex=3600))
+        
+        # 选择使用智能占位符分析还是传统流程
+        if use_intelligent_placeholders:
+            # 使用新的Agent驱动的智能占位符处理流程
+            task_result = celery_app.send_task(
+                "app.core.worker.intelligent_report_generation_pipeline", 
+                args=[task.id, str(user_id)]
+            )
+            message = "智能占位符报告生成任务已加入队列"
+        else:
+            # 使用传统的报告生成流程
+            task_result = celery_app.send_task(
+                "app.core.worker.report_generation_pipeline", args=[task.id]
+            )
+            message = "报告生成任务已加入队列"
+        
         return ApiResponse(
             success=True,
             data={
                 "task_id": task_id,
                 "celery_task_id": str(task_result.id),
-                "status": "queued"
+                "status": "queued",
+                "processing_mode": "intelligent" if use_intelligent_placeholders else "standard"
             },
-            message=f"报告生成任务已加入队列"
+            message=message
         )
     except Exception as e:
         return ApiResponse(
@@ -209,3 +231,46 @@ async def execute_task(
             error=str(e),
             message="任务执行失败"
         )
+
+
+@router.get("/{task_id}/status", response_model=ApiResponse)
+async def get_task_status(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取任务执行状态"""
+    user_id = current_user.id
+    if isinstance(user_id, str):
+        user_id = UUID(user_id)
+    
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
+    
+    # 从Redis获取任务状态
+    import redis.asyncio as redis
+    from app.core.config import settings
+    
+    redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+    try:
+        status_data = await redis_client.hgetall(f"report_task:{task_id}:status")
+        if not status_data:
+            status_data = {"status": "not_started", "progress": 0}
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"获取任务状态失败: {e}")
+        status_data = {"status": "unknown", "progress": 0}
+    finally:
+        await redis_client.close()
+    
+    return ApiResponse(
+        success=True,
+        data={
+            "task_id": task_id,
+            "task_name": task.name,
+            **status_data
+        },
+        message="获取任务状态成功"
+    )

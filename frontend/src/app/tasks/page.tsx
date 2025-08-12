@@ -18,7 +18,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Table } from '@/components/ui/Table'
+import { Table } from '@/components/ui/table'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Checkbox } from '@/components/ui/Checkbox'
@@ -26,6 +26,7 @@ import { Empty } from '@/components/ui/Empty'
 import { Progress } from '@/components/ui/Progress'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import { getTaskStatusInfo, formatRelativeTime } from '@/utils'
 import { Task } from '@/types'
 
@@ -44,6 +45,9 @@ export default function TasksPage() {
   } = useTaskStore()
   
   const { dataSources, fetchDataSources } = useDataSourceStore()
+  
+  // 启用WebSocket连接来接收实时任务更新
+  const { connected: wsConnected } = useWebSocket({ enabled: true })
   
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
@@ -137,22 +141,65 @@ export default function TasksPage() {
     const progress = getTaskProgress(taskId)
     if (!progress) return null
 
+    const getStatusColor = (status: string) => {
+      switch (status) {
+        case 'completed': return 'bg-green-500'
+        case 'failed': return 'bg-red-500'
+        case 'analyzing': return 'bg-blue-500'
+        case 'querying': return 'bg-yellow-500'
+        case 'processing': return 'bg-orange-500'
+        case 'generating': return 'bg-purple-500'
+        default: return 'bg-gray-500'
+      }
+    }
+
+    const getStatusText = (status: string) => {
+      switch (status) {
+        case 'pending': return '等待中'
+        case 'analyzing': return '分析中'
+        case 'querying': return '查询数据'
+        case 'processing': return '处理中'
+        case 'generating': return '生成中'
+        case 'completed': return '已完成'
+        case 'failed': return '已失败'
+        case 'retrying': return '重试中'
+        default: return status
+      }
+    }
+
     return (
-      <div className="w-full">
+      <div className="w-full max-w-xs">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs text-gray-600">{progress.status}</span>
+          <div className="flex items-center">
+            <div className={`w-2 h-2 rounded-full mr-2 ${getStatusColor(progress.status)}`} />
+            <span className="text-xs font-medium text-gray-700">
+              {getStatusText(progress.status)}
+            </span>
+          </div>
           <span className="text-xs text-gray-600">{progress.progress}%</span>
         </div>
-        <Progress 
-          value={progress.progress} 
-          size="sm"
-          variant={
-            progress.status === 'completed' ? 'success' :
-            progress.status === 'failed' ? 'error' : 'info'
-          }
-        />
-        {progress.message && (
-          <p className="text-xs text-gray-500 mt-1 truncate">{progress.message}</p>
+        
+        <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+          <div 
+            className={`h-2 rounded-full transition-all duration-300 ${
+              progress.status === 'completed' ? 'bg-green-500' :
+              progress.status === 'failed' ? 'bg-red-500' : 
+              'bg-blue-500'
+            }`}
+            style={{ width: `${Math.max(progress.progress, 5)}%` }}
+          />
+        </div>
+        
+        {progress.current_step && (
+          <p className="text-xs text-gray-500 truncate" title={progress.current_step}>
+            {progress.current_step}
+          </p>
+        )}
+        
+        {progress.message && progress.message !== progress.current_step && (
+          <p className="text-xs text-gray-400 truncate mt-1" title={progress.message}>
+            {progress.message}
+          </p>
         )}
       </div>
     )
@@ -252,8 +299,19 @@ export default function TasksPage() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => executeTask(record.id.toString())}
-            disabled={!record.is_active}
+            onClick={async () => {
+              try {
+                await executeTask(record.id.toString())
+                // 执行成功后开始显示进度
+              } catch (error) {
+                // 错误处理已在store中处理
+              }
+            }}
+            disabled={!record.is_active || !!getTaskProgress(record.id.toString())}
+            title={
+              !record.is_active ? '任务未启用' :
+              getTaskProgress(record.id.toString()) ? '任务执行中' : '执行任务'
+            }
           >
             <PlayIcon className="w-3 h-3" />
           </Button>
@@ -292,10 +350,17 @@ export default function TasksPage() {
         title="任务管理"
         description="创建和管理定时任务，支持复杂的Cron调度表达式"
         actions={
-          <Button onClick={() => router.push('/tasks/create')}>
-            <PlusIcon className="w-4 h-4 mr-2" />
-            创建任务
-          </Button>
+          <div className="flex items-center gap-3">
+            {/* WebSocket连接状态 */}
+            <div className="flex items-center text-sm text-gray-600">
+              <div className={`w-2 h-2 rounded-full mr-2 ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+              {wsConnected ? '已连接' : '未连接'}
+            </div>
+            <Button onClick={() => router.push('/tasks/create')}>
+              <PlusIcon className="w-4 h-4 mr-2" />
+              创建任务
+            </Button>
+          </div>
         }
       />
 

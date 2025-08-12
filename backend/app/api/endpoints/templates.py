@@ -34,7 +34,8 @@ async def get_templates(
     if isinstance(user_id, str):
         user_id = UUID(user_id)
     query = db.query(TemplateModel).filter(
-        (TemplateModel.user_id == user_id) | (TemplateModel.is_public == True)
+        ((TemplateModel.user_id == user_id) | (TemplateModel.is_public == True)) &
+        (TemplateModel.is_active == True)
     )
     
     if template_type:
@@ -90,7 +91,7 @@ async def get_template(
 ):
     """获取特定模板"""
     template = crud_template.get(db, id=template_id)
-    if not template or (template.user_id != current_user.id and not template.is_public):
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -114,7 +115,7 @@ async def update_template(
 ):
     """更新模板"""
     template = crud_template.get(db, id=template_id)
-    if not template or template.user_id != current_user.id:
+    if not template or not template.is_active or template.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -126,9 +127,14 @@ async def update_template(
         obj_in=template_update
     )
     
+    # Convert to schema for proper serialization
+    template_schema = TemplateSchema.model_validate(template)
+    template_dict = template_schema.model_dump()
+    template_dict['unique_id'] = str(template_dict.get('id'))
+    
     return ApiResponse(
         success=True,
-        data=template,
+        data=template_dict,
         message="模板更新成功"
     )
 
@@ -141,7 +147,7 @@ async def delete_template(
 ):
     """删除模板"""
     template = crud_template.get(db, id=template_id)
-    if not template or template.user_id != current_user.id:
+    if not template or not template.is_active or template.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -165,7 +171,7 @@ async def duplicate_template(
 ):
     """复制模板"""
     template = crud_template.get(db, id=template_id)
-    if not template or (template.user_id != current_user.id and not template.is_public):
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -187,9 +193,14 @@ async def duplicate_template(
         user_id=current_user.id
     )
     
+    # Convert to schema for proper serialization
+    template_schema = TemplateSchema.model_validate(new_template)
+    template_dict = template_schema.model_dump()
+    template_dict['unique_id'] = str(template_dict.get('id'))
+    
     return ApiResponse(
         success=True,
-        data=new_template,
+        data=template_dict,
         message="模板复制成功"
     )
 
@@ -237,9 +248,14 @@ async def upload_template_file(
     
     updated_template = crud_template.update(db, db_obj=template, obj_in=update_data)
     
+    # Convert to schema for proper serialization
+    template_schema = TemplateSchema.model_validate(updated_template)
+    template_dict = template_schema.model_dump()
+    template_dict['unique_id'] = str(template_dict.get('id'))
+    
     return ApiResponse(
         success=True,
-        data=updated_template,
+        data=template_dict,
         message="模板文件上传成功"
     )
 
@@ -252,7 +268,7 @@ async def preview_template(
 ):
     """获取模板内容和占位符分布（支持DOC格式）"""
     template = crud_template.get(db, id=template_id)
-    if not template or (template.user_id != current_user.id and not template.is_public):
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -270,12 +286,25 @@ async def preview_template(
             
             # 创建临时文件
             with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
-                if content.startswith('<?xml') or content.startswith('PK'):
-                    # 二进制内容
-                    temp_file.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
-                else:
-                    # 文本内容
-                    temp_file.write(content.encode())
+                try:
+                    # 处理二进制内容（hex编码）
+                    if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
+                        # 是hex编码的二进制内容
+                        binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
+                        temp_file.write(binary_data)
+                    elif content.startswith('PK'):
+                        # 直接的二进制内容（docx文件头）
+                        temp_file.write(content.encode('latin-1'))
+                    elif content:
+                        # 文本内容，直接写入
+                        temp_file.write(content.encode('utf-8'))
+                    else:
+                        # 空内容，创建基本的docx结构
+                        temp_file.write(b'PK\x03\x04')  # 基本的zip文件头
+                except Exception as content_error:
+                    # 如果内容处理失败，使用基本内容
+                    temp_file.write(content.encode('utf-8', errors='ignore') if content else b'')
+                
                 temp_path = temp_file.name
             
             try:
@@ -289,26 +318,58 @@ async def preview_template(
                 for p in stats_placeholders:
                     placeholders.append({
                         "type": "统计",
-                        "description": p["description"],
-                        "placeholder_text": p["placeholder_text"],
+                        "description": p.get("description", ""),
+                        "placeholder_text": p.get("placeholder_text", ""),
                         "requirements": p.get("analysis_requirements", {})
                     })
                 
                 for p in chart_placeholders:
                     placeholders.append({
                         "type": "图表", 
-                        "description": p["description"],
-                        "placeholder_text": p["placeholder_text"],
+                        "description": p.get("description", ""),
+                        "placeholder_text": p.get("placeholder_text", ""),
                         "requirements": p.get("chart_requirements", {})
                     })
                     
+            except Exception as parser_error:
+                # 如果DOC解析器失败，尝试从原始内容中提取占位符
+                try:
+                    # 如果是hex编码的内容，先解码
+                    text_content = content
+                    if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
+                        try:
+                            binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
+                            text_content = binary_data.decode('utf-8', errors='ignore')
+                        except:
+                            text_content = content
+                    
+                    # 使用正则表达式提取占位符
+                    placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+                    for match in placeholder_pattern.finditer(text_content):
+                        placeholders.append({
+                            "type": match.group(1).strip(),
+                            "description": match.group(2).strip(),
+                            "placeholder_text": match.group(0)
+                        })
+                except:
+                    # 最后的fallback：返回默认占位符信息
+                    placeholders.append({
+                        "type": "文档",
+                        "description": f"DOCX模板文件: {template.original_filename}",
+                        "placeholder_text": "{{文档:DOCX内容}}"
+                    })
             finally:
-                os.unlink(temp_path)
+                # 安全删除临时文件
+                try:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                except:
+                    pass
                 
         except Exception as e:
-            # 降级到基本解析
+            # 完全降级到基本解析
             placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
-            for match in placeholder_pattern.finditer(content):
+            for match in placeholder_pattern.finditer(content or ""):
                 placeholders.append({
                     "type": match.group(1).strip(),
                     "description": match.group(2).strip(),
@@ -357,7 +418,7 @@ async def generate_report_from_template(
 ):
     """基于DOC模板生成报告"""
     template = crud_template.get(db, id=template_id)
-    if not template or (template.user_id != current_user.id and not template.is_public):
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -371,10 +432,24 @@ async def generate_report_from_template(
         # 创建临时输入文件
         with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_input:
             content = template.content or ''
-            if content.startswith('<?xml') or content.startswith('PK'):
-                temp_input.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
-            else:
-                temp_input.write(content.encode())
+            try:
+                # 处理二进制内容（hex编码）
+                if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
+                    # 是hex编码的二进制内容
+                    binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
+                    temp_input.write(binary_data)
+                elif content.startswith('PK'):
+                    # 直接的二进制内容（docx文件头）
+                    temp_input.write(content.encode('latin-1'))
+                elif content:
+                    # 文本内容，直接写入
+                    temp_input.write(content.encode('utf-8'))
+                else:
+                    # 空内容，创建基本的docx结构
+                    temp_input.write(b'PK\x03\x04')  # 基本的zip文件头
+            except Exception as content_error:
+                # 如果内容处理失败，使用基本内容
+                temp_input.write(content.encode('utf-8', errors='ignore') if content else b'')
             temp_input_path = temp_input.name
         
         # 创建输出文件路径
@@ -448,7 +523,7 @@ async def validate_template_placeholders(
 ):
     """验证模板占位符与数据源的匹配度"""
     template = crud_template.get(db, id=template_id)
-    if not template or (template.user_id != current_user.id and not template.is_public):
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="模板不存在或无权限访问"
@@ -463,10 +538,25 @@ async def validate_template_placeholders(
             import os
             
             with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
-                if content.startswith('<?xml') or content.startswith('PK'):
-                    temp_file.write(bytes.fromhex(content) if len(content) % 2 == 0 else content.encode())
-                else:
-                    temp_file.write(content.encode())
+                try:
+                    # 处理二进制内容（hex编码）
+                    if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
+                        # 是hex编码的二进制内容
+                        binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
+                        temp_file.write(binary_data)
+                    elif content.startswith('PK'):
+                        # 直接的二进制内容（docx文件头）
+                        temp_file.write(content.encode('latin-1'))
+                    elif content:
+                        # 文本内容，直接写入
+                        temp_file.write(content.encode('utf-8'))
+                    else:
+                        # 空内容，创建基本的docx结构
+                        temp_file.write(b'PK\x03\x04')  # 基本的zip文件头
+                except Exception as content_error:
+                    # 如果内容处理失败，使用基本内容
+                    temp_file.write(content.encode('utf-8', errors='ignore') if content else b'')
+                
                 temp_path = temp_file.name
             
             try:
@@ -475,8 +565,42 @@ async def validate_template_placeholders(
                     placeholder_data.get("stats_placeholders", []) + 
                     placeholder_data.get("chart_placeholders", [])
                 )
+            except Exception as parser_error:
+                # 如果DOC解析器失败，尝试从原始内容中提取占位符
+                placeholders = []
+                try:
+                    # 如果是hex编码的内容，先解码
+                    text_content = content
+                    if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
+                        try:
+                            binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
+                            text_content = binary_data.decode('utf-8', errors='ignore')
+                        except:
+                            text_content = content
+                    
+                    # 使用正则表达式提取占位符
+                    import re
+                    placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
+                    for match in placeholder_pattern.finditer(text_content):
+                        placeholders.append({
+                            "placeholder_type": match.group(1).strip(),
+                            "description": match.group(2).strip(),
+                            "placeholder_text": match.group(0)
+                        })
+                except:
+                    # 最后的fallback：返回默认占位符信息
+                    placeholders = [{
+                        "placeholder_type": "文档",
+                        "description": f"DOCX模板文件: {template.original_filename}",
+                        "placeholder_text": "{{文档:DOCX内容}}"
+                    }]
             finally:
-                os.unlink(temp_path)
+                # 安全删除临时文件
+                try:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                except:
+                    pass
         else:
             # 基本解析
             import re

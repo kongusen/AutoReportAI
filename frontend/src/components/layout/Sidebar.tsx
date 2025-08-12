@@ -200,7 +200,7 @@ export function Sidebar() {
                     >
                       <Avatar
                         size="sm"
-                        src={user?.avatar_url}
+                        src={undefined}
                         fallback={user?.username || user?.email}
                       />
                       <div className="flex flex-1 items-center justify-between ml-3">
@@ -335,7 +335,7 @@ export function Sidebar() {
                 >
                   <Avatar
                     size="sm"
-                    src={user?.avatar_url}
+                    src={undefined}
                     fallback={user?.username || user?.email}
                   />
                   <div className="flex flex-1 items-center justify-between ml-3">

@@ -35,7 +35,7 @@ export default function RegisterPage() {
       await registerUser(data)
       setSuccess('注册成功！请使用您的账号登录。')
       setTimeout(() => {
-        router.push('/auth/login')
+        router.push('/login')
       }, 2000)
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || err.response?.data?.error || err.response?.data?.detail || '注册失败，请稍后重试'
@@ -169,7 +169,7 @@ export default function RegisterPage() {
                 <span className="text-sm text-gray-600">
                   已有账号？{' '}
                   <Link
-                    href="/auth/login"
+                    href="/login"
                     className="font-medium text-black hover:text-gray-800"
                   >
                     立即登录

@@ -43,10 +43,18 @@ python -c "import fastapi, uvicorn, celery, redis" || {
 
 # 检查Redis连接
 echo "🔍 检查Redis连接..."
-python -c "import redis; r=redis.Redis(host='localhost', port=6380); r.ping()" || {
+python -c "import redis; r=redis.Redis(host='localhost', port=6379); r.ping()" || {
     echo "❌ Redis连接失败"
     echo "💡 请确保Redis服务正在运行："
     echo "   docker-compose up -d redis"
+    exit 1
+}
+
+# 运行启动检查
+echo "🚀 运行启动检查..."
+python scripts/startup_check.py || {
+    echo "❌ 启动检查失败"
+    echo "💡 请检查数据库和Redis服务状态"
     exit 1
 }
 

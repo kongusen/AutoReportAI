@@ -15,8 +15,12 @@ from app.models.report_history import ReportHistory
 from app.schemas.report_history import ReportHistoryCreate, ReportHistoryResponse
 from app.services.report_generation.generator import ReportGenerationService as ReportGenerator
 from app.services.intelligent_report_service import IntelligentReportService
+# Enhanced Agent-based report generation
+from app.services.agents.core.intelligent_pipeline_orchestrator import pipeline_orchestrator, PipelineContext
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=ApiResponse)
@@ -164,7 +168,7 @@ async def generate_intelligent_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """智能报告生成 - 支持大数据处理和ETL优化"""
+    """智能报告生成 - 使用Agent管道系统进行完整的报告处理"""
     from app.models.template import Template
     from app.models.data_source import DataSource
     from app.models.task import Task
@@ -214,7 +218,7 @@ async def generate_intelligent_report(
         from app.schemas.task import TaskCreate
         task_data = TaskCreate(
             name=request.name or f"智能报告任务-{template.name}",
-            description=request.description or f"基于模板{template.name}的智能报告生成",
+            description=request.description or f"基于模板{template.name}的Agent驱动智能报告生成",
             template_id=tpl_uuid,
             data_source_id=ds_uuid,
             schedule_type="once"
@@ -223,18 +227,19 @@ async def generate_intelligent_report(
         task = crud_task.create_with_owner(db=db, obj_in=task_data, owner_id=user_id)
         
     # 创建报告历史记录
-    task_data = ReportHistoryCreate(
+    report_data = ReportHistoryCreate(
         task_id=task.id,
         user_id=user_id,
         status="pending"
     )
     
-    # 在后台生成智能报告
+    # 在后台使用Agent管道生成智能报告
     background_tasks.add_task(
-        generate_intelligent_report_task,
+        generate_agent_based_intelligent_report_task,
         template_id=str(tpl_uuid),
         data_source_id=str(ds_uuid),
         user_id=str(user_id),
+        task_id=task.id,
         optimization_level=request.optimization_level,
         enable_intelligent_etl=request.enable_intelligent_etl,
         batch_size=request.batch_size
@@ -243,13 +248,14 @@ async def generate_intelligent_report(
     return ApiResponse(
         success=True,
         data={
-            "task_id": task_data.task_id,
+            "task_id": task.id,
             "status": "pending",
             "optimization_level": request.optimization_level,
             "batch_size": request.batch_size,
-            "message": "智能报告生成任务已提交"
+            "agent_pipeline": "enabled",
+            "message": "Agent驱动的智能报告生成任务已提交"
         },
-        message="智能报告生成任务已提交，支持大数据处理和ETL优化"
+        message="Agent驱动的智能报告生成任务已提交，支持完整的数据分析管道"
     )
 
 
@@ -609,7 +615,158 @@ async def generate_intelligent_report_task(
         raise e
 
 
+async def generate_agent_based_intelligent_report_task(
+    template_id: str,
+    data_source_id: str,
+    user_id: str,
+    task_id: int,
+    optimization_level: str = "standard",
+    enable_intelligent_etl: bool = True,
+    batch_size: int = 10000
+):
+    """Agent驱动的后台智能报告生成任务"""
+    try:
+        # 创建报告历史记录
+        from app.db.session import get_db_session
+        report_record_id = None
+        template_type = "docx"
+        
+        with get_db_session() as db:
+            from app.schemas.report_history import ReportHistoryCreate
+            from uuid import UUID
+            from app.crud.crud_report_history import report_history
+            
+            report_data = ReportHistoryCreate(
+                task_id=task_id,
+                user_id=UUID(user_id),
+                status="processing"
+            )
+            report_record = report_history.create(db=db, obj_in=report_data)
+            report_record_id = report_record.id  # Store ID, not the object
+            db.commit()
+            
+            # 获取模板信息用于管道上下文
+            from app.models.template import Template
+            template = db.query(Template).filter(Template.id == UUID(template_id)).first()
+            template_type = template.template_type if template else "docx"
+        
+        # 创建Agent管道上下文
+        pipeline_context = PipelineContext(
+            template_id=template_id,
+            data_source_id=data_source_id,
+            user_id=user_id,
+            template_type=template_type,
+            output_format="docx",
+            optimization_level=optimization_level,
+            batch_size=batch_size,
+            enable_caching=True,
+            custom_config={
+                "task_id": task_id,
+                "enable_intelligent_etl": enable_intelligent_etl,
+                "report_record_id": report_record_id
+            }
+        )
+        
+        # 执行Agent驱动的智能管道
+        pipeline_result = await pipeline_orchestrator.execute(pipeline_context)
+        
+        # 更新报告状态
+        with get_db_session() as db:
+            report = db.query(ReportHistory).filter(
+                ReportHistory.id == report_record_id
+            ).first()
+            
+            if report:
+                if pipeline_result.success:
+                    pipeline_data = pipeline_result.data
+                    
+                    # 提取报告内容
+                    report_content = ""
+                    if hasattr(pipeline_data, 'final_output') and pipeline_data.final_output:
+                        # 如果有二进制输出，转换为hex字符串存储
+                        report_content = pipeline_data.final_output.hex()
+                    elif hasattr(pipeline_data, 'stage_results'):
+                        # 从阶段结果中提取内容
+                        for stage, stage_result in pipeline_data.stage_results.items():
+                            if stage_result.success and hasattr(stage_result.data, 'content'):
+                                report_content += str(stage_result.data.content) + "\n\n"
+                    
+                    report.status = "completed"
+                    report.result = report_content
+                    report.processing_metadata = {
+                        "agent_pipeline": True,
+                        "optimization_level": optimization_level,
+                        "batch_size": batch_size,
+                        "intelligent_etl_enabled": enable_intelligent_etl,
+                        "execution_time": pipeline_result.execution_time,
+                        "stages_completed": len(pipeline_data.stage_results) if hasattr(pipeline_data, 'stage_results') else 0,
+                        "quality_score": pipeline_data.quality_score if hasattr(pipeline_data, 'quality_score') else 0,
+                        "pipeline_metadata": pipeline_result.metadata
+                    }
+                else:
+                    report.status = "failed"
+                    report.error_message = pipeline_result.error_message
+                    report.processing_metadata = {
+                        "agent_pipeline": True,
+                        "optimization_level": optimization_level,
+                        "error_type": "pipeline_execution_failed"
+                    }
+                
+                db.commit()
+        
+        return pipeline_result.data if pipeline_result.success else None
+        
+    except Exception as e:
+        # 更新报告状态为失败
+        try:
+            from app.db.session import get_db_session
+            with get_db_session() as db:
+                report = db.query(ReportHistory).filter(
+                    ReportHistory.task_id == task_id
+                ).order_by(ReportHistory.id.desc()).first()
+                
+                if report:
+                    report.status = "failed"
+                    report.error_message = str(e)
+                    report.processing_metadata = {
+                        "agent_pipeline": True,
+                        "optimization_level": optimization_level,
+                        "batch_size": batch_size,
+                        "error_type": type(e).__name__
+                    }
+                    db.commit()
+        except Exception as db_error:
+            logger.error(f"Failed to update report status: {db_error}")
+        
+        logger.error(f"Agent-based report generation failed: {e}")
+        raise e
+
+
 async def regenerate_report_task(report_id: int):
     """后台重新生成报告任务"""
-    # 这里应该实现实际的报告重新生成逻辑
-    pass
+    try:
+        # 获取原始报告配置并重新使用Agent管道生成
+        from app.db.session import get_db_session
+        with get_db_session() as db:
+            report = db.query(ReportHistory).filter(ReportHistory.id == report_id).first()
+            
+            if not report or not report.task:
+                logger.error(f"Report {report_id} not found for regeneration")
+                return
+            
+            task = report.task
+            metadata = report.processing_metadata or {}
+            
+            # 使用Agent管道重新生成
+            await generate_agent_based_intelligent_report_task(
+                template_id=str(task.template_id),
+                data_source_id=str(task.data_source_id),
+                user_id=str(task.owner_id),
+                task_id=task.id,
+                optimization_level=metadata.get("optimization_level", "standard"),
+                enable_intelligent_etl=metadata.get("intelligent_etl_enabled", True),
+                batch_size=metadata.get("batch_size", 10000)
+            )
+            
+    except Exception as e:
+        logger.error(f"Report regeneration failed: {e}")

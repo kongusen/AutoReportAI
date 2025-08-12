@@ -12,6 +12,7 @@ from ..models.data_source import DataSource
 from ..schemas.data_source import DataSourceCreate, DataSourceUpdate
 from .base import CRUDBase
 from ..core.data_source_utils import generate_slug
+from ..core.security_utils import encrypt_data
 
 
 class CRUDDataSource(CRUDBase[DataSource, DataSourceCreate, DataSourceUpdate]):
@@ -61,6 +62,13 @@ class CRUDDataSource(CRUDBase[DataSource, DataSourceCreate, DataSourceUpdate]):
         obj_data = obj_in.model_dump() if hasattr(obj_in, 'model_dump') else obj_in.dict()
         obj_data['user_id'] = user_id
         
+        # 加密敏感信息
+        if obj_data.get('connection_string'):
+            obj_data['connection_string'] = encrypt_data(obj_data['connection_string'])
+        
+        if obj_data.get('doris_password'):
+            obj_data['doris_password'] = encrypt_data(obj_data['doris_password'])
+        
         # 生成用户友好的slug（如果没有提供）
         if not obj_data.get('slug') and obj_data.get('name'):
             obj_data['slug'] = generate_slug(obj_data['name'], user_id, db)
@@ -91,6 +99,13 @@ class CRUDDataSource(CRUDBase[DataSource, DataSourceCreate, DataSourceUpdate]):
         else:
             # 字典
             update_data = obj_in
+        
+        # 加密敏感信息
+        if update_data.get('connection_string'):
+            update_data['connection_string'] = encrypt_data(update_data['connection_string'])
+        
+        if update_data.get('doris_password'):
+            update_data['doris_password'] = encrypt_data(update_data['doris_password'])
         
         for field, value in update_data.items():
             setattr(db_obj, field, value)

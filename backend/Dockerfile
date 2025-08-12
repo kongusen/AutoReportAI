@@ -1,83 +1,119 @@
-# Multi-stage build for optimized production image
-# Stage 1: Build stage
-FROM docker.io/python:3.11-slim AS builder
+# Multi-stage build for optimized and stable production image
+# Stage 1: Base image with system dependencies
+FROM python:3.11-slim as base
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Configure apt to use IPv4 only and disable parallel downloads
+# Configure apt for better reliability
 RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
     echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::BrokenProxy    "true";' >> /etc/apt/apt.conf.d/99force-ipv4
+    echo 'Acquire::http::No-Cache "true";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
+    echo 'Acquire::BrokenProxy "true";' >> /etc/apt/apt.conf.d/99force-ipv4
 
-# Install system dependencies for building
-RUN apt-get update --fix-missing && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Stage 2: Dependencies builder
+FROM base as builder
+
+# Install system dependencies required for building Python packages
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        wget \
+        gcc \
+        g++ \
+        libc6-dev \
+        libpq-dev \
+        libffi-dev \
+        libssl-dev \
+        pkg-config \
+        git && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements files
-COPY ./requirements/ /app/requirements/
-
-# Create virtual environment and install dependencies
+# Create and activate virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip --trusted-host pypi.org --trusted-host files.pythonhosted.org && \
-    pip install --no-cache-dir -r /app/requirements/production.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
+# Upgrade pip and install wheel
+RUN pip install --no-cache-dir --upgrade \
+    pip==23.3.1 \
+    setuptools==69.0.2 \
+    wheel==0.42.0
 
-# Stage 2: Production stage
-FROM python:3.11-slim AS production
+# Copy requirements file
+COPY requirements.txt /app/
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PATH="/opt/venv/bin:$PATH"
+# Install Python dependencies with better error handling
+RUN pip install --no-cache-dir --timeout=300 \
+    --trusted-host pypi.org \
+    --trusted-host pypi.python.org \
+    --trusted-host files.pythonhosted.org \
+    -r requirements.txt
 
-# Configure apt to use IPv4 only and disable parallel downloads
-RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::http::No-Cache true;' >> /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::BrokenProxy    "true";' >> /etc/apt/apt.conf.d/99force-ipv4
+# Stage 3: Production runtime
+FROM base as production
 
 # Install only runtime dependencies
-RUN apt-get update --fix-missing && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        wget \
+        libpq5 \
+        libffi8 \
+        libssl3 \
+        ca-certificates \
+        dumb-init \
+        procps && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
 
-# Create non-root user
-RUN addgroup --system --gid 1001 app && \
-    adduser --system --uid 1001 --gid 1001 app
+# Create app user and group with specific UID/GID for consistency
+RUN groupadd --gid 1001 app && \
+    useradd --uid 1001 --gid app --shell /bin/bash --create-home app
 
-# Copy virtual environment from builder stage
-COPY --from=builder /opt/venv /opt/venv
+# Copy virtual environment from builder
+COPY --from=builder --chown=app:app /opt/venv /opt/venv
+
+# Set PATH to use virtual environment
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Set working directory
 WORKDIR /app
 
+# Create necessary directories
+RUN mkdir -p /app/logs /app/reports /app/uploads /app/storage && \
+    chown -R app:app /app
+
 # Copy application code
-COPY --chown=app:app . /app
+COPY --chown=app:app . /app/
 
-# Copy and set up health check script
-COPY --chown=app:app ./scripts/healthcheck_backend.sh /healthcheck.sh
-RUN chmod +x /healthcheck.sh
+# Copy entrypoint and healthcheck scripts
+COPY --chown=app:app entrypoint.sh /app/entrypoint.sh
+COPY --chown=app:app healthcheck.sh /app/healthcheck.sh
 
-# Switch to non-root user
+# Make scripts executable
+RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh
+
+# Switch to app user
 USER app
 
 # Expose port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD /healthcheck.sh
+HEALTHCHECK --interval=30s --timeout=15s --start-period=40s --retries=3 \
+    CMD /app/healthcheck.sh
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Set default entrypoint
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["/app/entrypoint.sh", "api"] 

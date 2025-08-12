@@ -10,7 +10,10 @@ from docx.shared import Inches
 
 from .ai_integration import ChartGenerator, ChartConfig, ChartResult
 from .ai_integration import ContentGenerator, FormatConfig, GeneratedContent
-from .intelligent_placeholder import PlaceholderProcessor
+# Enhanced Agent system integration
+from .agents.orchestrator import orchestrator
+from .agents.base import AgentResult
+from .agents.core.intelligent_pipeline_orchestrator import pipeline_orchestrator, PipelineContext
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +285,7 @@ class TemplateParser:
         task_config: Optional[Dict[str, Any]] = None,
     ) -> TemplateProcessingResult:
         """
-        使用智能占位符处理模板
+        使用智能管道处理模板 - 通过完整的Agent pipeline处理
 
         Args:
             template_path: 模板文件路径
@@ -296,7 +299,106 @@ class TemplateParser:
         start_time = datetime.now()
 
         try:
-            logger.info(f"开始智能模板处理: {template_path}")
+            logger.info(f"开始智能管道模板处理: {template_path}")
+
+            # 创建管道上下文
+            pipeline_context = PipelineContext(
+                template_id=template_path,  # 使用路径作为临时ID
+                data_source_id=str(data_source_id),
+                user_id=task_config.get("user_id", "system") if task_config else "system",
+                template_type=self._detect_template_type(template_path),
+                output_format="docx",
+                optimization_level=task_config.get("optimization_level", "standard") if task_config else "standard",
+                batch_size=task_config.get("batch_size", 10000) if task_config else 10000,
+                custom_config={
+                    "template_path": template_path,
+                    "output_path": output_path,
+                    **(task_config or {})
+                }
+            )
+
+            # 执行完整的智能管道
+            pipeline_result = await pipeline_orchestrator.execute(pipeline_context)
+
+            if pipeline_result.success:
+                pipeline_data = pipeline_result.data
+                
+                # 从管道结果构建模板处理结果
+                replacements = []
+                successful_count = 0
+                total_placeholders = 0
+
+                # 提取占位符处理信息
+                if hasattr(pipeline_data, 'stage_results'):
+                    # 从各个阶段提取处理信息
+                    for stage, stage_result in pipeline_data.stage_results.items():
+                        if stage_result.success and hasattr(stage_result, 'metadata'):
+                            metadata = stage_result.metadata
+                            if "placeholders_processed" in metadata:
+                                total_placeholders += metadata.get("placeholders_processed", 0)
+                                successful_count += metadata.get("successful_replacements", 0)
+                
+                # 处理输出文件
+                success = False
+                final_output_path = output_path
+                
+                if pipeline_data.final_output:
+                    # 写入最终输出
+                    try:
+                        with open(output_path, 'wb') as f:
+                            f.write(pipeline_data.final_output)
+                        success = True
+                        logger.info(f"管道输出已写入: {output_path}")
+                    except Exception as e:
+                        logger.error(f"写入输出文件失败: {e}")
+                        success = False
+                elif pipeline_data.output_path:
+                    # 复制现有输出文件
+                    try:
+                        import shutil
+                        shutil.copy2(pipeline_data.output_path, output_path)
+                        success = True
+                        logger.info(f"管道输出已复制到: {output_path}")
+                    except Exception as e:
+                        logger.error(f"复制输出文件失败: {e}")
+                        success = False
+
+                processing_time = (datetime.now() - start_time).total_seconds()
+
+                return TemplateProcessingResult(
+                    success=success,
+                    processed_file_path=final_output_path if success else None,
+                    replacements=replacements,
+                    total_placeholders=total_placeholders,
+                    successful_replacements=successful_count,
+                    processing_time=processing_time,
+                )
+            
+            else:
+                # 管道执行失败，回退到传统处理方式
+                logger.warning(f"管道处理失败，回退到传统方式: {pipeline_result.error_message}")
+                return await self._fallback_to_traditional_processing(
+                    template_path, output_path, data_source_id, task_config, start_time
+                )
+
+        except Exception as e:
+            logger.error(f"智能管道处理失败: {e}")
+            # 回退到传统处理方式
+            return await self._fallback_to_traditional_processing(
+                template_path, output_path, data_source_id, task_config, start_time
+            )
+
+    async def _fallback_to_traditional_processing(
+        self,
+        template_path: str,
+        output_path: str,
+        data_source_id: int,
+        task_config: Optional[Dict[str, Any]],
+        start_time: datetime
+    ) -> TemplateProcessingResult:
+        """回退到传统的占位符处理方式"""
+        try:
+            logger.info("使用传统方式处理模板占位符")
 
             # 1. 解析智能占位符
             placeholder_data = self.parse_intelligent_placeholders(template_path)
@@ -317,19 +419,31 @@ class TemplateParser:
 
             for placeholder in placeholders:
                 try:
-                    # 使用智能占位符处理器处理
-                    processor = PlaceholderProcessor()
-                    result = await processor.process_single_placeholder(
-                        placeholder, data_source_id, task_config
-                    )
-
-                    if result and result.get("success"):
+                    # 使用基础Agent系统处理占位符
+                    logger.info(f"处理占位符: {placeholder['placeholder_text']}")
+                    
+                    # 准备Agent输入数据
+                    agent_input = {
+                        "placeholder_type": placeholder["placeholder_type"],
+                        "description": placeholder["description"],
+                        "data_source_id": data_source_id,
+                        "context": task_config or {}
+                    }
+                    
+                    # 通过orchestrator处理占位符
+                    agent_result = await orchestrator.run(agent_input, task_config)
+                    
+                    if agent_result.success and agent_result.data:
+                        # 从工作流结果中提取最终内容
+                        workflow_result = agent_result.data
+                        final_content, content_type, chart_path = self._extract_final_content(workflow_result)
+                        
                         replacement = ReplacementResult(
                             success=True,
                             original_placeholder=placeholder["placeholder_text"],
-                            replacement_content=str(result.get("processed_value", "")),
-                            content_type=result.get("content_type", "text"),
-                            chart_path=result.get("chart_path")  # 添加图表路径
+                            replacement_content=final_content,
+                            content_type=content_type,
+                            chart_path=chart_path
                         )
                         successful_count += 1
                     else:
@@ -338,7 +452,7 @@ class TemplateParser:
                             original_placeholder=placeholder["placeholder_text"],
                             replacement_content=placeholder["placeholder_text"],
                             content_type="error",
-                            error_message=result.get("error", "处理失败"),
+                            error_message=agent_result.error_message or "Agent处理失败",
                         )
 
                     replacements.append(replacement)
@@ -371,7 +485,7 @@ class TemplateParser:
             )
 
         except Exception as e:
-            logger.error(f"模板处理失败: {e}")
+            logger.error(f"传统模板处理失败: {e}")
             processing_time = (datetime.now() - start_time).total_seconds()
 
             return TemplateProcessingResult(
@@ -566,6 +680,97 @@ class TemplateParser:
         except Exception as e:
             return {"valid": False, "error": f"模板验证失败: {str(e)}"}
 
+    def _extract_final_content(self, workflow_result) -> tuple[str, str, Optional[str]]:
+        """
+        从工作流结果中提取最终内容用于替换占位符
+        
+        Returns:
+            tuple of (final_content, content_type, chart_path)
+        """
+        try:
+            final_content = ""
+            content_type = "text"
+            chart_path = None
+            
+            if not hasattr(workflow_result, 'results'):
+                return "数据处理完成", "text", None
+            
+            results = workflow_result.results
+            
+            # 优先级：内容生成 > 图表 > 分析结果 > 原始数据
+            if "generate_content" in results and results["generate_content"].success:
+                content_result = results["generate_content"].data
+                if hasattr(content_result, 'content'):
+                    final_content = content_result.content
+                    content_type = "generated_content"
+            
+            elif "generate_report" in results and results["generate_report"].success:
+                content_result = results["generate_report"].data
+                if hasattr(content_result, 'content'):
+                    final_content = content_result.content
+                    content_type = "generated_content"
+                    
+            elif "generate_description" in results and results["generate_description"].success:
+                content_result = results["generate_description"].data
+                if hasattr(content_result, 'content'):
+                    final_content = content_result.content
+                    content_type = "generated_content"
+            
+            # 检查图表结果
+            chart_steps = ["create_chart", "create_summary_chart", "create_trend_chart"]
+            for step in chart_steps:
+                if step in results and results[step].success:
+                    chart_result = results[step].data
+                    if hasattr(chart_result, 'file_path') and chart_result.file_path:
+                        chart_path = chart_result.file_path
+                        if not final_content and hasattr(chart_result, 'description'):
+                            final_content = chart_result.description
+                            content_type = "chart_result"
+                        break
+            
+            # 如果没有内容生成，尝试从分析结果生成简单描述
+            if not final_content:
+                analysis_steps = ["analyze_data", "descriptive_analysis", "trend_analysis"]
+                for step in analysis_steps:
+                    if step in results and results[step].success:
+                        analysis_result = results[step].data
+                        if hasattr(analysis_result, 'summary'):
+                            final_content = analysis_result.summary
+                            content_type = "analysis_summary"
+                            break
+                        elif hasattr(analysis_result, 'results') and isinstance(analysis_result.results, dict):
+                            # 生成简单的统计摘要
+                            stats = []
+                            for key, value in analysis_result.results.items():
+                                if isinstance(value, dict) and "mean" in value:
+                                    stats.append(f"{key}平均值: {value['mean']:.2f}")
+                                elif isinstance(value, (int, float)):
+                                    stats.append(f"{key}: {value}")
+                            if stats:
+                                final_content = "，".join(stats[:3])  # 取前3个统计项
+                                content_type = "analysis_summary"
+                            break
+            
+            # 最后的fallback
+            if not final_content:
+                if "fetch_data" in results and results["fetch_data"].success:
+                    data_result = results["fetch_data"].data
+                    if hasattr(data_result, 'row_count'):
+                        final_content = f"数据查询完成，共{data_result.row_count}条记录"
+                        content_type = "data_summary"
+                    else:
+                        final_content = "数据处理完成"
+                        content_type = "text"
+                else:
+                    final_content = "处理完成"
+                    content_type = "text"
+            
+            return final_content, content_type, chart_path
+            
+        except Exception as e:
+            logger.error(f"提取最终内容失败: {e}")
+            return "内容生成失败", "error", None
+
     def _replace_with_chart(self, paragraph, placeholder: str, chart_path: str):
         """在段落中用图表替换占位符"""
         try:
@@ -604,6 +809,28 @@ class TemplateParser:
                     break
         except Exception as e:
             logger.error(f"表格单元格图表替换失败: {e}")
+
+    def _detect_template_type(self, template_path: str) -> str:
+        """检测模板类型"""
+        import os
+        
+        if not os.path.exists(template_path):
+            return "unknown"
+            
+        file_extension = os.path.splitext(template_path)[1].lower()
+        
+        type_mapping = {
+            '.docx': 'docx',
+            '.doc': 'docx',
+            '.xlsx': 'xlsx', 
+            '.xls': 'xlsx',
+            '.html': 'html',
+            '.htm': 'html',
+            '.pdf': 'pdf',
+            '.txt': 'text'
+        }
+        
+        return type_mapping.get(file_extension, 'text')
 
 
 template_parser = TemplateParser()

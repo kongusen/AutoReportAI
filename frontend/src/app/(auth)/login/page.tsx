@@ -106,7 +106,7 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between">
                 <Link
-                  href="/auth/forgot-password"
+                  href="/forgot-password"
                   className="text-sm text-gray-600 hover:text-gray-900"
                 >
                   忘记密码？
@@ -126,7 +126,7 @@ export default function LoginPage() {
                 <span className="text-sm text-gray-600">
                   还没有账号？{' '}
                   <Link
-                    href="/auth/register"
+                    href="/register"
                     className="font-medium text-black hover:text-gray-800"
                   >
                     立即注册

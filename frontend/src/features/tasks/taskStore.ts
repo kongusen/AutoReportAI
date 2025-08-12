@@ -20,6 +20,10 @@ interface TaskState {
   toggleTaskStatus: (id: string, isActive: boolean) => Promise<void>
   executeTask: (id: string) => Promise<void>
   
+  // Task status methods
+  fetchTaskStatus: (id: string) => Promise<any>
+  startTaskStatusPolling: (taskId: string) => void
+  
   // Batch operations
   batchUpdateStatus: (ids: string[], isActive: boolean) => Promise<void>
   batchDeleteTasks: (ids: string[]) => Promise<void>
@@ -27,6 +31,7 @@ interface TaskState {
   // Progress management
   updateTaskProgress: (progress: TaskProgress) => void
   getTaskProgress: (taskId: string) => TaskProgress | undefined
+  clearTaskProgress: (taskId: string) => void
   
   // Internal methods
   setLoading: (loading: boolean) => void
@@ -167,13 +172,66 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 执行任务
   executeTask: async (id: string) => {
     try {
-      await api.post(`/tasks/${id}/execute`)
+      const response = await api.post(`/tasks/${id}/execute`)
+      const result = response.data || response
+      
+      // 开始轮询任务状态
+      get().startTaskStatusPolling(id)
+      
       toast.success('任务执行请求已发送')
+      return result
     } catch (error: any) {
       console.error('Failed to execute task:', error)
       toast.error('执行任务失败')
       throw error
     }
+  },
+
+  // 获取任务状态
+  fetchTaskStatus: async (id: string) => {
+    try {
+      const response = await api.get(`/tasks/${id}/status`)
+      const statusData = response.data || response
+      
+      // 更新任务进度
+      if (statusData) {
+        const progress: TaskProgress = {
+          task_id: id,
+          progress: parseInt(statusData.progress) || 0,
+          status: statusData.status || 'pending',
+          message: statusData.current_step || statusData.message
+        }
+        get().updateTaskProgress(progress)
+      }
+      
+      return statusData
+    } catch (error: any) {
+      console.error('Failed to fetch task status:', error)
+      return null
+    }
+  },
+
+  // 开始任务状态轮询
+  startTaskStatusPolling: (taskId: string) => {
+    const pollInterval = setInterval(async () => {
+      const status = await get().fetchTaskStatus(taskId)
+      
+      if (status && (status.status === 'completed' || status.status === 'failed')) {
+        clearInterval(pollInterval)
+        
+        // 显示完成通知
+        if (status.status === 'completed') {
+          toast.success(`任务 #${taskId} 执行完成`)
+        } else {
+          toast.error(`任务 #${taskId} 执行失败`)
+        }
+      }
+    }, 2000) // 每2秒轮询一次
+
+    // 30秒后停止轮询
+    setTimeout(() => {
+      clearInterval(pollInterval)
+    }, 30000)
   },
 
   // 批量更新状态
@@ -235,6 +293,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   getTaskProgress: (taskId: string) => {
     const { taskProgress } = get()
     return taskProgress.get(taskId)
+  },
+
+  // 清除任务进度
+  clearTaskProgress: (taskId: string) => {
+    const { taskProgress } = get()
+    const newProgress = new Map(taskProgress)
+    newProgress.delete(taskId)
+    set({ taskProgress: newProgress })
   },
 
   // Internal methods

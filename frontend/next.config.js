@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   experimental: {
     turbo: {
       rules: {
@@ -9,6 +10,7 @@ const nextConfig = {
         },
       },
     },
+    outputFileTracingRoot: process.cwd(),
   },
   images: {
     domains: ['localhost', 'autoreportai.com'],

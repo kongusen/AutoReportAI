@@ -155,9 +155,11 @@ export interface TaskUpdate extends Partial<TaskCreate> {}
 export interface TaskProgress {
   task_id: string
   progress: number
-  status: 'running' | 'completed' | 'failed' | 'pending'
+  status: 'pending' | 'analyzing' | 'querying' | 'processing' | 'generating' | 'completed' | 'failed' | 'retrying'
   message?: string
+  current_step?: string
   estimated_time?: number
+  updated_at?: string
 }
 
 // 报告类型
@@ -207,7 +209,7 @@ export interface DashboardStats {
 
 // WebSocket消息类型
 export interface WebSocketMessage {
-  type: 'task_progress' | 'system_notification' | 'report_completed'
+  type: 'task_progress' | 'system_notification' | 'report_completed' | 'pong'
   payload: any
   timestamp: string
   user_id?: string

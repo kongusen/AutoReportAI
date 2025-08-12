@@ -12,7 +12,6 @@ from app.api.versioning import APIVersionMiddleware
 from app.core.config import settings
 from app.core.logging_config import setup_logging, RequestLoggingMiddleware
 from app.core.exception_handlers import setup_exception_handlers
-from app.initial_data import init_db
 from app.websocket.router import router as websocket_router
 
 # Setup logging as soon as the application starts
@@ -384,7 +383,8 @@ app = create_application()
 @app.on_event("startup")
 async def startup():
     # setup_logging() # Can be called again if needed, it's idempotent
-    init_db()
+    # 数据库初始化已在 entrypoint.sh 中处理，这里不再重复执行
+    # init_db()
     redis_connection = redis.from_url(
         settings.REDIS_URL, encoding="utf-8", decode_responses=True
     )

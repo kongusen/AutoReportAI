@@ -6,17 +6,25 @@ import json
 
 # Configuration
 BASE_URL = "http://localhost:8000/api/v1"
-TOKEN_FILE = "/tmp/token.txt"
+USERNAME = "admin"
+PASSWORD = "password"
 
 def get_token():
-    if not os.path.exists(TOKEN_FILE):
-        print(f"Token file not found at {TOKEN_FILE}")
+    login_data = {
+        "username": USERNAME,
+        "password": PASSWORD
+    }
+    response = requests.post(f"{BASE_URL}/auth/login", data=login_data)
+    if response.status_code == 200:
+        token_data = response.json()
+        return token_data["data"]["access_token"]
+    else:
+        print(f"Failed to get token: {response.status_code} - {response.text}")
         return None
-    with open(TOKEN_FILE, "r") as f:
-        return f.read().strip()
 
 TOKEN = get_token()
 if not TOKEN:
+    print("Could not obtain authentication token")
     exit(1)
 
 HEADERS = {
@@ -24,11 +32,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# These are from the other test file. We will use them.
-# In a real scenario, you might want to create these dynamically or fetch them.
-# I will need to create them first.
-DATA_SOURCE_ID = None
-TEMPLATE_ID = None
+# Use existing IDs from the query results
+DATA_SOURCE_ID = "5f848786-bb94-4ec0-b2f7-fda8d84a820e"  # Test Doris for Intelligent WF
+TEMPLATE_ID = "a28c2983-f27d-41fe-aa44-a83dd859012c"  # 投诉数据分析报告 (实际ID)
 
 def create_data_source():
     print("Attempting to find or create a test Doris data source...")
@@ -128,9 +134,14 @@ def create_task(template_id, data_source_id):
     }
     response = requests.post(f"{BASE_URL}/tasks/", headers=HEADERS, json=task_data)
     if response.status_code == 200:
-        task = response.json().get('data')
-        print(f"Task created successfully. Task ID: {task['id']}")
-        return task['id']
+        result = response.json()
+        if result.get('success') and result.get('data'):
+            task = result['data']
+            print(f"Task created successfully. Task ID: {task['id']}")
+            return task['id']
+        else:
+            print(f"Unexpected response format: {result}")
+            return None
     else:
         print(f"Failed to create task. Status: {response.status_code}, Response: {response.text}")
         return None
@@ -173,14 +184,9 @@ def check_task_status(task_id):
 
 def main():
     print("Starting intelligent task workflow test...")
-    global DATA_SOURCE_ID, TEMPLATE_ID
-    DATA_SOURCE_ID = create_data_source()
-    TEMPLATE_ID = create_template()
-
-    if not DATA_SOURCE_ID or not TEMPLATE_ID:
-        print("Could not create or find required Data Source and Template. Exiting.")
-        return
-
+    print(f"Using existing data source ID: {DATA_SOURCE_ID}")
+    print(f"Using existing template ID: {TEMPLATE_ID}")
+    
     task_id = create_task(TEMPLATE_ID, DATA_SOURCE_ID)
     if task_id:
         if execute_intelligent_task(task_id):

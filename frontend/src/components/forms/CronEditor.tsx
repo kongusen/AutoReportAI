@@ -13,6 +13,7 @@ interface CronEditorProps {
   value: string
   onChange: (cron: string) => void
   error?: string
+  autoSave?: boolean
 }
 
 const minuteOptions = Array.from({ length: 60 }, (_, i) => ({ label: i.toString(), value: i.toString() }))
@@ -30,33 +31,78 @@ const weekdayOptions = [
 ]
 
 const presetSchedules = [
-  { label: '每分钟', value: '* * * * *', description: '每分钟执行一次' },
-  { label: '每5分钟', value: '*/5 * * * *', description: '每5分钟执行一次' },
-  { label: '每15分钟', value: '*/15 * * * *', description: '每15分钟执行一次' },
-  { label: '每30分钟', value: '*/30 * * * *', description: '每30分钟执行一次' },
-  { label: '每小时', value: '0 * * * *', description: '每小时的第0分钟执行' },
-  { label: '每2小时', value: '0 */2 * * *', description: '每2小时执行一次' },
-  { label: '每天午夜', value: '0 0 * * *', description: '每天00:00执行' },
-  { label: '每天上午6点', value: '0 6 * * *', description: '每天06:00执行' },
-  { label: '每天上午9点', value: '0 9 * * *', description: '每天09:00执行' },
-  { label: '每天下午2点', value: '0 14 * * *', description: '每天14:00执行' },
-  { label: '每天下午6点', value: '0 18 * * *', description: '每天18:00执行' },
-  { label: '每天晚上9点', value: '0 21 * * *', description: '每天21:00执行' },
-  { label: '每周一上午9点', value: '0 9 * * 1', description: '每周一09:00执行' },
-  { label: '每周五下午5点', value: '0 17 * * 5', description: '每周五17:00执行' },
-  { label: '工作日上午9点', value: '0 9 * * 1-5', description: '周一到周五09:00执行' },
-  { label: '工作日下午6点', value: '0 18 * * 1-5', description: '周一到周五18:00执行' },
-  { label: '周末上午10点', value: '0 10 * * 0,6', description: '周六、周日10:00执行' },
-  { label: '每月1日上午9点', value: '0 9 1 * *', description: '每月第一天09:00执行' },
-  { label: '每月15日下午2点', value: '0 14 15 * *', description: '每月15日14:00执行' },
-  { label: '每季度第一天', value: '0 0 1 */3 *', description: '每3个月第一天00:00执行' },
-  { label: '每年1月1日', value: '0 0 1 1 *', description: '每年1月1日00:00执行' }
+  // 高频执行
+  { label: '每分钟', value: '* * * * *', description: '每分钟执行一次', category: 'frequent' },
+  { label: '每2分钟', value: '*/2 * * * *', description: '每2分钟执行一次', category: 'frequent' },
+  { label: '每5分钟', value: '*/5 * * * *', description: '每5分钟执行一次', category: 'frequent' },
+  { label: '每10分钟', value: '*/10 * * * *', description: '每10分钟执行一次', category: 'frequent' },
+  { label: '每15分钟', value: '*/15 * * * *', description: '每15分钟执行一次', category: 'frequent' },
+  { label: '每30分钟', value: '*/30 * * * *', description: '每30分钟执行一次', category: 'frequent' },
+  
+  // 每小时
+  { label: '每小时', value: '0 * * * *', description: '每小时的第0分钟执行', category: 'hourly' },
+  { label: '每2小时', value: '0 */2 * * *', description: '每2小时执行一次', category: 'hourly' },
+  { label: '每3小时', value: '0 */3 * * *', description: '每3小时执行一次', category: 'hourly' },
+  { label: '每4小时', value: '0 */4 * * *', description: '每4小时执行一次', category: 'hourly' },
+  { label: '每6小时', value: '0 */6 * * *', description: '每6小时执行一次', category: 'hourly' },
+  { label: '每8小时', value: '0 */8 * * *', description: '每8小时执行一次', category: 'hourly' },
+  { label: '每12小时', value: '0 */12 * * *', description: '每12小时执行一次', category: 'hourly' },
+  
+  // 每天
+  { label: '每天午夜', value: '0 0 * * *', description: '每天00:00执行', category: 'daily' },
+  { label: '每天凌晨1点', value: '0 1 * * *', description: '每天01:00执行', category: 'daily' },
+  { label: '每天凌晨2点', value: '0 2 * * *', description: '每天02:00执行', category: 'daily' },
+  { label: '每天凌晨3点', value: '0 3 * * *', description: '每天03:00执行', category: 'daily' },
+  { label: '每天上午6点', value: '0 6 * * *', description: '每天06:00执行', category: 'daily' },
+  { label: '每天上午8点', value: '0 8 * * *', description: '每天08:00执行', category: 'daily' },
+  { label: '每天上午9点', value: '0 9 * * *', description: '每天09:00执行', category: 'daily' },
+  { label: '每天上午10点', value: '0 10 * * *', description: '每天10:00执行', category: 'daily' },
+  { label: '每天中午12点', value: '0 12 * * *', description: '每天12:00执行', category: 'daily' },
+  { label: '每天下午2点', value: '0 14 * * *', description: '每天14:00执行', category: 'daily' },
+  { label: '每天下午4点', value: '0 16 * * *', description: '每天16:00执行', category: 'daily' },
+  { label: '每天下午6点', value: '0 18 * * *', description: '每天18:00执行', category: 'daily' },
+  { label: '每天晚上8点', value: '0 20 * * *', description: '每天20:00执行', category: 'daily' },
+  { label: '每天晚上9点', value: '0 21 * * *', description: '每天21:00执行', category: 'daily' },
+  { label: '每天晚上10点', value: '0 22 * * *', description: '每天22:00执行', category: 'daily' },
+  
+  // 工作日
+  { label: '工作日上午9点', value: '0 9 * * 1-5', description: '周一到周五09:00执行', category: 'weekdays' },
+  { label: '工作日上午10点', value: '0 10 * * 1-5', description: '周一到周五10:00执行', category: 'weekdays' },
+  { label: '工作日中午12点', value: '0 12 * * 1-5', description: '周一到周五12:00执行', category: 'weekdays' },
+  { label: '工作日下午2点', value: '0 14 * * 1-5', description: '周一到周五14:00执行', category: 'weekdays' },
+  { label: '工作日下午5点', value: '0 17 * * 1-5', description: '周一到周五17:00执行', category: 'weekdays' },
+  { label: '工作日下午6点', value: '0 18 * * 1-5', description: '周一到周五18:00执行', category: 'weekdays' },
+  
+  // 每周
+  { label: '每周一上午9点', value: '0 9 * * 1', description: '每周一09:00执行', category: 'weekly' },
+  { label: '每周二上午9点', value: '0 9 * * 2', description: '每周二09:00执行', category: 'weekly' },
+  { label: '每周三上午9点', value: '0 9 * * 3', description: '每周三09:00执行', category: 'weekly' },
+  { label: '每周四上午9点', value: '0 9 * * 4', description: '每周四09:00执行', category: 'weekly' },
+  { label: '每周五上午9点', value: '0 9 * * 5', description: '每周五09:00执行', category: 'weekly' },
+  { label: '每周五下午5点', value: '0 17 * * 5', description: '每周五17:00执行', category: 'weekly' },
+  { label: '每周六上午10点', value: '0 10 * * 6', description: '每周六10:00执行', category: 'weekly' },
+  { label: '每周日上午10点', value: '0 10 * * 0', description: '每周日10:00执行', category: 'weekly' },
+  { label: '周末上午10点', value: '0 10 * * 0,6', description: '周六、周日10:00执行', category: 'weekly' },
+  
+  // 每月
+  { label: '每月1日上午9点', value: '0 9 1 * *', description: '每月第一天09:00执行', category: 'monthly' },
+  { label: '每月1日中午12点', value: '0 12 1 * *', description: '每月第一天12:00执行', category: 'monthly' },
+  { label: '每月15日上午9点', value: '0 9 15 * *', description: '每月15日09:00执行', category: 'monthly' },
+  { label: '每月15日下午2点', value: '0 14 15 * *', description: '每月15日14:00执行', category: 'monthly' },
+  { label: '每月最后一天', value: '0 0 L * *', description: '每月最后一天00:00执行', category: 'monthly' },
+  
+  // 特殊
+  { label: '每季度第一天', value: '0 0 1 */3 *', description: '每3个月第一天00:00执行', category: 'special' },
+  { label: '每半年第一天', value: '0 0 1 */6 *', description: '每6个月第一天00:00执行', category: 'special' },
+  { label: '每年1月1日', value: '0 0 1 1 *', description: '每年1月1日00:00执行', category: 'special' },
+  { label: '每年7月1日', value: '0 0 1 7 *', description: '每年7月1日00:00执行', category: 'special' },
 ]
 
-export function CronEditor({ value, onChange, error }: CronEditorProps) {
+export function CronEditor({ value, onChange, error, autoSave = false }: CronEditorProps) {
   const [mode, setMode] = useState<'quick' | 'preset' | 'visual' | 'text'>('quick')
   const [textValue, setTextValue] = useState(value || '0 9 * * 1-5')
   const [nextExecutions, setNextExecutions] = useState<Date[]>([])
+  const [selectedCategory, setSelectedCategory] = useState<string>('all')
 
   // 同步外部 value 到内部状态
   useEffect(() => {
@@ -76,6 +122,14 @@ export function CronEditor({ value, onChange, error }: CronEditorProps) {
     setTextValue(preset)
     onChange(preset)
     calculateNextExecutions(preset)
+    
+    // 如果启用了自动保存，延迟触发保存事件
+    if (autoSave) {
+      setTimeout(() => {
+        const event = new CustomEvent('cronAutoSave', { detail: { cron: preset } })
+        window.dispatchEvent(event)
+      }, 100)
+    }
   }
 
   const handleTextChange = (newValue: string) => {
@@ -83,6 +137,14 @@ export function CronEditor({ value, onChange, error }: CronEditorProps) {
     if (isValidCron(newValue)) {
       onChange(newValue)
       calculateNextExecutions(newValue)
+      
+      // 如果启用了自动保存，延迟触发保存事件
+      if (autoSave) {
+        setTimeout(() => {
+          const event = new CustomEvent('cronAutoSave', { detail: { cron: newValue } })
+          window.dispatchEvent(event)
+        }, 500) // 延迟500ms，避免频繁触发
+      }
     }
   }
 
@@ -187,7 +249,7 @@ export function CronEditor({ value, onChange, error }: CronEditorProps) {
               <CardTitle className="text-base">快速设置调度</CardTitle>
             </CardHeader>
             <CardContent>
-              <QuickScheduleEditor value={textValue} onChange={handleTextChange} />
+              <QuickScheduleEditor value={textValue} onChange={handleTextChange} autoSave={autoSave} />
             </CardContent>
           </Card>
         </TabPanel>
@@ -197,22 +259,95 @@ export function CronEditor({ value, onChange, error }: CronEditorProps) {
               <CardTitle className="text-base">预设调度模板</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {presetSchedules.map((preset) => (
-                  <Button
-                    key={preset.value}
-                    variant={textValue === preset.value ? 'default' : 'outline'}
-                    size="sm"
-                    className="justify-start p-3 h-auto"
-                    onClick={() => handlePresetSelect(preset.value)}
+              <div className="space-y-4">
+                {/* 分类筛选 */}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button
+                    type="button"
+                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                      selectedCategory === 'all' 
+                        ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    onClick={() => setSelectedCategory('all')}
                   >
-                    <div className="text-left w-full">
-                      <div className="font-medium text-sm">{preset.label}</div>
-                      <div className="text-xs text-gray-500 font-mono mt-1">{preset.value}</div>
-                      <div className="text-xs text-gray-400 mt-1">{preset.description}</div>
-                    </div>
-                  </Button>
-                ))}
+                    全部
+                  </button>
+                  {[
+                    { key: 'frequent', label: '高频执行' },
+                    { key: 'hourly', label: '每小时' },
+                    { key: 'daily', label: '每日' },
+                    { key: 'weekdays', label: '工作日' },
+                    { key: 'weekly', label: '每周' },
+                    { key: 'monthly', label: '每月' },
+                    { key: 'special', label: '特殊' }
+                  ].map(cat => (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                        selectedCategory === cat.key 
+                          ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                      onClick={() => setSelectedCategory(cat.key)}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+                
+                {/* 预设模板 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {presetSchedules
+                    .filter(preset => selectedCategory === 'all' || preset.category === selectedCategory)
+                    .map((preset) => (
+                    <Button
+                      key={preset.value}
+                      variant={textValue === preset.value ? 'default' : 'outline'}
+                      size="sm"
+                      className="justify-start p-3 h-auto"
+                      onClick={() => handlePresetSelect(preset.value)}
+                    >
+                      <div className="text-left w-full">
+                        <div className="font-medium text-sm">{preset.label}</div>
+                        <div className="text-xs text-gray-500 font-mono mt-1">{preset.value}</div>
+                        <div className="text-xs text-gray-400 mt-1">{preset.description}</div>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
+                
+                {/* 快速输入 */}
+                <div className="border-t pt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    或直接输入Cron表达式
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={textValue}
+                      onChange={(e) => handleTextChange(e.target.value)}
+                      placeholder="0 9 * * 1-5"
+                      className="font-mono text-sm flex-1"
+                      error={!!error}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (isValidCron(textValue)) {
+                          handlePresetSelect(textValue)
+                        }
+                      }}
+                      disabled={!isValidCron(textValue)}
+                    >
+                      应用
+                    </Button>
+                  </div>
+                  {error && (
+                    <p className="mt-1 text-xs text-red-600">{error}</p>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -412,9 +547,10 @@ export function CronEditor({ value, onChange, error }: CronEditorProps) {
 interface QuickScheduleEditorProps {
   value: string
   onChange: (cron: string) => void
+  autoSave?: boolean
 }
 
-function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
+function QuickScheduleEditor({ value, onChange, autoSave }: QuickScheduleEditorProps) {
   // 解析传入的 cron 值来初始化状态
   const parseCronValue = (cronValue: string) => {
     try {
@@ -518,7 +654,15 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
   useEffect(() => {
     const cron = generateCron()
     onChange(cron)
-  }, [scheduleType, time, weekdays, monthDay])
+    
+    // 如果启用了自动保存，延迟触发保存事件
+    if (autoSave) {
+      setTimeout(() => {
+        const event = new CustomEvent('cronAutoSave', { detail: { cron } })
+        window.dispatchEvent(event)
+      }, 100)
+    }
+  }, [scheduleType, time, weekdays, monthDay, onChange, autoSave])
 
   return (
     <div className="space-y-6">
@@ -574,7 +718,7 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
           <div>
             <label className="block text-xs text-gray-500 mb-1">分钟</label>
             <Select
-              options={[0, 15, 30, 45].map(i => ({ 
+              options={[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(i => ({ 
                 label: i.toString().padStart(2, '0'), 
                 value: i.toString() 
               }))}
@@ -608,6 +752,39 @@ function QuickScheduleEditor({ value, onChange }: QuickScheduleEditorProps) {
           </p>
         </div>
       )}
+
+      {/* 自定义时间输入 */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-3">自定义时间（24小时制）</label>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="block text-xs text-gray-500 mb-1">小时:分钟</label>
+            <Input
+              type="time"
+              value={`${time.hour.padStart(2, '0')}:${time.minute.padStart(2, '0')}`}
+              onChange={(e) => {
+                const [hour, minute] = e.target.value.split(':')
+                setTime({ hour, minute })
+              }}
+              className="text-center"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs text-gray-500 mb-1">或分钟数</label>
+            <Select
+              options={Array.from({ length: 60 }, (_, i) => ({ 
+                label: `${i.toString().padStart(2, '0')}分`, 
+                value: i.toString() 
+              }))}
+              value={time.minute}
+              onChange={(value) => setTime(prev => ({ ...prev, minute: value as string }))}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          提示：可以直接选择时间，或使用时间输入框进行精确设置
+        </p>
+      </div>
 
       {/* 月日设置 */}
       {scheduleType === 'monthly' && (

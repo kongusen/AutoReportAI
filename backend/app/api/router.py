@@ -16,6 +16,7 @@ from app.api.endpoints import (
     intelligent_placeholders,
     health,
     settings,
+    task_scheduler,  # 重新启用
     # 如有其它业务模块可继续添加
 )
 
@@ -41,3 +42,4 @@ api_router.include_router(files.router, prefix="/v1/files", tags=["文件管理"
 api_router.include_router(history.router, prefix="/v1/history", tags=["历史记录"])
 api_router.include_router(intelligent_placeholders.router, prefix="/v1/intelligent-placeholders", tags=["智能占位符"])
 api_router.include_router(settings.router, prefix="/v1/settings", tags=["用户设置"])
+api_router.include_router(task_scheduler.router, prefix="/v1/task-scheduler", tags=["任务调度"])

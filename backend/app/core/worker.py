@@ -46,7 +46,81 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_max_tasks_per_child=1000,
     broker_connection_retry_on_startup=True,
+    # Beat调度器配置
+    beat_schedule={},
+    beat_scheduler='celery.beat.PersistentScheduler',
+    beat_sync_every=1,
+    beat_max_loop_interval=300,
+    # 确保 beat_schedule 存在
+    beat_schedule_filename='/app/celerybeat-schedule',
+    beat_schedule_db='/app/celerybeat-schedule.db',
 )
+
+# 确保 beat_schedule 字典存在
+if not hasattr(celery_app.conf, 'beat_schedule') or celery_app.conf.beat_schedule is None:
+    celery_app.conf.beat_schedule = {}
+
+# 确保调度文件路径正确（不是目录）
+import os
+schedule_file = os.path.join(os.getcwd(), 'celerybeat-schedule')
+if os.path.exists(schedule_file) and os.path.isdir(schedule_file):
+    import shutil
+    shutil.rmtree(schedule_file)
+    logger.warning(f"删除了错误的目录: {schedule_file}")
+
+# 初始化任务调度器
+def init_task_scheduler():
+    """初始化任务调度器并加载数据库中的任务"""
+    try:
+        from app.db.session import get_db_session
+        # 加载数据库中的任务到 Celery Beat
+        with get_db_session() as db:
+            from app.models.task import Task
+            tasks = db.query(Task).filter(
+                Task.is_active == True,
+                Task.schedule.isnot(None)
+            ).all()
+            
+            loaded_count = 0
+            for task in tasks:
+                try:
+                    # 解析 cron 表达式
+                    cron_parts = task.schedule.split()
+                    if len(cron_parts) == 5:
+                        minute, hour, day, month, day_of_week = cron_parts
+                        
+                        # 创建 Celery crontab 调度
+                        from celery.schedules import crontab
+                        schedule = crontab(
+                            minute=minute,
+                            hour=hour,
+                            day_of_month=day,
+                            month_of_year=month,
+                            day_of_week=day_of_week
+                        )
+                        
+                        # 注册到 Celery Beat
+                        task_name = f"task_{task.id}"
+                        celery_app.conf.beat_schedule[task_name] = {
+                            'task': 'app.core.worker.execute_scheduled_task',
+                            'schedule': schedule,
+                            'args': (task.id,)
+                        }
+                        loaded_count += 1
+                        logger.info(f"Task {task.id} ({task.name}) 已注册到 Celery Beat")
+                        
+                except Exception as e:
+                    logger.error(f"注册 Task {task.id} 到 Celery Beat 失败: {e}")
+        
+        logger.info(f"成功加载了 {loaded_count} 个任务到 Celery Beat")
+        return True
+        
+    except Exception as e:
+        logger.error(f"初始化任务调度器失败: {e}")
+        return False
+
+# 初始化任务调度器
+init_task_scheduler()
 
 
 class TaskStatus:
@@ -507,6 +581,56 @@ def report_generation(template_content: str, output_config: Dict[str, Any],
 # ETL作业执行任务
 @celery_app.task(bind=True, autoretry_for=(Exception,), 
                 retry_kwargs={'max_retries': 3, 'countdown': 60})
+def execute_scheduled_task(self, task_id: int) -> Dict[str, Any]:
+    """
+    执行调度的任务
+    
+    Args:
+        task_id: 任务ID
+        
+    Returns:
+        执行结果
+    """
+    logger.info(f"开始执行调度的任务: {task_id}")
+    
+    db = SessionLocal()
+    try:
+        # 获取任务信息
+        task = crud.task.get(db, id=task_id)
+        if not task:
+            raise ValueError(f"任务不存在: {task_id}")
+        
+        # 检查任务是否启用
+        if not task.is_active:
+            logger.warning(f"任务已禁用: {task_id}")
+            return {"status": "skipped", "message": "任务已禁用"}
+        
+        # 执行智能报告生成任务
+        user_id = str(task.owner_id)
+        result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+        
+        logger.info(f"任务执行已启动: {task_id}, Celery任务ID: {result.id}")
+        
+        return {
+            "status": "started",
+            "task_id": task_id,
+            "celery_task_id": result.id,
+            "message": "任务执行已启动"
+        }
+        
+    except Exception as e:
+        logger.error(f"执行调度任务失败: {task_id}, 错误: {str(e)}")
+        return {
+            "status": "failed",
+            "task_id": task_id,
+            "error": str(e)
+        }
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, autoretry_for=(Exception,), 
+                retry_kwargs={'max_retries': 3, 'countdown': 60})
 def execute_etl_job(self, job_id: str, job_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     执行ETL作业任务
@@ -723,7 +847,9 @@ def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
         update_task_progress(task_id, "processing", 25, f"发现 {len(placeholders)} 个占位符，开始Agent处理...")
         
         # 第二步：使用Agent系统处理占位符
-        from app.services.agents.orchestrator import orchestrator
+        # 使用懒加载避免循环导入
+        from app.services.agents.orchestrator import AgentOrchestrator
+        orchestrator = AgentOrchestrator()
         
         # 创建任务上下文
         task_context = {

@@ -66,6 +66,11 @@ class CeleryETLScheduler:
             
             # 注册到Celery Beat
             task_name = f"etl_job_{job_id}"
+            
+            # 确保 beat_schedule 存在
+            if not hasattr(celery_app.conf, 'beat_schedule') or celery_app.conf.beat_schedule is None:
+                celery_app.conf.beat_schedule = {}
+            
             celery_app.conf.beat_schedule[task_name] = {
                 'task': 'app.core.worker.execute_etl_job',
                 'schedule': schedule,
@@ -103,7 +108,9 @@ class CeleryETLScheduler:
                 task_name = self.scheduled_jobs[job_id]['task_name']
                 
                 # 从Celery Beat中移除
-                if task_name in celery_app.conf.beat_schedule:
+                if (hasattr(celery_app.conf, 'beat_schedule') and 
+                    celery_app.conf.beat_schedule is not None and
+                    task_name in celery_app.conf.beat_schedule):
                     del celery_app.conf.beat_schedule[task_name]
                 
                 # 从本地记录中移除

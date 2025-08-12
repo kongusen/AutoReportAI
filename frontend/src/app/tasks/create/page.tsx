@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -55,6 +55,8 @@ export default function CreateTaskPage() {
   const { dataSources, fetchDataSources } = useDataSourceStore()
   const { templates, fetchTemplates } = useTemplateStore()
   const [recipientInput, setRecipientInput] = useState('')
+  const [isDirty, setIsDirty] = useState(false)
+  const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null)
 
   const {
     register,
@@ -78,7 +80,24 @@ export default function CreateTaskPage() {
   useEffect(() => {
     fetchDataSources()
     fetchTemplates()
-  }, [fetchDataSources, fetchTemplates])
+    
+    // 监听cron自动保存事件
+    const handleCronAutoSave = (event: CustomEvent) => {
+      const { cron } = event.detail
+      setValue('schedule', cron)
+      setIsDirty(true)
+      setLastAutoSave(new Date())
+      
+      // 显示保存提示
+      console.log('Cron 配置已自动保存:', cron)
+    }
+    
+    window.addEventListener('cronAutoSave', handleCronAutoSave as EventListener)
+    
+    return () => {
+      window.removeEventListener('cronAutoSave', handleCronAutoSave as EventListener)
+    }
+  }, [fetchDataSources, fetchTemplates, setValue])
 
   const onSubmit = async (data: FormData) => {
     try {
@@ -161,6 +180,9 @@ export default function CreateTaskPage() {
             addRecipient={addRecipient}
             removeRecipient={removeRecipient}
             handleRecipientKeyDown={handleRecipientKeyDown}
+            isDirty={isDirty}
+            lastAutoSave={lastAutoSave}
+            setIsDirty={setIsDirty}
           />
         </Tabs>
 
@@ -195,6 +217,9 @@ interface TaskTabsProps {
   addRecipient: () => void
   removeRecipient: (email: string) => void
   handleRecipientKeyDown: (e: React.KeyboardEvent) => void
+  isDirty: boolean
+  lastAutoSave: Date | null
+  setIsDirty: (dirty: boolean) => void
 }
 
 function TaskTabs({
@@ -211,6 +236,9 @@ function TaskTabs({
   addRecipient,
   removeRecipient,
   handleRecipientKeyDown,
+  isDirty,
+  lastAutoSave,
+  setIsDirty,
 }: TaskTabsProps) {
   const { activeKey } = useTabsContext()
 
@@ -304,9 +332,21 @@ function TaskTabs({
           <CardContent>
             <CronEditor
               value={watchedSchedule}
-              onChange={(cron) => setValue('schedule', cron)}
+              onChange={(cron) => {
+                setValue('schedule', cron)
+                setIsDirty(true)
+              }}
               error={errors.schedule?.message}
+              autoSave={true}
             />
+            {isDirty && (
+              <div className="mt-4 text-xs text-green-600 bg-green-50 p-2 rounded flex items-center">
+                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                周期配置已自动保存{lastAutoSave ? ` (于 ${lastAutoSave.toLocaleTimeString()})` : ''}
+              </div>
+            )}
           </CardContent>
         </Card>
       </TabPanel>

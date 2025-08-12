@@ -389,6 +389,18 @@ async def startup():
         settings.REDIS_URL, encoding="utf-8", decode_responses=True
     )
     await FastAPILimiter.init(redis_connection)
+    
+    # 启动Task智能调度器 - 改为在需要时才创建实例
+    # from app.services.task_scheduler import task_scheduler
+    # await task_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    # 停止Task智能调度器 - 改为在需要时才创建实例
+    # from app.services.task_scheduler import task_scheduler
+    # await task_scheduler.stop()
+    pass
 
 
 # All API routes are handled by the api_router

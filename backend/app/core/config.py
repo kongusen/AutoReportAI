@@ -1,5 +1,7 @@
 import os
-from typing import Dict, List, Optional
+import json
+from typing import Dict, List, Optional, Any
+from pydantic import field_validator
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
@@ -167,6 +169,46 @@ class Settings(BaseSettings):
     CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
     CORS_ALLOW_METHODS: List[str] = os.getenv("CORS_ALLOW_METHODS", "*").split(",")
     CORS_ALLOW_HEADERS: List[str] = os.getenv("CORS_ALLOW_HEADERS", "*").split(",")
+
+    # 兼容：环境变量既可传 JSON 数组，也可传用逗号分隔的字符串
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    # 回退为逗号分隔
+                    pass
+            return [item.strip() for item in s.split(",") if item.strip()]
+        return v
+
+    @field_validator("CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", mode="before")
+    @classmethod
+    def _parse_list_like(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    pass
+            return [item.strip() for item in s.split(",") if item.strip()]
+        return v
 
     class Config:
         case_sensitive = True

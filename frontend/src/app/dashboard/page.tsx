@@ -8,9 +8,9 @@ import {
   DocumentArrowDownIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui'
-import { Badge } from '@/components/ui'
-import { Button } from '@/components/ui'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { api } from '@/utils/api'

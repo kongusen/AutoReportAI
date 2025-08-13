@@ -236,7 +236,7 @@ def create_application() -> FastAPI:
     origins = list(set([
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        *getattr(settings, "CORS_ORIGINS", []),
+        "http://192.168.61.30:3000",
     ]))
 
     app.add_middleware(

@@ -1,3 +1,8 @@
+// Debug: print important envs at build time
+console.log('[next.config] NODE_ENV:', process.env.NODE_ENV)
+console.log('[next.config] NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL)
+console.log('[next.config] NEXT_PUBLIC_WS_URL:', process.env.NEXT_PUBLIC_WS_URL)
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',

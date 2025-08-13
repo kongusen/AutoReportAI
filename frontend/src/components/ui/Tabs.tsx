@@ -91,6 +91,7 @@ export function Tabs({
           {items.map((item) => (
             <button
               key={item.key}
+              type="button"
               className={cn(
                 'flex items-center gap-2 font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2',
                 sizeClasses[size],

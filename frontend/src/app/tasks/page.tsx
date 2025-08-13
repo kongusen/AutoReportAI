@@ -141,66 +141,65 @@ export default function TasksPage() {
     const progress = getTaskProgress(taskId)
     if (!progress) return null
 
-    const getStatusColor = (status: string) => {
-      switch (status) {
-        case 'completed': return 'bg-green-500'
-        case 'failed': return 'bg-red-500'
-        case 'analyzing': return 'bg-blue-500'
-        case 'querying': return 'bg-yellow-500'
-        case 'processing': return 'bg-orange-500'
-        case 'generating': return 'bg-purple-500'
-        default: return 'bg-gray-500'
+    const handleRetryTask = async () => {
+      try {
+        await executeTask(taskId)
+      } catch (error) {
+        // 错误处理已在store中处理
       }
     }
 
-    const getStatusText = (status: string) => {
-      switch (status) {
-        case 'pending': return '等待中'
-        case 'analyzing': return '分析中'
-        case 'querying': return '查询数据'
-        case 'processing': return '处理中'
-        case 'generating': return '生成中'
-        case 'completed': return '已完成'
-        case 'failed': return '已失败'
-        case 'retrying': return '重试中'
-        default: return status
+    const getProgressMessage = () => {
+      if (progress.current_step && progress.current_step !== progress.message) {
+        return progress.current_step
       }
+      return progress.message || '处理中...'
+    }
+
+    // 获取错误详情
+    const getErrorDetails = () => {
+      if (progress.status === 'failed') {
+        // 尝试从各个可能的字段获取错误详情
+        const details = (progress as any).error || 
+                       (progress as any).traceback ||
+                       (progress as any).details ||
+                       (progress as any).error_details
+        return details
+      }
+      
+      // 警告状态的详情
+      if (progress.status === 'completed' && (progress as any).has_errors) {
+        const placeholderResults = (progress as any).placeholder_results
+        if (placeholderResults) {
+          const failedPlaceholders = placeholderResults.filter((p: any) => !p.success)
+          if (failedPlaceholders.length > 0) {
+            return `${failedPlaceholders.length} 个占位符处理失败:\n${failedPlaceholders.map((p: any) => `- ${p.placeholder_name}: ${p.error || p.content}`).join('\n')}`
+          }
+        }
+      }
+      
+      return null
+    }
+
+    const determineStatus = () => {
+      if (progress.status === 'completed' && (progress as any).has_errors) {
+        return 'warning'
+      }
+      return progress.status as any
     }
 
     return (
-      <div className="w-full max-w-xs">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center">
-            <div className={`w-2 h-2 rounded-full mr-2 ${getStatusColor(progress.status)}`} />
-            <span className="text-xs font-medium text-gray-700">
-              {getStatusText(progress.status)}
-            </span>
-          </div>
-          <span className="text-xs text-gray-600">{progress.progress}%</span>
-        </div>
-        
-        <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
-          <div 
-            className={`h-2 rounded-full transition-all duration-300 ${
-              progress.status === 'completed' ? 'bg-green-500' :
-              progress.status === 'failed' ? 'bg-red-500' : 
-              'bg-blue-500'
-            }`}
-            style={{ width: `${Math.max(progress.progress, 5)}%` }}
-          />
-        </div>
-        
-        {progress.current_step && (
-          <p className="text-xs text-gray-500 truncate" title={progress.current_step}>
-            {progress.current_step}
-          </p>
-        )}
-        
-        {progress.message && progress.message !== progress.current_step && (
-          <p className="text-xs text-gray-400 truncate mt-1" title={progress.message}>
-            {progress.message}
-          </p>
-        )}
+      <div className="w-full max-w-sm">
+        <Progress
+          value={progress.progress}
+          status={determineStatus()}
+          message={getProgressMessage()}
+          errorDetails={getErrorDetails()}
+          showPercent={true}
+          showMessage={true}
+          size="sm"
+          onRetry={progress.status === 'failed' ? handleRetryTask : undefined}
+        />
       </div>
     )
   }

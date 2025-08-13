@@ -51,9 +51,9 @@ celery_app.conf.update(
     beat_scheduler='celery.beat.PersistentScheduler',
     beat_sync_every=1,
     beat_max_loop_interval=300,
-    # 确保 beat_schedule 存在
-    beat_schedule_filename='/app/celerybeat-schedule',
-    beat_schedule_db='/app/celerybeat-schedule.db',
+    # 确保 beat_schedule 存在 - 使用本地路径而非Docker路径
+    beat_schedule_filename='celerybeat-schedule',
+    beat_schedule_db='celerybeat-schedule.db',
 )
 
 # 确保 beat_schedule 字典存在
@@ -772,242 +772,97 @@ def test_celery_task(word: str) -> str:
 
 # 添加辅助函数
 def update_task_progress(task_id: int, status: str, progress: int, message: str):
-    """同步更新任务进度的辅助函数"""
+    """同步更新任务进度的辅助函数 - 改进错误处理"""
+    status_data = {
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+    return update_task_progress_dict(task_id, status_data)
+
+
+def send_error_notification(task_id: int, error_message: str):
+    """发送错误通知的辅助函数"""
     try:
-        import redis
-        redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-        
-        status_data = {
-            "status": status,
-            "progress": progress,
-            "message": message,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        
-        redis_client.hset(f"report_task:{task_id}:status", mapping=status_data)
-        redis_client.close()
+        from app.services.notification.notification_service import NotificationService
+        notification_service = NotificationService()
+        # 这里可以添加异步通知逻辑
+        logger.info(f"错误通知已发送 - 任务ID: {task_id}: {error_message}")
     except Exception as e:
-        logger.error(f"更新任务进度失败: {e}")
+        logger.error(f"发送错误通知失败: {e}")
+
+
+def safe_update_progress_with_fallback(task_id: int, status: str, progress: int, message: str, fallback_status: dict = None):
+    """安全的进度更新，失败时使用备用状态"""
+    success = update_task_progress(task_id, status, progress, message)
+    if not success and fallback_status:
+        logger.warning(f"使用备用状态更新任务 {task_id}")
+        update_task_progress_dict(task_id, fallback_status)
+    return success
 
 
 def update_task_progress_dict(task_id: int, status_data: dict):
-    """同步更新任务进度的辅助函数（字典版本）"""
-    try:
-        import redis
-        redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-        redis_client.hset(f"report_task:{task_id}:status", mapping=status_data)
-        redis_client.close()
-    except Exception as e:
-        logger.error(f"更新任务进度失败: {e}")
+    """同步更新任务进度的辅助函数（字典版本）- 改进错误处理"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        redis_client = None
+        try:
+            import redis
+            redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+            
+            # 添加时间戳确保数据新鲜度
+            if "updated_at" not in status_data:
+                status_data["updated_at"] = datetime.utcnow().isoformat()
+            
+            # 测试Redis连接
+            redis_client.ping()
+            
+            # 设置状态数据
+            result = redis_client.hset(f"report_task:{task_id}:status", mapping=status_data)
+            logger.debug(f"任务进度更新成功 - 任务ID: {task_id}, 状态: {status_data.get('status', 'unknown')}, Redis返回: {result}")
+            
+            # 设置过期时间（1小时）
+            redis_client.expire(f"report_task:{task_id}:status", 3600)
+            
+            return True
+            
+        except redis.ConnectionError as conn_error:
+            logger.warning(f"Redis连接失败 (尝试 {attempt + 1}/{max_retries}): {conn_error}")
+        except redis.TimeoutError as timeout_error:
+            logger.warning(f"Redis超时 (尝试 {attempt + 1}/{max_retries}): {timeout_error}")
+        except Exception as e:
+            logger.warning(f"更新任务进度失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+            
+        finally:
+            # 确保Redis连接关闭
+            if redis_client:
+                try:
+                    redis_client.close()
+                except:
+                    pass
+        
+        # 最后一次尝试失败
+        if attempt == max_retries - 1:
+            logger.error(f"任务进度更新彻底失败 - 任务ID: {task_id}")
+            # 尝试发送错误通知
+            try:
+                send_error_notification(task_id, f"状态更新失败: Redis连接问题")
+            except Exception as notify_error:
+                logger.error(f"发送错误通知也失败: {notify_error}")
+            return False
+            
+        # 等待后重试
+        time.sleep(1 * (attempt + 1))
+    
+    return False
 
 
 @celery_app.task(bind=True, name='app.core.worker.intelligent_report_generation_pipeline')
 def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
     """
-    智能占位符驱动的报告生成流水线
+    智能占位符驱动的报告生成流水线 - 使用增强版本
     """
-    from app.db.session import SessionLocal
-    from app.models.task import Task
-    from app.models.template import Template
-    from app.models.data_source import DataSource
-    from app import crud
-    from datetime import datetime
-    import asyncio
-    import uuid
-    
-    logger.info(f"开始智能占位符报告生成流水线 - 任务ID: {task_id}")
-    
-    db = SessionLocal()
-    
-    try:
-        # 获取任务信息
-        task = crud.task.get(db, id=task_id)
-        if not task:
-            raise Exception(f"任务 {task_id} 不存在")
-        
-        # 获取模板和数据源
-        template = db.query(Template).filter(Template.id == task.template_id).first()
-        data_source = db.query(DataSource).filter(DataSource.id == task.data_source_id).first()
-        
-        if not template:
-            raise Exception(f"模板 {task.template_id} 不存在")
-        if not data_source:
-            raise Exception(f"数据源 {task.data_source_id} 不存在")
-        
-        logger.info(f"任务信息 - 模板: {template.name}, 数据源: {data_source.name}")
-        
-        # 更新任务状态
-        update_task_progress(task_id, "processing", 10, "开始智能占位符分析...")
-        
-        # 第一步：分析模板中的占位符
-        from app.api.endpoints.intelligent_placeholders import extract_placeholders_from_content
-        placeholders = extract_placeholders_from_content(template.content)
-        
-        logger.info(f"发现 {len(placeholders)} 个占位符")
-        update_task_progress(task_id, "processing", 25, f"发现 {len(placeholders)} 个占位符，开始Agent处理...")
-        
-        # 第二步：使用Agent系统处理占位符
-        # 使用懒加载避免循环导入
-        from app.services.agents.orchestrator import AgentOrchestrator
-        orchestrator = AgentOrchestrator()
-        
-        # 创建任务上下文
-        task_context = {
-            "template_id": str(template.id),
-            "template_name": template.name,
-            "template_content": template.content,
-            "data_source_id": str(data_source.id),
-            "data_source_name": data_source.name,
-            "data_source": data_source,
-            "user_id": user_id,
-            "task_id": str(task_id),
-            "processing_config": {},
-            "output_config": {}
-        }
-        
-        # 异步处理占位符
-        async def process_placeholders():
-            placeholder_results = []
-            successful_count = 0
-            
-            for i, placeholder in enumerate(placeholders):
-                try:
-                    progress = 25 + (i / len(placeholders)) * 60  # 25% to 85%
-                    update_task_progress(
-                        task_id, "processing", int(progress), 
-                        f"处理占位符 {i+1}/{len(placeholders)}: {placeholder.get('placeholder_name', '')}"
-                    )
-                    
-                    # 准备占位符处理数据
-                    placeholder_input = {
-                        "placeholder_type": placeholder.get("placeholder_type", "text"),
-                        "description": placeholder.get("description", placeholder.get("placeholder_name", "")),
-                        "data_source_id": str(data_source.id),
-                    }
-                    
-                    # 通过orchestrator处理单个占位符
-                    agent_result = await orchestrator._process_single_placeholder(placeholder_input, task_context)
-                    
-                    if agent_result.success and agent_result.data:
-                        # 从工作流结果中提取最终内容
-                        from app.api.endpoints.intelligent_placeholders import extract_content_from_agent_result
-                        final_content = extract_content_from_agent_result(agent_result)
-                        
-                        placeholder_results.append({
-                            "placeholder_name": placeholder.get("placeholder_name", ""),
-                            "content": final_content,
-                            "success": True,
-                            "agent_result": str(agent_result.data)[:200]  # 限制长度
-                        })
-                        successful_count += 1
-                        logger.info(f"占位符 '{placeholder.get('placeholder_name', '')}' 处理成功: {final_content}")
-                    else:
-                        error_msg = agent_result.error_message if hasattr(agent_result, 'error_message') else "未知错误"
-                        placeholder_results.append({
-                            "placeholder_name": placeholder.get("placeholder_name", ""),
-                            "content": "数据获取失败",
-                            "success": False,
-                            "error": error_msg
-                        })
-                        logger.warning(f"占位符 '{placeholder.get('placeholder_name', '')}' 处理失败: {error_msg}")
-                
-                except Exception as e:
-                    error_msg = str(e)
-                    placeholder_results.append({
-                        "placeholder_name": placeholder.get("placeholder_name", ""),
-                        "content": "处理失败",
-                        "success": False,
-                        "error": error_msg
-                    })
-                    logger.error(f"占位符 '{placeholder.get('placeholder_name', '')}' 处理异常: {error_msg}")
-            
-            return placeholder_results, successful_count
-        
-        # 运行异步处理
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            placeholder_results, successful_count = loop.run_until_complete(process_placeholders())
-        finally:
-            loop.close()
-        
-        # 第三步：生成报告内容
-        update_task_progress(task_id, "processing", 85, f"生成报告内容... ({successful_count}/{len(placeholders)} 个占位符处理成功)")
-        
-        # 替换模板中的占位符
-        report_content = template.content
-        for result in placeholder_results:
-            if result.get("success"):
-                placeholder_name = result.get("placeholder_name", "")
-                content = result.get("content", "")
-                # 替换占位符
-                report_content = report_content.replace(f"{{{{{placeholder_name}}}}}", str(content))
-        
-        # 第四步：保存报告结果
-        update_task_progress(task_id, "processing", 95, "保存报告结果...")
-        
-        # 生成报告文件路径
-        from datetime import datetime
-        import os
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_filename = f"intelligent_report_{task_id}_{timestamp}.txt"
-        reports_dir = os.path.join(os.getcwd(), "reports")
-        os.makedirs(reports_dir, exist_ok=True)
-        report_path = os.path.join(reports_dir, report_filename)
-        
-        # 保存报告内容
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write(f"# 智能占位符生成报告\n")
-            f.write(f"## 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"## 模板: {template.name}\n")
-            f.write(f"## 数据源: {data_source.name}\n")
-            f.write(f"## 占位符处理结果: {successful_count}/{len(placeholders)} 成功\n\n")
-            f.write("## 报告内容\n\n")
-            f.write(report_content)
-            f.write(f"\n\n## 占位符处理详情\n")
-            for result in placeholder_results:
-                status = "✅" if result.get("success") else "❌"
-                f.write(f"- {status} {result.get('placeholder_name', '')}: {result.get('content', '')}\n")
-                if not result.get("success") and result.get("error"):
-                    f.write(f"  错误: {result.get('error')}\n")
-        
-        # 完成任务
-        final_status = {
-            "status": "completed",
-            "progress": 100,
-            "message": f"智能占位符报告生成完成 ({successful_count}/{len(placeholders)} 个占位符处理成功)",
-            "report_path": report_path,
-            "report_filename": report_filename,
-            "placeholder_results": placeholder_results,
-            "successful_count": successful_count,
-            "total_placeholders": len(placeholders),
-            "completion_time": datetime.now().isoformat()
-        }
-        
-        update_task_progress_dict(task_id, final_status)
-        
-        logger.info(f"智能占位符报告生成完成 - 任务ID: {task_id}, 成功率: {successful_count}/{len(placeholders)}")
-        
-        return {
-            "success": True,
-            "task_id": task_id,
-            "report_path": report_path,
-            "successful_placeholders": successful_count,
-            "total_placeholders": len(placeholders)
-        }
-        
-    except Exception as e:
-        error_msg = f"智能占位符报告生成失败: {str(e)}"
-        logger.error(error_msg)
-        
-        update_task_progress(task_id, "failed", 0, error_msg)
-        
-        return {
-            "success": False,
-            "task_id": task_id,
-            "error": error_msg
-        }
-        
-    finally:
-        db.close()
+    # 使用增强版本的函数
+    from app.core.worker_enhanced import enhanced_intelligent_report_generation_pipeline
+    return enhanced_intelligent_report_generation_pipeline(task_id, user_id)

@@ -46,6 +46,11 @@ export interface ProgressProps
   max?: number
   showPercent?: boolean
   animated?: boolean
+  status?: 'pending' | 'processing' | 'completed' | 'failed' | 'warning'
+  message?: string
+  errorDetails?: string
+  showMessage?: boolean
+  onRetry?: () => void
 }
 
 export function Progress({
@@ -56,10 +61,34 @@ export function Progress({
   variant = 'default',
   showPercent = false,
   animated = false,
+  status,
+  message,
+  errorDetails,
+  showMessage = true,
+  onRetry,
   ...props
 }: ProgressProps) {
   const percentage = Math.min(Math.max((value / max) * 100, 0), 100)
-
+  
+  // 根据状态自动设置variant
+  const getVariantByStatus = (status?: string) => {
+    switch (status) {
+      case 'completed':
+        return 'success'
+      case 'failed':
+        return 'error'
+      case 'warning':
+        return 'warning'
+      case 'processing':
+        return 'info'
+      default:
+        return variant
+    }
+  }
+  
+  const finalVariant = status ? getVariantByStatus(status) : variant
+  const isAnimated = animated || (status === 'processing' && percentage < 100)
+  
   return (
     <div className="w-full">
       <div
@@ -68,17 +97,65 @@ export function Progress({
       >
         <div
           className={cn(
-            progressBarVariants({ variant }),
-            animated && 'animate-pulse'
+            progressBarVariants({ variant: finalVariant }),
+            isAnimated && 'animate-pulse'
           )}
           style={{
             transform: `translateX(-${100 - percentage}%)`,
           }}
         />
       </div>
-      {showPercent && (
-        <div className="mt-1 text-right text-xs text-gray-600">
-          {Math.round(percentage)}%
+      
+      <div className="mt-1 flex items-center justify-between">
+        {/* 状态消息 */}
+        {showMessage && message && (
+          <div className={cn(
+            "text-xs flex-1",
+            status === 'failed' ? 'text-red-600' : 
+            status === 'completed' ? 'text-green-600' :
+            status === 'warning' ? 'text-yellow-600' :
+            'text-gray-600'
+          )}>
+            {message}
+          </div>
+        )}
+        
+        {/* 百分比显示 */}
+        {showPercent && (
+          <div className="text-xs text-gray-600 ml-2">
+            {Math.round(percentage)}%
+          </div>
+        )}
+      </div>
+      
+      {/* 错误详情和重试按钮 */}
+      {status === 'failed' && (
+        <div className="mt-2 space-y-1">
+          {errorDetails && (
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-700">
+                错误详情
+              </summary>
+              <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-20">
+                {errorDetails}
+              </pre>
+            </details>
+          )}
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="text-xs text-blue-600 hover:text-blue-800 underline"
+            >
+              重试
+            </button>
+          )}
+        </div>
+      )}
+      
+      {/* 警告状态的额外信息 */}
+      {status === 'warning' && errorDetails && (
+        <div className="mt-1 text-xs text-yellow-700 bg-yellow-50 p-2 rounded">
+          {errorDetails}
         </div>
       )}
     </div>

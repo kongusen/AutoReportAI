@@ -14,6 +14,7 @@ interface CronEditorProps {
   onChange: (cron: string) => void
   error?: string
   autoSave?: boolean
+  onSave?: (cron: string) => Promise<void>
 }
 
 const minuteOptions = Array.from({ length: 60 }, (_, i) => ({ label: i.toString(), value: i.toString() }))
@@ -98,11 +99,13 @@ const presetSchedules = [
   { label: '每年7月1日', value: '0 0 1 7 *', description: '每年7月1日00:00执行', category: 'special' },
 ]
 
-export function CronEditor({ value, onChange, error, autoSave = false }: CronEditorProps) {
+export function CronEditor({ value, onChange, error, autoSave = false, onSave }: CronEditorProps) {
   const [mode, setMode] = useState<'quick' | 'preset' | 'visual' | 'text'>('quick')
   const [textValue, setTextValue] = useState(value || '0 9 * * 1-5')
   const [nextExecutions, setNextExecutions] = useState<Date[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [isSaving, setIsSaving] = useState(false)
+  const [lastSaved, setLastSaved] = useState<Date | null>(null)
 
   // 同步外部 value 到内部状态
   useEffect(() => {
@@ -118,16 +121,30 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
     { key: 'text', label: '表达式编辑' },
   ]
 
+  // 自动保存功能
+  const triggerAutoSave = async (cron: string) => {
+    if (autoSave && onSave && isValidCron(cron)) {
+      setIsSaving(true)
+      try {
+        await onSave(cron)
+        setLastSaved(new Date())
+      } catch (error) {
+        console.error('Auto-save failed:', error)
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  }
+
   const handlePresetSelect = (preset: string) => {
     setTextValue(preset)
     onChange(preset)
     calculateNextExecutions(preset)
     
-    // 如果启用了自动保存，延迟触发保存事件
-    if (autoSave) {
+    // 如果启用了自动保存，延迟触发保存
+    if (autoSave && onSave) {
       setTimeout(() => {
-        const event = new CustomEvent('cronAutoSave', { detail: { cron: preset } })
-        window.dispatchEvent(event)
+        triggerAutoSave(preset)
       }, 100)
     }
   }
@@ -138,11 +155,10 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
       onChange(newValue)
       calculateNextExecutions(newValue)
       
-      // 如果启用了自动保存，延迟触发保存事件
-      if (autoSave) {
+      // 如果启用了自动保存，延迟触发保存
+      if (autoSave && onSave) {
         setTimeout(() => {
-          const event = new CustomEvent('cronAutoSave', { detail: { cron: newValue } })
-          window.dispatchEvent(event)
+          triggerAutoSave(newValue)
         }, 500) // 延迟500ms，避免频繁触发
       }
     }
@@ -176,10 +192,31 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
       }
 
       if (parts.dayOfWeek !== '*') {
-        const weekdays = parts.dayOfWeek.split(',').map(d => {
-          const weekday = weekdayOptions.find(w => w.value === d)
-          return weekday ? weekday.label : d
-        })
+        let weekdays: string[] = []
+        
+        if (parts.dayOfWeek.includes(',')) {
+          // 处理逗号分隔的多个值：1,3,5
+          weekdays = parts.dayOfWeek.split(',').map(d => {
+            const weekday = weekdayOptions.find(w => w.value === d.trim())
+            return weekday ? weekday.label : d.trim()
+          })
+        } else if (parts.dayOfWeek.includes('-')) {
+          // 处理范围表达式：1-5
+          const [start, end] = parts.dayOfWeek.split('-').map(d => parseInt(d.trim()))
+          const rangeWeekdays = []
+          for (let i = start; i <= end; i++) {
+            const weekday = weekdayOptions.find(w => w.value === i.toString())
+            if (weekday) {
+              rangeWeekdays.push(weekday.label)
+            }
+          }
+          weekdays = rangeWeekdays
+        } else {
+          // 处理单个值：1
+          const weekday = weekdayOptions.find(w => w.value === parts.dayOfWeek)
+          weekdays = weekday ? [weekday.label] : [parts.dayOfWeek]
+        }
+        
         descriptions.push(`在 ${weekdays.join(', ')}`)
       }
 
@@ -193,7 +230,7 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
     }
   }
 
-  // Calculate next execution times
+  // Calculate next execution times - improved version
   const calculateNextExecutions = (cronExpression: string) => {
     if (!isValidCron(cronExpression)) {
       setNextExecutions([])
@@ -203,34 +240,96 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
     try {
       const executions: Date[] = []
       const now = new Date()
-      
-      // Simple calculation for next executions (basic implementation)
-      // In a real application, you'd use a proper cron parser library like node-cron
       const parts = parseCron(cronExpression)
       
-      for (let i = 0; i < 5; i++) {
-        const nextTime = new Date(now)
-        nextTime.setSeconds(0)
-        nextTime.setMilliseconds(0)
+      // 更精确的执行时间计算
+      let currentTime = new Date(now)
+      currentTime.setSeconds(0)
+      currentTime.setMilliseconds(0)
+      
+      // 查找接下来的5次执行时间
+      let count = 0
+      const maxAttempts = 1000 // 防止无限循环
+      let attempts = 0
+      
+      while (count < 5 && attempts < maxAttempts) {
+        attempts++
+        currentTime.setMinutes(currentTime.getMinutes() + 1)
         
-        // Add days to get future executions
-        nextTime.setDate(now.getDate() + i)
-        
-        // Set hour and minute based on cron expression
-        if (parts.hour !== '*' && !parts.hour.includes('/')) {
-          nextTime.setHours(parseInt(parts.hour))
+        if (matchesCronExpression(currentTime, parts)) {
+          executions.push(new Date(currentTime))
+          count++
+          
+          // 如果是高频执行(每分钟、每几分钟)，跳过一些时间避免重复
+          if (parts.minute.includes('*/') && count < 5) {
+            const interval = parseInt(parts.minute.split('*/')[1]) || 1
+            currentTime.setMinutes(currentTime.getMinutes() + interval - 1)
+          } else if (parts.hour.includes('*/') && count < 5) {
+            const interval = parseInt(parts.hour.split('*/')[1]) || 1
+            currentTime.setHours(currentTime.getHours() + interval - 1)
+          }
         }
-        if (parts.minute !== '*' && !parts.minute.includes('/')) {
-          nextTime.setMinutes(parseInt(parts.minute))
-        }
-        
-        executions.push(new Date(nextTime))
       }
       
       setNextExecutions(executions)
     } catch (error) {
       setNextExecutions([])
     }
+  }
+
+  // 检查时间是否匹配cron表达式
+  const matchesCronExpression = (date: Date, parts: any) => {
+    const minute = date.getMinutes()
+    const hour = date.getHours()
+    const day = date.getDate()
+    const month = date.getMonth() + 1
+    const dayOfWeek = date.getDay()
+
+    // 检查分钟
+    if (!matchesCronPart(parts.minute, minute, 60)) return false
+    
+    // 检查小时
+    if (!matchesCronPart(parts.hour, hour, 24)) return false
+    
+    // 检查日期
+    if (!matchesCronPart(parts.day, day, 31)) return false
+    
+    // 检查月份
+    if (!matchesCronPart(parts.month, month, 12)) return false
+    
+    // 检查星期
+    if (!matchesCronPart(parts.dayOfWeek, dayOfWeek, 7)) return false
+
+    return true
+  }
+
+  // 检查单个cron部分是否匹配
+  const matchesCronPart = (cronPart: string, value: number, max: number) => {
+    if (cronPart === '*') return true
+    
+    // 处理间隔表达式 */n
+    if (cronPart.startsWith('*/')) {
+      const interval = parseInt(cronPart.substring(2))
+      return value % interval === 0
+    }
+    
+    // 处理范围表达式 n-m
+    if (cronPart.includes('-')) {
+      const [start, end] = cronPart.split('-').map(Number)
+      return value >= start && value <= end
+    }
+    
+    // 处理列表表达式 n,m,o
+    if (cronPart.includes(',')) {
+      const values = cronPart.split(',').map(Number)
+      return values.includes(value)
+    }
+    
+    // 处理具体数值
+    const cronValue = parseInt(cronPart)
+    if (isNaN(cronValue)) return false
+    
+    return value === cronValue
   }
 
   // Update executions when component mounts or value changes
@@ -243,243 +342,39 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
   return (
     <div className="space-y-4">
       <Tabs items={tabItems} defaultActiveKey="quick">
-        <TabPanel value="quick" activeValue={useTabsContext().activeKey}>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">快速设置调度</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <QuickScheduleEditor value={textValue} onChange={handleTextChange} autoSave={autoSave} />
-            </CardContent>
-          </Card>
-        </TabPanel>
-        <TabPanel value="preset" activeValue={useTabsContext().activeKey}>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">预设调度模板</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {/* 分类筛选 */}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <button
-                    type="button"
-                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                      selectedCategory === 'all' 
-                        ? 'bg-blue-100 text-blue-800 border border-blue-200' 
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                    onClick={() => setSelectedCategory('all')}
-                  >
-                    全部
-                  </button>
-                  {[
-                    { key: 'frequent', label: '高频执行' },
-                    { key: 'hourly', label: '每小时' },
-                    { key: 'daily', label: '每日' },
-                    { key: 'weekdays', label: '工作日' },
-                    { key: 'weekly', label: '每周' },
-                    { key: 'monthly', label: '每月' },
-                    { key: 'special', label: '特殊' }
-                  ].map(cat => (
-                    <button
-                      key={cat.key}
-                      type="button"
-                      className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                        selectedCategory === cat.key 
-                          ? 'bg-blue-100 text-blue-800 border border-blue-200' 
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                      onClick={() => setSelectedCategory(cat.key)}
-                    >
-                      {cat.label}
-                    </button>
-                  ))}
-                </div>
-                
-                {/* 预设模板 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {presetSchedules
-                    .filter(preset => selectedCategory === 'all' || preset.category === selectedCategory)
-                    .map((preset) => (
-                    <Button
-                      key={preset.value}
-                      variant={textValue === preset.value ? 'default' : 'outline'}
-                      size="sm"
-                      className="justify-start p-3 h-auto"
-                      onClick={() => handlePresetSelect(preset.value)}
-                    >
-                      <div className="text-left w-full">
-                        <div className="font-medium text-sm">{preset.label}</div>
-                        <div className="text-xs text-gray-500 font-mono mt-1">{preset.value}</div>
-                        <div className="text-xs text-gray-400 mt-1">{preset.description}</div>
-                      </div>
-                    </Button>
-                  ))}
-                </div>
-                
-                {/* 快速输入 */}
-                <div className="border-t pt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    或直接输入Cron表达式
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={textValue}
-                      onChange={(e) => handleTextChange(e.target.value)}
-                      placeholder="0 9 * * 1-5"
-                      className="font-mono text-sm flex-1"
-                      error={!!error}
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (isValidCron(textValue)) {
-                          handlePresetSelect(textValue)
-                        }
-                      }}
-                      disabled={!isValidCron(textValue)}
-                    >
-                      应用
-                    </Button>
-                  </div>
-                  {error && (
-                    <p className="mt-1 text-xs text-red-600">{error}</p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabPanel>
-
-        <TabPanel value="visual" activeValue={useTabsContext().activeKey}>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">可视化Cron编辑器</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <VisualCronEditor value={textValue} onChange={handleTextChange} />
-            </CardContent>
-          </Card>
-        </TabPanel>
-
-        <TabPanel value="text" activeValue={useTabsContext().activeKey}>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Cron表达式编辑器</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Input
-                  value={textValue}
-                  onChange={(e) => handleTextChange(e.target.value)}
-                  placeholder="0 9 * * 1-5"
-                  className="font-mono text-base"
-                  error={!!error}
-                />
-                
-                {/* Cron字段说明 */}
-                <div className="grid grid-cols-5 gap-2 text-xs">
-                  <div className="bg-blue-50 p-2 rounded text-center">
-                    <div className="font-semibold text-blue-700">分钟</div>
-                    <div className="text-blue-600">0-59</div>
-                  </div>
-                  <div className="bg-green-50 p-2 rounded text-center">
-                    <div className="font-semibold text-green-700">小时</div>
-                    <div className="text-green-600">0-23</div>
-                  </div>
-                  <div className="bg-yellow-50 p-2 rounded text-center">
-                    <div className="font-semibold text-yellow-700">日</div>
-                    <div className="text-yellow-600">1-31</div>
-                  </div>
-                  <div className="bg-purple-50 p-2 rounded text-center">
-                    <div className="font-semibold text-purple-700">月</div>
-                    <div className="text-purple-600">1-12</div>
-                  </div>
-                  <div className="bg-pink-50 p-2 rounded text-center">
-                    <div className="font-semibold text-pink-700">星期</div>
-                    <div className="text-pink-600">0-7</div>
-                  </div>
-                </div>
-
-                {/* 语法帮助 */}
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">Cron语法说明</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-gray-600">
-                    <div>
-                      <h5 className="font-semibold mb-2">基本符号</h5>
-                      <ul className="space-y-1">
-                        <li><span className="font-mono bg-white px-1 rounded">*</span> - 匹配任意值</li>
-                        <li><span className="font-mono bg-white px-1 rounded">?</span> - 不指定值（日和星期互斥）</li>
-                        <li><span className="font-mono bg-white px-1 rounded">-</span> - 范围分隔符</li>
-                        <li><span className="font-mono bg-white px-1 rounded">,</span> - 值列表分隔符</li>
-                        <li><span className="font-mono bg-white px-1 rounded">/</span> - 步长指定符</li>
-                      </ul>
-                    </div>
-                    <div>
-                      <h5 className="font-semibold mb-2">示例</h5>
-                      <ul className="space-y-1">
-                        <li><span className="font-mono bg-white px-1 rounded">*/5</span> - 每5分钟</li>
-                        <li><span className="font-mono bg-white px-1 rounded">1-5</span> - 1到5</li>
-                        <li><span className="font-mono bg-white px-1 rounded">1,3,5</span> - 1、3、5</li>
-                        <li><span className="font-mono bg-white px-1 rounded">0 */2</span> - 每2小时的第0分钟</li>
-                        <li><span className="font-mono bg-white px-1 rounded">0 9-17</span> - 9点到17点的第0分钟</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 常用模式 */}
-                <div>
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">常用模式</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {[
-                      { pattern: '0 * * * *', desc: '每小时执行' },
-                      { pattern: '*/15 * * * *', desc: '每15分钟执行' },
-                      { pattern: '0 2 * * *', desc: '每天凌晨2点执行' },
-                      { pattern: '0 9-17 * * 1-5', desc: '工作日9-17点每小时执行' },
-                      { pattern: '0 0 1 * *', desc: '每月1日执行' },
-                      { pattern: '0 0 * * 0', desc: '每周日执行' }
-                    ].map((item, index) => (
-                      <Button
-                        key={index}
-                        variant="ghost"
-                        size="sm"
-                        className="justify-between text-xs h-auto py-2"
-                        onClick={() => handleTextChange(item.pattern)}
-                      >
-                        <span className="font-mono">{item.pattern}</span>
-                        <span className="text-gray-500">{item.desc}</span>
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 在线验证 */}
-                <div className="border rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-medium text-gray-700">表达式验证</h4>
-                    <Badge variant={isValidCron(textValue) ? 'success' : 'destructive'} size="sm">
-                      {isValidCron(textValue) ? '有效' : '无效'}
-                    </Badge>
-                  </div>
-                  {isValidCron(textValue) && (
-                    <div className="text-xs text-gray-600">
-                      ✓ 表达式格式正确，可以正常使用
-                    </div>
-                  )}
-                  {!isValidCron(textValue) && (
-                    <div className="text-xs text-red-600">
-                      ✗ 表达式格式错误，请检查语法
-                    </div>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabPanel>
+        <CronEditorTabContent 
+          textValue={textValue}
+          handleTextChange={handleTextChange}
+          handlePresetSelect={handlePresetSelect}
+          selectedCategory={selectedCategory}
+          setSelectedCategory={setSelectedCategory}
+          error={error}
+          autoSave={autoSave}
+          onSave={onSave}
+        />
       </Tabs>
+
+      {/* 自动保存状态显示 */}
+      {autoSave && onSave && (
+        <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg mb-4">
+          <div className="flex items-center space-x-2">
+            <div className="text-sm font-medium text-blue-900">自动保存</div>
+            {isSaving && (
+              <div className="text-xs text-blue-600">正在保存...</div>
+            )}
+            {!isSaving && lastSaved && (
+              <div className="text-xs text-blue-600">
+                上次保存: {formatDate(lastSaved, { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  second: '2-digit' 
+                })}
+              </div>
+            )}
+          </div>
+          <div className={`w-2 h-2 rounded-full ${isSaving ? 'bg-yellow-400' : 'bg-green-400'}`}></div>
+        </div>
+      )}
 
       {/* Cron表达式解释和预览 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -544,13 +439,285 @@ export function CronEditor({ value, onChange, error, autoSave = false }: CronEdi
   )
 }
 
+interface CronEditorTabContentProps {
+  textValue: string
+  handleTextChange: (value: string) => void
+  handlePresetSelect: (preset: string) => void
+  selectedCategory: string
+  setSelectedCategory: (category: string) => void
+  error?: string
+  autoSave?: boolean
+  onSave?: (cron: string) => Promise<void>
+}
+
+function CronEditorTabContent({
+  textValue,
+  handleTextChange,
+  handlePresetSelect,
+  selectedCategory,
+  setSelectedCategory,
+  error,
+  autoSave,
+  onSave
+}: CronEditorTabContentProps) {
+  const { activeKey } = useTabsContext()
+  
+  return (
+    <>
+      <TabPanel value="quick" activeValue={activeKey}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">快速设置调度</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <QuickScheduleEditor 
+              value={textValue} 
+              onChange={handleTextChange} 
+              autoSave={autoSave}
+              onSave={onSave}
+            />
+          </CardContent>
+        </Card>
+      </TabPanel>
+      
+      <TabPanel value="preset" activeValue={activeKey}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">预设调度模板</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* 分类筛选 */}
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                    selectedCategory === 'all' 
+                      ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                  onClick={() => setSelectedCategory('all')}
+                >
+                  全部
+                </button>
+                {[
+                  { key: 'frequent', label: '高频执行' },
+                  { key: 'hourly', label: '每小时' },
+                  { key: 'daily', label: '每日' },
+                  { key: 'weekdays', label: '工作日' },
+                  { key: 'weekly', label: '每周' },
+                  { key: 'monthly', label: '每月' },
+                  { key: 'special', label: '特殊' }
+                ].map(cat => (
+                  <button
+                    key={cat.key}
+                    type="button"
+                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                      selectedCategory === cat.key 
+                        ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    onClick={() => setSelectedCategory(cat.key)}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+              
+              {/* 预设模板 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {presetSchedules
+                  .filter(preset => selectedCategory === 'all' || preset.category === selectedCategory)
+                  .map((preset) => (
+                  <Button
+                    key={preset.value}
+                    variant={textValue === preset.value ? 'default' : 'outline'}
+                    size="sm"
+                    className="justify-start p-3 h-auto"
+                    onClick={() => handlePresetSelect(preset.value)}
+                  >
+                    <div className="text-left w-full">
+                      <div className="font-medium text-sm">{preset.label}</div>
+                      <div className="text-xs text-gray-500 font-mono mt-1">{preset.value}</div>
+                      <div className="text-xs text-gray-400 mt-1">{preset.description}</div>
+                    </div>
+                  </Button>
+                ))}
+              </div>
+              
+              {/* 快速输入 */}
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  或直接输入Cron表达式
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    value={textValue}
+                    onChange={(e) => handleTextChange(e.target.value)}
+                    placeholder="0 9 * * 1-5"
+                    className="font-mono text-sm flex-1"
+                    error={!!error}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (isValidCron(textValue)) {
+                        handlePresetSelect(textValue)
+                      }
+                    }}
+                    disabled={!isValidCron(textValue)}
+                  >
+                    应用
+                  </Button>
+                </div>
+                {error && (
+                  <p className="mt-1 text-xs text-red-600">{error}</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value="visual" activeValue={activeKey}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">可视化Cron编辑器</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <VisualCronEditor value={textValue} onChange={handleTextChange} />
+          </CardContent>
+        </Card>
+      </TabPanel>
+
+      <TabPanel value="text" activeValue={activeKey}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cron表达式编辑器</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Input
+                value={textValue}
+                onChange={(e) => handleTextChange(e.target.value)}
+                placeholder="0 9 * * 1-5"
+                className="font-mono text-base"
+                error={!!error}
+              />
+              
+              {/* Cron字段说明 */}
+              <div className="grid grid-cols-5 gap-2 text-xs">
+                <div className="bg-blue-50 p-2 rounded text-center">
+                  <div className="font-semibold text-blue-700">分钟</div>
+                  <div className="text-blue-600">0-59</div>
+                </div>
+                <div className="bg-green-50 p-2 rounded text-center">
+                  <div className="font-semibold text-green-700">小时</div>
+                  <div className="text-green-600">0-23</div>
+                </div>
+                <div className="bg-yellow-50 p-2 rounded text-center">
+                  <div className="font-semibold text-yellow-700">日</div>
+                  <div className="text-yellow-600">1-31</div>
+                </div>
+                <div className="bg-purple-50 p-2 rounded text-center">
+                  <div className="font-semibold text-purple-700">月</div>
+                  <div className="text-purple-600">1-12</div>
+                </div>
+                <div className="bg-pink-50 p-2 rounded text-center">
+                  <div className="font-semibold text-pink-700">星期</div>
+                  <div className="text-pink-600">0-7</div>
+                </div>
+              </div>
+
+              {/* 语法帮助 */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Cron语法说明</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-gray-600">
+                  <div>
+                    <h5 className="font-semibold mb-2">基本符号</h5>
+                    <ul className="space-y-1">
+                      <li><span className="font-mono bg-white px-1 rounded">*</span> - 匹配任意值</li>
+                      <li><span className="font-mono bg-white px-1 rounded">?</span> - 不指定值（日和星期互斥）</li>
+                      <li><span className="font-mono bg-white px-1 rounded">-</span> - 范围分隔符</li>
+                      <li><span className="font-mono bg-white px-1 rounded">,</span> - 值列表分隔符</li>
+                      <li><span className="font-mono bg-white px-1 rounded">/</span> - 步长指定符</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <h5 className="font-semibold mb-2">示例</h5>
+                    <ul className="space-y-1">
+                      <li><span className="font-mono bg-white px-1 rounded">*/5</span> - 每5分钟</li>
+                      <li><span className="font-mono bg-white px-1 rounded">1-5</span> - 1到5</li>
+                      <li><span className="font-mono bg-white px-1 rounded">1,3,5</span> - 1、3、5</li>
+                      <li><span className="font-mono bg-white px-1 rounded">0 */2</span> - 每2小时的第0分钟</li>
+                      <li><span className="font-mono bg-white px-1 rounded">0 9-17</span> - 9点到17点的第0分钟</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* 常用模式 */}
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-3">常用模式</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {[
+                    { pattern: '0 * * * *', desc: '每小时执行' },
+                    { pattern: '*/15 * * * *', desc: '每15分钟执行' },
+                    { pattern: '0 2 * * *', desc: '每天凌晨2点执行' },
+                    { pattern: '0 9-17 * * 1-5', desc: '工作日9-17点每小时执行' },
+                    { pattern: '0 0 1 * *', desc: '每月1日执行' },
+                    { pattern: '0 0 * * 0', desc: '每周日执行' }
+                  ].map((item, index) => (
+                    <Button
+                      key={index}
+                      variant="ghost"
+                      size="sm"
+                      className="justify-between text-xs h-auto py-2"
+                      onClick={() => handleTextChange(item.pattern)}
+                    >
+                      <span className="font-mono">{item.pattern}</span>
+                      <span className="text-gray-500">{item.desc}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 在线验证 */}
+              <div className="border rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium text-gray-700">表达式验证</h4>
+                  <Badge variant={isValidCron(textValue) ? 'success' : 'destructive'} size="sm">
+                    {isValidCron(textValue) ? '有效' : '无效'}
+                  </Badge>
+                </div>
+                {isValidCron(textValue) && (
+                  <div className="text-xs text-gray-600">
+                    ✓ 表达式格式正确，可以正常使用
+                  </div>
+                )}
+                {!isValidCron(textValue) && (
+                  <div className="text-xs text-red-600">
+                    ✗ 表达式格式错误，请检查语法
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </TabPanel>
+    </>
+  )
+}
+
 interface QuickScheduleEditorProps {
   value: string
   onChange: (cron: string) => void
   autoSave?: boolean
+  onSave?: (cron: string) => Promise<void>
 }
 
-function QuickScheduleEditor({ value, onChange, autoSave }: QuickScheduleEditorProps) {
+function QuickScheduleEditor({ value, onChange, autoSave, onSave }: QuickScheduleEditorProps) {
   // 解析传入的 cron 值来初始化状态
   const parseCronValue = (cronValue: string) => {
     try {
@@ -655,14 +822,17 @@ function QuickScheduleEditor({ value, onChange, autoSave }: QuickScheduleEditorP
     const cron = generateCron()
     onChange(cron)
     
-    // 如果启用了自动保存，延迟触发保存事件
-    if (autoSave) {
-      setTimeout(() => {
-        const event = new CustomEvent('cronAutoSave', { detail: { cron } })
-        window.dispatchEvent(event)
+    // 如果启用了自动保存，延迟触发保存
+    if (autoSave && onSave && isValidCron(cron)) {
+      setTimeout(async () => {
+        try {
+          await onSave(cron)
+        } catch (error) {
+          console.error('Auto-save failed:', error)
+        }
       }, 100)
     }
-  }, [scheduleType, time, weekdays, monthDay, onChange, autoSave])
+  }, [scheduleType, time, weekdays, monthDay, onChange, autoSave, onSave])
 
   return (
     <div className="space-y-6">

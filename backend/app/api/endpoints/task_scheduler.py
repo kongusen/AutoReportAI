@@ -51,13 +51,13 @@ async def create_task_schedule(
         task_update = TaskUpdate(schedule=cron_expression)
         updated_task = crud.task.update(db, db_obj=task, obj_in=task_update)
         
-        # 在调度器中注册 - 动态导入避免循环依赖
+        # 在统一调度器中注册
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            await task_scheduler.schedule_task(task_id, cron_expression)
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            await scheduler.add_or_update_task(task_id, cron_expression)
             
-            next_run_info = await task_scheduler.get_task_status(task_id)
+            next_run_info = await scheduler.get_task_status(task_id)
         except Exception as scheduler_error:
             # 如果调度器有问题，至少数据库更新成功了
             next_run_info = {"message": f"数据库更新成功，但调度器注册失败: {scheduler_error}"}
@@ -106,13 +106,13 @@ async def update_task_schedule(
         task_update = TaskUpdate(schedule=cron_expression)
         updated_task = crud.task.update(db, db_obj=task, obj_in=task_update)
         
-        # 更新调度器 - 动态导入避免循环依赖
+        # 更新统一调度器
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            await task_scheduler.schedule_task(task_id, cron_expression)
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            await scheduler.add_or_update_task(task_id, cron_expression)
             
-            next_run_info = await task_scheduler.get_task_status(task_id)
+            next_run_info = await scheduler.get_task_status(task_id)
         except Exception as scheduler_error:
             next_run_info = {"message": f"数据库更新成功，但调度器更新失败: {scheduler_error}"}
         
@@ -155,11 +155,11 @@ async def remove_task_schedule(
         )
     
     try:
-        # 从调度器中移除 - 动态导入避免循环依赖
+        # 从统一调度器中移除
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            await task_scheduler.unschedule_task(task_id)
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            await scheduler.remove_task(task_id)
         except Exception as scheduler_error:
             # 即使调度器移除失败，仍然更新数据库
             pass
@@ -211,13 +211,13 @@ async def execute_task_immediately(
         )
     
     try:
-        # 执行任务 - 动态导入避免循环依赖
+        # 执行任务 - 使用统一调度器
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            result = await task_scheduler.execute_task_immediately(task_id, str(user_id))
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            result = await scheduler.execute_task_immediately(task_id, str(user_id))
         except Exception as scheduler_error:
-            result = {"status": "error", "message": f"任务调度器不可用: {scheduler_error}"}
+            result = {"status": "error", "message": f"统一调度器不可用: {scheduler_error}"}
         
         if result["status"] == "error":
             raise HTTPException(
@@ -258,16 +258,16 @@ async def get_task_status(
         )
     
     try:
-        # 获取任务状态 - 动态导入避免循环依赖
+        # 获取任务状态 - 使用统一调度器
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            status_info = await task_scheduler.get_task_status(task_id)
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            status_info = await scheduler.get_task_status(task_id)
         except Exception as scheduler_error:
             status_info = {
                 "task_id": task_id,
                 "status": "unknown",
-                "message": f"任务调度器不可用: {scheduler_error}"
+                "message": f"统一调度器不可用: {scheduler_error}"
             }
         
         return ApiResponse(
@@ -301,13 +301,13 @@ async def get_scheduled_tasks(
             Task.is_active == True
         ).all()
         
-        # 获取调度器信息 - 动态导入避免循环依赖
+        # 获取统一调度器信息
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            scheduler_info = task_scheduler.get_scheduled_tasks_info()
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            scheduler_info = await scheduler.get_scheduler_info()
         except Exception as scheduler_error:
-            scheduler_info = []
+            scheduler_info = {}
         
         # 结合数据库和调度器信息
         scheduled_info = {
@@ -354,11 +354,12 @@ async def get_active_tasks(
             Task.is_active == True
         ).all()
         
-        # 动态获取活跃任务信息
+        # 获取统一调度器的活跃任务信息
         try:
-            from app.services.task_scheduler import TaskScheduler
-            task_scheduler = TaskScheduler()
-            active_tasks_from_scheduler = task_scheduler.get_all_active_tasks()
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+            scheduler_info = await scheduler.get_scheduler_info()
+            active_tasks_from_scheduler = scheduler.active_tasks
         except Exception as scheduler_error:
             active_tasks_from_scheduler = {}
 
@@ -388,13 +389,13 @@ async def reload_task_schedules(
     # 检查用户权限（这里可以添加管理员权限检查）
     
     try:
-        # 重新加载调度 - 动态导入
-        from app.services.task_scheduler import TaskScheduler
-        task_scheduler = TaskScheduler()
-        await task_scheduler.reload_task_schedules()
+        # 重新加载调度 - 使用统一调度器
+        from app.core.unified_scheduler import get_scheduler
+        scheduler = await get_scheduler()
+        await scheduler.reload_all_tasks()
         
         # 获取重新加载后的状态
-        scheduled_tasks_info = task_scheduler.get_scheduled_tasks_info()
+        scheduled_tasks_info = await scheduler.get_scheduler_info()
         
         return ApiResponse(
             success=True,

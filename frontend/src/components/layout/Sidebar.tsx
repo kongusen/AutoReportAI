@@ -10,7 +10,6 @@ import {
   ClockIcon,
   DocumentArrowDownIcon,
   CogIcon,
-  ChartBarIcon,
   XMarkIcon,
   Bars3Icon,
   BellIcon,
@@ -29,7 +28,6 @@ const navigation = [
   { name: '模板', href: '/templates', icon: DocumentTextIcon },
   { name: '任务', href: '/tasks', icon: ClockIcon },
   { name: '报告', href: '/reports', icon: DocumentArrowDownIcon },
-  { name: '分析', href: '/analytics', icon: ChartBarIcon },
 ]
 
 

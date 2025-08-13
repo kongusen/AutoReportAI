@@ -28,6 +28,34 @@
 
 ---
 
+## 📋 快速开始
+
+### 🐳 Docker 部署（推荐）
+
+1. **克隆项目**
+   ```bash
+   git clone <repository-url>
+   cd AutoReportAI
+   ```
+
+2. **配置环境**
+   ```bash
+   cp .env.template .env
+   # 编辑 .env 文件，设置必要的配置项
+   ```
+
+3. **启动服务**
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **访问应用**
+   - 前端: http://localhost:3000
+   - 后端API: http://localhost:8000
+   - API文档: http://localhost:8000/docs
+
+📖 **详细部署指南**: 请参考 [DEPLOYMENT.md](./DEPLOYMENT.md) 获取完整的部署说明。
+
 ## ✨ 核心特性
 
 AutoReportAI 采用革命性的 **Agent 中心化架构**，将 AI 智能与企业级可靠性完美结合。

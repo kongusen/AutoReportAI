@@ -14,7 +14,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Only ignore Python packaging lib directories, not frontend lib
+backend/lib/
+*/venv/lib/
 lib64/
 parts/
 sdist/
@@ -112,8 +114,9 @@ test_output*.pdf
 !**/test_*.ts
 !**/test_*.tsx
 
-# Templates folder - contains sensitive documents
+# Templates folder - contains sensitive documents (but allow frontend/src/features/templates)
 templates/
+!frontend/src/features/templates/
 
 # Backend test artifacts
 backend/.coverage
@@ -256,7 +259,6 @@ uploads/
 
 
 # Test reports
-reports/
 test_reports/
 
 # Claude AI files

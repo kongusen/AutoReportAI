@@ -179,6 +179,8 @@ services:
         HTTP_PROXY: http://192.168.101.241:7890
         HTTPS_PROXY: http://192.168.101.241:7890
     container_name: autoreport_frontend
+    volumes:
+      - frontend_public_data:/app/public
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
@@ -452,16 +454,70 @@ services:
         max-size: "10m"
         max-file: "3"
 
-# Volumes for persistent data storage - using named volumes instead of bind mounts for automatic creation
+# Volumes for persistent data storage - using local directory mounts for better control
 volumes:
   postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/postgres
+  
   redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/redis
+  
   backend_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/logs
+  
   backend_uploads:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/uploads
+  
   backend_reports:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/reports
+  
   backend_storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/storage
+  
   celery_beat_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/celery-beat
+  
   minio_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/minio
+
+  frontend_public_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/frontend-public
 
 # Network configuration
 networks:

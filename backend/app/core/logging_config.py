@@ -9,6 +9,11 @@ import structlog
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import logging.config
+import os
+from pathlib import Path
+from app.core.config import settings
+
 # Context variable for request tracking
 request_id_context: ContextVar[str] = ContextVar('request_id', default='')
 request_start_time_context: ContextVar[float] = ContextVar('request_start_time', default=0.0)
@@ -71,6 +76,42 @@ def add_performance_metrics(logger, method_name, event_dict):
     if 'duration' in event_dict or 'execution_time' in event_dict:
         event_dict['metric_type'] = 'performance'
     return event_dict
+
+
+def log_startup_config():
+    """记录启动配置到日志"""
+    logger = logging.getLogger("startup")
+    
+    logger.info("=" * 80)
+    logger.info("🚀 AutoReportAI 系统启动配置")
+    logger.info("=" * 80)
+    
+    # 记录基础配置
+    logger.info(f"项目名称: {settings.PROJECT_NAME}")
+    logger.info(f"API版本: {settings.API_V1_STR}")
+    logger.info(f"运行环境: {settings.ENVIRONMENT}")
+    logger.info(f"调试模式: {settings.DEBUG}")
+    
+    # 记录数据库配置
+    logger.info(f"数据库主机: {settings.db_host}")
+    logger.info(f"数据库端口: {settings.db_port}")
+    logger.info(f"数据库名称: {settings.db_name}")
+    logger.info(f"数据库用户: {settings.db_user}")
+    logger.info(f"数据库密码: {'*' * len(settings.db_password) if settings.db_password else 'None'}")
+    
+    # 记录安全配置
+    logger.info(f"密钥长度: {len(settings.SECRET_KEY)} 字符")
+    logger.info(f"加密密钥: {settings.ENCRYPTION_KEY[:4]}****{settings.ENCRYPTION_KEY[-4:] if len(settings.ENCRYPTION_KEY) > 8 else '****'}")
+    logger.info(f"Token过期时间: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} 分钟")
+    
+    # 记录网络配置
+    logger.info(f"Redis URL: {settings.REDIS_URL}")
+    logger.info(f"API基础URL: {settings.API_BASE_URL}")
+    logger.info(f"WebSocket端口: {settings.WS_PORT}")
+    
+    logger.info("=" * 80)
+    logger.info("✅ 启动配置记录完成")
+    logger.info("=" * 80)
 
 
 def setup_logging(log_level: str = "INFO", enable_file_logging: bool = True):

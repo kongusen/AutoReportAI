@@ -17,6 +17,66 @@ from app.websocket.router import router as websocket_router
 # Setup logging as soon as the application starts
 setup_logging()
 
+def print_startup_config():
+    """启动时打印配置信息"""
+    print("=" * 80)
+    print("🚀 AutoReportAI 系统启动配置")
+    print("=" * 80)
+    print()
+    
+    # 打印关键配置
+    print("📋 基础配置")
+    print("-" * 60)
+    print(f"  项目名称: {settings.PROJECT_NAME}")
+    print(f"  API版本: {settings.API_V1_STR}")
+    print(f"  运行环境: {settings.ENVIRONMENT}")
+    print(f"  调试模式: {settings.DEBUG}")
+    print()
+    
+    print("📊 数据库配置")
+    print("-" * 60)
+    print(f"  数据库主机: {settings.db_host}")
+    print(f"  数据库端口: {settings.db_port}")
+    print(f"  数据库名称: {settings.db_name}")
+    print(f"  数据库用户: {settings.db_user}")
+    print(f"  数据库密码: {'*' * len(settings.db_password) if settings.db_password else 'None'}")
+    print(f"  连接URL: {settings.DATABASE_URL}")
+    print()
+    
+    print("🔐 安全配置")
+    print("-" * 60)
+    print(f"  密钥长度: {len(settings.SECRET_KEY)} 字符")
+    print(f"  加密密钥: {settings.ENCRYPTION_KEY[:4]}****{settings.ENCRYPTION_KEY[-4:] if len(settings.ENCRYPTION_KEY) > 8 else '****'}")
+    print(f"  Token过期时间: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} 分钟")
+    print()
+    
+    print("🌐 网络配置")
+    print("-" * 60)
+    print(f"  Redis URL: {settings.REDIS_URL}")
+    print(f"  API基础URL: {settings.API_BASE_URL}")
+    print(f"  WebSocket端口: {settings.WS_PORT}")
+    print()
+    
+    print("📁 存储配置")
+    print("-" * 60)
+    print(f"  上传目录: {settings.UPLOAD_DIR}")
+    print(f"  报告目录: {settings.REPORT_OUTPUT_DIR}")
+    print(f"  存储路径: {settings.LOCAL_STORAGE_PATH}")
+    print(f"  最大上传大小: {settings.MAX_UPLOAD_SIZE / (1024*1024):.1f} MB")
+    print()
+    
+    print("🤖 AI配置")
+    print("-" * 60)
+    print(f"  默认模型: {settings.DEFAULT_AI_MODEL}")
+    print(f"  请求超时: {settings.AI_REQUEST_TIMEOUT} 秒")
+    print(f"  最大重试: {settings.AI_MAX_RETRIES} 次")
+    print()
+    
+    print("=" * 80)
+    print("✅ 配置信息打印完成")
+    print("=" * 80)
+    print()
+
 def create_application() -> FastAPI:
     """创建FastAPI应用实例"""
     app = FastAPI(
@@ -393,6 +453,8 @@ async def startup():
     # 启动Task智能调度器 - 改为在需要时才创建实例
     # from app.services.task_scheduler import task_scheduler
     # await task_scheduler.start()
+
+    print_startup_config()
 
 
 @app.on_event("shutdown")

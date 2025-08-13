@@ -289,3 +289,6 @@ backend/celerybeat-schedule*
 
 # Docker data directory
 autoreporait-docker/data/
+
+# Additional Docker ignore files
+autoreporait-docker/docker-compose-db.yml

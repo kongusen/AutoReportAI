@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
@@ -156,6 +156,17 @@ class Settings(BaseSettings):
     DEFAULT_AI_PROVIDER_API_BASE: str = os.getenv("DEFAULT_AI_PROVIDER_API_BASE", "https://api.openai.com/v1")
     DEFAULT_AI_PROVIDER_API_KEY: str = os.getenv("DEFAULT_AI_PROVIDER_API_KEY", "sk-your-api-key")
     DEFAULT_AI_PROVIDER_MODELS: List[str] = os.getenv("DEFAULT_AI_PROVIDER_MODELS", "gpt-3.5-turbo,gpt-4").split(",")
+
+    # CORS 配置（支持动态）
+    CORS_ORIGINS: List[str] = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    # 可选：使用正则动态匹配（例如 ^https?://192\.168\.61\.[0-9]+:3000$）
+    CORS_ORIGIN_REGEX: Optional[str] = os.getenv("CORS_ORIGIN_REGEX") or None
+    CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
+    CORS_ALLOW_METHODS: List[str] = os.getenv("CORS_ALLOW_METHODS", "*").split(",")
+    CORS_ALLOW_HEADERS: List[str] = os.getenv("CORS_ALLOW_HEADERS", "*").split(",")
 
     class Config:
         case_sensitive = True

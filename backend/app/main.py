@@ -232,17 +232,20 @@ def create_application() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
 
     # CORS 配置
-    origins = [
+    # 支持通过环境变量动态配置，配置项位于 settings 中
+    origins = list(set([
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-    ]
+        *getattr(settings, "CORS_ORIGINS", []),
+    ]))
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origin_regex=getattr(settings, "CORS_ORIGIN_REGEX", None),
+        allow_credentials=getattr(settings, "CORS_ALLOW_CREDENTIALS", True),
+        allow_methods=getattr(settings, "CORS_ALLOW_METHODS", ["*"]),
+        allow_headers=getattr(settings, "CORS_ALLOW_HEADERS", ["*"]),
     )
 
     # 自定义OpenAPI schema

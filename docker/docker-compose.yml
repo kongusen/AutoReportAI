@@ -341,51 +341,52 @@ services:
       start_period: 40s
 
   # Flower Monitoring (Optional - for development/monitoring)
-  flower:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-      args:
-        - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
-        - HTTPS_PROXY=${BUILD_HTTPS_PROXY:-}
-        - NO_PROXY=${BUILD_NO_PROXY:-localhost,127.0.0.1}
-    container_name: ${COMPOSE_PROJECT_NAME:-autoreport}_flower
-    ports:
-      - "${FLOWER_PORT:-5555}:5555"
-    environment:
-      # Service Configuration
-      SERVICE_TYPE: flower
-      
-      # Redis Configuration
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      
-      # Basic Auth for Flower
-      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:password}
-      
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - autoreport-network
-    deploy:
-      resources:
-        limits:
-          cpus: ${FLOWER_MAX_CPUS:-0.25}
-          memory: ${FLOWER_MAX_MEMORY:-256M}
-        reservations:
-          memory: ${FLOWER_MIN_MEMORY:-128M}
-    command: ["/app/entrypoint.sh", "flower"]
-    healthcheck:
-      test: ["CMD", "/app/healthcheck.sh"]
-      interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 20s
-    profiles:
-      - monitoring
-      - dev
+  # Note: Flower requires separate installation, will be fixed in future versions
+  # flower:
+  #   build:
+  #     context: ../backend
+  #     dockerfile: Dockerfile
+  #     args:
+  #       - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
+  #       - HTTPS_PROXY=${BUILD_HTTPS_PROXY:-}
+  #       - NO_PROXY=${BUILD_NO_PROXY:-localhost,127.0.0.1}
+  #   container_name: ${COMPOSE_PROJECT_NAME:-autoreport}_flower
+  #   ports:
+  #     - "${FLOWER_PORT:-5555}:5555"
+  #   environment:
+  #     # Service Configuration
+  #     SERVICE_TYPE: flower
+  #     
+  #     # Redis Configuration
+  #     CELERY_BROKER_URL: redis://redis:6379/1
+  #     CELERY_RESULT_BACKEND: redis://redis:6379/2
+  #     
+  #     # Basic Auth for Flower
+  #     FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:password}
+  #     
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - autoreport-network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: ${FLOWER_MAX_CPUS:-0.25}
+  #         memory: ${FLOWER_MAX_MEMORY:-256M}
+  #       reservations:
+  #         memory: ${FLOWER_MIN_MEMORY:-128M}
+  #   command: ["/app/entrypoint.sh", "flower"]
+  #   healthcheck:
+  #     test: ["CMD", "/app/healthcheck.sh"]
+  #     interval: 30s
+  #     timeout: 15s
+  #     retries: 3
+  #     start_period: 20s
+  #   profiles:
+  #     - monitoring
+  #     - dev
 
   # MinIO Object Storage (Optional)
   minio:

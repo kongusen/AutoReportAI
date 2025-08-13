@@ -5,6 +5,7 @@ async-timeout
 bcrypt
 blinker
 celery[redis]>=5.2.0
+flower
 certifi
 cffi
 charset-normalizer

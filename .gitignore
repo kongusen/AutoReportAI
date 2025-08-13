@@ -114,7 +114,6 @@ test_output*.pdf
 !**/test_*.tsx
 
 # Templates folder - contains sensitive documents (but allow frontend/src/features/templates)
-templates/
 !frontend/src/features/templates/
 
 # Backend test artifacts

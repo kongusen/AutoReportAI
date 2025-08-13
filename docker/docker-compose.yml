@@ -12,7 +12,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ../backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoreport}"]
       interval: 10s
@@ -38,7 +38,7 @@ services:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
-      - ./backend/scripts/redis.conf:/etc/redis/redis.conf:ro
+      - ../backend/scripts/redis.conf:/etc/redis/redis.conf:ro
     command: redis-server /etc/redis/redis.conf --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -60,7 +60,7 @@ services:
   # Backend API Service
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
       args:
         - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
@@ -159,7 +159,7 @@ services:
   # Frontend Service
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
       args:
         - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
@@ -201,7 +201,7 @@ services:
   # Celery Worker - Background Task Processing
   celery-worker:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
       args:
         - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
@@ -282,7 +282,7 @@ services:
   # Celery Beat Scheduler
   celery-beat:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
       args:
         - HTTP_PROXY=${BUILD_HTTP_PROXY:-}
@@ -343,7 +343,7 @@ services:
   # Flower Monitoring (Optional - for development/monitoring)
   flower:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
       args:
         - HTTP_PROXY=${BUILD_HTTP_PROXY:-}

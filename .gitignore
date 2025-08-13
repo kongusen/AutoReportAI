@@ -15,7 +15,6 @@ downloads/
 eggs/
 .eggs/
 # Only ignore Python packaging lib directories, not frontend lib
-backend/lib/
 */venv/lib/
 lib64/
 parts/

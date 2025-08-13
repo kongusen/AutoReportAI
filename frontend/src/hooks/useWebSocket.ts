@@ -37,7 +37,7 @@ export const useWebSocket = (options: UseWebSocketOptions = {}) => {
 
     try {
       // 获取认证token
-      const token = localStorage.getItem('auth_token')
+      const token = localStorage.getItem('authToken')
       const wsUrl = token ? `${url}?token=${token}` : url
 
       ws.current = new WebSocket(wsUrl)

@@ -234,7 +234,8 @@ mcp-server/env/
 
 # Upload directories
 uploads/
-storage/
+/storage/**
+/backend/storage/**
 
 # Test reports
 reports/

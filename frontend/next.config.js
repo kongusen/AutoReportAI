@@ -21,10 +21,8 @@ const nextConfig = {
   },
   webpack: (config, { isServer }) => {
     // 添加 CaseSensitivePathsPlugin 来检测大小写问题
-    if (!isServer) {
-      const CaseSensitivePathsPlugin = require('case-sensitive-paths-webpack-plugin');
-      config.plugins.push(new CaseSensitivePathsPlugin());
-    }
+    const CaseSensitivePathsPlugin = require('case-sensitive-paths-webpack-plugin');
+    config.plugins.push(new CaseSensitivePathsPlugin());
     return config;
   },
 }

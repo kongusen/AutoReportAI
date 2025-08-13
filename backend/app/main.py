@@ -77,6 +77,36 @@ def print_startup_config():
     print("=" * 80)
     print()
 
+def print_all_settings_values():
+    """打印Settings的所有配置项（敏感信息脱敏）"""
+    try:
+        print("=" * 80)
+        print("🧩 Settings 全量配置值（启动时）")
+        print("=" * 80)
+        
+        # 收集并排序，保证输出稳定
+        keys = [k for k in dir(settings) if not k.startswith('_') and not callable(getattr(settings, k, None))]
+        for key in sorted(keys):
+            try:
+                value = getattr(settings, key)
+                # 脱敏处理
+                lower_key = key.lower()
+                if any(s in lower_key for s in ["password", "secret", "key", "token"]):
+                    if isinstance(value, str) and len(value) > 8:
+                        display_value = value[:4] + "*" * (len(value) - 8) + value[-4:]
+                    else:
+                        display_value = "*" * len(str(value)) if value else "None"
+                else:
+                    display_value = value
+                print(f"{key:<30} = {display_value}")
+            except Exception as inner_e:
+                print(f"{key:<30} = Error: {inner_e}")
+        print("=" * 80)
+        print("✅ Settings 全量配置打印完成")
+        print("=" * 80)
+    except Exception as e:
+        print(f"⚠️ 打印Settings失败: {e}")
+
 def create_application() -> FastAPI:
     """创建FastAPI应用实例"""
     app = FastAPI(
@@ -454,7 +484,9 @@ async def startup():
     # from app.services.task_scheduler import task_scheduler
     # await task_scheduler.start()
 
+    # 启动时打印关键配置与全量Settings
     print_startup_config()
+    print_all_settings_values()
 
 
 @app.on_event("shutdown")

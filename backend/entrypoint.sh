@@ -99,9 +99,60 @@ init_database() {
     fi
 }
 
+# Print environment variables and Settings (before starting Python app)
+print_env_and_settings() {
+    echo "========================================"
+    echo "🧩 Startup environment overview"
+    echo "========================================"
+    echo "ENVIRONMENT=${ENVIRONMENT:-unset}"
+    echo "DEBUG=${DEBUG:-unset}"
+    echo "LOG_LEVEL=${LOG_LEVEL:-unset}"
+    echo "POSTGRES_HOST=${POSTGRES_HOST:-unset}"
+    echo "POSTGRES_PORT=${POSTGRES_PORT:-unset}"
+    echo "POSTGRES_DB=${POSTGRES_DB:-unset}"
+    echo "POSTGRES_USER=${POSTGRES_USER:-unset}"
+    if [ -n "${POSTGRES_PASSWORD}" ]; then echo "POSTGRES_PASSWORD=****"; else echo "POSTGRES_PASSWORD=unset"; fi
+    echo "REDIS_URL=${REDIS_URL:-unset}"
+    echo "DATABASE_URL=${DATABASE_URL:-unset}"
+    if [ -n "${ENCRYPTION_KEY}" ]; then echo "ENCRYPTION_KEY_LENGTH=${#ENCRYPTION_KEY}"; else echo "ENCRYPTION_KEY=unset"; fi
+    echo "========================================"
+    echo "Attempting to import and print Settings from Python (pre-main)..."
+    set +e
+    python - <<'PY'
+from app.core.config import settings
+
+def is_sensitive(name: str) -> bool:
+    ln = name.lower()
+    return any(s in ln for s in ("password","secret","key","token"))
+
+def mask(val):
+    try:
+        s = str(val)
+        return s[:4] + "*"*(len(s)-8) + s[-4:] if len(s) > 8 else "*"*len(s)
+    except Exception:
+        return "****"
+
+print("="*80)
+print("Settings (pre-main)")
+print("-"*80)
+for k in sorted([a for a in dir(settings) if not a.startswith("_") and not callable(getattr(settings,a))]):
+    v = getattr(settings, k)
+    if is_sensitive(k):
+        v = mask(v)
+    print(f"{k:<30} = {v}")
+print("="*80)
+PY
+    if [ $? -ne 0 ]; then
+        echo "⚠️  Warning: Failed to import/print Settings."
+    fi
+    set -e
+}
+
 # Main execution based on command
 case "$1" in
     "api")
+        # Print env and settings before any checks
+        print_env_and_settings
         # Use comprehensive startup check instead of individual checks
         if run_startup_check; then
             echo "🚀 Starting API server..."
@@ -112,6 +163,8 @@ case "$1" in
         fi
         ;;
     "worker")
+        # Print env and settings before any checks
+        print_env_and_settings
         # Worker also needs database access, so run startup check
         if run_startup_check; then
             echo "🚀 Starting Celery worker..."
@@ -126,6 +179,8 @@ case "$1" in
         fi
         ;;
     "beat")
+        # Print env and settings before any checks
+        print_env_and_settings
         # Beat scheduler needs database access for scheduling data
         if run_startup_check; then
             echo "🚀 Starting Celery beat scheduler..."

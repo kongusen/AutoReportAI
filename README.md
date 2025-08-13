@@ -38,15 +38,20 @@
    cd AutoReportAI
    ```
 
-2. **配置环境**
+2. **使用便捷脚本启动**
    ```bash
-   cp .env.template .env
-   # 编辑 .env 文件，设置必要的配置项
+   cd docker
+   ./start.sh
    ```
 
-3. **启动服务**
+3. **或者手动启动**
    ```bash
-   docker-compose up -d
+   # 配置环境
+   cp docker/.env.template docker/.env
+   # 编辑 .env 文件，设置必要的配置项
+   
+   # 启动服务
+   docker-compose -f docker/docker-compose.yml up -d
    ```
 
 4. **访问应用**
@@ -54,7 +59,12 @@
    - 后端API: http://localhost:8000
    - API文档: http://localhost:8000/docs
 
-📖 **详细部署指南**: 请参考 [DEPLOYMENT.md](./DEPLOYMENT.md) 获取完整的部署说明。
+📖 **详细部署指南**: 请参考 [docker/DEPLOYMENT.md](./docker/DEPLOYMENT.md) 获取完整的部署说明。
+
+🛠️ **Docker 文件说明**:
+- `docker/` - 包含所有 Docker 相关文件
+- `docker/start.sh` - 便捷启动脚本（支持多种模式）
+- `docker/stop.sh` - 停止和清理脚本
 
 ## ✨ 核心特性
 

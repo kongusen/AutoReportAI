@@ -25,6 +25,12 @@ wheels/
 *.egg
 MANIFEST
 
+# Keep important source directories
+!frontend/src/
+!backend/app/
+!backend/scripts/
+!backend/migrations/
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -90,14 +96,21 @@ docker-compose.yml.override
 *.swo
 *~
 
-# Test documents and reports
-test*.txt
-test*.csv
-test*.json
-test*.xml
-test*.docx
-test*.pdf
-test*.sh
+# Test documents and reports (exclude test output files, but keep test source code)
+test_output*.txt
+test_output*.csv
+test_results*.json
+test_results*.xml
+test_output*.docx
+test_output*.pdf
+# Keep test source files
+!**/tests/
+!**/*_test.py
+!**/*_test.ts
+!**/*_test.tsx
+!**/test_*.py
+!**/test_*.ts
+!**/test_*.tsx
 
 # Templates folder - contains sensitive documents
 templates/
@@ -141,6 +154,12 @@ yarn-error.log*
 .next/
 out/
 build/
+# Keep source build configs
+!frontend/next.config.js
+!frontend/tailwind.config.js
+!frontend/tsconfig.json
+!backend/requirements/
+!backend/Dockerfile*
 
 # Environment variables
 .env.local
@@ -234,8 +253,7 @@ mcp-server/env/
 
 # Upload directories
 uploads/
-/storage/**
-/backend/storage/**
+
 
 # Test reports
 reports/
@@ -247,6 +265,15 @@ test_reports/
 # Local configuration files
 config.local.*
 settings.local.*
+# Keep important configuration files
+!backend/app/core/config.py
+!backend/app/config/
+!autoreporait-docker/docker-compose.yml
+!autoreporait-docker/docker-compose.*.yml
+!backend/requirements.txt
+!backend/requirements/
+!frontend/package.json
+!frontend/package-lock.json
 
 # Backup files
 *.bak

@@ -190,11 +190,6 @@ case "$1" in
             exit 1
         fi
         ;;
-    "flower")
-        wait_for_redis
-        echo "Starting Flower monitoring..."
-        exec celery -A app.core.worker flower --port=5555
-        ;;
     "startup-check")
         run_startup_check
         ;;
@@ -207,7 +202,7 @@ case "$1" in
         init_database
         ;;
     *)
-        echo "Available commands: api, worker, beat, flower, startup-check, migrate, init"
+        echo "Available commands: api, worker, beat, startup-check, migrate, init"
         echo "Usage: docker run <image> <command>"
         exit 1
         ;;

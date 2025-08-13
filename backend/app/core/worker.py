@@ -68,59 +68,18 @@ if os.path.exists(schedule_file) and os.path.isdir(schedule_file):
     shutil.rmtree(schedule_file)
     logger.warning(f"删除了错误的目录: {schedule_file}")
 
-# 初始化任务调度器
-def init_task_scheduler():
-    """初始化任务调度器并加载数据库中的任务"""
+# 初始化 Celery 调度系统
+def init_celery_scheduler():
+    """初始化 Celery 调度系统"""
     try:
-        from app.db.session import get_db_session
-        # 加载数据库中的任务到 Celery Beat
-        with get_db_session() as db:
-            from app.models.task import Task
-            tasks = db.query(Task).filter(
-                Task.is_active == True,
-                Task.schedule.isnot(None)
-            ).all()
-            
-            loaded_count = 0
-            for task in tasks:
-                try:
-                    # 解析 cron 表达式
-                    cron_parts = task.schedule.split()
-                    if len(cron_parts) == 5:
-                        minute, hour, day, month, day_of_week = cron_parts
-                        
-                        # 创建 Celery crontab 调度
-                        from celery.schedules import crontab
-                        schedule = crontab(
-                            minute=minute,
-                            hour=hour,
-                            day_of_month=day,
-                            month_of_year=month,
-                            day_of_week=day_of_week
-                        )
-                        
-                        # 注册到 Celery Beat
-                        task_name = f"task_{task.id}"
-                        celery_app.conf.beat_schedule[task_name] = {
-                            'task': 'app.core.worker.execute_scheduled_task',
-                            'schedule': schedule,
-                            'args': (task.id,)
-                        }
-                        loaded_count += 1
-                        logger.info(f"Task {task.id} ({task.name}) 已注册到 Celery Beat")
-                        
-                except Exception as e:
-                    logger.error(f"注册 Task {task.id} 到 Celery Beat 失败: {e}")
-        
-        logger.info(f"成功加载了 {loaded_count} 个任务到 Celery Beat")
-        return True
-        
+        from app.core.celery_scheduler import initialize_celery_scheduler
+        return initialize_celery_scheduler(celery_app)
     except Exception as e:
-        logger.error(f"初始化任务调度器失败: {e}")
+        logger.error(f"初始化 Celery 调度器失败: {e}")
         return False
 
-# 初始化任务调度器
-init_task_scheduler()
+# 在模块加载时初始化调度器
+init_celery_scheduler()
 
 
 class TaskStatus:
@@ -856,6 +815,13 @@ def update_task_progress_dict(task_id: int, status_data: dict):
         time.sleep(1 * (attempt + 1))
     
     return False
+
+
+@celery_app.task(bind=True, name='app.core.worker.execute_scheduled_task')
+def execute_scheduled_task(self, task_id: int):
+    """执行调度的任务 - 由 Celery Beat 调用"""
+    from app.core.celery_scheduler import execute_scheduled_task as _execute_scheduled_task
+    return _execute_scheduled_task(task_id)
 
 
 @celery_app.task(bind=True, name='app.core.worker.intelligent_report_generation_pipeline')

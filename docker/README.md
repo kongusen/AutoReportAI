@@ -66,11 +66,22 @@ docker-compose --profile dev up -d
 docker-compose --profile prod up -d
 ```
 
-### 监控模式
-监控相关服务（当前Flower服务暂未启用，此模式暂时无效）
+### 任务监控
+
+使用 Celery 内置命令监控任务：
 
 ```bash
-# docker-compose --profile monitoring up -d  # 暂时禁用
+# 查看活跃任务
+docker-compose exec backend celery -A app.core.worker inspect active
+
+# 查看任务统计
+docker-compose exec backend celery -A app.core.worker inspect stats
+
+# 查看注册的任务
+docker-compose exec backend celery -A app.core.worker inspect registered
+
+# 查看Worker状态
+docker-compose exec backend celery -A app.core.worker status
 ```
 
 ## 常用命令

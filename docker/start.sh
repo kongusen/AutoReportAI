@@ -171,9 +171,9 @@ show_service_info() {
     echo "  API文档:  http://localhost:8000/docs"
     
     # 检查特定服务是否启动
-    if docker-compose ps | grep -q "flower"; then
-        echo "  Flower监控: http://localhost:5555"
-    fi
+    # if docker-compose ps | grep -q "flower"; then
+    #     echo "  Flower监控: http://localhost:5555"
+    # fi
     
     if docker-compose ps | grep -q "minio"; then
         echo "  MinIO控制台: http://localhost:9001"

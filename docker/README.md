@@ -53,7 +53,7 @@ docker-compose up -d
 ```
 
 ### 开发模式
-包含监控服务（Flower）
+开发环境配置（当前与基础模式相同，Flower监控服务暂未启用）
 
 ```bash
 docker-compose --profile dev up -d
@@ -67,10 +67,10 @@ docker-compose --profile prod up -d
 ```
 
 ### 监控模式
-仅启动监控相关服务
+监控相关服务（当前Flower服务暂未启用，此模式暂时无效）
 
 ```bash
-docker-compose --profile monitoring up -d
+# docker-compose --profile monitoring up -d  # 暂时禁用
 ```
 
 ## 常用命令
@@ -112,6 +112,20 @@ docker-compose down -v
 
 更多详细信息请参考 `DEPLOYMENT.md` 文件。
 
+## 超简单启动：
+  cd docker
+  ./start.sh
+
+  不同部署模式：
+  ./start.sh basic      # 基础模式（默认）
+  ./start.sh dev         # 开发模式（含监控）
+  ./start.sh prod        # 生产模式（含存储）
+  ./start.sh monitoring  # 仅监控模式
+
+  停止和清理：
+  ./stop.sh              # 停止服务
+  ./stop.sh --clean      # 停止并删除所有数据（谨慎使用）
+
 ## 安全提醒
 
 ⚠️ **生产环境部署前请务必**：
@@ -120,3 +134,5 @@ docker-compose down -v
 - 启用 HTTPS
 - 定期备份数据
 - 监控系统资源使用情况
+
+

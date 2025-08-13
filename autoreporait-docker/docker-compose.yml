@@ -101,7 +101,7 @@ services:
       DEBUG: ${DEBUG:-false}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Lx4JmUDcz9BUCEnAdi7jw6Q_s_EyHuMWzGsW8U7pJf4=}
       
       # CORS Configuration
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}

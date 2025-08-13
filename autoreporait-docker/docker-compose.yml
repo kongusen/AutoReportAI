@@ -104,7 +104,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Lx4JmUDcz9BUCEnAdi7jw6Q_s_EyHuMWzGsW8U7pJf4=}
       
       # CORS Configuration
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.61.30:3000}
       
       # AI Provider Configuration
       AI_PROVIDER: ${AI_PROVIDER:-openai}

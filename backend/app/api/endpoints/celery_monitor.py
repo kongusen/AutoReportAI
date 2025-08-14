@@ -13,13 +13,13 @@ from app.api.deps import get_current_active_user, get_db
 from app.core.celery_scheduler import get_scheduler_manager
 from app.core.worker import celery_app
 from app.models.user import User
-from app.schemas.base import ApiResponse
+from app.schemas.base import APIResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/workers/status", response_model=ApiResponse)
+@router.get("/workers/status", response_model=APIResponse)
 def get_workers_status(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -28,7 +28,7 @@ def get_workers_status(
         manager = get_scheduler_manager(celery_app)
         stats = manager.get_worker_stats()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=stats,
             message="Workers 状态获取成功"
@@ -39,7 +39,7 @@ def get_workers_status(
         raise HTTPException(status_code=500, detail=f"获取 Workers 状态失败: {str(e)}")
 
 
-@router.get("/tasks/scheduled", response_model=ApiResponse)
+@router.get("/tasks/scheduled", response_model=APIResponse)
 def get_scheduled_tasks(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -48,7 +48,7 @@ def get_scheduled_tasks(
         manager = get_scheduler_manager(celery_app)
         tasks = manager.get_all_scheduled_tasks()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=tasks,
             message=f"获取了 {len(tasks)} 个调度任务信息"
@@ -59,7 +59,7 @@ def get_scheduled_tasks(
         raise HTTPException(status_code=500, detail=f"获取调度任务失败: {str(e)}")
 
 
-@router.get("/tasks/{task_id}/status", response_model=ApiResponse)
+@router.get("/tasks/{task_id}/status", response_model=APIResponse)
 def get_task_status(
     task_id: int,
     current_user: User = Depends(get_current_active_user)
@@ -69,7 +69,7 @@ def get_task_status(
         manager = get_scheduler_manager(celery_app)
         status = manager.get_task_status(task_id)
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=status,
             message=f"任务 {task_id} 状态获取成功"
@@ -80,7 +80,7 @@ def get_task_status(
         raise HTTPException(status_code=500, detail=f"获取任务状态失败: {str(e)}")
 
 
-@router.post("/tasks/{task_id}/execute", response_model=ApiResponse)
+@router.post("/tasks/{task_id}/execute", response_model=APIResponse)
 def execute_task_immediately(
     task_id: int,
     current_user: User = Depends(get_current_active_user)
@@ -93,7 +93,7 @@ def execute_task_immediately(
         if result["status"] == "error":
             raise HTTPException(status_code=400, detail=result["message"])
             
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message=f"任务 {task_id} 已提交执行"
@@ -106,7 +106,7 @@ def execute_task_immediately(
         raise HTTPException(status_code=500, detail=f"执行任务失败: {str(e)}")
 
 
-@router.post("/tasks/{task_id}/schedule", response_model=ApiResponse)
+@router.post("/tasks/{task_id}/schedule", response_model=APIResponse)
 def update_task_schedule(
     task_id: int,
     cron_expression: str,
@@ -127,7 +127,7 @@ def update_task_schedule(
         if not success:
             raise HTTPException(status_code=400, detail="更新任务调度失败")
             
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data={"task_id": task_id, "schedule": cron_expression},
             message=f"任务 {task_id} 调度已更新"
@@ -140,7 +140,7 @@ def update_task_schedule(
         raise HTTPException(status_code=500, detail=f"更新任务调度失败: {str(e)}")
 
 
-@router.delete("/tasks/{task_id}/schedule", response_model=ApiResponse)
+@router.delete("/tasks/{task_id}/schedule", response_model=APIResponse)
 def remove_task_schedule(
     task_id: int,
     current_user: User = Depends(get_current_active_user),
@@ -160,7 +160,7 @@ def remove_task_schedule(
         if not success:
             raise HTTPException(status_code=400, detail="移除任务调度失败")
             
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data={"task_id": task_id},
             message=f"任务 {task_id} 调度已移除"
@@ -173,7 +173,7 @@ def remove_task_schedule(
         raise HTTPException(status_code=500, detail=f"移除任务调度失败: {str(e)}")
 
 
-@router.post("/scheduler/reload", response_model=ApiResponse)
+@router.post("/scheduler/reload", response_model=APIResponse)
 def reload_scheduler(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -182,7 +182,7 @@ def reload_scheduler(
         manager = get_scheduler_manager(celery_app)
         loaded_count = manager.load_scheduled_tasks_from_database()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data={"loaded_tasks": loaded_count},
             message=f"调度器已重新加载，加载了 {loaded_count} 个任务"
@@ -193,7 +193,7 @@ def reload_scheduler(
         raise HTTPException(status_code=500, detail=f"重新加载调度器失败: {str(e)}")
 
 
-@router.get("/inspect/active", response_model=ApiResponse)
+@router.get("/inspect/active", response_model=APIResponse)
 def inspect_active_tasks(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -202,7 +202,7 @@ def inspect_active_tasks(
         inspect = celery_app.control.inspect()
         active_tasks = inspect.active()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=active_tasks or {},
             message="活跃任务查询成功"
@@ -213,7 +213,7 @@ def inspect_active_tasks(
         raise HTTPException(status_code=500, detail=f"查看活跃任务失败: {str(e)}")
 
 
-@router.get("/inspect/stats", response_model=ApiResponse)
+@router.get("/inspect/stats", response_model=APIResponse)
 def inspect_worker_stats(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -222,7 +222,7 @@ def inspect_worker_stats(
         inspect = celery_app.control.inspect()
         stats = inspect.stats()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=stats or {},
             message="Worker 统计信息查询成功"
@@ -233,7 +233,7 @@ def inspect_worker_stats(
         raise HTTPException(status_code=500, detail=f"查看 Worker 统计信息失败: {str(e)}")
 
 
-@router.get("/inspect/registered", response_model=ApiResponse)
+@router.get("/inspect/registered", response_model=APIResponse)
 def inspect_registered_tasks(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -242,7 +242,7 @@ def inspect_registered_tasks(
         inspect = celery_app.control.inspect()
         registered = inspect.registered()
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=registered or {},
             message="已注册任务查询成功"
@@ -253,7 +253,7 @@ def inspect_registered_tasks(
         raise HTTPException(status_code=500, detail=f"查看已注册任务失败: {str(e)}")
 
 
-@router.get("/beat/schedule", response_model=ApiResponse)
+@router.get("/beat/schedule", response_model=APIResponse)
 def get_beat_schedule(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -270,7 +270,7 @@ def get_beat_schedule(
                 "options": config.get("options", {})
             }
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=beat_schedule,
             message=f"Beat 调度信息查询成功，共 {len(beat_schedule)} 个任务"

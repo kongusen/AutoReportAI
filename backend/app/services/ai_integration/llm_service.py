@@ -149,12 +149,27 @@ class LLMProviderManager:
 
     def _create_openai_client(self, provider_name: str) -> openai.OpenAI:
         """Create OpenAI client"""
+        from app.core.ai_url_utils import normalize_ai_provider_url
+        
         provider = self.providers[provider_name]
         api_key = self.api_keys[provider_name]
 
+        # 智能处理URL - 自动添加/v1/chat/completions如果需要的话
+        base_url = None
+        if provider.api_base_url:
+            # 将完整的chat/completions URL转换为OpenAI客户端需要的base URL
+            normalized_url = normalize_ai_provider_url(str(provider.api_base_url), 'openai')
+            # OpenAI客户端需要的是不包含/chat/completions的base URL
+            if normalized_url.endswith('/v1/chat/completions'):
+                base_url = normalized_url.replace('/chat/completions', '')
+            elif normalized_url.endswith('/chat/completions'):
+                base_url = normalized_url.replace('/chat/completions', '')
+            else:
+                base_url = normalized_url
+
         return openai.OpenAI(
             api_key=api_key,
-            base_url=str(provider.api_base_url) if provider.api_base_url else None,
+            base_url=base_url,
         )
 
     def _create_anthropic_client(self, provider_name: str):
@@ -653,13 +668,24 @@ class AIService:
         if self.provider.provider_type.value == "openai":
             if not decrypted_api_key:
                 raise ValueError("Active OpenAI provider has no API key.")
+            
+            from app.core.ai_url_utils import normalize_ai_provider_url
+            
+            # 智能处理URL
+            base_url = None
+            if self.provider.api_base_url:
+                normalized_url = normalize_ai_provider_url(str(self.provider.api_base_url), 'openai')
+                # OpenAI客户端需要的是不包含/chat/completions的base URL
+                if normalized_url.endswith('/v1/chat/completions'):
+                    base_url = normalized_url.replace('/chat/completions', '')
+                elif normalized_url.endswith('/chat/completions'):
+                    base_url = normalized_url.replace('/chat/completions', '')
+                else:
+                    base_url = normalized_url
+            
             self.client = openai.OpenAI(
                 api_key=decrypted_api_key,
-                base_url=(
-                    str(self.provider.api_base_url)
-                    if self.provider.api_base_url
-                    else None
-                ),
+                base_url=base_url,
             )
         else:
             self.client = None  # Or handle other provider types

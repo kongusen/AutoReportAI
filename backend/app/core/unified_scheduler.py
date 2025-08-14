@@ -10,6 +10,7 @@ import threading
 import time
 
 import redis.asyncio as redis
+from app.core.time_utils import now, format_iso
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -223,7 +224,7 @@ class UnifiedTaskScheduler:
                 # 记录任务执行
                 self.active_tasks[task_id] = {
                     "status": "running",
-                    "start_time": datetime.now(),
+                    "start_time": now(),
                     "user_id": user_id,
                     "celery_task_id": result.id,
                     "triggered_by": "apscheduler"
@@ -308,7 +309,7 @@ class UnifiedTaskScheduler:
             logger.error(f"移除任务调度失败 {task_id}: {e}")
     
     async def execute_task_immediately(self, task_id: int, user_id: str) -> Dict[str, Any]:
-        """立即执行任务"""
+        """立即执行任务 - 优先级模式"""
         try:
             if task_id in self.active_tasks and self.active_tasks[task_id].get("status") == "running":
                 return {"status": "error", "message": "任务正在执行中"}
@@ -318,32 +319,107 @@ class UnifiedTaskScheduler:
                 if not task:
                     return {"status": "error", "message": "任务不存在"}
                 
+                # 存储任务所有者信息到Redis，供WebSocket通知使用
+                await self._store_task_owner(task_id, user_id)
+                
                 # 发送开始通知
                 await self._send_start_notification(db, task, user_id)
                 
-                # 启动Celery任务
-                from app.core.worker import intelligent_report_generation_pipeline
-                celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+                # 检查是否有空闲worker，如果有就使用高优先级队列立即执行
+                celery_result = await self._execute_with_priority(task_id, user_id)
                 
                 # 记录活跃任务
                 self.active_tasks[task_id] = {
-                    "status": "running",
-                    "start_time": datetime.now(),
+                    "status": "queued" if celery_result.get("queued") else "running",
+                    "start_time": now(),
                     "user_id": user_id,
-                    "celery_task_id": celery_result.id,
-                    "triggered_by": "manual"
+                    "celery_task_id": celery_result["celery_task_id"],
+                    "triggered_by": "manual",
+                    "processing_mode": celery_result.get("processing_mode", "intelligent")
                 }
                 
                 return {
-                    "status": "started",
+                    "status": "queued" if celery_result.get("queued") else "running",
                     "task_id": task_id,
-                    "celery_task_id": celery_result.id,
-                    "message": "任务已启动"
+                    "celery_task_id": celery_result["celery_task_id"],
+                    "processing_mode": celery_result.get("processing_mode", "intelligent"),
+                    "message": "智能占位符报告生成任务已加入队列" if celery_result.get("queued") else "任务已立即开始执行"
                 }
                 
         except Exception as e:
             logger.error(f"立即执行任务失败 {task_id}: {e}")
             return {"status": "error", "message": f"任务启动失败: {str(e)}"}
+    
+    async def _store_task_owner(self, task_id: int, user_id: str):
+        """存储任务所有者信息到Redis供WebSocket通知使用"""
+        try:
+            if self.redis_client:
+                await self.redis_client.set(
+                    f"report_task:{task_id}:owner", 
+                    user_id,
+                    ex=86400  # 24小时过期
+                )
+                logger.debug(f"已存储任务 {task_id} 的所有者信息: {user_id}")
+        except Exception as e:
+            logger.error(f"存储任务所有者信息失败 {task_id}: {e}")
+    
+    async def _execute_with_priority(self, task_id: int, user_id: str) -> Dict[str, Any]:
+        """智能优先级执行 - 检查worker状态并优化执行"""
+        try:
+            from app.core.worker import intelligent_report_generation_pipeline, celery_app
+            
+            # 检查当前活跃的worker数量
+            active_workers = celery_app.control.inspect().active_queues()
+            if active_workers:
+                worker_count = len(active_workers)
+                logger.info(f"当前活跃worker数量: {worker_count}")
+            else:
+                worker_count = 0
+            
+            # 检查当前队列中等待的任务数量
+            queue_stats = celery_app.control.inspect().active()
+            pending_tasks = 0
+            if queue_stats:
+                for worker_tasks in queue_stats.values():
+                    pending_tasks += len(worker_tasks)
+            
+            logger.info(f"当前队列中任务数量: {pending_tasks}")
+            
+            # 智能调度决策
+            if worker_count > 0 and pending_tasks < worker_count:
+                # 有空闲worker，使用高优先级立即执行
+                celery_result = intelligent_report_generation_pipeline.apply_async(
+                    args=[task_id, user_id],
+                    priority=9,  # 高优先级
+                    queue='report_tasks'  # 指定队列
+                )
+                return {
+                    "celery_task_id": celery_result.id,
+                    "queued": False,
+                    "processing_mode": "intelligent",
+                    "message": "任务已立即开始执行"
+                }
+            else:
+                # worker繁忙，正常加入队列
+                celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+                return {
+                    "celery_task_id": celery_result.id,
+                    "queued": True,
+                    "processing_mode": "intelligent",
+                    "message": "智能占位符报告生成任务已加入队列"
+                }
+                
+        except Exception as e:
+            logger.error(f"优先级执行检查失败: {e}")
+            # 回退到普通执行
+            from app.core.worker import intelligent_report_generation_pipeline
+            celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+            return {
+                "celery_task_id": celery_result.id,
+                "queued": True,
+                "processing_mode": "intelligent",
+                "message": "智能占位符报告生成任务已加入队列"
+            }
     
     async def get_task_status(self, task_id: int) -> Dict[str, Any]:
         """获取任务状态"""

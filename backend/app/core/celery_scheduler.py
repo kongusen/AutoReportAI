@@ -85,7 +85,7 @@ class CelerySchedulerManager:
             # 注册到 Celery Beat
             task_name = f"scheduled_task_{task.id}"
             self.celery_app.conf.beat_schedule[task_name] = {
-                'task': 'app.core.celery_scheduler.execute_scheduled_task',
+                'task': 'app.core.worker.execute_scheduled_task',
                 'schedule': schedule,
                 'args': (task.id,),
                 'options': {
@@ -323,42 +323,8 @@ def initialize_celery_scheduler(celery_app: Celery) -> bool:
         return False
 
 
-# Celery 任务：执行调度的任务
-def execute_scheduled_task(task_id: int):
-    """执行调度的任务"""
-    logger.info(f"开始执行调度任务: {task_id}")
-    
-    try:
-        # 更新任务执行状态
-        with get_db_session() as db:
-            task = crud.task.get(db, id=task_id)
-            if not task:
-                logger.error(f"调度任务 {task_id} 不存在")
-                return {"status": "error", "message": f"任务 {task_id} 不存在"}
-            
-            if not task.is_active:
-                logger.warning(f"调度任务 {task_id} 未激活，跳过执行")
-                return {"status": "skipped", "message": f"任务 {task_id} 未激活"}
-        
-        # 提交到主要的报告生成流水线
-        from app.core.worker import intelligent_report_generation_pipeline
-        
-        # 使用系统用户执行调度任务
-        system_user_id = "system"
-        result = intelligent_report_generation_pipeline.delay(task_id, system_user_id)
-        
-        logger.info(f"调度任务 {task_id} 已提交执行，Celery task ID: {result.id}")
-        
-        return {
-            "status": "submitted",
-            "task_id": task_id,
-            "celery_task_id": result.id,
-            "submitted_at": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"执行调度任务 {task_id} 失败: {e}")
-        return {"status": "error", "message": str(e)}
+# 注意：execute_scheduled_task 函数已移除
+# 调度任务现在直接在 worker.py 的 execute_scheduled_task_celery 中使用智能占位符驱动的流水线
 
 
 # Celery 信号处理

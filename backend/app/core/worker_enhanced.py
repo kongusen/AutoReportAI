@@ -145,12 +145,37 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
     """
     增强的智能占位符驱动报告生成流水线
     改进了错误处理、状态更新和文件保存机制
+    现在支持用户专属AI配置
     """
-    logger.info(f"开始增强版智能占位符报告生成流水线 - 任务ID: {task_id}")
+    logger.info(f"开始增强版智能占位符报告生成流水线 - 任务ID: {task_id}, 用户ID: {user_id}")
     
     db = SessionLocal()
     
     try:
+        # 0. 加载用户专属的AI配置
+        sync_update_task_progress(task_id, "processing", 2, "加载用户AI配置...")
+        
+        from app.core.ai_service_factory import get_user_ai_service, get_user_provider_summary
+        
+        try:
+            # 获取用户AI配置摘要用于日志记录
+            ai_config_summary = get_user_provider_summary(user_id)
+            logger.info(f"用户 {user_id} 的AI配置: {ai_config_summary}")
+            
+            # 获取用户专属的AI服务
+            user_ai_service = get_user_ai_service(user_id)
+            logger.info(f"成功为用户 {user_id} 加载AI服务")
+            
+            # 检查AI服务健康状态
+            health_status = user_ai_service.health_check()
+            if health_status.get("status") != "healthy" and health_status.get("status") != "mock":
+                logger.warning(f"用户AI服务健康检查异常: {health_status}")
+            
+        except Exception as ai_setup_error:
+            logger.error(f"加载用户AI配置失败: {ai_setup_error}")
+            # 继续使用系统默认配置，不中断任务
+            user_ai_service = None
+            
         # 1. 获取和验证任务信息
         sync_update_task_progress(task_id, "processing", 5, "验证任务配置...")
         
@@ -171,6 +196,13 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             raise Exception(f"数据源 {task.data_source_id} 不存在")
         
         logger.info(f"任务配置验证成功 - 模板: {template.name}, 数据源: {data_source.name}")
+        
+        # 记录使用的AI配置信息
+        if user_ai_service:
+            ai_info = f"使用用户专属AI配置 (提供商: {getattr(user_ai_service.provider, 'provider_name', 'unknown')})"
+        else:
+            ai_info = "使用系统默认AI配置"
+        logger.info(ai_info)
         
         # 2. 分析模板中的占位符
         sync_update_task_progress(task_id, "processing", 15, "分析模板占位符...")
@@ -196,7 +228,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
         placeholder_results = []
         successful_count = 0
         
-        # 创建任务上下文
+        # 创建任务上下文，包含用户专属AI服务
         task_context = {
             "template_id": str(template.id),
             "template_name": template.name,
@@ -206,6 +238,8 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             "data_source": data_source,
             "user_id": user_id,
             "task_id": str(task_id),
+            "user_ai_service": user_ai_service,  # 传递用户专属AI服务
+            "ai_config_info": ai_info,
         }
         
         # 处理每个占位符

@@ -7,24 +7,78 @@ from pydantic_settings import BaseSettings
 load_dotenv()
 
 
+def detect_environment():
+    """检测运行环境：Docker 还是本地"""
+    # 检查是否在 Docker 容器内
+    if os.path.exists("/.dockerenv"):
+        return "docker"
+    
+    # 检查环境变量
+    if os.getenv("DOCKER_ENV") == "true":
+        return "docker"
+    
+    # 检查是否能连接到 Docker 服务名
+    try:
+        import socket
+        socket.gethostbyname("db")
+        return "docker"
+    except:
+        return "local"
+
+
+def get_database_url():
+    """根据环境获取数据库连接URL"""
+    # 优先使用环境变量中的完整URL
+    if database_url := os.getenv("DATABASE_URL"):
+        return database_url
+    
+    # 根据环境动态生成URL
+    env = detect_environment()
+    db_user = os.getenv("POSTGRES_USER", "postgres")
+    db_password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    db_name = os.getenv("POSTGRES_DB", "autoreport")
+    db_port = os.getenv("POSTGRES_PORT", "5432")
+    
+    if env == "docker":
+        db_host = "db"  # Docker服务名
+    else:
+        db_host = "localhost"  # 本地环境
+    
+    return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+
+def get_redis_url():
+    """根据环境获取Redis连接URL"""
+    # 优先使用环境变量中的完整URL
+    if redis_url := os.getenv("REDIS_URL"):
+        return redis_url
+    
+    # 根据环境动态生成URL
+    env = detect_environment()
+    redis_port = os.getenv("REDIS_PORT", "6379")
+    
+    if env == "docker":
+        redis_host = "redis"  # Docker服务名
+        redis_db = "1"  # Docker环境使用数据库1
+    else:
+        redis_host = "localhost"  # 本地环境
+        redis_db = "0"  # 本地环境使用数据库0
+    
+    return f"redis://{redis_host}:{redis_port}/{redis_db}"
+
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AutoReportAI"
     API_V1_STR: str = "/api/v1"
 
-    # Database configuration
-    db_user: str = os.getenv("POSTGRES_USER", "postgres")
-    db_password: str = os.getenv("POSTGRES_PASSWORD", "postgres")
-    db_host: str = os.getenv("POSTGRES_HOST", "localhost")
-    db_port: str = os.getenv("POSTGRES_PORT", "5432")
-    db_name: str = os.getenv("POSTGRES_DB", "postgres")
+    # Database configuration - 智能环境检测
+    DATABASE_URL: str = get_database_url()
 
-    # Use the dynamically constructed URL
-    DATABASE_URL: str = (
-        f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-    )
-
-    # Redis configuration for rate limiting
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    # Redis configuration - 智能环境检测  
+    REDIS_URL: str = get_redis_url()
+    
+    # 环境信息
+    ENVIRONMENT_TYPE: str = detect_environment()
 
 
     # Email settings

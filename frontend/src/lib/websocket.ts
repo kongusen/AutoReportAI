@@ -71,11 +71,20 @@ export class WebSocketManager {
       this.notifyStateChange(ConnectionState.CONNECTING)
       
       try {
-        const wsUrl = token ? `${this.config.url}?token=${token}` : this.config.url
-        this.ws = new WebSocket(wsUrl)
+        this.ws = new WebSocket(this.config.url)
         
         this.ws.onopen = () => {
-          this.log('WebSocket connected successfully')
+          this.log('WebSocket connected, sending auth message')
+          
+          // 发送认证消息
+          if (token) {
+            const authMessage = {
+              type: 'auth',
+              token: token
+            }
+            this.ws!.send(JSON.stringify(authMessage))
+          }
+          
           this.reconnectAttempts = 0
           this.startHeartbeat()
           this.notifyStateChange(ConnectionState.OPEN)
@@ -223,12 +232,18 @@ export class WebSocketManager {
       return
     }
 
-    // 分发消息到对应的处理器
+    // 分发消息到通用处理器（新增）
+    const generalHandler = this.messageHandlers.get('*')
+    if (generalHandler) {
+      generalHandler(message)
+    }
+
+    // 分发消息到对应的特定处理器
     const handler = this.messageHandlers.get(message.type)
     if (handler) {
-      handler(message.payload)
+      handler(message.payload || message)
     } else {
-      console.warn('No handler registered for message type:', message.type)
+      this.log('No handler registered for message type:', message.type)
     }
   }
 

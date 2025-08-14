@@ -494,26 +494,86 @@ _task_status_storage = {}
 
 
 def extract_placeholders_from_content(content: str) -> List[Dict[str, Any]]:
-    """从模板内容中提取占位符"""
+    """从模板内容中提取占位符（支持多种格式）"""
     import re
-    
-    # 通用占位符匹配模式
-    placeholder_pattern = re.compile(r"{{\s*([\w\-_]+)\s*}}")
-    matches = placeholder_pattern.finditer(content)
+    import zipfile
+    import io
+    import xml.etree.ElementTree as ET
     
     placeholders = []
-    for match in matches:
-        placeholder_name = match.group(1)
+    
+    # 如果是十六进制字符串（Word文档），先解析
+    if content and len(content) > 100 and all(c in '0123456789abcdefABCDEF' for c in content[:100]):
+        try:
+            # 转换十六进制字符串为bytes
+            content_bytes = bytes.fromhex(content)
+            
+            # 如果是ZIP格式（Word文档）
+            if content_bytes.startswith(b'PK'):
+                zip_buffer = io.BytesIO(content_bytes)
+                with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+                    if 'word/document.xml' in zip_file.namelist():
+                        doc_xml = zip_file.read('word/document.xml')
+                        
+                        # 从XML中提取纯文本
+                        try:
+                            root = ET.fromstring(doc_xml)
+                            text_parts = []
+                            for elem in root.iter():
+                                if elem.text:
+                                    text_parts.append(elem.text)
+                            content = ' '.join(text_parts)
+                        except:
+                            # 如果XML解析失败，使用原始XML字符串
+                            content = doc_xml.decode('utf-8', errors='ignore')
+        except:
+            # 如果解析失败，使用原始内容
+            pass
+    
+    # 增强的占位符匹配模式，支持多种格式
+    patterns = [
+        # 复杂格式：{{类型: 描述}} 或 {{类型:描述}}
+        re.compile(r"{{\s*([^:{}]+)\s*:\s*([^{}]+)\s*}}"),
+        # 简单格式：{{变量名}}
+        re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_\-]*)\s*}}"),
+        # 更宽泛的格式：{{任何内容}}（作为后备）
+        re.compile(r"{{\s*([^{}]+)\s*}}")
+    ]
+    
+    found_placeholders = set()  # 防重复
+    
+    for pattern in patterns:
+        matches = pattern.finditer(content)
         
-        # 推断占位符类型
-        placeholder_type = infer_placeholder_type(placeholder_name, "", "")
-        
-        placeholders.append({
-            "placeholder_name": placeholder_name,
-            "placeholder_type": placeholder_type,
-            "description": placeholder_name,
-            "position": match.start()
-        })
+        for match in matches:
+            if len(match.groups()) == 2:
+                # 复杂格式：类型和描述分开
+                category = match.group(1).strip()
+                description = match.group(2).strip()
+                placeholder_name = f"{category}:{description}"
+                placeholder_text = match.group(0)
+            else:
+                # 简单格式
+                placeholder_name = match.group(1).strip()
+                placeholder_text = match.group(0)
+                description = placeholder_name
+            
+            # 跳过重复的占位符
+            if placeholder_text in found_placeholders:
+                continue
+            found_placeholders.add(placeholder_text)
+            
+            # 推断占位符类型
+            placeholder_type = infer_placeholder_type(placeholder_name, "", "")
+            
+            placeholders.append({
+                "placeholder_name": placeholder_name,
+                "placeholder_text": placeholder_text,
+                "placeholder_type": placeholder_type,
+                "description": description if len(match.groups()) == 2 else placeholder_name,
+                "position": match.start(),
+                "category": match.group(1).strip() if len(match.groups()) == 2 else "general"
+            })
     
     return placeholders
 

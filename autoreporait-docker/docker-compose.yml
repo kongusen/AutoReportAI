@@ -8,10 +8,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-autoreport}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+      PGTZ: ${TIMEZONE:-Asia/Shanghai}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ../backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoreport}"]
@@ -25,10 +27,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${DB_MAX_CPUS:-0.5}'
+          memory: ${DB_MAX_MEMORY:-512M}
         reservations:
-          memory: 256M
+          memory: ${DB_MIN_MEMORY:-256M}
     logging:
       driver: json-file
       options:
@@ -39,10 +41,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: autoreport_redis
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
     ports:
       - "${REDIS_PORT:-6381}:6379"
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
       - ../backend/scripts/redis.conf:/etc/redis/redis.conf:ro
     command: redis-server /etc/redis/redis.conf --appendonly yes
     healthcheck:
@@ -57,10 +61,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '${REDIS_MAX_CPUS:-0.25}'
+          memory: ${REDIS_MAX_MEMORY:-256M}
         reservations:
-          memory: 128M
+          memory: ${REDIS_MIN_MEMORY:-128M}
     logging:
       driver: json-file
       options:
@@ -73,12 +77,15 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       args:
-        HTTP_PROXY: http://192.168.101.241:7890
-        HTTPS_PROXY: http://192.168.101.241:7890
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1}
     container_name: autoreport_backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
+      # Timezone Configuration
+      TZ: ${TIMEZONE:-Asia/Shanghai}
       # Service Configuration
       SERVICE_TYPE: api
       WORKERS: ${API_WORKERS:-1}
@@ -93,8 +100,8 @@ services:
       
       # Redis Configuration
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # Application Configuration
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -104,9 +111,16 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Lx4JmUDcz9BUCEnAdi7jw6Q_s_EyHuMWzGsW8U7pJf4=}
       
       # CORS Configuration
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.61.30:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       
       # AI Provider Configuration
+      # Primary AI Provider (支持任何OpenAI兼容的服务)
+      PRIMARY_AI_PROVIDER: ${PRIMARY_AI_PROVIDER:-}
+      PRIMARY_AI_API_KEY: ${PRIMARY_AI_API_KEY:-}
+      PRIMARY_AI_BASE_URL: ${PRIMARY_AI_BASE_URL:-}
+      PRIMARY_AI_MODEL: ${PRIMARY_AI_MODEL:-gpt-4o-mini}
+      
+      # Backup AI Provider (OpenAI)
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
@@ -138,11 +152,14 @@ services:
       # Monitoring Configuration
       ENABLE_MONITORING: ${ENABLE_MONITORING:-true}
       
+      # Timezone Configuration
+      TIMEZONE: ${TIMEZONE:-Asia/Shanghai}
+      
     volumes:
-      - backend_logs:/app/logs
-      - backend_uploads:/app/uploads
-      - backend_reports:/app/reports
-      - backend_storage:/app/storage
+      - ./data/backend/logs:/app/logs
+      - ./data/backend/uploads:/app/uploads
+      - ./data/backend/reports:/app/reports
+      - ./data/backend/storage:/app/storage
     depends_on:
       db:
         condition: service_healthy
@@ -154,10 +171,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '${BACKEND_MAX_CPUS:-1.0}'
+          memory: ${BACKEND_MAX_MEMORY:-1G}
         reservations:
-          memory: 512M
+          memory: ${BACKEND_MIN_MEMORY:-512M}
     healthcheck:
       test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
@@ -176,11 +193,12 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        HTTP_PROXY: http://192.168.101.241:7890
-        HTTPS_PROXY: http://192.168.101.241:7890
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1}
     container_name: autoreport_frontend
     volumes:
-      - frontend_public_data:/app/public
+      - ./data/frontend/public:/app/public
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
@@ -189,6 +207,8 @@ services:
       # API URLs - using backend service name for internal communication
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000/api/v1}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://backend:8000/ws}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-AutoReportAI}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-1.0.0}
       # Internal API URL for server-side requests
       INTERNAL_API_URL: http://backend:8000/api/v1
     depends_on:
@@ -200,10 +220,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${FRONTEND_MAX_CPUS:-0.5}'
+          memory: ${FRONTEND_MAX_MEMORY:-512M}
         reservations:
-          memory: 256M
+          memory: ${FRONTEND_MIN_MEMORY:-256M}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
@@ -222,15 +242,18 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       args:
-        HTTP_PROXY: http://192.168.101.241:7890
-        HTTPS_PROXY: http://192.168.101.241:7890
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1}
     container_name: autoreport_celery_worker
     environment:
+      # Timezone Configuration
+      TZ: ${TIMEZONE:-Asia/Shanghai}
       # Service Configuration
       SERVICE_TYPE: worker
       
       # Celery Configuration
-      CELERY_QUEUES: ${CELERY_QUEUES:-report_tasks,analysis_tasks,query_tasks,generation_tasks}
+      CELERY_QUEUES: ${CELERY_QUEUES:-celery,report_tasks,analysis_tasks,query_tasks,generation_tasks}
       CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
       CELERY_MAX_TASKS: ${CELERY_MAX_TASKS:-100}
       CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
@@ -245,8 +268,8 @@ services:
       
       # Redis Configuration
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # Application Configuration
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -255,6 +278,13 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       
       # AI Provider Configuration
+      # Primary AI Provider (支持任何OpenAI兼容的服务)
+      PRIMARY_AI_PROVIDER: ${PRIMARY_AI_PROVIDER:-}
+      PRIMARY_AI_API_KEY: ${PRIMARY_AI_API_KEY:-}
+      PRIMARY_AI_BASE_URL: ${PRIMARY_AI_BASE_URL:-}
+      PRIMARY_AI_MODEL: ${PRIMARY_AI_MODEL:-gpt-4o-mini}
+      
+      # Backup AI Provider (OpenAI)
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
@@ -266,11 +296,14 @@ services:
       AGENT_CACHE_TTL: ${AGENT_CACHE_TTL:-3600}
       AGENT_MAX_RETRIES: ${AGENT_MAX_RETRIES:-3}
       
+      # Timezone Configuration
+      TIMEZONE: ${TIMEZONE:-Asia/Shanghai}
+      
     volumes:
-      - backend_logs:/app/logs
-      - backend_uploads:/app/uploads
-      - backend_reports:/app/reports
-      - backend_storage:/app/storage
+      - ./data/backend/logs:/app/logs
+      - ./data/backend/uploads:/app/uploads
+      - ./data/backend/reports:/app/reports
+      - ./data/backend/storage:/app/storage
     depends_on:
       db:
         condition: service_healthy
@@ -284,10 +317,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '${BACKEND_MAX_CPUS:-1.0}'
+          memory: ${BACKEND_MAX_MEMORY:-1G}
         reservations:
-          memory: 512M
+          memory: ${BACKEND_MIN_MEMORY:-512M}
     command: ["/app/entrypoint.sh", "worker"]
     healthcheck:
       test: ["CMD", "/app/healthcheck.sh"]
@@ -307,10 +340,13 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       args:
-        HTTP_PROXY: http://192.168.101.241:7890
-        HTTPS_PROXY: http://192.168.101.241:7890
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1}
     container_name: autoreport_celery_beat
     environment:
+      # Timezone Configuration
+      TZ: ${TIMEZONE:-Asia/Shanghai}
       # Service Configuration
       SERVICE_TYPE: beat
       
@@ -324,8 +360,8 @@ services:
       
       # Redis Configuration
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # Application Configuration
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -333,8 +369,12 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       
+      # Timezone Configuration
+      TIMEZONE: ${TIMEZONE:-Asia/Shanghai}
+      
     volumes:
-      - backend_logs:/app/logs
+      - ./data/backend/logs:/app/logs
+      - ./data/celery-beat:/app/celery-beat
     depends_on:
       db:
         condition: service_healthy
@@ -371,8 +411,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       args:
-        HTTP_PROXY: http://192.168.101.241:7890
-        HTTPS_PROXY: http://192.168.101.241:7890
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.1}
     container_name: autoreport_flower
     ports:
       - "${FLOWER_PORT:-5555}:5555"
@@ -381,8 +422,8 @@ services:
       SERVICE_TYPE: flower
       
       # Redis Configuration
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # Basic Auth for Flower (optional)
       FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:password}
@@ -427,7 +468,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
@@ -454,70 +495,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-# Volumes for persistent data storage - using local directory mounts for better control
-volumes:
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/postgres
-  
-  redis_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/redis
-  
-  backend_logs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/logs
-  
-  backend_uploads:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/uploads
-  
-  backend_reports:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/reports
-  
-  backend_storage:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/storage
-  
-  celery_beat_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/celery-beat
-  
-  minio_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/minio
-
-  frontend_public_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/frontend-public
 
 # Network configuration
 networks:

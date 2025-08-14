@@ -177,11 +177,10 @@ async def delete_task(
 @router.post("/{task_id}/execute", response_model=ApiResponse)
 async def execute_task(
     task_id: int,
-    use_intelligent_placeholders: bool = Query(False, description="使用智能占位符分析"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """执行任务"""
+    """执行任务 - 统一使用智能占位符驱动的流水线"""
     user_id = current_user.id
     if isinstance(user_id, str):
         user_id = UUID(user_id)
@@ -190,7 +189,7 @@ async def execute_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
 
-    # 发送一个Celery任务来异步执行报告生成
+    # 发送一个Celery任务来异步执行智能报告生成
     try:
         # 在Redis中保存任务所有者信息以便进度通知
         from app.core.config import settings
@@ -200,20 +199,11 @@ async def execute_task(
         import asyncio
         asyncio.create_task(redis_client.set(f"report_task:{task.id}:owner", str(user_id), ex=3600))
         
-        # 选择使用智能占位符分析还是传统流程
-        if use_intelligent_placeholders:
-            # 使用新的Agent驱动的智能占位符处理流程
-            task_result = celery_app.send_task(
-                "app.core.worker.intelligent_report_generation_pipeline", 
-                args=[task.id, str(user_id)]
-            )
-            message = "智能占位符报告生成任务已加入队列"
-        else:
-            # 使用传统的报告生成流程
-            task_result = celery_app.send_task(
-                "app.core.worker.report_generation_pipeline", args=[task.id]
-            )
-            message = "报告生成任务已加入队列"
+        # 统一使用智能占位符驱动的报告生成流水线
+        task_result = celery_app.send_task(
+            "app.core.worker.intelligent_report_generation_pipeline", 
+            args=[task.id, str(user_id)]
+        )
         
         return ApiResponse(
             success=True,
@@ -221,9 +211,9 @@ async def execute_task(
                 "task_id": task_id,
                 "celery_task_id": str(task_result.id),
                 "status": "queued",
-                "processing_mode": "intelligent" if use_intelligent_placeholders else "standard"
+                "processing_mode": "intelligent"
             },
-            message=message
+            message="智能占位符报告生成任务已加入队列"
         )
     except Exception as e:
         return ApiResponse(

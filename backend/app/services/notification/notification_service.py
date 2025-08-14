@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+from app.core.time_utils import now, format_iso
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -199,7 +200,7 @@ class NotificationService:
             from datetime import datetime, timedelta
 
             # 获取过去一周的数据
-            end_date = datetime.utcnow()
+            end_date = now()
             start_date = end_date - timedelta(days=7)
 
             # 查询用户的报告历史
@@ -291,7 +292,7 @@ class NotificationService:
                     "task_id": task_id,
                     "report_path": report_path,
                     "download_url": f"/api/reports/{task_id}/download",
-                    "completed_at": datetime.utcnow().isoformat()
+                    "completed_at": format_iso()
                 },
                 user_id=user_id
             )
@@ -336,7 +337,7 @@ class NotificationService:
                 data={
                     "task_id": task_id,
                     "error": error_message,
-                    "failed_at": datetime.utcnow().isoformat()
+                    "failed_at": format_iso()
                 },
                 user_id=user_id
             )
@@ -399,7 +400,7 @@ class NotificationService:
                     级别: {level}
                     标题: {title}
                     消息: {message}
-                    时间: {datetime.utcnow().isoformat()}
+                    时间: {format_iso()}
                     
                     请及时处理此告警。
                     """
@@ -417,7 +418,7 @@ class NotificationService:
         """
         try:
             # 从Redis获取最近一小时的任务统计
-            current_time = datetime.utcnow()
+            current_time = now()
             one_hour_ago = current_time.timestamp() - 3600
             
             # 获取任务指标
@@ -469,7 +470,7 @@ class NotificationService:
             task_metrics = {
                 "task_id": task_id,
                 "status": status,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": format_iso(),
                 "duration": duration,
                 "error": error
             }

@@ -101,16 +101,25 @@ export default function CreateTaskPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      await createTask({
+      const result = await createTask({
         ...data,
         template_id: data.template_id as any, // UUID类型转换
         data_source_id: data.data_source_id as any, // UUID类型转换
         schedule: data.schedule || undefined,
         recipients: data.recipients || [],
       })
-      router.push('/tasks')
+      
+      // 确保创建成功后才跳转
+      if (result) {
+        console.log('任务创建成功，准备跳转到任务列表页:', result)
+        router.push('/tasks')
+      } else {
+        console.error('任务创建返回空结果')
+        throw new Error('任务创建失败：返回结果为空')
+      }
     } catch (error) {
-      // 错误处理在store中已处理
+      console.error('创建任务时发生错误:', error)
+      // 错误处理在store中已处理，这里不需要额外处理
     }
   }
 

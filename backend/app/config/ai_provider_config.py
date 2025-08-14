@@ -1,23 +1,9 @@
 """
-AI供应商配置
-配置用于大数据分析报告生成的AI服务
+AI供应商配置模块
+所有AI提供商配置均从数据库读取，此文件保留用于场景化配置
 """
 
-import os
 from typing import Dict, Any
-
-# AI供应商配置
-AI_PROVIDER_CONFIG = {
-    "api_base_url": "https://xiaoai.plus/v1/chat/completions",
-    "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "model": "gpt-4o-mini",
-    "max_tokens": 4000,
-    "temperature": 0.3,
-    "timeout": 60,
-    "retry_times": 3,
-    "stream": False,
-    "verify_ssl": False  # 如果SSL有问题可以设置为False
-}
 
 # 用于不同场景的模型配置
 MODEL_CONFIGS = {
@@ -41,36 +27,46 @@ MODEL_CONFIGS = {
     }
 }
 
-def get_ai_config(scenario: str = "default") -> Dict[str, Any]:
+def get_scenario_config(scenario: str = "default") -> Dict[str, Any]:
     """
-    获取AI配置
+    获取特定场景的模型配置
     
     Args:
         scenario: 使用场景 (placeholder_analysis, data_analysis, report_generation)
+    
+    Returns:
+        场景特定的配置参数，需要与数据库配置合并使用
     """
-    base_config = AI_PROVIDER_CONFIG.copy()
-    
     if scenario in MODEL_CONFIGS:
-        base_config.update(MODEL_CONFIGS[scenario])
+        return MODEL_CONFIGS[scenario].copy()
     
-    return base_config
+    # 返回默认配置
+    return {
+        "model": "gpt-4o-mini",
+        "max_tokens": 4000,
+        "temperature": 0.3,
+        "timeout": 60
+    }
 
-def validate_ai_config() -> bool:
-    """验证AI配置是否完整"""
-    required_keys = ["api_base_url", "api_key", "model"]
-    
-    for key in required_keys:
-        if not AI_PROVIDER_CONFIG.get(key):
-            print(f"❌ AI配置缺少必要参数: {key}")
-            return False
-    
-    print("✅ AI配置验证通过")
-    return True
+
+def get_default_model_params() -> Dict[str, Any]:
+    """获取默认模型参数"""
+    return {
+        "max_tokens": 4000,
+        "temperature": 0.3,
+        "timeout": 60,
+        "retry_times": 3,
+        "stream": False,
+        "verify_ssl": True
+    }
+
 
 if __name__ == "__main__":
-    print("🤖 AI供应商配置信息:")
-    print(f"API地址: {AI_PROVIDER_CONFIG['api_base_url']}")
-    print(f"模型: {AI_PROVIDER_CONFIG['model']}")
-    print(f"API Key: {AI_PROVIDER_CONFIG['api_key'][:10]}...{AI_PROVIDER_CONFIG['api_key'][-4:]}")
+    print("🤖 AI场景配置模块")
+    print("此模块提供不同场景下的AI模型参数配置")
+    print(f"可用场景: {', '.join(MODEL_CONFIGS.keys())}")
     
-    validate_ai_config()
+    for scenario, config in MODEL_CONFIGS.items():
+        print(f"\n📋 {scenario}:")
+        for key, value in config.items():
+            print(f"  {key}: {value}")

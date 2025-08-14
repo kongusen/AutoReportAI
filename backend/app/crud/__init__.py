@@ -9,15 +9,23 @@ from .crud_template import crud_template as template
 from .crud_user import crud_user
 from .crud_user_profile import user_profile
 
+# Aliases for easier access
+ai_provider = crud_ai_provider
+etl_job = crud_etl_job
+user = crud_user
+
 __all__ = [
     "crud_ai_provider",
+    "ai_provider",
     "analytics_data", 
     "data_source",
     "crud_etl_job",
+    "etl_job",
     "placeholder_mapping",
     "report_history",
     "task",
     "template",
     "crud_user",
+    "user",
     "user_profile",
 ]

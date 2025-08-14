@@ -22,8 +22,9 @@ interface TaskState {
   
   // Task status methods
   fetchTaskStatus: (id: string) => Promise<any>
-  startTaskStatusPolling: (taskId: string) => void
-  startLongTaskPolling: (taskId: string) => void
+  
+  // WebSocket message handlers
+  handleTaskProgressMessage: (message: any) => void
   
   // Batch operations
   batchUpdateStatus: (ids: string[], isActive: boolean) => Promise<void>
@@ -101,12 +102,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const response = await api.post('/tasks', data)
       const newTask = response.data || response
       
+      // 验证返回的数据
+      if (!newTask || !newTask.id) {
+        throw new Error('创建任务失败：服务器返回数据格式错误')
+      }
+      
       get().addTask(newTask)
       toast.success('任务创建成功')
       return newTask
     } catch (error: any) {
       console.error('Failed to create task:', error)
-      toast.error('创建任务失败')
+      const errorMessage = error.response?.data?.message || error.message || '创建任务失败'
+      toast.error(errorMessage)
       throw error
     } finally {
       set({ loading: false })
@@ -170,14 +177,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  // 执行任务 - 改进错误处理
+  // 执行任务 - 使用WebSocket实时更新
   executeTask: async (id: string) => {
     try {
       const response = await api.post(`/tasks/${id}/execute?use_intelligent_placeholders=true`)
       const result = response.data || response
       
-      // 开始轮询任务状态
-      get().startTaskStatusPolling(id)
+      // 初始化任务进度状态
+      get().updateTaskProgress({
+        task_id: id,
+        status: 'queued',
+        progress: 0,
+        message: '任务已提交，等待处理...'
+      })
       
       toast.success('任务执行请求已发送，开始处理...')
       return result
@@ -201,7 +213,55 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  // 获取任务状态 - 改进错误处理
+  // WebSocket消息处理器 - 处理任务进度更新
+  handleTaskProgressMessage: (message: any) => {
+    const { task_id, progress, status, current_step, message: progressMessage } = message.data || message
+    
+    if (task_id) {
+      const taskProgress: TaskProgress = {
+        task_id: task_id.toString(),
+        progress: parseInt(progress) || 0,
+        status: status || 'pending',
+        message: current_step || progressMessage || ''
+      }
+      
+      get().updateTaskProgress(taskProgress)
+      
+      // 处理最终状态通知
+      if (status === 'completed') {
+        const successMessage = message.successful_count && message.total_placeholders 
+          ? `任务 #${task_id} 执行完成 (${message.successful_count}/${message.total_placeholders} 个占位符处理成功)`
+          : `任务 #${task_id} 执行完成`
+        
+        toast.success(successMessage)
+        
+        // 如果有错误但整体完成，显示警告
+        if (message.has_errors) {
+          toast(`任务完成但存在部分错误，请查看详情`, {
+            icon: '⚠️',
+            style: {
+              background: '#FEF3C7',
+              color: '#D97706',
+              border: '1px solid #F59E0B'
+            }
+          })
+        }
+      } else if (status === 'failed') {
+        const errorMessage = message.error || progressMessage || '未知错误'
+        toast.error(`任务 #${task_id} 执行失败: ${errorMessage}`, {
+          duration: 10000,
+        })
+        
+        console.error('Task failed via WebSocket:', {
+          task_id,
+          error: errorMessage,
+          message
+        })
+      }
+    }
+  },
+
+  // 获取任务状态 - 仅用于初始加载，不再用于轮询
   fetchTaskStatus: async (id: string) => {
     try {
       const response = await api.get(`/tasks/${id}/status`)
@@ -216,12 +276,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           message: statusData.current_step || statusData.message
         }
         get().updateTaskProgress(progress)
-        
-        // 检查是否有错误状态
-        if (statusData.status === 'failed' && statusData.error) {
-          // 这里可以使用增强的toast系统显示错误
-          console.error(`Task ${id} failed:`, statusData.error)
-        }
       }
       
       return statusData
@@ -229,131 +283,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       console.error('Failed to fetch task status:', error)
       return null
     }
-  },
-
-  // 开始任务状态轮询 - 改进错误显示和处理95%卡住问题
-  startTaskStatusPolling: (taskId: string) => {
-    let pollCount = 0
-    let lastProgress = -1
-    let stuckProgressCount = 0
-    const maxStuckCount = 10 // 10次相同进度后认为卡住
-    
-    const pollInterval = setInterval(async () => {
-      pollCount++
-      const status = await get().fetchTaskStatus(taskId)
-      
-      if (status) {
-        const currentProgress = parseInt(status.progress) || 0
-        
-        // 检测是否卡在同一进度
-        if (currentProgress === lastProgress && currentProgress >= 95) {
-          stuckProgressCount++
-          console.warn(`任务 ${taskId} 可能卡在 ${currentProgress}% (连续 ${stuckProgressCount} 次)`)
-          
-          // 如果卡在95%以上超过10次，显示警告
-          if (stuckProgressCount >= maxStuckCount) {
-            toast(`任务 #${taskId} 似乎在 ${currentProgress}% 处暂停，可能正在处理大文件...`, {
-              icon: '⏳',
-              duration: 5000,
-              style: {
-                background: '#FEF3C7',
-                color: '#D97706'
-              }
-            })
-            stuckProgressCount = 0 // 重置计数，避免重复提示
-          }
-        } else {
-          lastProgress = currentProgress
-          stuckProgressCount = 0
-        }
-      }
-      
-      if (status && (status.status === 'completed' || status.status === 'failed')) {
-        clearInterval(pollInterval)
-        
-        // 显示完成通知
-        if (status.status === 'completed') {
-          const successMessage = status.successful_count && status.total_placeholders 
-            ? `任务 #${taskId} 执行完成 (${status.successful_count}/${status.total_placeholders} 个占位符处理成功)`
-            : `任务 #${taskId} 执行完成`
-          toast.success(successMessage)
-          
-          // 如果有错误但整体完成，显示警告
-          if (status.has_errors) {
-            toast(`任务完成但存在部分错误，请查看详情`, {
-              icon: '⚠️',
-              style: {
-                background: '#FEF3C7',
-                color: '#D97706',
-                border: '1px solid #F59E0B'
-              }
-            })
-          }
-        } else {
-          // 使用增强的错误显示
-          const errorMessage = status.error || status.message || '未知错误'
-          const errorDetails = status.traceback || status.details
-          
-          toast.error(`任务 #${taskId} 执行失败: ${errorMessage}`, {
-            duration: 10000,
-          })
-          
-          console.error('Task failed with details:', {
-            taskId,
-            error: errorMessage,
-            details: errorDetails,
-            status
-          })
-        }
-      }
-      
-      // 如果轮询超过60次(2分钟)且任务仍在运行，延长轮询时间
-      if (pollCount > 60 && status && status.status === 'processing') {
-        console.log(`任务 ${taskId} 运行时间较长，延长轮询间隔`)
-        clearInterval(pollInterval)
-        
-        // 启动更长间隔的轮询
-        get().startLongTaskPolling(taskId)
-      }
-    }, 2000) // 每2秒轮询一次
-
-    // 2分钟后停止快速轮询
-    setTimeout(() => {
-      clearInterval(pollInterval)
-      
-      // 检查任务是否仍在运行
-      const currentStatus = get().getTaskProgress(taskId)
-      if (currentStatus && currentStatus.status === 'processing') {
-        console.log(`任务 ${taskId} 仍在运行，启动长时间轮询`)
-        get().startLongTaskPolling(taskId)
-      }
-    }, 120000)
-  },
-
-  // 长时间任务轮询
-  startLongTaskPolling: (taskId: string) => {
-    const longPollInterval = setInterval(async () => {
-      const status = await get().fetchTaskStatus(taskId)
-      
-      if (status && (status.status === 'completed' || status.status === 'failed')) {
-        clearInterval(longPollInterval)
-        
-        if (status.status === 'completed') {
-          toast.success(`长时间任务 #${taskId} 最终完成了！`)
-        } else {
-          toast.error(`长时间任务 #${taskId} 执行失败`)
-        }
-      }
-    }, 10000) // 每10秒轮询一次
-
-    // 10分钟后停止长时间轮询
-    setTimeout(() => {
-      clearInterval(longPollInterval)
-      toast(`任务 #${taskId} 轮询已停止，请手动检查状态`, {
-        icon: 'ℹ️',
-        duration: 8000
-      })
-    }, 600000)
   },
 
   // 批量更新状态

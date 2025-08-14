@@ -155,7 +155,7 @@ export interface TaskUpdate extends Partial<TaskCreate> {}
 export interface TaskProgress {
   task_id: string
   progress: number
-  status: 'pending' | 'analyzing' | 'querying' | 'processing' | 'generating' | 'completed' | 'failed' | 'retrying'
+  status: 'pending' | 'queued' | 'analyzing' | 'querying' | 'processing' | 'generating' | 'completed' | 'failed' | 'retrying'
   message?: string
   current_step?: string
   estimated_time?: number

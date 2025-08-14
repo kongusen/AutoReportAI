@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
+from app.core.time_utils import format_iso
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class NotificationMessage:
         self.message = message
         self.data = data or {}
         self.user_id = user_id
-        self.timestamp = datetime.utcnow().isoformat()
+        self.timestamp = format_iso()
 
     def to_dict(self):
         return {

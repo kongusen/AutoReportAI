@@ -2,10 +2,11 @@ import json
 import logging
 import time
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+from app.core.time_utils import now, format_iso
 from celery import Celery, chord, group
 from celery.exceptions import MaxRetriesExceededError, Retry
 from kombu import Queue
@@ -39,8 +40,8 @@ celery_app.conf.update(
     result_serializer='json',
     accept_content=['json'],
     result_expires=3600,
-    timezone='UTC',
-    enable_utc=True,
+    timezone='Asia/Shanghai',
+    enable_utc=False,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
@@ -51,22 +52,34 @@ celery_app.conf.update(
     beat_scheduler='celery.beat.PersistentScheduler',
     beat_sync_every=1,
     beat_max_loop_interval=300,
-    # 确保 beat_schedule 存在 - 使用本地路径而非Docker路径
-    beat_schedule_filename='celerybeat-schedule',
-    beat_schedule_db='celerybeat-schedule.db',
+    # 确保 beat_schedule 存在 - 使用绝对路径
+    beat_schedule_filename='/tmp/celerybeat-schedule',
+    beat_schedule_db='/tmp/celerybeat-schedule.db',
 )
 
 # 确保 beat_schedule 字典存在
 if not hasattr(celery_app.conf, 'beat_schedule') or celery_app.conf.beat_schedule is None:
     celery_app.conf.beat_schedule = {}
 
-# 确保调度文件路径正确（不是目录）
+# 清理旧的调度文件
 import os
-schedule_file = os.path.join(os.getcwd(), 'celerybeat-schedule')
-if os.path.exists(schedule_file) and os.path.isdir(schedule_file):
-    import shutil
-    shutil.rmtree(schedule_file)
-    logger.warning(f"删除了错误的目录: {schedule_file}")
+import shutil
+schedule_files = [
+    'celerybeat-schedule',
+    'celerybeat-schedule.db',
+    '/tmp/celerybeat-schedule',
+    '/tmp/celerybeat-schedule.db'
+]
+for schedule_file in schedule_files:
+    if os.path.exists(schedule_file):
+        try:
+            if os.path.isdir(schedule_file):
+                shutil.rmtree(schedule_file)
+            else:
+                os.remove(schedule_file)
+            logger.info(f"清理了调度文件: {schedule_file}")
+        except Exception as e:
+            logger.warning(f"清理调度文件失败 {schedule_file}: {e}")
 
 # 初始化 Celery 调度系统
 def init_celery_scheduler():
@@ -116,7 +129,7 @@ class TaskProgressManager:
         status_data = {
             "status": status,
             "progress": progress,
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": format_iso()
         }
         
         if current_step:
@@ -134,150 +147,41 @@ class TaskProgressManager:
         # 发送WebSocket通知
         notification_service = NotificationService()
         await notification_service.send_task_progress_update(task_id, status_data)
+    
+    def update_task_progress_sync(
+        self,
+        task_id: int,
+        status: str,
+        progress: int,
+        current_step: Optional[str] = None,
+        step_details: Optional[Dict[str, Any]] = None
+    ):
+        """同步更新任务进度（在Celery任务中使用）"""
+        import asyncio
+        
+        # 在新的事件循环中运行异步方法
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                self.update_task_progress(
+                    task_id, status, progress, current_step, step_details
+                )
+            )
+        except Exception as e:
+            logger.error(f"同步更新任务进度失败: {e}")
+        finally:
+            try:
+                loop.close()
+            except:
+                pass
 
 
 progress_manager = TaskProgressManager()
 
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), 
-                retry_kwargs={'max_retries': 3, 'countdown': 60})
-def report_generation_pipeline(self, task_id: int) -> Dict[str, Any]:
-    """
-    主报告生成任务 - 协调整个报告生成流程
-    实现完整的任务分解和并行处理
-    """
-    logger.info(f"开始报告生成流程，任务ID: {task_id}")
-    
-    db = SessionLocal()
-    try:
-        # 1. 获取任务配置
-        task = crud.task.get(db=db, id=task_id)
-        if not task:
-            raise ValueError(f"任务 ID {task_id} 不存在")
-        
-        # 更新任务状态
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.ANALYZING, 10, "解析模板"
-        ))
-        
-        # 2. 解析模板获取占位符列表
-        template_result = template_parsing.delay(
-            template_id=task.template_id,
-            task_id=task_id
-        )
-        placeholders = template_result.get(timeout=300)
-        
-        if not placeholders:
-            raise ValueError("模板解析失败或未找到占位符")
-        
-        # 更新进度
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.ANALYZING, 25, "分析占位符需求"
-        ))
-        
-        # 3. 创建占位符分析任务组
-        analysis_tasks = []
-        for placeholder in placeholders:
-            analysis_tasks.append(
-                placeholder_analysis.s(
-                    placeholder_data=placeholder,
-                    data_source_id=task.data_source_id,
-                    task_id=task_id
-                )
-            )
-        
-        # 并行执行占位符分析
-        analysis_job = group(analysis_tasks)
-        analysis_results = analysis_job.apply_async()
-        analysis_data = analysis_results.get(timeout=600)
-        
-        # 更新进度
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.QUERYING, 50, "执行数据查询"
-        ))
-        
-        # 4. 创建数据查询任务组
-        query_tasks = []
-        for analysis in analysis_data:
-            if analysis and analysis.get('etl_instruction'):
-                query_tasks.append(
-                    data_query.s(
-                        etl_instruction=analysis['etl_instruction'],
-                        data_source_id=task.data_source_id,
-                        task_id=task_id
-                    )
-                )
-        
-        # 并行执行数据查询
-        if query_tasks:
-            query_job = group(query_tasks)
-            query_results = query_job.apply_async()
-            query_data = query_results.get(timeout=900)
-        else:
-            query_data = []
-        
-        # 更新进度
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.PROCESSING, 75, "填充报告内容"
-        ))
-        
-        # 5. 内容填充任务
-        filling_result = content_filling.delay(
-            template_content=task.template.content,
-            placeholders=placeholders,
-            query_results=query_data,
-            task_id=task_id
-        )
-        filled_content = filling_result.get(timeout=300)
-        
-        # 更新进度
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.GENERATING, 90, "生成报告文件"
-        ))
-        
-        # 6. 报告生成任务
-        generation_result = report_generation.delay(
-            template_content=filled_content,
-            output_config={
-                "format": "docx",
-                "title": task.name,
-                "task_id": task_id
-            },
-            task_id=task_id
-        )
-        final_report = generation_result.get(timeout=300)
-        
-        # 更新完成状态
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.COMPLETED, 100, "报告生成完成"
-        ))
-        
-        logger.info(f"报告生成流程完成，任务ID: {task_id}")
-        
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "report_path": final_report.get("report_path"),
-            "placeholders_count": len(placeholders),
-            "queries_executed": len(query_data),
-            "completion_time": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"报告生成流程失败，任务ID: {task_id}, 错误: {str(e)}")
-        
-        # 更新失败状态
-        asyncio.create_task(progress_manager.update_task_progress(
-            task_id, TaskStatus.FAILED, 0, f"生成失败: {str(e)}"
-        ))
-        
-        # 重试逻辑
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (self.request.retries + 1))
-        
-        raise
-    finally:
-        db.close()
+# 普通报告生成流水线已移除 - 统一使用智能占位符驱动的版本
+# 所有任务执行（手动和调度）都使用 intelligent_report_generation_pipeline
 
 
 @celery_app.task
@@ -365,7 +269,7 @@ def placeholder_analysis(self, placeholder_data: Dict[str, Any],
                         "placeholder": placeholder_data,
                         "etl_instruction": data_query_result.data.get('etl_instruction'),
                         "data_source_id": data_source_id,
-                        "analysis_time": datetime.now().isoformat(),
+                        "analysis_time": format_iso(),
                         "agent_workflow": True
                     }
             
@@ -378,7 +282,7 @@ def placeholder_analysis(self, placeholder_data: Dict[str, Any],
                     "description": f"通过Agent系统处理占位符: {placeholder_name}"
                 },
                 "data_source_id": data_source_id,
-                "analysis_time": datetime.now().isoformat(),
+                "analysis_time": format_iso(),
                 "agent_workflow": True
             }
         else:
@@ -513,7 +417,7 @@ def report_generation(template_content: str, output_config: Dict[str, Any],
             "content": template_content,
             "file_path": report_path,
             "status": "completed",
-            "generated_at": datetime.utcnow()
+            "generated_at": now()
         }
         
         report_record = crud.report_history.create(
@@ -635,9 +539,9 @@ def execute_etl_job(self, job_id: str, job_config: Dict[str, Any]) -> Dict[str, 
         }
         
         # 执行ETL作业
-        start_time = datetime.utcnow()
+        start_time = now()
         result = etl_executor.execute_instruction(etl_instruction, data_source_id)
-        end_time = datetime.utcnow()
+        end_time = now()
         
         # 更新作业执行状态
         crud.etl_job.update(
@@ -684,7 +588,7 @@ def execute_etl_job(self, job_id: str, job_config: Dict[str, Any]) -> Dict[str, 
                     db,
                     db_obj=etl_job,
                     obj_in={
-                        "last_run_at": datetime.utcnow(),
+                        "last_run_at": now(),
                         "status": "failed",
                         "error_message": str(e)
                     }
@@ -736,7 +640,7 @@ def update_task_progress(task_id: int, status: str, progress: int, message: str)
         "status": status,
         "progress": progress,
         "message": message,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": format_iso()
     }
     return update_task_progress_dict(task_id, status_data)
 
@@ -772,7 +676,7 @@ def update_task_progress_dict(task_id: int, status_data: dict):
             
             # 添加时间戳确保数据新鲜度
             if "updated_at" not in status_data:
-                status_data["updated_at"] = datetime.utcnow().isoformat()
+                status_data["updated_at"] = format_iso()
             
             # 测试Redis连接
             redis_client.ping()
@@ -818,10 +722,40 @@ def update_task_progress_dict(task_id: int, status_data: dict):
 
 
 @celery_app.task(bind=True, name='app.core.worker.execute_scheduled_task')
-def execute_scheduled_task(self, task_id: int):
-    """执行调度的任务 - 由 Celery Beat 调用"""
-    from app.core.celery_scheduler import execute_scheduled_task as _execute_scheduled_task
-    return _execute_scheduled_task(task_id)
+def execute_scheduled_task_celery(self, task_id: int):
+    """执行调度的任务 - 由 Celery Beat 调用，使用智能占位符驱动的版本"""
+    logger.info(f"开始执行调度任务 {task_id}，使用智能占位符驱动的流水线")
+    
+    # 直接调用智能占位符驱动的报告生成流水线
+    # 使用系统用户执行调度任务
+    system_user_id = "system"
+    
+    # 更新任务执行状态
+    try:
+        with SessionLocal() as db:
+            task = crud.task.get(db, id=task_id)
+            if not task:
+                logger.error(f"调度任务 {task_id} 不存在")
+                return {"status": "error", "message": f"任务 {task_id} 不存在"}
+            
+            if not task.is_active:
+                logger.warning(f"调度任务 {task_id} 未激活，跳过执行")
+                return {"status": "skipped", "message": f"任务 {task_id} 未激活"}
+        
+        # 提交到智能报告生成流水线
+        result = intelligent_report_generation_pipeline.delay(task_id, system_user_id)
+        logger.info(f"调度任务 {task_id} 已提交到智能流水线，Celery task ID: {result.id}")
+        
+        return {
+            "status": "submitted",
+            "task_id": task_id,
+            "celery_task_id": result.id,
+            "submitted_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"执行调度任务 {task_id} 失败: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @celery_app.task(bind=True, name='app.core.worker.intelligent_report_generation_pipeline')

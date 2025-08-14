@@ -10,21 +10,18 @@ import toast from 'react-hot-toast'
 
 export function useWebSocketIntegration() {
   const { wsManager, isConnected, connectionState } = useWebSocket()
-  const { updateTaskProgress } = useTaskStore()
+  const { handleTaskProgressMessage } = useTaskStore()
   const { addReport, updateReportStatus } = useReportStore()
 
   useEffect(() => {
     if (!wsManager) return
 
-    // 注册任务进度更新处理器
-    const handleTaskProgress = (progress: TaskProgress) => {
-      updateTaskProgress(progress)
-      
-      // 显示进度通知
-      if (progress.status === 'completed') {
-        toast.success(`任务 "${progress.task_id}" 执行完成`)
-      } else if (progress.status === 'failed') {
-        toast.error(`任务 "${progress.task_id}" 执行失败`)
+    // 注册任务进度更新处理器 - 通用WebSocket消息处理
+    const handleGeneralMessage = (message: any) => {
+      // 根据消息类型处理
+      if (message.type === 'info' && message.data && message.data.task_id) {
+        // 任务进度更新消息
+        handleTaskProgressMessage(message)
       }
     }
 
@@ -98,18 +95,18 @@ export function useWebSocketIntegration() {
       )
     }
 
-    // 注册消息处理器
-    wsManager.on('task_progress', handleTaskProgress)
+    // 注册消息处理器 - 监听所有消息类型
+    wsManager.on('*', handleGeneralMessage)
     wsManager.on('system_notification', handleSystemNotification)
     wsManager.on('report_completed', handleReportCompleted)
 
     // 清理函数
     return () => {
-      wsManager.off('task_progress')
+      wsManager.off('*')
       wsManager.off('system_notification')
       wsManager.off('report_completed')
     }
-  }, [wsManager, updateTaskProgress, addReport, updateReportStatus])
+  }, [wsManager, handleTaskProgressMessage, addReport, updateReportStatus])
 
   return {
     isConnected,

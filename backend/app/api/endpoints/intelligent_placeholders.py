@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 import re
+import logging
+from datetime import datetime
 
 from app.core.architecture import ApiResponse
 from app.db.session import get_db
@@ -16,6 +18,7 @@ from app.crud import template as crud_template
 from app.crud.crud_data_source import crud_data_source
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/analyze", response_model=ApiResponse)
@@ -122,15 +125,21 @@ async def match_placeholder_fields(
             detail="数据源不存在或无权限访问"
         )
     
-    # 模拟字段匹配逻辑
-    # 在实际应用中，这里应该分析数据源的字段结构
-    mock_fields = [
-        "name", "email", "phone", "address", "company", "title", 
-        "date", "amount", "quantity", "price", "total", "description"
-    ]
+    # 从真实数据源获取字段结构
+    try:
+        # 导入数据源服务
+        from app.services.data_sources import data_source_service
+        
+        # 获取数据源的实际字段
+        available_fields = await data_source_service.get_data_source_fields(str(data_source.id))
+        logger.info(f"Retrieved {len(available_fields)} fields from data source {data_source.name}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to get real fields from data source: {e}")
+        available_fields = []
     
     field_suggestions = []
-    for field in mock_fields:
+    for field in available_fields:
         # 计算匹配分数（简单的字符串相似度）
         match_score = calculate_similarity(placeholder_name.lower(), field.lower())
         if match_score > 0.3:  # 只返回相似度较高的字段
@@ -208,7 +217,7 @@ async def generate_intelligent_report(
     task_id = str(uuid.uuid4())
     
     # 导入真实的Agent系统
-    from app.services.agents.orchestrator import orchestrator
+    from app.services.agents.orchestration import orchestrator
     
     try:
         # 创建任务上下文
@@ -234,7 +243,7 @@ async def generate_intelligent_report(
         async def process_in_background():
             try:
                 # 解析模板内容获取占位符
-                from app.services.template_parser_service import TemplateParser
+                from app.services.report_generation.document_pipeline import TemplateParser
                 parser = TemplateParser()
                 
                 # 先解析模板内容中的占位符
@@ -702,13 +711,6 @@ def build_placeholder_data(task_status: Dict[str, Any]) -> Dict[str, Any]:
             content = result.get("content", "")
             placeholder_data[placeholder_name] = content
     
-    # 添加一些默认的占位符数据用于演示
-    if not placeholder_data:
-        placeholder_data = {
-            "database_count": "3",
-            "total_tables": "15",
-            "database_list": "mysql, yjg, test_analysis",
-            "current_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+    # 如果没有占位符数据，返回空字典（确保所有数据来自真实数据源）
     
     return placeholder_data

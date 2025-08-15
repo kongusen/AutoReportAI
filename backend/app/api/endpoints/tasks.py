@@ -11,7 +11,7 @@ from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.crud.crud_task import crud_task
-from app.core.worker import celery_app
+from app.services.task.core.worker import celery_app
 
 router = APIRouter()
 
@@ -201,7 +201,7 @@ async def execute_task(
         
         # 统一使用智能占位符驱动的报告生成流水线
         task_result = celery_app.send_task(
-            "app.core.worker.intelligent_report_generation_pipeline", 
+            "app.services.task.core.worker.tasks.enhanced_tasks.intelligent_report_generation_pipeline", 
             args=[task.id, str(user_id)]
         )
         

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 import time
 
 from ..base import BaseAgent, AgentConfig, AgentResult, AgentType
-from ..orchestrator import AgentOrchestrator, WorkflowDefinition, TaskStep, WorkflowResult
+from ..orchestration import AgentOrchestrator, WorkflowDefinition, TaskStep, WorkflowResult
 
 
 logger = logging.getLogger(__name__)

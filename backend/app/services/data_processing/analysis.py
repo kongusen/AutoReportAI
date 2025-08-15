@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 
 from app import models
 from .retrieval import DataRetrievalService
-from ..statistics_service import StatisticsService
-from ..visualization_service import VisualizationService
+from .statistics_service import StatisticsService
+from .visualization_service import VisualizationService
 
 
 class DataAnalysisService:

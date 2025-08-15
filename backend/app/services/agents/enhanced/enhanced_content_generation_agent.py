@@ -25,8 +25,8 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 from datetime import datetime, timedelta
 from collections import deque
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
-from ..content_generation_agent import ContentGenerationAgent, ContentRequest, ContentResult
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
+from ..specialized.content_generation_agent import ContentGenerationAgent, ContentRequest, ContentResult
 from ..security import sandbox_manager, SandboxLevel
 from ..tools import tool_registry
 

@@ -31,8 +31,8 @@ from sklearn.metrics import silhouette_score
 import warnings
 warnings.filterwarnings('ignore')
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
-from ..analysis_agent import AnalysisAgent, AnalysisRequest, AnalysisResult
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
+from ..specialized.schema_analysis_agent import SchemaAnalysisAgent
 from ..security import sandbox_manager, SandboxLevel
 from ..tools import tool_registry
 
@@ -591,7 +591,7 @@ class InsightGenerator:
         return insights
 
 
-class EnhancedAnalysisAgent(AnalysisAgent):
+class EnhancedAnalysisAgent(SchemaAnalysisAgent):
     """增强版分析Agent"""
     
     def __init__(self, config: AgentConfig = None):

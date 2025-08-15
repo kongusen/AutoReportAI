@@ -252,7 +252,7 @@ cd backend
 source venv/bin/activate
 
 # 启动 Agent 编排器
-celery -A app.core.worker worker --loglevel=info --concurrency=4
+celery -A app.services.task.core.worker.celery_app worker --loglevel=info --concurrency=4
 
 # 启动任务调度器
 python scheduler/main.py

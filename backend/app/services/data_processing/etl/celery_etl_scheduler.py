@@ -15,7 +15,7 @@ from celery.schedules import crontab
 from sqlalchemy.orm import Session
 
 from app import crud
-from app.core.worker import celery_app
+from app.services.task.core.worker import celery_app
 from app.db.session import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class CeleryETLScheduler:
                 celery_app.conf.beat_schedule = {}
             
             celery_app.conf.beat_schedule[task_name] = {
-                'task': 'app.core.worker.execute_etl_job',
+                'task': 'app.services.task.core.worker.tasks.basic_tasks.execute_etl_job',
                 'schedule': schedule,
                 'args': (job_id, job_config)
             }

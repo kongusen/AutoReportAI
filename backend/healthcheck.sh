@@ -9,7 +9,7 @@ case "$SERVICE_TYPE" in
         curl -f -s --max-time 10 http://localhost:8000/api/v1/health || exit 1
         ;;
     "worker")
-        celery -A app.core.worker inspect ping --timeout=10 || exit 1
+        celery -A app.services.task.core.worker.celery_app inspect ping --timeout=10 || exit 1
         ;;
     "beat")
         # For beat, just check if process is running

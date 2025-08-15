@@ -26,8 +26,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
-from ..visualization_agent import VisualizationAgent, ChartRequest, ChartResult
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
+from ..specialized.visualization_agent import VisualizationAgent, ChartRequest, ChartResult
 from ..security import sandbox_manager, SandboxLevel
 from ..tools import tool_registry
 

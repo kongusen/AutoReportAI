@@ -16,13 +16,14 @@ import numpy as np
 
 from ...core.security_utils import decrypt_data
 from ...models.data_source import DataSource
+from .base_connector import BaseConnector, ConnectorConfig, QueryResult
 
 
 @dataclass
-class DorisConfig:
+class DorisConfig(ConnectorConfig):
     """Doris配置"""
-    fe_hosts: List[str]
-    be_hosts: List[str] 
+    fe_hosts: List[str] = None
+    be_hosts: List[str] = None
     http_port: int = 8030
     query_port: int = 9030
     database: str = "default"
@@ -30,6 +31,12 @@ class DorisConfig:
     password: str = ""
     load_balance: bool = True
     timeout: int = 30
+    
+    def __post_init__(self):
+        if self.fe_hosts is None:
+            self.fe_hosts = ["localhost"]
+        if self.be_hosts is None:
+            self.be_hosts = ["localhost"]
 
 
 @dataclass
@@ -44,10 +51,11 @@ class DorisQueryResult:
     fe_host: str
 
 
-class DorisConnector:
+class DorisConnector(BaseConnector):
     """Apache Doris连接器"""
     
     def __init__(self, config: DorisConfig):
+        super().__init__(config)
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.current_fe_index = 0  # 当前使用的FE节点索引
@@ -60,16 +68,19 @@ class DorisConnector:
             keepalive_timeout=60
         )
         
-    async def __aenter__(self):
+    async def connect(self) -> None:
+        """建立连接"""
         self.session = aiohttp.ClientSession(
             connector=self.connector,
             timeout=self.timeout
         )
-        return self
+        self._connected = True
         
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def disconnect(self) -> None:
+        """断开连接"""
         if hasattr(self, 'session'):
             await self.session.close()
+        self._connected = False
     
     @classmethod
     def from_data_source(cls, data_source: DataSource) -> 'DorisConnector':
@@ -147,7 +158,7 @@ class DorisConnector:
         self, 
         sql: str, 
         parameters: Optional[Dict[str, Any]] = None
-    ) -> DorisQueryResult:
+    ) -> QueryResult:
         """
         执行SQL查询 - 使用管理 API 的 show_proc 机制
         
@@ -191,7 +202,7 @@ class DorisConnector:
             self.logger.error(f"Doris query failed: {e}")
             raise Exception(f"Query execution failed: {str(e)}")
     
-    async def _get_databases(self, fe_host: str, start_time: float) -> DorisQueryResult:
+    async def _get_databases(self, fe_host: str, start_time: float) -> QueryResult:
         """通过管理API获取数据库列表"""
         
         url = f"http://{fe_host}:{self.config.http_port}/api/show_proc"
@@ -371,6 +382,69 @@ class DorisConnector:
             self.logger.error(f"Failed to get table schema: {e}")
             return {"error": str(e)}
     
+    async def get_all_tables(self) -> List[str]:
+        """获取所有表名"""
+        try:
+            # 使用管理API获取表列表
+            fe_host = await self._get_available_fe_host()
+            url = f"http://{fe_host}:{self.config.http_port}/api/show_proc"
+            params = {"path": f"/dbs/{self.config.database}"}
+            auth = aiohttp.BasicAuth(self.config.username, self.config.password)
+            
+            async with self.session.get(url, params=params, auth=auth) as response:
+                response.raise_for_status()
+                result = await response.json()
+                
+                if result.get("code") != 0:
+                    self.logger.warning(f"Failed to get tables: {result.get('msg', 'Unknown error')}")
+                    return []
+                
+                # 从结果中提取表名
+                tables = []
+                data = result.get("data", [])
+                for row in data:
+                    if len(row) >= 2:
+                        table_name = row[1]  # 表名通常在第二列
+                        # 过滤系统表
+                        if not table_name.startswith('__'):
+                            tables.append(table_name)
+                
+                return tables
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get tables: {e}")
+            return []
+    
+    async def get_table_fields(self, table_name: str = None) -> List[str]:
+        """获取表的字段列表，如果未指定表名则获取所有表的字段"""
+        try:
+            if table_name:
+                # 获取指定表的字段
+                schema = await self.get_table_schema(table_name)
+                if "error" in schema:
+                    return []
+                return [col["name"] for col in schema.get("columns", [])]
+            else:
+                # 获取所有表的字段
+                all_fields = set()
+                tables = await self.get_all_tables()
+                
+                for table in tables[:5]:  # 限制检查前5个表以避免过多请求
+                    try:
+                        schema = await self.get_table_schema(table)
+                        if "error" not in schema:
+                            for col in schema.get("columns", []):
+                                all_fields.add(col["name"])
+                    except Exception as e:
+                        self.logger.warning(f"Failed to get schema for table {table}: {e}")
+                        continue
+                
+                return list(all_fields)
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get table fields: {e}")
+            return []
+    
     async def get_table_statistics(self, table_name: str) -> Dict[str, Any]:
         """获取表统计信息"""
         
@@ -538,3 +612,114 @@ class DorisConnector:
 def create_doris_connector(data_source: DataSource) -> DorisConnector:
     """创建Doris连接器"""
     return DorisConnector.from_data_source(data_source)
+
+    async def get_fields(self, table_name: Optional[str] = None) -> List[str]:
+        """获取字段列表"""
+        try:
+            if not self._connected:
+                await self.connect()
+            
+            fe_host = await self._get_available_fe_host()
+            
+            if table_name:
+                # 获取指定表的字段
+                url = f"http://{fe_host}:{self.config.http_port}/api/show_proc"
+                params = {"path": f"/dbs/{self.config.database}/{table_name}/schema"}
+                auth = aiohttp.BasicAuth(self.config.username, self.config.password)
+                
+                async with self.session.get(url, params=params, auth=auth) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                
+                if result.get("code") == 0:
+                    fields = []
+                    for field in result.get("data", []):
+                        if isinstance(field, dict) and "Field" in field:
+                            fields.append(field["Field"])
+                    return fields
+                else:
+                    self.logger.warning(f"Failed to get fields for table {table_name}: {result.get('msg')}")
+                    return []
+            else:
+                # 获取所有表的字段
+                tables = await self.get_tables()
+                all_fields = []
+                for table in tables[:5]:  # 限制表数量避免性能问题
+                    table_fields = await self.get_fields(table)
+                    all_fields.extend(table_fields)
+                return list(set(all_fields))  # 去重
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get Doris fields: {e}")
+            return []
+    
+    async def get_tables(self) -> List[str]:
+        """获取表列表"""
+        try:
+            if not self._connected:
+                await self.connect()
+            
+            fe_host = await self._get_available_fe_host()
+            
+            url = f"http://{fe_host}:{self.config.http_port}/api/show_proc"
+            params = {"path": f"/dbs/{self.config.database}/tables"}
+            auth = aiohttp.BasicAuth(self.config.username, self.config.password)
+            
+            async with self.session.get(url, params=params, auth=auth) as response:
+                response.raise_for_status()
+                result = await response.json()
+            
+            if result.get("code") == 0:
+                tables = []
+                for table in result.get("data", []):
+                    if isinstance(table, dict) and "Name" in table:
+                        tables.append(table["Name"])
+                return tables
+            else:
+                self.logger.warning(f"Failed to get tables: {result.get('msg')}")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get Doris tables: {e}")
+            return []
+    
+    async def execute_optimized_query(
+        self, 
+        sql: str, 
+        optimization_hints: Optional[List[str]] = None
+    ) -> QueryResult:
+        """执行优化查询"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            if not self._connected:
+                await self.connect()
+            
+            # 应用优化提示
+            if optimization_hints:
+                for hint in optimization_hints:
+                    sql = f"/*+ {hint} */ {sql}"
+            
+            # 执行查询
+            result = await self.execute_query(sql)
+            
+            return result
+            
+        except Exception as e:
+            execution_time = asyncio.get_event_loop().time() - start_time
+            self.logger.error(f"Optimized query failed: {e}")
+            
+            return QueryResult(
+                data=pd.DataFrame(),
+                execution_time=execution_time,
+                success=False,
+                error_message=str(e)
+            )
+    
+    def validate_config(self) -> bool:
+        """验证配置"""
+        if not self.config.fe_hosts:
+            return False
+        if not self.config.database:
+            return False
+        return True

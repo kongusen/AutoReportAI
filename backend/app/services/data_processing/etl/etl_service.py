@@ -10,7 +10,7 @@ from app import crud, models
 from app.core.config import settings
 from app.core.security_utils import ConnectionStringError, validate_connection_string
 from app.db.session import get_db_session
-from ...data_sanitization_service import data_sanitizer
+from ..data_sanitization_service import data_sanitizer
 from .etl_engine_service import ETLTransformationEngine
 from .intelligent_etl_executor import (
     ETLInstructions,

@@ -14,7 +14,7 @@ from app.models.user import User
 from app.models.report_history import ReportHistory
 from app.schemas.report_history import ReportHistoryCreate, ReportHistoryResponse
 from app.services.report_generation.generator import ReportGenerationService as ReportGenerator
-from app.services.intelligent_report_service import IntelligentReportService
+from app.services.agents.orchestration import AgentOrchestrator
 # Enhanced Agent-based report generation
 from app.services.agents.core.intelligent_pipeline_orchestrator import pipeline_orchestrator, PipelineContext
 import logging
@@ -476,15 +476,24 @@ async def generate_report_task(
             report_record = report_history.create(db=db, obj_in=report_data)
             db.commit()
         
-        # 初始化智能报告服务
-        intelligent_report_service = IntelligentReportService()
+        # 初始化Agent编排器
+        agent_orchestrator = AgentOrchestrator()
         
-        # 生成智能报告
-        result = await intelligent_report_service.generate_intelligent_report(
-            template_id=template_id,
-            data_source_id=data_source_id,
-            user_id=user_id
-        )
+        # 使用Agent系统生成智能报告
+        placeholder_input = {
+            "template_id": template_id,
+            "data_source_id": data_source_id,
+            "user_id": user_id,
+            "placeholder_type": "comprehensive"
+        }
+        
+        agent_result = await agent_orchestrator.execute(placeholder_input)
+        result = {
+            "filled_template": agent_result.data if agent_result.success else "",
+            "processing_metadata": agent_result.metadata or {},
+            "success": agent_result.success,
+            "error_message": agent_result.error_message if not agent_result.success else None
+        }
         
         # 更新报告状态
         from app.db.session import get_db_session
@@ -527,8 +536,8 @@ async def generate_intelligent_report_task(
 ):
     """后台智能报告生成任务"""
     try:
-        # 初始化智能报告服务，支持优化参数
-        intelligent_report_service = IntelligentReportService()
+        # 初始化Agent编排器，支持优化参数
+        agent_orchestrator = AgentOrchestrator()
         
         # 根据优化级别配置参数
         config = {
@@ -546,13 +555,22 @@ async def generate_intelligent_report_task(
             config["streaming_mode"] = True
             config["memory_threshold"] = 0.8
         
-        # 生成智能报告
-        result = await intelligent_report_service.generate_intelligent_report_with_config(
-            template_id=template_id,
-            data_source_id=data_source_id,
-            user_id=user_id,
-            config=config
-        )
+        # 使用Agent系统生成智能报告
+        placeholder_input = {
+            "template_id": template_id,
+            "data_source_id": data_source_id,
+            "user_id": user_id,
+            "placeholder_type": "comprehensive",
+            "config": config
+        }
+        
+        agent_result = await agent_orchestrator.execute(placeholder_input)
+        result = {
+            "filled_template": agent_result.data if agent_result.success else "",
+            "processing_metadata": agent_result.metadata or {},
+            "success": agent_result.success,
+            "error_message": agent_result.error_message if not agent_result.success else None
+        }
         
         # 更新报告状态
         from app.db.session import get_db_session

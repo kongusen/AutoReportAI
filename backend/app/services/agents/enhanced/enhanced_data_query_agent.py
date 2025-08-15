@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union, Tuple
 from datetime import datetime, timedelta
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
-from ..data_query_agent import DataQueryAgent, QueryRequest, QueryResult
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
+from ..specialized.data_query_agent import DataQueryAgent, QueryRequest, QueryResult
 from ..security import sandbox_manager, SandboxLevel
 from ..tools import tool_registry, ToolCategory
 

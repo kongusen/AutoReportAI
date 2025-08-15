@@ -15,8 +15,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Tuple
 import json
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType
-from ..analysis_agent import AnalysisAgent
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType
+from ..specialized.schema_analysis_agent import AnalysisAgent
 
 
 logger = logging.getLogger(__name__)

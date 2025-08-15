@@ -46,14 +46,14 @@ from .enhanced_analysis_agent import (
 
 from .enhanced_visualization_agent import (
     EnhancedVisualizationAgent,
-    SmartVisualizationRequest,
+    SmartChartRequest,
     ChartRecommendation,
-    DesignSuggestion,
-    StorytellingElement,
+    ColorPalette,
+    LayoutConfig,
     ChartRecommender,
     ColorHarmonyEngine,
     LayoutOptimizer,
-    DataStoryteller
+    StorytellingEngine
 )
 
 __all__ = [
@@ -90,12 +90,12 @@ __all__ = [
     
     # 增强可视化Agent
     'EnhancedVisualizationAgent',
-    'SmartVisualizationRequest',
+    'SmartChartRequest',
     'ChartRecommendation',
-    'DesignSuggestion',
-    'StorytellingElement',
+    'ColorPalette',
+    'LayoutConfig',
     'ChartRecommender',
     'ColorHarmonyEngine',
     'LayoutOptimizer',
-    'DataStoryteller'
+    'StorytellingEngine'
 ]

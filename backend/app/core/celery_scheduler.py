@@ -85,7 +85,7 @@ class CelerySchedulerManager:
             # 注册到 Celery Beat
             task_name = f"scheduled_task_{task.id}"
             self.celery_app.conf.beat_schedule[task_name] = {
-                'task': 'app.core.worker.execute_scheduled_task',
+                'task': 'app.services.task.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
                 'schedule': schedule,
                 'args': (task.id,),
                 'options': {
@@ -236,7 +236,7 @@ class CelerySchedulerManager:
                     return {"status": "error", "message": f"任务 {task_id} 未激活"}
             
             # 提交任务到 Celery 队列
-            from app.core.worker import intelligent_report_generation_pipeline
+            from app.services.task.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
             result = intelligent_report_generation_pipeline.delay(task_id, user_id)
             
             logger.info(f"任务 {task_id} 已提交立即执行，Celery task ID: {result.id}")

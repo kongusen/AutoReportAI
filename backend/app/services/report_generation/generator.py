@@ -11,9 +11,9 @@ from app.core.logging_config import get_module_logger, get_performance_logger
 from ..ai_integration import AIService
 from ..data_processing import DataRetrievalService
 from .composer import ReportCompositionService
-from ..template_parser_service import TemplateParser
-from ..tool_dispatcher_service import ToolDispatcherService
-from ..word_generator_service import WordGeneratorService
+from .document_pipeline import TemplateParser
+from ..agents.orchestration import AgentOrchestrator
+from .word_generator_service import WordGeneratorService
 
 # Get module-specific loggers
 logger = get_module_logger('report_generation')
@@ -33,13 +33,13 @@ class ReportGenerationService:
     def __init__(self, db: Session):
         self.db = db
         self.template_parser = TemplateParser()
-        self.tool_dispatcher = ToolDispatcherService(db)
+        self.agent_orchestrator = AgentOrchestrator()
         self.composition_service = ReportCompositionService()
         self.word_generator = WordGeneratorService()
         self.ai_service = AIService(db)
         self.data_retrieval = DataRetrievalService()
 
-    def generate_report(
+    async def generate_report(
         self,
         task_id: int,
         template_id: int,
@@ -99,12 +99,16 @@ class ReportGenerationService:
                 placeholder_description = placeholder.get("description", "")
 
                 try:
-                    # Use the tool dispatcher to process the placeholder
-                    result = self.tool_dispatcher.dispatch(
-                        data_source_id=data_source_id,
-                        placeholder_type=placeholder_type,
-                        placeholder_description=placeholder_description,
-                    )
+                    # Use the agent orchestrator to process the placeholder
+                    placeholder_input = {
+                        "placeholder_type": placeholder_type,
+                        "description": placeholder_description,
+                        "data_source_id": str(data_source_id),
+                    }
+                    
+                    # Execute using agent orchestrator
+                    agent_result = await self.agent_orchestrator.execute(placeholder_input)
+                    result = agent_result.data if agent_result.success else f"[Error: {agent_result.error_message}]"
 
                     # Format the placeholder key for replacement
                     if placeholder_type == "scalar":

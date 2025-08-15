@@ -98,7 +98,7 @@ def start_celery_worker():
         # 构建Celery启动命令
         cmd = [
             sys.executable, "-m", "celery", 
-            "-A", "app.core.worker.celery_app",
+            "-A", "app.services.task.core.worker.celery_app",
             "worker",
             "--loglevel=info",
             "--concurrency=2",

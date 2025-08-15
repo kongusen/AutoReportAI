@@ -87,3 +87,21 @@ test-quick:
 # 调试模式测试
 test-debug:
 	python -m pytest tests/ -v --tb=long --log-cli-level=DEBUG
+
+# Celery相关命令
+celery-worker:
+	celery -A app.services.task.core.worker.celery_app worker --loglevel=info --concurrency=2
+
+celery-beat:
+	celery -A app.services.task.core.worker.celery_app beat --loglevel=info
+
+celery-monitor:
+	celery -A app.services.task.core.worker.celery_app flower
+
+# 启动完整服务
+start-all:
+	@echo "启动完整服务（API + Celery Worker + Celery Beat）"
+	@echo "请确保Redis服务正在运行"
+	@echo "在另一个终端运行: make celery-worker"
+	@echo "在另一个终端运行: make celery-beat"
+	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

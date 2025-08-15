@@ -188,7 +188,7 @@ async def test_data_source(
 ):
     """测试数据源连接，支持多种ID格式"""
     import time
-    from ...services.data_source_service import data_source_service
+    from ...services.data_sources import data_source_service
     
     # 使用新的ID解析系统
     data_source = resolve_data_source_id(data_source_id, current_user.id, db)
@@ -247,7 +247,7 @@ async def sync_data_source(
     
     # 实际执行数据源同步逻辑
     try:
-        from ...services.data_source_service import data_source_service
+        from ...services.data_sources import data_source_service
         sync_result = await data_source_service.sync_data_source(str(data_source.id))
         
         if sync_result.get("success"):

@@ -119,7 +119,7 @@ class UnifiedTaskScheduler:
     async def _load_scheduled_tasks_celery(self):
         """为Celery Beat加载调度任务"""
         try:
-            from app.core.worker import celery_app
+            from app.services.task.core.worker import celery_app
             from celery.schedules import crontab
             
             with get_db_session() as db:
@@ -148,7 +148,7 @@ class UnifiedTaskScheduler:
                             # 注册到Celery Beat
                             task_name = f"unified_task_{task.id}"
                             celery_app.conf.beat_schedule[task_name] = {
-                                'task': 'app.core.worker.execute_scheduled_task',
+                                'task': 'app.services.task.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
                                 'schedule': schedule,
                                 'args': (task.id,)
                             }
@@ -215,7 +215,7 @@ class UnifiedTaskScheduler:
                     return
                 
                 # 使用Celery执行实际的任务处理
-                from app.core.worker import intelligent_report_generation_pipeline
+                from app.services.task.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
                 user_id = str(task.owner_id)
                 
                 # 异步启动Celery任务
@@ -256,7 +256,7 @@ class UnifiedTaskScheduler:
     async def _reload_celery_task(self, task_id: int, cron_expression: str):
         """重新加载单个Celery任务"""
         try:
-            from app.core.worker import celery_app
+            from app.services.task.core.worker import celery_app
             from celery.schedules import crontab
             
             # 解析cron表达式
@@ -274,7 +274,7 @@ class UnifiedTaskScheduler:
                 
                 task_name = f"unified_task_{task_id}"
                 celery_app.conf.beat_schedule[task_name] = {
-                    'task': 'app.core.worker.execute_scheduled_task',
+                    'task': 'app.services.task.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
                     'schedule': schedule,
                     'args': (task_id,)
                 }
@@ -295,7 +295,7 @@ class UnifiedTaskScheduler:
                     self.apscheduler.remove_job(job_id)
             else:
                 # 对于Celery，从beat_schedule中移除
-                from app.core.worker import celery_app
+                from app.services.task.core.worker import celery_app
                 if job_id in celery_app.conf.beat_schedule:
                     del celery_app.conf.beat_schedule[job_id]
             
@@ -366,7 +366,8 @@ class UnifiedTaskScheduler:
     async def _execute_with_priority(self, task_id: int, user_id: str) -> Dict[str, Any]:
         """智能优先级执行 - 检查worker状态并优化执行"""
         try:
-            from app.core.worker import intelligent_report_generation_pipeline, celery_app
+            from app.services.task.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
+            from app.services.task.core.worker import celery_app
             
             # 检查当前活跃的worker数量
             active_workers = celery_app.control.inspect().active_queues()
@@ -412,7 +413,7 @@ class UnifiedTaskScheduler:
         except Exception as e:
             logger.error(f"优先级执行检查失败: {e}")
             # 回退到普通执行
-            from app.core.worker import intelligent_report_generation_pipeline
+            from app.services.task.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
             celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
             return {
                 "celery_task_id": celery_result.id,
@@ -492,7 +493,7 @@ class UnifiedTaskScheduler:
             ]
         else:
             try:
-                from app.core.worker import celery_app
+                from app.services.task.core.worker import celery_app
                 info["celery_beat_schedule"] = list(celery_app.conf.beat_schedule.keys())
             except:
                 info["celery_beat_schedule"] = []
@@ -512,7 +513,7 @@ class UnifiedTaskScheduler:
                 await self._load_scheduled_tasks_apscheduler()
             else:
                 # 清除Celery调度
-                from app.core.worker import celery_app
+                from app.services.task.core.worker import celery_app
                 keys_to_remove = [k for k in celery_app.conf.beat_schedule.keys() if k.startswith("unified_task_")]
                 for key in keys_to_remove:
                     del celery_app.conf.beat_schedule[key]

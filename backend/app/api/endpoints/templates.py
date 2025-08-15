@@ -13,8 +13,11 @@ from app.models.user import User
 from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema
 from app.crud import template as crud_template
-from app.services.template_parser_service import template_parser
+from app.services.report_generation.document_pipeline import TemplateParser
 import re
+
+# 创建全局实例
+template_parser = TemplateParser()
 
 router = APIRouter()
 

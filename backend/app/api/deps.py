@@ -272,29 +272,29 @@ def get_enhanced_ai_service(db: Session = Depends(get_db)):
         )
 
 
-def get_content_generator(db: Session = Depends(get_db)):
-    """Get content generator dependency"""
+def get_content_generation_agent(db: Session = Depends(get_db)):
+    """Get content generation agent dependency"""
     try:
-        from app.services.ai_integration import ContentGenerator
-        return ContentGenerator(db)
+        from app.services.agents.content_generation_agent import ContentGenerationAgent
+        return ContentGenerationAgent()
     except Exception as e:
-        logger.error(f"Failed to create ContentGenerator: {e}")
+        logger.error(f"Failed to create ContentGenerationAgent: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Content generator service unavailable"
+            detail="Content generation agent unavailable"
         )
 
 
-def get_chart_generator(db: Session = Depends(get_db)):
-    """Get chart generator dependency"""
+def get_visualization_agent(db: Session = Depends(get_db)):
+    """Get visualization agent dependency"""
     try:
-        from app.services.ai_integration import ChartGenerator
-        return ChartGenerator(db)
+        from app.services.agents.visualization_agent import VisualizationAgent
+        return VisualizationAgent()
     except Exception as e:
-        logger.error(f"Failed to create ChartGenerator: {e}")
+        logger.error(f"Failed to create VisualizationAgent: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chart generator service unavailable"
+            detail="Visualization agent unavailable"
         )
 
 
@@ -387,6 +387,72 @@ def get_all_services_health(db: Session = Depends(get_db)) -> dict:
             "error": str(e),
             "services": services_health
         }
+
+
+# Task Management Services
+def get_task_manager(db: Session = Depends(get_db)):
+    """Get task manager dependency"""
+    try:
+        from app.services.task.management.task_manager import TaskManager
+        return TaskManager()
+    except Exception as e:
+        logger.error(f"Failed to create TaskManager: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Task manager service unavailable"
+        )
+
+
+def get_status_tracker(db: Session = Depends(get_db)):
+    """Get status tracker dependency"""
+    try:
+        from app.services.task.management.status_tracker import StatusTracker
+        return StatusTracker()
+    except Exception as e:
+        logger.error(f"Failed to create StatusTracker: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Status tracker service unavailable"
+        )
+
+
+def get_task_scheduler(db: Session = Depends(get_db)):
+    """Get task scheduler dependency"""
+    try:
+        from app.services.task.core.scheduler import TaskScheduler
+        return TaskScheduler()
+    except Exception as e:
+        logger.error(f"Failed to create TaskScheduler: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Task scheduler service unavailable"
+        )
+
+
+def get_agent_executor(db: Session = Depends(get_db)):
+    """Get agent executor dependency"""
+    try:
+        from app.services.task.execution.agent_executor import AgentExecutor
+        return AgentExecutor()
+    except Exception as e:
+        logger.error(f"Failed to create AgentExecutor: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent executor service unavailable"
+        )
+
+
+def get_fallback_handler(db: Session = Depends(get_db)):
+    """Get fallback handler dependency"""
+    try:
+        from app.services.task.execution.fallback import FallbackHandler
+        return FallbackHandler()
+    except Exception as e:
+        logger.error(f"Failed to create FallbackHandler: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Fallback handler service unavailable"
+        )
 
 
 def check_service_dependencies() -> Dict[str, Any]:

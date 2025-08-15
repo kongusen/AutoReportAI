@@ -11,14 +11,14 @@ __version__ = "1.0.0"
 from .etl_service import ETLService, ETLJobStatus
 from .etl_engine_service import ETLTransformationEngine
 from .intelligent_etl_executor import IntelligentETLExecutor
-from .etl_job_scheduler import ETLJobScheduler, ETLJobExecutionStatus
+from .celery_etl_scheduler import CeleryETLScheduler, ETLJobExecutionStatus
 
 # 模块导出
 __all__ = [
     "ETLService",
-    "ETLJobStatus",
+    "ETLJobStatus", 
     "ETLTransformationEngine", 
     "IntelligentETLExecutor",
-    "ETLJobScheduler",
+    "CeleryETLScheduler",
     "ETLJobExecutionStatus"
 ]

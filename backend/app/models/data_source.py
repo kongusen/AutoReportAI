@@ -81,6 +81,10 @@ class DataSource(Base):
         "PlaceholderMapping", back_populates="data_source"
     )
 
+    # 表结构关系
+    table_schemas = relationship("TableSchema", back_populates="data_source", cascade="all, delete-orphan")
+    table_relationships = relationship("TableRelationship", back_populates="data_source", cascade="all, delete-orphan")
+
     # 学习系统关系
     error_logs = relationship("ErrorLog", back_populates="data_source")
     learning_rules = relationship("LearningRule", back_populates="data_source")

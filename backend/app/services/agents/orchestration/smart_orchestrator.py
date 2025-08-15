@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 from datetime import datetime, timedelta
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType, AgentError
 from ..enhanced.enhanced_data_query_agent import EnhancedDataQueryAgent, SemanticQueryRequest
 from ..enhanced.enhanced_content_generation_agent import EnhancedContentGenerationAgent, ContextualContentRequest
 from ..enhanced.enhanced_analysis_agent import EnhancedAnalysisAgent, MLAnalysisRequest

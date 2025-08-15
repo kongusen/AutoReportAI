@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 添加项目路径到 sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app.core.worker import celery_app
+from app.services.task.core.worker import celery_app
 from app.core.celery_scheduler import get_scheduler_manager
 from app.db.session import get_db_session
 from app.models.task import Task

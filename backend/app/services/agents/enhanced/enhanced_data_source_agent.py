@@ -12,8 +12,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType
-from ..data_query_agent import DataQueryAgent
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType
+from ..specialized.data_query_agent import DataQueryAgent
 
 
 logger = logging.getLogger(__name__)

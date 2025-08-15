@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.api.deps import get_current_active_user, get_db
 from app.core.celery_scheduler import get_scheduler_manager
-from app.core.worker import celery_app
+from app.services.task.core.worker import celery_app
 from app.models.user import User
 from app.schemas.base import APIResponse
 

@@ -20,6 +20,8 @@ from .quality_checker import (
     LanguageAnalyzer,
     DataConsistencyValidator
 )
+from .document_pipeline import TemplateParser
+from .word_generator_service import WordGeneratorService
 
 # 模块导出
 __all__ = [
@@ -33,5 +35,7 @@ __all__ = [
     "QualityIssueType",
     "QualitySeverity",
     "LanguageAnalyzer",
-    "DataConsistencyValidator"
+    "DataConsistencyValidator",
+    "TemplateParser",
+    "WordGeneratorService"
 ]

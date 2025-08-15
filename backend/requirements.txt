@@ -62,3 +62,4 @@ matplotlib
 seaborn
 plotly
 kaleido
+scikit-learn

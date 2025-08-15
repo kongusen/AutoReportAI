@@ -15,7 +15,6 @@ from app.schemas.base import APIResponse, HealthCheckResponse
 class APIVersion(str, Enum):
     """API版本枚举"""
     V1 = "v1"
-    V2 = "v2"  # 为未来版本预留
 
 
 class VersionInfo(BaseModel):
@@ -39,31 +38,23 @@ class APIVersionManager:
                 version="v1",
                 status="active",
                 release_date="2024-01-01",
-                description="初始API版本，提供核心功能",
+                description="现代化API架构，提供完整的智能报告生成功能",
                 new_features=[
+                    "统一的API响应格式",
+                    "改进的错误处理和状态码",
+                    "更好的分页支持",
+                    "增强的认证系统",
+                    "Agent智能编排系统",
                     "智能占位符处理",
                     "报告生成服务",
                     "数据源管理",
-                    "用户认证和授权",
-                    "模板管理"
-                ]
-            ),
-            APIVersion.V2: VersionInfo(
-                version="v2",
-                status="active",
-                release_date="2024-07-22",
-                description="重构后的现代API架构，提供更好的错误处理和响应格式",
-                new_features=[
-                    "统一的API响应格式",
-                    "改进的错误处理",
-                    "更好的分页支持",
-                    "增强的认证系统",
-                    "现代化的端点设计"
+                    "模板管理",
+                    "任务调度和监控"
                 ]
             )
         }
-        self.current_version = APIVersion.V2
-        self.supported_versions = [APIVersion.V1, APIVersion.V2]
+        self.current_version = APIVersion.V1
+        self.supported_versions = [APIVersion.V1]
     
     def get_version_info(self, version: str) -> Optional[VersionInfo]:
         """获取版本信息"""

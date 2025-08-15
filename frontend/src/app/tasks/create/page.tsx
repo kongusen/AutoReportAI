@@ -18,8 +18,9 @@ import { CronEditor } from '@/components/forms/CronEditor'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTemplateStore } from '@/features/templates/templateStore'
-import { TaskCreate } from '@/types'
+import { TaskCreate, ProcessingMode, AgentWorkflowType } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
+import { TaskConfigForm } from '@/components/tasks/TaskConfigForm'
 
 const taskSchema = z.object({
   name: z.string().min(1, '任务名称不能为空').max(100, '任务名称不能超过100个字符'),
@@ -29,6 +30,12 @@ const taskSchema = z.object({
   schedule: z.string().optional(),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
+  
+  // 新增：Agent配置字段
+  processing_mode: z.enum(['simple', 'intelligent', 'hybrid']).default('intelligent'),
+  workflow_type: z.enum(['simple_report', 'statistical_analysis', 'chart_generation', 'comprehensive_analysis', 'custom_workflow']).default('simple_report'),
+  max_context_tokens: z.number().min(1000).max(128000).default(32000),
+  enable_compression: z.boolean().default(true),
 }).refine((data) => {
   if (data.schedule && !isValidCron(data.schedule)) {
     return false
@@ -71,6 +78,10 @@ export default function CreateTaskPage() {
       is_active: true,
       recipients: [],
       schedule: '',
+      processing_mode: 'intelligent' as ProcessingMode,
+      workflow_type: 'simple_report' as AgentWorkflowType,
+      max_context_tokens: 32000,
+      enable_compression: true,
     },
   })
 
@@ -158,6 +169,7 @@ export default function CreateTaskPage() {
 
   const tabItems = [
     { key: 'basic', label: '基本信息' },
+    { key: 'ai_config', label: 'AI配置' },
     { key: 'schedule', label: '调度设置' },
     { key: 'notification', label: '通知配置' },
   ]
@@ -331,6 +343,18 @@ function TaskTabs({
             </div>
           </CardContent>
         </Card>
+      </TabPanel>
+
+      <TabPanel value="ai_config" activeValue={activeKey}>
+        <TaskConfigForm
+          task={getValues()}
+          onChange={(config) => {
+            Object.entries(config).forEach(([key, value]) => {
+              setValue(key as keyof FormData, value)
+            })
+          }}
+          showAdvanced={true}
+        />
       </TabPanel>
 
       <TabPanel value="schedule" activeValue={activeKey}>

@@ -2,10 +2,15 @@
 export interface ApiResponse<T = any> {
   success: boolean
   data?: T
-  message?: string
-  error?: string
-  errors?: string[]
-  timestamp?: string
+  message: string | null
+  error?: string | null
+  errors?: Array<{
+    field?: string
+    message: string
+    code?: string
+  }> | null
+  meta?: Record<string, any> | null
+  timestamp: string
   request_id?: string
   version?: string
 }
@@ -132,6 +137,11 @@ export interface TemplateCreate extends Omit<Template, 'id' | 'user_id' | 'creat
 }
 export interface TemplateUpdate extends Partial<Omit<TemplateCreate, 'file'>> {}
 
+// Agent编排相关枚举
+export type TaskStatus = 'pending' | 'processing' | 'agent_orchestrating' | 'generating' | 'completed' | 'failed' | 'cancelled'
+export type ProcessingMode = 'simple' | 'intelligent' | 'hybrid'
+export type AgentWorkflowType = 'simple_report' | 'statistical_analysis' | 'chart_generation' | 'comprehensive_analysis' | 'custom_workflow'
+
 // 任务类型
 export interface Task {
   id: number
@@ -146,6 +156,23 @@ export interface Task {
   is_active: boolean
   created_at: string
   updated_at?: string
+  
+  // 新增：Agent编排相关字段
+  status?: TaskStatus
+  processing_mode?: ProcessingMode
+  workflow_type?: AgentWorkflowType
+  
+  // 新增：执行统计字段
+  execution_count?: number
+  success_count?: number
+  failure_count?: number
+  success_rate?: number
+  last_execution_at?: string
+  average_execution_time?: number
+  
+  // 新增：配置字段
+  max_context_tokens?: number
+  enable_compression?: boolean
 }
 
 export interface TaskCreate extends Omit<Task, 'id' | 'owner_id' | 'unique_id' | 'created_at' | 'updated_at'> {}
@@ -155,11 +182,23 @@ export interface TaskUpdate extends Partial<TaskCreate> {}
 export interface TaskProgress {
   task_id: string
   progress: number
-  status: 'pending' | 'queued' | 'analyzing' | 'querying' | 'processing' | 'generating' | 'completed' | 'failed' | 'retrying'
+  status: TaskStatus | 'queued' | 'analyzing' | 'querying' | 'retrying'
   message?: string
   current_step?: string
   estimated_time?: number
   updated_at?: string
+  
+  // Agent编排相关进度信息
+  workflow_step?: string
+  agent_execution_times?: Record<string, number>
+  placeholder_results?: Array<{
+    placeholder_name: string
+    success: boolean
+    content?: string
+    error?: string
+  }>
+  has_errors?: boolean
+  error_details?: string
 }
 
 // 报告类型

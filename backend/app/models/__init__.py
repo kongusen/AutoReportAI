@@ -12,13 +12,16 @@ from .learning_data import (
 )
 from .placeholder_mapping import PlaceholderMapping
 from .report_history import ReportHistory
-from .task import Task
+from .task import Task, TaskExecution, TaskStatus, ProcessingMode, AgentWorkflowType
 from .template import Template
 from .user import User
 from .user_profile import UserProfile
 
+# Task模型现在包含Agent编排支持，无需独立的Agent模型
+
 # 确保导入顺序正确，避免外键引用问题
 __all__ = [
+    # 原有模型
     "User",
     "UserProfile",
     "Template",
@@ -29,6 +32,10 @@ __all__ = [
     "AnalyticsData",
     "PlaceholderMapping",
     "Task",
+    "TaskExecution", 
+    "TaskStatus",
+    "ProcessingMode",
+    "AgentWorkflowType",
     "PlaceholderProcessingHistory",
     "ErrorLog",
     "UserFeedback",

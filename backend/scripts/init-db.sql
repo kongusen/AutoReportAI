@@ -22,30 +22,9 @@ GRANT USAGE ON SCHEMA agents TO postgres;
 GRANT USAGE ON SCHEMA analytics TO postgres;
 GRANT USAGE ON SCHEMA audit TO postgres;
 
--- Create custom data types for agents system
+-- Create custom data types for latest Agent orchestration system
 DO $$ 
 BEGIN
-    -- Agent status enum
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'agent_status') THEN
-        CREATE TYPE agent_status AS ENUM (
-            'idle',
-            'running', 
-            'completed',
-            'failed',
-            'cancelled',
-            'timeout'
-        );
-    END IF;
-    
-    -- Pipeline optimization levels
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'optimization_level') THEN
-        CREATE TYPE optimization_level AS ENUM (
-            'standard',
-            'high_performance', 
-            'memory_optimized'
-        );
-    END IF;
-    
     -- Data source types
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'datasource_type') THEN
         CREATE TYPE datasource_type AS ENUM (
@@ -64,27 +43,36 @@ BEGIN
         );
     END IF;
     
-    -- Report status types
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'report_status') THEN
-        CREATE TYPE report_status AS ENUM (
-            'draft',
-            'processing',
+    -- Task status types for Agent orchestration
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'taskstatus') THEN
+        CREATE TYPE taskstatus AS ENUM (
+            'pending',
+            'processing', 
+            'agent_orchestrating',
+            'generating',
             'completed',
             'failed',
             'cancelled'
         );
     END IF;
     
-    -- Analysis types
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'analysis_type') THEN
-        CREATE TYPE analysis_type AS ENUM (
-            'descriptive',
-            'diagnostic', 
-            'predictive',
-            'prescriptive',
-            'exploratory',
-            'time_series',
-            'anomaly_detection'
+    -- Processing mode types for Agent workflows
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'processingmode') THEN
+        CREATE TYPE processingmode AS ENUM (
+            'simple',
+            'intelligent',
+            'hybrid'
+        );
+    END IF;
+    
+    -- Agent workflow types for intelligent processing
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'agentworkflowtype') THEN
+        CREATE TYPE agentworkflowtype AS ENUM (
+            'simple_report',
+            'statistical_analysis',
+            'chart_generation',
+            'comprehensive_analysis',
+            'custom_workflow'
         );
     END IF;
 END $$;
@@ -253,7 +241,9 @@ BEGIN
     RAISE NOTICE 'AutoReportAI database initialization completed successfully!';
     RAISE NOTICE 'Extensions created: uuid-ossp, pg_trgm, pg_stat_statements, hstore';
     RAISE NOTICE 'Custom schemas created: agents, analytics, audit';
-    RAISE NOTICE 'Custom types created for agents system';
+    RAISE NOTICE 'Latest Agent orchestration system initialized';
+    RAISE NOTICE 'Task orchestration types: taskstatus, processingmode, agentworkflowtype';
+    RAISE NOTICE 'Data source types: datasource_type';
     RAISE NOTICE 'Audit system configured';
     RAISE NOTICE 'Performance monitoring views created';
     RAISE NOTICE 'Database ready for Alembic migrations';

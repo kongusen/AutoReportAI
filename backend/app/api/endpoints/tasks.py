@@ -40,10 +40,12 @@ async def get_tasks(
     total = query.count()
     tasks = query.offset(skip).limit(limit).all()
     
-    # 手动转换数据以避免schema验证问题
+    # 转换为TaskResponse格式，保持向后兼容
     task_dicts = []
     for task in tasks:
+        # 构建兼容的任务数据，包含新字段但有默认值
         task_dict = {
+            # 原有字段
             "id": task.id,
             "name": task.name,
             "description": task.description,
@@ -55,7 +57,20 @@ async def get_tasks(
             "is_active": task.is_active,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-            "unique_id": str(task.id)
+            "unique_id": str(task.id),
+            
+            # 新增字段（可选，有默认值，保持前端兼容）
+            "status": task.status.value if hasattr(task, 'status') and task.status else "pending",
+            "processing_mode": task.processing_mode.value if hasattr(task, 'processing_mode') and task.processing_mode else "intelligent",
+            "workflow_type": task.workflow_type.value if hasattr(task, 'workflow_type') and task.workflow_type else "simple_report",
+            "execution_count": getattr(task, 'execution_count', 0),
+            "success_count": getattr(task, 'success_count', 0),
+            "failure_count": getattr(task, 'failure_count', 0),
+            "success_rate": task.success_rate if hasattr(task, 'success_rate') else 0.0,
+            "last_execution_at": task.last_execution_at.isoformat() if hasattr(task, 'last_execution_at') and task.last_execution_at else None,
+            "average_execution_time": getattr(task, 'average_execution_time', 0.0),
+            "max_context_tokens": getattr(task, 'max_context_tokens', 32000),
+            "enable_compression": getattr(task, 'enable_compression', True)
         }
         task_dicts.append(task_dict)
     

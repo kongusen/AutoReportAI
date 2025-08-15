@@ -230,13 +230,103 @@ export function getDataSourceTypeName(type: string): string {
  * 获取任务状态的显示信息
  */
 export function getTaskStatusInfo(status: string) {
-  const statusInfo: Record<string, { label: string; color: string }> = {
+  const statusInfo: Record<string, { label: string; color: string; icon?: string }> = {
     pending: { label: '等待中', color: 'gray' },
-    running: { label: '执行中', color: 'blue' },
+    processing: { label: '处理中', color: 'blue' },
+    agent_orchestrating: { label: 'AI编排中', color: 'purple' },
+    generating: { label: '生成中', color: 'blue' },
     completed: { label: '已完成', color: 'green' },
-    failed: { label: '已失败', color: 'red' }
+    failed: { label: '已失败', color: 'red' },
+    cancelled: { label: '已取消', color: 'gray' },
+    running: { label: '执行中', color: 'blue' }, // 向后兼容
+    queued: { label: '排队中', color: 'yellow' },
+    analyzing: { label: '分析中', color: 'indigo' },
+    querying: { label: '查询中', color: 'cyan' },
+    retrying: { label: '重试中', color: 'orange' }
   }
   return statusInfo[status] || { label: status, color: 'gray' }
+}
+
+/**
+ * 获取处理模式的显示信息
+ */
+export function getProcessingModeInfo(mode: string) {
+  const modeInfo: Record<string, { label: string; description: string; color: string }> = {
+    simple: { 
+      label: '简单模式', 
+      description: '传统报告生成', 
+      color: 'gray' 
+    },
+    intelligent: { 
+      label: '智能模式', 
+      description: 'AI智能编排', 
+      color: 'blue' 
+    },
+    hybrid: { 
+      label: '混合模式', 
+      description: '智能与传统结合', 
+      color: 'purple' 
+    }
+  }
+  return modeInfo[mode] || { label: mode, description: '', color: 'gray' }
+}
+
+/**
+ * 获取工作流类型的显示信息
+ */
+export function getWorkflowTypeInfo(type: string) {
+  const typeInfo: Record<string, { label: string; description: string; color: string }> = {
+    simple_report: {
+      label: '简单报告',
+      description: '基础报告生成',
+      color: 'gray'
+    },
+    statistical_analysis: {
+      label: '统计分析',
+      description: '数据统计分析报告',
+      color: 'blue'
+    },
+    chart_generation: {
+      label: '图表生成',
+      description: '可视化图表报告',
+      color: 'green'
+    },
+    comprehensive_analysis: {
+      label: '综合分析',
+      description: '全面数据分析报告',
+      color: 'purple'
+    },
+    custom_workflow: {
+      label: '自定义流程',
+      description: '定制化工作流',
+      color: 'orange'
+    }
+  }
+  return typeInfo[type] || { label: type, description: '', color: 'gray' }
+}
+
+/**
+ * 格式化执行时间
+ */
+export function formatExecutionTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}秒`
+  } else if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = Math.round(seconds % 60)
+    return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`
+  } else {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    return minutes > 0 ? `${hours}小时${minutes}分钟` : `${hours}小时`
+  }
+}
+
+/**
+ * 格式化成功率
+ */
+export function formatSuccessRate(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`
 }
 
 /**

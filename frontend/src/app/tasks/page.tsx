@@ -27,8 +27,15 @@ import { Progress } from '@/components/ui/Progress'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { getTaskStatusInfo, formatRelativeTime } from '@/utils'
-import { Task } from '@/types'
+import { 
+  getTaskStatusInfo, 
+  formatRelativeTime, 
+  getProcessingModeInfo, 
+  getWorkflowTypeInfo,
+  formatExecutionTime,
+  formatSuccessRate 
+} from '@/utils'
+import { Task, TaskStatus } from '@/types'
 
 export default function TasksPage() {
   const router = useRouter()
@@ -150,31 +157,47 @@ export default function TasksPage() {
     }
 
     const getProgressMessage = () => {
+      // 优先显示Agent工作流步骤
+      if (progress.workflow_step) {
+        return progress.workflow_step
+      }
+      
       if (progress.current_step && progress.current_step !== progress.message) {
         return progress.current_step
       }
-      return progress.message || '处理中...'
+      
+      // 根据状态显示默认消息
+      const statusMessages: Record<string, string> = {
+        'agent_orchestrating': 'AI智能编排中...',
+        'processing': '数据处理中...',
+        'generating': '报告生成中...',
+        'analyzing': '数据分析中...',
+        'querying': '数据查询中...'
+      }
+      
+      return statusMessages[progress.status] || progress.message || '处理中...'
     }
 
     // 获取错误详情
     const getErrorDetails = () => {
       if (progress.status === 'failed') {
+        // 优先显示error_details
+        if (progress.error_details) {
+          return progress.error_details
+        }
+        
         // 尝试从各个可能的字段获取错误详情
         const details = (progress as any).error || 
                        (progress as any).traceback ||
-                       (progress as any).details ||
-                       (progress as any).error_details
+                       (progress as any).details
         return details
       }
       
-      // 警告状态的详情
-      if (progress.status === 'completed' && (progress as any).has_errors) {
-        const placeholderResults = (progress as any).placeholder_results
-        if (placeholderResults) {
-          const failedPlaceholders = placeholderResults.filter((p: any) => !p.success)
-          if (failedPlaceholders.length > 0) {
-            return `${failedPlaceholders.length} 个占位符处理失败:\n${failedPlaceholders.map((p: any) => `- ${p.placeholder_name}: ${p.error || p.content}`).join('\n')}`
-          }
+      // 警告状态的详情 - 显示占位符处理结果
+      if (progress.status === 'completed' && progress.has_errors && progress.placeholder_results) {
+        const failedPlaceholders = progress.placeholder_results.filter(p => !p.success)
+        if (failedPlaceholders.length > 0) {
+          return `${failedPlaceholders.length} 个占位符处理失败:\n${failedPlaceholders.map(p => `- ${p.placeholder_name}: ${p.error || p.content}`).join('\n')}`
         }
       }
       
@@ -182,10 +205,19 @@ export default function TasksPage() {
     }
 
     const determineStatus = () => {
-      if (progress.status === 'completed' && (progress as any).has_errors) {
+      if (progress.status === 'completed' && progress.has_errors) {
         return 'warning'
       }
       return progress.status as any
+    }
+
+    const getAgentExecutionInfo = () => {
+      if (progress.agent_execution_times && Object.keys(progress.agent_execution_times).length > 0) {
+        return Object.entries(progress.agent_execution_times)
+          .map(([agent, time]) => `${agent}: ${formatExecutionTime(time)}`)
+          .join('\n')
+      }
+      return null
     }
 
     return (
@@ -200,6 +232,37 @@ export default function TasksPage() {
           size="sm"
           onRetry={progress.status === 'failed' ? handleRetryTask : undefined}
         />
+        
+        {/* Agent执行信息 */}
+        {progress.status === 'agent_orchestrating' && getAgentExecutionInfo() && (
+          <div className="mt-1 text-xs text-gray-500">
+            <details className="cursor-pointer">
+              <summary className="hover:text-gray-700">Agent执行详情</summary>
+              <div className="mt-1 p-2 bg-gray-50 rounded text-xs font-mono whitespace-pre-line">
+                {getAgentExecutionInfo()}
+              </div>
+            </details>
+          </div>
+        )}
+        
+        {/* 占位符处理结果 */}
+        {progress.placeholder_results && progress.placeholder_results.length > 0 && (
+          <div className="mt-1 text-xs text-gray-500">
+            <details className="cursor-pointer">
+              <summary className="hover:text-gray-700">
+                占位符处理 ({progress.placeholder_results.filter(p => p.success).length}/{progress.placeholder_results.length})
+              </summary>
+              <div className="mt-1 space-y-1">
+                {progress.placeholder_results.map((result, index) => (
+                  <div key={index} className={`flex items-center gap-2 text-xs ${result.success ? 'text-green-600' : 'text-red-600'}`}>
+                    <span className={`w-2 h-2 rounded-full ${result.success ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className="truncate">{result.placeholder_name}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
       </div>
     )
   }
@@ -255,20 +318,82 @@ export default function TasksPage() {
       ),
     },
     {
+      key: 'workflow_info',
+      title: 'AI工作流',
+      dataIndex: 'workflow_type',
+      render: (workflowType: string, record: Task) => {
+        const workflowInfo = getWorkflowTypeInfo(workflowType || 'simple_report')
+        const modeInfo = getProcessingModeInfo(record.processing_mode || 'intelligent')
+        
+        return (
+          <div className="space-y-1">
+            <div className="flex items-center">
+              <Badge variant="outline" className={`text-${workflowInfo.color}-600 border-${workflowInfo.color}-200`}>
+                {workflowInfo.label}
+              </Badge>
+            </div>
+            <div className="text-xs text-gray-500">
+              {modeInfo.label}
+            </div>
+          </div>
+        )
+      },
+    },
+    {
       key: 'status',
-      title: '状态',
-      dataIndex: 'is_active',
-      render: (isActive: boolean, record: Task) => {
+      title: '执行状态',
+      dataIndex: 'status',
+      render: (status: TaskStatus, record: Task) => {
         const progress = getTaskProgress(record.id.toString())
         
         if (progress) {
           return <TaskProgressIndicator taskId={record.id.toString()} />
         }
         
+        // 显示任务状态和激活状态
+        const statusInfo = getTaskStatusInfo(status || 'pending')
+        
         return (
-          <Badge variant={isActive ? 'success' : 'secondary'}>
-            {isActive ? '运行中' : '已停止'}
-          </Badge>
+          <div className="space-y-1">
+            <Badge variant={statusInfo.color as any}>
+              {statusInfo.label}
+            </Badge>
+            <div className="text-xs text-gray-500">
+              {record.is_active ? '已启用' : '已停用'}
+            </div>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'execution_stats',
+      title: '执行统计',
+      dataIndex: 'execution_count',
+      render: (executionCount: number, record: Task) => {
+        const successRate = record.success_rate || 0
+        const avgTime = record.average_execution_time || 0
+        
+        return (
+          <div className="space-y-1 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-gray-600">执行:</span>
+              <span className="font-medium">{executionCount || 0}次</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-600">成功率:</span>
+              <span className={`font-medium ${successRate >= 0.8 ? 'text-green-600' : successRate >= 0.5 ? 'text-yellow-600' : 'text-red-600'}`}>
+                {formatSuccessRate(successRate)}
+              </span>
+            </div>
+            {avgTime > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">平均:</span>
+                <span className="font-medium text-blue-600">
+                  {formatExecutionTime(avgTime)}
+                </span>
+              </div>
+            )}
+          </div>
         )
       },
     },

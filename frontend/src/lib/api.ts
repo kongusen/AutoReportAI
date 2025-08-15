@@ -10,7 +10,7 @@ const apiClient = axios.create({
   },
 })
 
-// 请求拦截器 - 添加认证token
+// 请求拦截器 - 添加认证token和元数据
 apiClient.interceptors.request.use(
   (config) => {
     // 从localStorage获取token
@@ -20,6 +20,12 @@ apiClient.interceptors.request.use(
         config.headers.Authorization = `Bearer ${token}`
       }
     }
+    
+    // 添加API版本和请求ID
+    config.headers['API-Version'] = 'v1'
+    config.headers['X-Request-ID'] = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    config.headers['X-Client-Version'] = process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0'
+    
     return config
   },
   (error) => {
@@ -27,9 +33,21 @@ apiClient.interceptors.request.use(
   }
 )
 
-// 响应拦截器 - 统一错误处理
+// 响应拦截器 - 统一错误处理和元数据处理
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
+    // 记录API版本和请求ID（如果需要调试）
+    const apiVersion = response.headers['api-version']
+    const requestId = response.headers['x-request-id']
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(`API Response [${apiVersion}] [${requestId}]:`, {
+        status: response.status,
+        url: response.config.url,
+        data: response.data
+      })
+    }
+    
     return response
   },
   (error: AxiosError) => {
@@ -54,13 +72,23 @@ apiClient.interceptors.response.use(
     const { status } = error.response
     const errorData = error.response.data as any
     
-    // 检查是否是新的 ApiResponse 格式
-    const errorMessage = errorData?.message || errorData?.error || errorData?.detail
-    const errorDetail = errorData?.data?.detail || errorData?.detail
+    // 适配现代化的 ApiResponse 格式
+    const errorMessage = errorData?.message || errorData?.error || errorData?.detail || '请求失败'
+    const errorCode = errorData?.code
+    const errorDetails = errorData?.details
+    const errors = errorData?.errors
     
     switch (status) {
       case 400:
-        toast.error(errorMessage || '请求参数错误')
+        // 处理现代化的错误格式
+        if (errors && Array.isArray(errors)) {
+          errors.forEach((err: any) => {
+            const fieldPrefix = err.field ? `${err.field}: ` : ''
+            toast.error(`${fieldPrefix}${err.message}`)
+          })
+        } else {
+          toast.error(errorMessage || '请求参数错误')
+        }
         break
       case 403:
         toast.error(errorMessage || '没有权限访问此资源')
@@ -70,13 +98,19 @@ apiClient.interceptors.response.use(
         break
       case 422:
         // 处理表单验证错误
-        if (errorDetail) {
-          if (Array.isArray(errorDetail)) {
-            errorDetail.forEach((err: any) => {
+        if (errors && Array.isArray(errors)) {
+          errors.forEach((err: any) => {
+            const fieldPrefix = err.field ? `${err.field}: ` : ''
+            toast.error(`${fieldPrefix}${err.message}`)
+          })
+        } else if (errorDetails) {
+          // 兼容旧的验证错误格式
+          if (Array.isArray(errorDetails)) {
+            errorDetails.forEach((err: any) => {
               toast.error(`${err.loc?.join(' ')}: ${err.msg}`)
             })
-          } else if (typeof errorDetail === 'string') {
-            toast.error(errorDetail)
+          } else if (typeof errorDetails === 'string') {
+            toast.error(errorDetails)
           }
         } else {
           toast.error(errorMessage || '请求参数验证失败')

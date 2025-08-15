@@ -16,8 +16,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 import time
 
-from ..base import BaseAgent, AgentConfig, AgentResult, AgentType
-from ..orchestration import AgentOrchestrator, WorkflowDefinition, TaskStep, WorkflowResult
+from ..core_types import BaseAgent, AgentConfig, AgentResult, AgentType
+from ..orchestration.orchestrator import AgentOrchestrator, WorkflowDefinition, TaskStep, WorkflowResult
 
 
 logger = logging.getLogger(__name__)

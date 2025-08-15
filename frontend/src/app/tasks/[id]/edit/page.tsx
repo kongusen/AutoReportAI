@@ -18,8 +18,9 @@ import { CronEditor } from '@/components/forms/CronEditor'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTemplateStore } from '@/features/templates/templateStore'
-import { TaskUpdate } from '@/types'
+import { TaskUpdate, ProcessingMode, AgentWorkflowType } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
+import { TaskConfigForm } from '@/components/tasks/TaskConfigForm'
 
 const taskSchema = z.object({
   name: z.string().min(1, '任务名称不能为空').max(100, '任务名称不能超过100个字符'),
@@ -29,6 +30,12 @@ const taskSchema = z.object({
   schedule: z.string().optional(),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
+  
+  // 新增：Agent配置字段
+  processing_mode: z.enum(['simple', 'intelligent', 'hybrid']).default('intelligent'),
+  workflow_type: z.enum(['simple_report', 'statistical_analysis', 'chart_generation', 'comprehensive_analysis', 'custom_workflow']).default('simple_report'),
+  max_context_tokens: z.number().min(1000).max(128000).default(32000),
+  enable_compression: z.boolean().default(true),
 }).refine((data) => {
   if (data.schedule && !isValidCron(data.schedule)) {
     return false
@@ -158,6 +165,7 @@ export default function EditTaskPage() {
 
   const tabItems = [
     { key: 'basic', label: '基本信息' },
+    { key: 'ai_config', label: 'AI配置' },
     { key: 'schedule', label: '调度设置' },
     { key: 'notification', label: '通知配置' },
   ]
@@ -334,6 +342,18 @@ function TaskTabs({
             </div>
           </CardContent>
         </Card>
+      </TabPanel>
+
+      <TabPanel value="ai_config" activeValue={activeKey}>
+        <TaskConfigForm
+          task={getValues()}
+          onChange={(config) => {
+            Object.entries(config).forEach(([key, value]) => {
+              setValue(key as keyof FormData, value)
+            })
+          }}
+          showAdvanced={true}
+        />
       </TabPanel>
 
       <TabPanel value="schedule" activeValue={activeKey}>

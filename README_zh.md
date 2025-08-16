@@ -38,100 +38,118 @@ AutoReportAI 是一个融合AI智能和企业级可靠性以及现代用户体�
 - **🌐 现代化Web界面**: 基于Next.js、TypeScript和Tailwind CSS构建的美观响应式UI，支持深色/浅色主题、仪表板分析和直观导航。
 - **🔧 企业级就绪**: 生产级部署，包含Docker容器化、CI/CD流水线、全面测试套件和数据库迁移。
 
-## 🏛️ 系统架构
+## 🏛️ 重构后的系统架构
 
-系统采用微服务架构设计，职责清晰分离，专为可扩展性和可维护性而设计。
+AutoReportAI 经过全面重构，采用现代化的分层架构设计，融合智能Agent系统、分布式任务管理和企业级数据处理能力。
 
 ```mermaid
-graph TD
-    subgraph "用户界面"
-        A[Web浏览器]
-        B[移动/平板设备]
+graph TB
+    subgraph "前端层 - Frontend Layer"
+        WEB[Next.js Web Dashboard]
+        API_GW[API Gateway]
     end
 
-    subgraph "前端层 (Next.js + TypeScript)"
-        C[仪表板]
-        D[任务管理]
-        E[模板编辑器]
-        F[数据源配置]
-        G[分析与报告]
-        H[用户管理]
+    subgraph "API服务层 - API Service Layer"
+        FASTAPI[FastAPI Server]
+        AUTH[认证授权 Authentication]
+        ENDPOINTS[API Endpoints]
     end
 
-    subgraph "API层 (FastAPI)"
-        I{API网关}
-        I --> J[认证与授权]
-        I --> K[任务管理API]
-        I --> L[模板管理API]
-        I --> M[数据源API]
-        I --> N[ETL作业API]
-        I --> O[分析API]
-        I --> P[用户配置API]
+    subgraph "核心业务层 - Core Business Layer"
+        subgraph "智能Agent系统 - Intelligent Agent System"
+            AGENT_CORE[Agent Core Services]
+            SPECIALIZED[Specialized Agents]
+            ENHANCED[Enhanced Agents] 
+            ORCHESTRATION[Agent Orchestration]
+        end
+        
+        subgraph "任务管理系统 - Task Management System"
+            CELERY[Celery Workers]
+            SCHEDULER[Unified Scheduler]
+            PIPELINE[Task Pipeline]
+            STATUS[Status Tracking]
+        end
+        
+        subgraph "数据处理系统 - Data Processing System"
+            ETL[ETL Engine]
+            CONNECTORS[Data Connectors]
+            SCHEMA[Schema Management]
+            ANALYSIS[Data Analysis]
+        end
     end
+
+    subgraph "AI集成层 - AI Integration Layer"
+        AI_SERVICE[AI Service Factory]
+        OPENAI[OpenAI Integration]
+        LOCAL[Local Models]
+        CUSTOM[Custom Providers]
+    end
+
+    subgraph "数据层 - Data Layer"
+        POSTGRES[(PostgreSQL Database)]
+        REDIS[(Redis Cache)]
+        FILES[File Storage]
+        EXTERNAL[External Data Sources]
+    end
+
+    WEB --> API_GW
+    API_GW --> FASTAPI
+    FASTAPI --> AUTH
+    FASTAPI --> ENDPOINTS
     
-    subgraph "调度与编排"
-        Q[APScheduler主进程]
-        R[任务队列管理器]
-        S[错误恢复系统]
-    end
-
-    subgraph "核心服务"
-        T[ETL服务引擎]
-        U[AI服务层]
-        V[数据分析服务]
-        W[可视化服务]
-        X[报告合成服务]
-        Y[统计服务]
-    end
-
-    subgraph "AI供应商"
-        Z[OpenAI集成]
-        AA[本地AI模型]
-        BB[自定义AI供应商]
-    end
-
-    subgraph "数据层 (PostgreSQL)"
-        CC[(主数据库)]
-        CC --> DD[用户与认证表]
-        CC --> EE[任务与调度表]
-        CC --> FF[模板与映射表]
-        CC --> GG[分析数据中心]
-        CC --> HH[审计与历史表]
-    end
-
-    subgraph "外部数据源"
-        II[业务数据库]
-        JJ[REST APIs]
-        KK[CSV/Excel文件]
-        LL[云存储]
-    end
-
-    A --> C
-    B --> C
-    C --> I
+    ENDPOINTS --> AGENT_CORE
+    ENDPOINTS --> CELERY
+    ENDPOINTS --> ETL
     
-    Q --> R
-    Q --> K
-    Q --> T
+    AGENT_CORE --> SPECIALIZED
+    AGENT_CORE --> ENHANCED
+    AGENT_CORE --> ORCHESTRATION
     
-    T --> II
-    T --> JJ
-    T --> KK
-    T --> LL
-    T --> GG
+    CELERY --> SCHEDULER
+    CELERY --> PIPELINE
+    CELERY --> STATUS
     
-    U --> Z
-    U --> AA
-    U --> BB
+    ETL --> CONNECTORS
+    ETL --> SCHEMA
+    ETL --> ANALYSIS
     
-    V --> GG
-    W --> GG
-    Y --> GG
+    SPECIALIZED --> AI_SERVICE
+    ENHANCED --> AI_SERVICE
+    AI_SERVICE --> OPENAI
+    AI_SERVICE --> LOCAL
+    AI_SERVICE --> CUSTOM
     
-    X --> U
-    X --> V
-    X --> W
+    AGENT_CORE --> POSTGRES
+    CELERY --> REDIS
+    ETL --> EXTERNAL
+    PIPELINE --> FILES
 ```
+
+### 🎯 重构后的核心子系统
+
+#### 🤖 **智能Agent系统**
+- **核心服务层**: 统一的Agent接口和错误处理机制
+- **专业Agent**: 模式分析、数据查询、内容生成、可视化专用Agent
+- **增强Agent**: 机器学习驱动的高级分析和处理能力
+- **智能编排**: 自动任务分解、Agent协调和执行优化
+
+#### 📋 **任务管理系统**
+- **Celery Workers**: 异步任务处理和分布式执行引擎
+- **统一调度器**: 集成Celery和APScheduler的混合调度系统
+- **任务流水线**: 智能报告生成的端到端执行流程
+- **状态跟踪**: 实时任务监控、进度管理和错误恢复
+
+#### 🔄 **数据处理系统**
+- **ETL引擎**: 智能数据提取、转换、加载和调度
+- **数据连接器**: 多种数据源的统一接入和管理
+- **模式管理**: 自动化数据库模式发现、分析和元数据管理
+- **数据分析**: 统计分析、数据质量检测和可视化服务
+
+#### 🧠 **AI集成层**
+- **AI服务工厂**: 多AI提供商的统一管理和智能路由
+- **OpenAI集成**: GPT模型的专业化封装和优化调用
+- **本地模型**: 支持本地部署AI模型的管理和推理
+- **自定义提供商**: 可扩展的AI服务接口和集成框架
 
 ## 🛠️ 技术栈
 
@@ -145,6 +163,114 @@ graph TD
 | **数据处理**       | <img src="https://img.shields.io/badge/Pandas-2.0+-green.svg?logo=pandas&style=flat-square" alt="Pandas"> <img src="https://img.shields.io/badge/NumPy-1.24+-blue.svg?logo=numpy&style=flat-square" alt="NumPy"> <img src="https://img.shields.io/badge/Matplotlib-3.7+-orange.svg?style=flat-square" alt="Matplotlib"> |
 | **DevOps与测试**   | <img src="https://img.shields.io/badge/Docker-24+-blue.svg?logo=docker&style=flat-square" alt="Docker"> <img src="https://img.shields.io/badge/Docker_Compose-2.0+-blue.svg?style=flat-square" alt="Docker Compose"> <img src="https://img.shields.io/badge/Pytest-7.4+-green.svg?style=flat-square" alt="Pytest"> <img src="https://img.shields.io/badge/Jest-29+-red.svg?logo=jest&style=flat-square" alt="Jest"> |
 | **文档生成**       | <img src="https://img.shields.io/badge/python--docx-0.8+-blue.svg?style=flat-square" alt="python-docx"> <img src="https://img.shields.io/badge/模板引擎-自定义-purple.svg?style=flat-square" alt="Template Engine"> |
+
+## 🎯 系统功能详解
+
+### 🤖 智能Agent系统功能
+
+#### 1. 专业Agent
+- **模式分析Agent**: 自动发现和分析数据库表结构、字段类型、关系映射
+- **数据查询Agent**: 智能SQL生成、查询优化、语义理解和性能调优
+- **内容生成Agent**: 基于数据的自然语言报告生成、多风格适配
+- **可视化Agent**: 智能图表推荐、数据可视化、交互式展示
+
+#### 2. 增强Agent功能
+- **机器学习分析**: 预测建模、异常检测、聚类分析、趋势预测
+- **上下文内容生成**: 多轮对话、风格一致性、个性化内容生成
+- **语义数据查询**: 自然语言转SQL、智能字段映射、查询优化
+- **智能可视化**: 图表类型推荐、自适应设计、数据故事化呈现
+
+#### 3. Agent编排功能
+- **智能任务分解**: 复杂请求自动分解为可执行的子任务
+- **并行执行管理**: 多Agent协同工作、资源优化调度
+- **依赖关系处理**: 任务间依赖分析、执行顺序优化
+- **错误恢复机制**: 自动重试、降级处理、故障转移
+
+### 📋 任务管理系统功能
+
+#### 1. Celery分布式任务
+- **异步任务处理**: 支持长时间运行的报告生成任务
+- **分布式执行**: 多Worker节点负载均衡和容错处理
+- **任务队列管理**: 优先级队列、任务分类、资源隔离
+- **错误处理**: 自动重试、死信队列、异常恢复机制
+
+#### 2. 统一调度系统
+- **混合调度模式**: 集成Celery和APScheduler的优势
+- **定时任务管理**: Cron表达式、周期任务、一次性任务
+- **动态调度**: 运行时添加/修改/删除任务
+- **调度监控**: 任务执行状态、性能指标、资源使用情况
+
+#### 3. 任务执行流水线
+- **端到端流程**: 从模板解析到报告生成的完整流程
+- **状态跟踪**: 实时进度更新、详细执行日志
+- **质量控制**: 每个阶段的质量检查和验证
+- **性能优化**: 缓存机制、资源复用、批处理优化
+
+### 🔄 数据处理系统功能
+
+#### 1. ETL引擎
+- **智能数据提取**: 支持多种数据源的自动发现和连接
+- **数据转换**: 数据清洗、格式转换、字段映射、类型转换
+- **数据加载**: 增量更新、批量加载、实时流处理
+- **ETL调度**: 定时ETL作业、依赖管理、错误恢复
+
+#### 2. 数据连接器
+- **Doris连接器**: 高性能OLAP数据库连接和查询优化
+- **SQL连接器**: 通用关系型数据库支持（MySQL、PostgreSQL等）
+- **API连接器**: RESTful API数据源集成和认证管理
+- **文件连接器**: CSV、Excel、JSON等文件格式支持
+
+#### 3. 模式管理
+- **自动模式发现**: 扫描数据源、识别表结构、推断关系
+- **元数据管理**: 字段描述、业务含义、数据质量指标
+- **关系分析**: 表间关系、外键约束、数据血缘追踪
+- **版本控制**: 模式变更跟踪、版本比较、迁移管理
+
+#### 4. 数据分析功能
+- **统计分析**: 描述性统计、分布分析、相关性分析
+- **数据质量**: 空值检测、重复数据、异常值识别
+- **可视化服务**: 图表生成、仪表板、交互式展示
+- **性能分析**: 查询性能监控、资源使用统计
+
+### 🧠 AI集成层功能
+
+#### 1. AI服务工厂
+- **多提供商管理**: OpenAI、本地模型、自定义服务统一接口
+- **智能路由**: 根据任务类型自动选择最适合的AI服务
+- **负载均衡**: 多个AI服务实例的负载分配和故障切换
+- **成本控制**: Token使用统计、成本监控、预算管理
+
+#### 2. OpenAI集成
+- **GPT模型调用**: GPT-4、GPT-3.5等模型的专业化封装
+- **Token管理**: 自动Token统计、成本控制、用量监控
+- **参数优化**: 温度、最大长度等参数的智能调整
+- **响应处理**: 结果解析、格式转换、质量评估
+
+#### 3. 本地模型支持
+- **模型管理**: 本地AI模型的加载、卸载、版本管理
+- **资源调度**: GPU/CPU资源的智能分配和优化
+- **性能优化**: 模型推理加速、批处理优化
+- **安全隔离**: 本地推理的安全沙盒环境
+
+### 📄 报告生成功能
+
+#### 1. 文档生成引擎
+- **Word文档生成**: 专业格式的.docx文档创建和样式控制
+- **模板系统**: 可定制的报告模板、样式管理、版本控制
+- **动态内容**: 占位符替换、条件内容、循环结构
+- **格式控制**: 字体、样式、表格、图片的精确控制
+
+#### 2. 文档流水线
+- **内容组装**: 多个数据源内容的智能组合和排版
+- **质量检查**: 内容完整性、格式正确性验证
+- **版本管理**: 报告版本控制、变更跟踪、审批流程
+- **输出管理**: 文件存储、下载链接、访问权限控制
+
+#### 3. 智能内容生成
+- **数据到文本**: JSON数据自动转换为自然语言描述
+- **多语言支持**: 中英文报告生成、本地化适配
+- **风格适配**: 商务、技术、学术等不同写作风格
+- **个性化**: 用户偏好学习、定制化内容生成
 
 ## 🚀 快速上手
 

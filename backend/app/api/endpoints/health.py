@@ -9,7 +9,8 @@ from typing import Dict, Any
 import time
 from datetime import datetime, timezone
 
-from app.api.deps import get_db, get_all_services_health
+from app.db.session import get_db
+from app.api.deps import get_all_services_health
 from app.core.config import settings
 
 router = APIRouter()

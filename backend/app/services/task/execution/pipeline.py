@@ -11,18 +11,20 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from celery import chord, group
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
-from app.core.time_utils import now, format_iso
+# from app.core.time_utils import format_iso  # 暂时不需要
 from app.db.session import SessionLocal
 from app.services.agents.orchestration import AgentOrchestrator
 from app.services.data_processing.etl.intelligent_etl_executor import IntelligentETLExecutor
 from app.services.notification.notification_service import NotificationService
 from app.services.report_generation.document_pipeline import TemplateParser
 from app.services.report_generation.word_generator_service import WordGeneratorService
+from app.websocket.manager import manager
 from ..core.progress_manager import (
     update_task_progress, 
     update_task_progress_dict,
@@ -30,6 +32,74 @@ from ..core.progress_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def update_task_progress_with_notification(task_id: int, user_id: str, status: str, progress: int, message: str):
+    """更新任务进度并发送WebSocket通知"""
+    # 更新Redis中的进度
+    update_task_progress(task_id, status, progress, message)
+    
+    # 发送WebSocket通知
+    try:
+        await manager.send_personal_message(
+            manager.NotificationMessage(
+                type="info" if status not in ["completed", "failed"] else ("success" if status == "completed" else "error"),
+                title=f"Task #{task_id} Update",
+                message=message,
+                data={
+                    "task_id": task_id,
+                    "status": status,
+                    "progress": progress,
+                    "current_step": message
+                },
+                user_id=user_id
+            ),
+            user_id
+        )
+    except Exception as e:
+        logger.error(f"Failed to send WebSocket notification: {e}")
+
+
+def sync_update_task_progress_with_notification(task_id: int, user_id: str, status: str, progress: int, message: str):
+    """同步版本的进度更新和WebSocket通知"""
+    # 更新Redis中的进度
+    update_task_progress(task_id, status, progress, message)
+    
+    # 发送WebSocket通知
+    try:
+        from app.websocket.manager import NotificationMessage
+        
+        # 创建通知消息
+        notification = NotificationMessage(
+            type="info" if status not in ["completed", "failed"] else ("success" if status == "completed" else "error"),
+            title=f"Task #{task_id} Update",
+            message=message,
+            data={
+                "task_id": task_id,
+                "status": status,
+                "progress": progress,
+                "current_step": message
+            },
+            user_id=user_id
+        )
+        
+        # 在新的事件循环中发送通知
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # 如果事件循环正在运行，创建一个任务
+            asyncio.create_task(manager.send_personal_message(notification, user_id))
+        else:
+            # 如果没有事件循环，运行异步函数
+            loop.run_until_complete(manager.send_personal_message(notification, user_id))
+            
+    except Exception as e:
+        logger.error(f"Failed to send WebSocket notification for task {task_id}: {e}")
+        # 继续执行，不要因为WebSocket通知失败而中断任务
 
 
 def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[str, Any]:
@@ -60,7 +130,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
             raise ValueError("模板或数据源不存在")
         
         # 更新任务状态为开始
-        update_task_progress(task_id, "processing", 10, "开始解析模板")
+        sync_update_task_progress_with_notification(task_id, user_id, "processing", 10, "开始解析模板")
         
         # 解析模板占位符
         parser = TemplateParser()
@@ -68,7 +138,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
         
         if not placeholders:
             # 没有占位符，直接生成报告
-            update_task_progress(task_id, "generating", 80, "生成最终报告")
+            sync_update_task_progress_with_notification(task_id, user_id, "generating", 80, "生成最终报告")
             
             word_generator = WordGeneratorService()
             report_path = word_generator.generate_report(
@@ -80,10 +150,10 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
             # 保存报告记录
             report_data = {
                 "task_id": task_id,
-                "content": template.content,
+                "user_id": UUID(user_id),
                 "file_path": report_path,
                 "status": "completed",
-                "generated_at": now()
+                "result": template.content
             }
             
             report_record = crud.report_history.create(
@@ -91,7 +161,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
                 obj_in=schemas.ReportHistoryCreate(**report_data)
             )
             
-            update_task_progress(task_id, "completed", 100, "报告生成完成")
+            sync_update_task_progress_with_notification(task_id, user_id, "completed", 100, "报告生成完成")
             
             return {
                 "status": "completed",
@@ -101,7 +171,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
             }
         
         # 有占位符，使用Agent系统处理
-        update_task_progress(task_id, "analyzing", 20, f"分析 {len(placeholders)} 个占位符")
+        sync_update_task_progress_with_notification(task_id, user_id, "analyzing", 20, f"分析 {len(placeholders)} 个占位符")
         
         # 使用Agent编排器处理所有占位符
         orchestrator = AgentOrchestrator()
@@ -128,7 +198,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
             loop.close()
             
             if agent_result.success:
-                update_task_progress(task_id, "generating", 80, "生成最终报告")
+                sync_update_task_progress_with_notification(task_id, user_id, "generating", 80, "生成最终报告")
                 
                 # 从Agent结果中提取处理后的内容
                 processed_content = agent_result.data.get("processed_content", template.content)
@@ -144,10 +214,10 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
                 # 保存报告记录
                 report_data = {
                     "task_id": task_id,
-                    "content": processed_content,
+                    "user_id": UUID(user_id),
                     "file_path": report_path,
                     "status": "completed",
-                    "generated_at": now()
+                    "result": processed_content
                 }
                 
                 report_record = crud.report_history.create(
@@ -155,7 +225,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
                     obj_in=schemas.ReportHistoryCreate(**report_data)
                 )
                 
-                update_task_progress(task_id, "completed", 100, "报告生成完成")
+                sync_update_task_progress_with_notification(task_id, user_id, "completed", 100, "报告生成完成")
                 
                 return {
                     "status": "completed",
@@ -174,7 +244,7 @@ def intelligent_report_generation_pipeline(task_id: int, user_id: str) -> Dict[s
         logger.error(f"智能报告生成失败 - 任务ID: {task_id}: {e}")
         
         # 更新任务状态为失败
-        update_task_progress(task_id, "failed", 0, f"生成失败: {str(e)}")
+        sync_update_task_progress_with_notification(task_id, user_id, "failed", 0, f"生成失败: {str(e)}")
         
         # 发送错误通知
         send_error_notification(task_id, str(e))
@@ -219,16 +289,16 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             raise ValueError("模板或数据源不存在")
         
         # 更新任务状态
-        update_task_progress(task_id, "processing", 5, "初始化任务")
+        sync_update_task_progress_with_notification(task_id, user_id, "processing", 5, "初始化任务")
         
         # 解析模板占位符
-        update_task_progress(task_id, "processing", 10, "解析模板占位符")
+        sync_update_task_progress_with_notification(task_id, user_id, "processing", 10, "解析模板占位符")
         parser = TemplateParser()
         placeholders = parser.extract_placeholders(template.content)
         
         if not placeholders:
             # 没有占位符，直接生成报告
-            update_task_progress(task_id, "generating", 90, "生成最终报告")
+            sync_update_task_progress_with_notification(task_id, user_id, "generating", 90, "生成最终报告")
             
             word_generator = WordGeneratorService()
             report_path = word_generator.generate_report(
@@ -240,11 +310,10 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             # 保存报告记录
             report_data = {
                 "task_id": task_id,
-                "content": template.content,
+                "user_id": UUID(user_id),
                 "file_path": report_path,
                 "status": "completed",
-                "generated_at": now(),
-                "execution_time": time.time() - start_time
+                "result": template.content
             }
             
             report_record = crud.report_history.create(
@@ -252,7 +321,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
                 obj_in=schemas.ReportHistoryCreate(**report_data)
             )
             
-            update_task_progress(task_id, "completed", 100, "报告生成完成")
+            sync_update_task_progress_with_notification(task_id, user_id, "completed", 100, "报告生成完成")
             
             return {
                 "status": "completed",
@@ -263,7 +332,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             }
         
         # 有占位符，使用增强版Agent系统处理
-        update_task_progress(task_id, "analyzing", 20, f"开始分析 {len(placeholders)} 个占位符")
+        sync_update_task_progress_with_notification(task_id, user_id, "analyzing", 20, f"开始分析 {len(placeholders)} 个占位符")
         
         # 使用增强版Agent编排器
         orchestrator = AgentOrchestrator()
@@ -281,7 +350,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
         
         # 执行增强版Agent处理
         try:
-            update_task_progress(task_id, "analyzing", 30, "执行Agent智能分析")
+            sync_update_task_progress_with_notification(task_id, user_id, "analyzing", 30, "执行Agent智能分析")
             
             # 运行异步Agent处理
             loop = asyncio.new_event_loop()
@@ -294,13 +363,13 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             loop.close()
             
             if agent_result.success:
-                update_task_progress(task_id, "processing", 70, "处理Agent分析结果")
+                sync_update_task_progress_with_notification(task_id, user_id, "processing", 70, "处理Agent分析结果")
                 
                 # 从Agent结果中提取处理后的内容
                 processed_content = agent_result.data.get("processed_content", template.content)
                 
                 # 生成Word文档
-                update_task_progress(task_id, "generating", 90, "生成Word文档")
+                sync_update_task_progress_with_notification(task_id, user_id, "generating", 90, "生成Word文档")
                 word_generator = WordGeneratorService()
                 report_path = word_generator.generate_report(
                     content=processed_content,
@@ -312,12 +381,10 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
                 execution_time = time.time() - start_time
                 report_data = {
                     "task_id": task_id,
-                    "content": processed_content,
+                    "user_id": UUID(user_id),
                     "file_path": report_path,
                     "status": "completed",
-                    "generated_at": now(),
-                    "execution_time": execution_time,
-                    "ai_config_used": ai_config
+                    "result": processed_content
                 }
                 
                 report_record = crud.report_history.create(
@@ -325,16 +392,15 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
                     obj_in=schemas.ReportHistoryCreate(**report_data)
                 )
                 
-                update_task_progress(task_id, "completed", 100, "增强版报告生成完成")
+                sync_update_task_progress_with_notification(task_id, user_id, "completed", 100, "增强版报告生成完成")
                 
                 # 发送成功通知
                 try:
                     notification_service = NotificationService()
                     notification_service.send_task_completion_notification(
                         task_id=task_id,
-                        task_name=task.name,
-                        status="success",
-                        execution_time=execution_time
+                        report_path=report_path,
+                        user_id=user_id
                     )
                 except Exception as notify_error:
                     logger.warning(f"发送成功通知失败: {notify_error}")
@@ -358,7 +424,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
         logger.error(f"增强版智能报告生成失败 - 任务ID: {task_id}: {e}")
         
         # 更新任务状态为失败
-        update_task_progress(task_id, "failed", 0, f"增强版生成失败: {str(e)}")
+        sync_update_task_progress_with_notification(task_id, user_id, "failed", 0, f"增强版生成失败: {str(e)}")
         
         # 发送错误通知
         send_error_notification(task_id, str(e))
@@ -368,7 +434,7 @@ def enhanced_intelligent_report_generation_pipeline(task_id: int, user_id: str) 
             notification_service = NotificationService()
             notification_service.send_task_failure_notification(
                 task_id=task_id,
-                task_name=task.name if task else f"任务{task_id}",
+                user_id=user_id,
                 error_message=str(e)
             )
         except Exception as notify_error:

@@ -114,9 +114,7 @@ async def refresh_token(
     current_user: ORMUser = Depends(get_current_user)
 ):
     """刷新访问令牌"""
-    access_token = create_access_token(
-        data={"sub": str(current_user.id)}
-    )
+    access_token = create_access_token(str(current_user.id))
     
     return ApiResponse(
         success=True,

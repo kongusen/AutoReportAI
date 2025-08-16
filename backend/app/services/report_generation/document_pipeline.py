@@ -107,7 +107,8 @@ class TemplateParser:
     
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.placeholder_pattern = r'\{([^}]+)\}'
+        # 支持单花括号和双花括号格式的占位符
+        self.placeholder_pattern = r'\{\{([^}]+)\}\}|\{([^}]+)\}'
     
     def parse_template(self, template_content: str) -> DocumentTemplate:
         """解析模板内容"""
@@ -131,13 +132,117 @@ class TemplateParser:
             }
         )
     
+    def extract_placeholders(self, content: str) -> List[Dict[str, Any]]:
+        """提取占位符（公共方法）"""
+        # 首先尝试检测是否为二进制Word文档
+        text_content = self._extract_text_from_content(content)
+        placeholders_info = self._extract_placeholders(text_content)
+        
+        # 转换为字典格式以兼容现有代码
+        result = []
+        for placeholder in placeholders_info:
+            result.append({
+                "name": placeholder.name,
+                "type": placeholder.type,
+                "description": placeholder.description,
+                "content_type": placeholder.content_type.value if hasattr(placeholder.content_type, 'value') else str(placeholder.content_type),
+                "required": placeholder.required
+            })
+        
+        return result
+    
+    def _extract_text_from_content(self, content: str) -> str:
+        """从内容中提取文本（支持二进制Word文档）"""
+        # 检查是否为二进制数据（Word文档的十六进制表示）
+        if self._is_binary_content(content):
+            self.logger.info("检测到二进制Word文档，尝试解析...")
+            try:
+                # 尝试将十六进制字符串转换为二进制数据
+                binary_data = bytes.fromhex(content)
+                
+                # 检查是否为Word文档（ZIP格式）
+                if binary_data.startswith(b'PK'):
+                    return self._extract_text_from_word_doc(binary_data)
+                else:
+                    self.logger.warning("无法识别的二进制格式")
+                    return content
+            except Exception as e:
+                self.logger.error(f"解析二进制文档失败: {e}")
+                return content
+        else:
+            # 纯文本内容，直接返回
+            return content
+    
+    def _is_binary_content(self, content: str) -> bool:
+        """检查内容是否为二进制数据的十六进制表示"""
+        if len(content) > 20 and all(c in '0123456789abcdef' for c in content.lower()):
+            # 检查是否以常见的文档格式魔术字节开头
+            hex_prefix = content[:20].lower()
+            # PK（ZIP/Word文档）= 504b
+            # PDF = 255044462d
+            if hex_prefix.startswith('504b') or hex_prefix.startswith('255044462d'):
+                return True
+        return False
+    
+    def _extract_text_from_word_doc(self, binary_data: bytes) -> str:
+        """从Word文档二进制数据中提取文本"""
+        try:
+            import tempfile
+            import os
+            
+            # 保存二进制数据到临时文件
+            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as temp_file:
+                temp_file.write(binary_data)
+                temp_file_path = temp_file.name
+            
+            try:
+                if HAS_DOCX:
+                    # 使用python-docx解析
+                    from docx import Document
+                    doc = Document(temp_file_path)
+                    
+                    # 提取所有段落文本
+                    text_parts = []
+                    for paragraph in doc.paragraphs:
+                        if paragraph.text.strip():
+                            text_parts.append(paragraph.text)
+                    
+                    # 提取表格文本
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    text_parts.append(cell.text)
+                    
+                    extracted_text = '\n'.join(text_parts)
+                    self.logger.info(f"成功从Word文档提取文本，长度: {len(extracted_text)}")
+                    return extracted_text
+                else:
+                    self.logger.warning("python-docx不可用，无法解析Word文档")
+                    return ""
+            finally:
+                # 清理临时文件
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+                    
+        except Exception as e:
+            self.logger.error(f"解析Word文档失败: {e}")
+            return ""
+    
     def _extract_placeholders(self, content: str) -> List[PlaceholderInfo]:
-        """提取占位符"""
+        """提取占位符（私有方法）"""
         placeholders = []
         matches = re.findall(self.placeholder_pattern, content)
         
         for match in matches:
-            placeholder_name = match.strip()
+            # match是一个元组，包含两个组：(双花括号匹配, 单花括号匹配)
+            # 取非空的那个
+            placeholder_name = (match[0] or match[1]).strip()
+            
+            if not placeholder_name:
+                continue
             
             # 分析占位符类型
             content_type = self._infer_content_type(placeholder_name)

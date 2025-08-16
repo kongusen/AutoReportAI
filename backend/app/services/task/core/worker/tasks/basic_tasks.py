@@ -33,7 +33,7 @@ from ..utils.progress_utils import update_task_progress, send_error_notification
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task
+@celery_app.task(name='app.services.task.core.worker.tasks.basic_tasks.template_parsing')
 def template_parsing(template_id: str, task_id: int) -> List[Dict[str, Any]]:
     """模板解析任务 - 提取所有占位符"""
     logger.info(f"开始解析模板，模板ID: {template_id}, 任务ID: {task_id}")
@@ -57,7 +57,8 @@ def template_parsing(template_id: str, task_id: int) -> List[Dict[str, Any]]:
         db.close()
 
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), 
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.basic_tasks.placeholder_analysis',
+                autoretry_for=(Exception,), 
                 retry_kwargs={'max_retries': 3, 'countdown': 30})
 def placeholder_analysis(self, placeholder_data: Dict[str, Any], 
                         data_source_id: str, task_id: int) -> Dict[str, Any]:
@@ -171,7 +172,8 @@ def _fallback_ai_analysis(placeholder_data: Dict[str, Any], data_source_id: str)
         db.close()
 
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), 
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.basic_tasks.data_query',
+                autoretry_for=(Exception,), 
                 retry_kwargs={'max_retries': 2, 'countdown': 60})
 def data_query(self, etl_instruction: Dict[str, Any], 
                data_source_id: str, task_id: int) -> Dict[str, Any]:
@@ -201,7 +203,7 @@ def data_query(self, etl_instruction: Dict[str, Any],
         db.close()
 
 
-@celery_app.task
+@celery_app.task(name='app.services.task.core.worker.tasks.basic_tasks.content_filling')
 def content_filling(template_content: str, placeholders: List[Dict[str, Any]], 
                    query_results: List[Dict[str, Any]], task_id: int) -> str:
     """内容填充任务 - 将查询结果填入模板"""
@@ -243,7 +245,7 @@ def content_filling(template_content: str, placeholders: List[Dict[str, Any]],
         raise
 
 
-@celery_app.task
+@celery_app.task(name='app.services.task.core.worker.tasks.basic_tasks.report_generation')
 def report_generation(template_content: str, output_config: Dict[str, Any], 
                      task_id: int) -> Dict[str, Any]:
     """报告生成任务 - 最终生成报告文件"""
@@ -289,7 +291,8 @@ def report_generation(template_content: str, output_config: Dict[str, Any],
         db.close()
 
 
-@celery_app.task(bind=True, autoretry_for=(Exception,), 
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.basic_tasks.execute_etl_job',
+                autoretry_for=(Exception,), 
                 retry_kwargs={'max_retries': 3, 'countdown': 60})
 def execute_etl_job(self, job_id: str, job_config: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -423,7 +426,7 @@ def execute_etl_job(self, job_id: str, job_config: Dict[str, Any]) -> Dict[str, 
         db.close()
 
 
-@celery_app.task
+@celery_app.task(name='app.services.task.core.worker.tasks.basic_tasks.test_celery_task')
 def test_celery_task(word: str) -> str:
     """测试任务"""
     return f"测试任务成功执行，收到的参数是: {word}"

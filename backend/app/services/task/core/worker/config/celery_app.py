@@ -21,7 +21,10 @@ celery_app = Celery(
     "autoreport_tasks",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.services.task.core.worker"]
+    include=[
+        "app.services.task.core.worker.tasks.basic_tasks",
+        "app.services.task.core.worker.tasks.enhanced_tasks"
+    ]
 )
 
 # Celery配置优化

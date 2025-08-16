@@ -45,17 +45,28 @@ def create_connector(data_source: DataSource) -> BaseConnector:
 
 def _create_doris_connector(data_source: DataSource) -> DorisConnector:
     """创建Doris连接器"""
+    from app.core.security_utils import decrypt_data
+    
+    # 解密密码
+    password = ""
+    if data_source.doris_password:
+        try:
+            password = decrypt_data(data_source.doris_password)
+        except Exception as e:
+            logger.error(f"Failed to decrypt password for data source {data_source.id}: {e}")
+            password = ""
+    
     config = DorisConfig(
         source_type=data_source.source_type,
         name=data_source.name,
-        description=data_source.description,
+        description=data_source.display_name or data_source.name,
         fe_hosts=data_source.doris_fe_hosts or ["localhost"],
         be_hosts=data_source.doris_be_hosts or ["localhost"],
         http_port=data_source.doris_http_port or 8030,
         query_port=data_source.doris_query_port or 9030,
         database=data_source.doris_database or "default",
         username=data_source.doris_username or "root",
-        password=data_source.doris_password or "",
+        password=password,
         load_balance=True,
         timeout=30
     )
@@ -68,7 +79,7 @@ def _create_sql_connector(data_source: DataSource) -> SQLConnector:
     config = SQLConfig(
         source_type=data_source.source_type,
         name=data_source.name,
-        description=data_source.description,
+        description=data_source.display_name or data_source.name,
         connection_string=data_source.connection_string,
         pool_size=5,
         max_overflow=10,
@@ -85,7 +96,7 @@ def _create_api_connector(data_source: DataSource) -> APIConnector:
     config = APIConfig(
         source_type=data_source.source_type,
         name=data_source.name,
-        description=data_source.description,
+        description=data_source.display_name or data_source.name,
         api_url=data_source.api_url,
         method=data_source.api_method or "GET",
         headers=data_source.api_headers,
@@ -103,8 +114,8 @@ def _create_csv_connector(data_source: DataSource) -> CSVConnector:
     config = CSVConfig(
         source_type=data_source.source_type,
         name=data_source.name,
-        description=data_source.description,
-        file_path=data_source.file_path,
+        description=data_source.display_name or data_source.name,
+        file_path=getattr(data_source, 'file_path', None),
         encoding="utf-8",
         delimiter=",",
         has_header=True,

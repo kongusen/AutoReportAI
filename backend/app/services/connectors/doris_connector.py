@@ -415,6 +415,14 @@ class DorisConnector(BaseConnector):
             self.logger.error(f"Failed to get tables: {e}")
             return []
     
+    async def get_fields(self, table_name: Optional[str] = None) -> List[str]:
+        """获取字段列表 - 实现BaseConnector抽象方法"""
+        return await self.get_table_fields(table_name)
+    
+    async def get_tables(self) -> List[str]:
+        """获取表列表 - 实现BaseConnector抽象方法"""
+        return await self.get_all_tables()
+    
     async def get_table_fields(self, table_name: str = None) -> List[str]:
         """获取表的字段列表，如果未指定表名则获取所有表的字段"""
         try:

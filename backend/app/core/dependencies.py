@@ -9,7 +9,7 @@ from app.models.user import User
 from app.core.security import decode_access_token
 
 security = HTTPBearer()
-reusable_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v2/auth/login")
+reusable_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 def get_current_user(

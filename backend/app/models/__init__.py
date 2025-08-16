@@ -12,6 +12,7 @@ from .learning_data import (
 )
 from .placeholder_mapping import PlaceholderMapping
 from .report_history import ReportHistory
+from .table_schema import TableSchema, ColumnSchema, TableRelationship, ColumnType
 from .task import Task, TaskExecution, TaskStatus, ProcessingMode, AgentWorkflowType
 from .template import Template
 from .user import User
@@ -31,11 +32,18 @@ __all__ = [
     "AIProvider",
     "AnalyticsData",
     "PlaceholderMapping",
+    # 表结构模型
+    "TableSchema",
+    "ColumnSchema", 
+    "TableRelationship",
+    "ColumnType",
+    # 任务模型
     "Task",
     "TaskExecution", 
     "TaskStatus",
     "ProcessingMode",
     "AgentWorkflowType",
+    # 学习模型
     "PlaceholderProcessingHistory",
     "ErrorLog",
     "UserFeedback",

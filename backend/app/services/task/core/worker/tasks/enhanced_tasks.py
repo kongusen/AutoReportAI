@@ -29,7 +29,7 @@ from ..utils.progress_utils import update_task_progress, send_error_notification
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, name='app.services.task.core.worker.execute_scheduled_task')
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.enhanced_tasks.execute_scheduled_task')
 def execute_scheduled_task(self, task_id: int):
     """执行调度的任务 - 由 Celery Beat 调用，使用智能占位符驱动的版本"""
     logger.info(f"开始执行调度任务 {task_id}，使用智能占位符驱动的流水线")
@@ -66,7 +66,7 @@ def execute_scheduled_task(self, task_id: int):
         return {"status": "error", "message": str(e)}
 
 
-@celery_app.task(bind=True, name='app.services.task.core.worker.intelligent_report_generation_pipeline')
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.enhanced_tasks.intelligent_report_generation_pipeline')
 def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
     """
     智能占位符驱动的报告生成流水线 - 使用增强版本
@@ -76,7 +76,7 @@ def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
     return enhanced_intelligent_report_generation_pipeline(task_id, user_id)
 
 
-@celery_app.task(bind=True, name='app.services.task.core.worker.enhanced_intelligent_report_generation_pipeline')
+@celery_app.task(bind=True, name='app.services.task.core.worker.tasks.enhanced_tasks.enhanced_intelligent_report_generation_pipeline')
 def enhanced_intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
     """
     增强版智能报告生成流水线 - 包含用户特定AI配置和详细进度管理
@@ -217,9 +217,8 @@ def enhanced_intelligent_report_generation_pipeline(self, task_id: int, user_id:
                     notification_service = NotificationService()
                     notification_service.send_task_completion_notification(
                         task_id=task_id,
-                        task_name=task.name,
-                        status="success",
-                        execution_time=execution_time
+                        report_path=report_path,
+                        user_id=user_id
                     )
                 except Exception as notify_error:
                     logger.warning(f"发送成功通知失败: {notify_error}")
@@ -253,7 +252,7 @@ def enhanced_intelligent_report_generation_pipeline(self, task_id: int, user_id:
             notification_service = NotificationService()
             notification_service.send_task_failure_notification(
                 task_id=task_id,
-                task_name=task.name if task else f"任务{task_id}",
+                user_id=user_id,
                 error_message=str(e)
             )
         except Exception as notify_error:

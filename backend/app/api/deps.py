@@ -16,7 +16,7 @@ from app.db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 reusable_oauth2 = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/auth/access-token"
+    tokenUrl=f"{settings.API_V1_STR}/auth/login"
 )
 
 
@@ -62,8 +62,8 @@ def get_current_user(
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
         )
-        username: str = payload.get("sub")
-        if username is None:
+        user_id: str = payload.get("sub")
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Could not validate credentials",
@@ -73,8 +73,8 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
         )
-    # 使用 get_by_username 而不是 get，因为 token 存储的是 username
-    user = crud.user.get_by_username(db, username=username)
+    # 使用 get 方法，因为 token 存储的是 user_id
+    user = crud.user.get(db, id=user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     # 强制user.id为UUID类型

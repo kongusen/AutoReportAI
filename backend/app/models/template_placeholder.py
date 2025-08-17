@@ -1,0 +1,139 @@
+"""
+Template Placeholder Models
+
+模板占位符相关数据模型，支持Agent分析的SQL持久化和数据缓存
+"""
+
+from sqlalchemy import Column, String, Text, Boolean, Integer, Float, DateTime, JSON, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+import uuid
+
+from app.db.base_class import Base
+
+
+class TemplatePlaceholder(Base):
+    """模板占位符配置表"""
+    __tablename__ = "template_placeholders"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id", ondelete="CASCADE"), nullable=False)
+    
+    # 占位符基本信息
+    placeholder_name = Column(String(255), nullable=False)
+    placeholder_text = Column(String(500), nullable=False)  # {{统计:总数}}
+    placeholder_type = Column(String(50), nullable=False)   # statistic, analysis, chart, table
+    content_type = Column(String(50), nullable=False)       # text, table, chart, image
+    
+    # Agent分析结果存储
+    agent_analyzed = Column(Boolean, default=False)         # 是否已被Agent分析
+    target_database = Column(String(100))                   # 目标数据库名
+    target_table = Column(String(100))                      # 目标数据表名
+    required_fields = Column(JSON)                          # 需要的字段列表
+    generated_sql = Column(Text)                            # Agent生成的SQL
+    sql_validated = Column(Boolean, default=False)          # SQL是否已验证
+    
+    # 执行配置
+    execution_order = Column(Integer, default=1)
+    cache_ttl_hours = Column(Integer, default=24)
+    is_required = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    
+    # Agent配置
+    agent_workflow_id = Column(String(100))
+    agent_config = Column(JSON, default=dict)
+    
+    # 元数据
+    description = Column(Text)
+    confidence_score = Column(Float, default=0.0)           # Agent分析的置信度
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    analyzed_at = Column(DateTime(timezone=True))           # Agent分析时间
+    
+    # 关系
+    template = relationship("Template", back_populates="placeholders")
+    placeholder_values = relationship("PlaceholderValue", back_populates="placeholder", cascade="all, delete-orphan")
+    
+    class Config:
+        orm_mode = True
+
+
+class PlaceholderValue(Base):
+    """占位符值存储表 - 存储每次执行的结果"""
+    __tablename__ = "placeholder_values"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    placeholder_id = Column(UUID(as_uuid=True), ForeignKey("template_placeholders.id", ondelete="CASCADE"), nullable=False)
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False)
+    
+    # 执行结果
+    raw_query_result = Column(JSON)                         # 原始查询结果
+    processed_value = Column(JSON)                          # 处理后的结构化数据
+    formatted_text = Column(Text)                           # 最终显示文本
+    
+    # 执行元数据
+    execution_sql = Column(Text)                            # 实际执行的SQL
+    execution_time_ms = Column(Integer)                     # 执行耗时
+    row_count = Column(Integer, default=0)                  # 返回行数
+    success = Column(Boolean, default=True)
+    error_message = Column(Text)
+    
+    # 缓存管理
+    cache_key = Column(String(255), unique=True)            # 缓存键
+    expires_at = Column(DateTime(timezone=True))
+    hit_count = Column(Integer, default=0)
+    last_hit_at = Column(DateTime(timezone=True))
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # 关系
+    placeholder = relationship("TemplatePlaceholder", back_populates="placeholder_values")
+    data_source = relationship("DataSource")
+    
+    class Config:
+        orm_mode = True
+
+
+class TemplateExecutionHistory(Base):
+    """模板执行历史表"""
+    __tablename__ = "template_execution_history"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id"), nullable=False)
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    
+    # 执行信息
+    execution_type = Column(String(50), nullable=False)     # manual, scheduled, api
+    status = Column(String(50), nullable=False)             # analyzing, running, completed, failed
+    
+    # 阶段标记
+    analysis_completed = Column(Boolean, default=False)     # Agent分析完成
+    sql_validation_completed = Column(Boolean, default=False)  # SQL验证完成
+    data_extraction_completed = Column(Boolean, default=False) # 数据提取完成
+    report_generation_completed = Column(Boolean, default=False) # 报告生成完成
+    
+    # 性能指标
+    total_duration_ms = Column(Integer)
+    analysis_duration_ms = Column(Integer)
+    extraction_duration_ms = Column(Integer)
+    generation_duration_ms = Column(Integer)
+    
+    # 结果信息
+    placeholders_analyzed = Column(Integer, default=0)
+    placeholders_extracted = Column(Integer, default=0)
+    cache_hit_rate = Column(Float, default=0.0)
+    output_file_path = Column(String(500))
+    output_file_size = Column(Integer)
+    
+    # 错误信息
+    error_details = Column(JSON)
+    failed_placeholders = Column(JSON)
+    
+    start_time = Column(DateTime(timezone=True), server_default=func.now())
+    end_time = Column(DateTime(timezone=True))
+    
+    class Config:
+        orm_mode = True

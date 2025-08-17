@@ -11,7 +11,7 @@ Provides comprehensive template management capabilities including:
 
 from .template_service import TemplateService
 from .placeholder_config_service import PlaceholderConfigService
-from .template_parser import EnhancedTemplateParser
+from .enhanced_template_parser import EnhancedTemplateParser
 from .template_cache_service import TemplateCacheService
 
 __all__ = [

@@ -17,9 +17,8 @@ from .core.scheduler import TaskScheduler
 from .core.progress_manager import TaskProgressManager, EnhancedTaskProgressManager
 
 # 导入执行组件
-from .execution.pipeline import (
-    intelligent_report_generation_pipeline,
-    enhanced_intelligent_report_generation_pipeline
+from .execution.unified_pipeline import (
+    unified_report_generation_pipeline
 )
 from .execution.agent_executor import AgentExecutor
 from .execution.fallback import FallbackHandler
@@ -42,8 +41,7 @@ __all__ = [
     "EnhancedTaskProgressManager",
     
     # 执行组件
-    "intelligent_report_generation_pipeline",
-    "enhanced_intelligent_report_generation_pipeline",
+    "unified_report_generation_pipeline",
     "AgentExecutor",
     "FallbackHandler",
     

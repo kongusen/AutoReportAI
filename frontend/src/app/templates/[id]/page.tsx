@@ -8,6 +8,8 @@ import {
   TrashIcon,
   EyeIcon,
   EyeSlashIcon,
+  CogIcon,
+  TableCellsIcon,
 } from '@heroicons/react/24/outline'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -149,6 +151,14 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                   预览
                 </>
               )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push(`/templates/${currentTemplate.id}/placeholders`)}
+            >
+              <TableCellsIcon className="w-4 h-4 mr-2" />
+              占位符管理
             </Button>
             <Button
               variant="outline"

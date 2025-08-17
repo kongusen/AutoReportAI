@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { Template, TemplateCreate, TemplateUpdate, TemplatePreview, ApiResponse } from '@/types'
+import { Template, TemplateCreate, TemplateUpdate, TemplatePreview, PlaceholderConfig, PlaceholderAnalytics, ApiResponse } from '@/types'
 import { api } from '@/lib/api'
 import toast from 'react-hot-toast'
 
@@ -13,6 +13,11 @@ interface TemplateState {
   placeholderPreview: TemplatePreview | null
   previewLoading: boolean
   
+  // 占位符相关状态
+  placeholders: PlaceholderConfig[]
+  placeholderAnalytics: PlaceholderAnalytics | null
+  placeholderLoading: boolean
+  
   // Actions
   fetchTemplates: () => Promise<void>
   getTemplate: (id: string) => Promise<Template>
@@ -22,6 +27,15 @@ interface TemplateState {
   previewTemplate: (content: string, variables?: Record<string, any>) => Promise<string>
   uploadTemplateFile: (id: string, file: File) => Promise<Template>
   fetchPlaceholderPreview: (id: string) => Promise<void>
+  
+  // 占位符管理方法
+  fetchPlaceholders: (templateId: string) => Promise<void>
+  analyzePlaceholders: (templateId: string, forceReparse?: boolean) => Promise<void>
+  analyzeWithAgent: (templateId: string, dataSourceId: string, forceReanalyze?: boolean) => Promise<void>
+  updatePlaceholder: (templateId: string, placeholderId: string, updates: Partial<PlaceholderConfig>) => Promise<void>
+  getTemplateReadiness: (templateId: string, dataSourceId?: string) => Promise<any>
+  invalidateCache: (templateId: string, cacheLevel?: string) => Promise<void>
+  getCacheStatistics: (templateId: string) => Promise<any>
 
   // Internal methods
   setLoading: (loading: boolean) => void
@@ -40,6 +54,11 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   previewContent: '',
   placeholderPreview: null,
   previewLoading: false,
+  
+  // 占位符相关状态
+  placeholders: [],
+  placeholderAnalytics: null,
+  placeholderLoading: false,
 
   // 获取模板列表
   fetchTemplates: async () => {
@@ -244,5 +263,154 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     const { templates } = get()
     const filteredList = templates.filter(template => template.id !== id)
     set({ templates: filteredList })
+  },
+
+  // =====================================================================
+  // 占位符管理方法
+  // =====================================================================
+
+  // 获取模板占位符列表
+  fetchPlaceholders: async (templateId: string) => {
+    try {
+      set({ placeholderLoading: true })
+      const response = await api.get(`/templates/${templateId}/placeholders`)
+      const placeholderData = response.data?.data || response.data || {}
+      
+      set({ 
+        placeholders: placeholderData.placeholders || [],
+        placeholderAnalytics: {
+          total_placeholders: placeholderData.total_placeholders || 0,
+          analyzed_placeholders: placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0,
+          sql_validated_placeholders: placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.sql_validated).length || 0,
+          average_confidence_score: placeholderData.placeholders?.reduce((sum: number, p: PlaceholderConfig) => sum + p.confidence_score, 0) / (placeholderData.total_placeholders || 1) || 0,
+          cache_hit_rate: 0,
+          analysis_coverage: (placeholderData.total_placeholders > 0 ? (placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0) / placeholderData.total_placeholders * 100 : 0),
+          execution_stats: {
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            average_execution_time_ms: 0
+          }
+        }
+      })
+    } catch (error: any) {
+      console.error('Failed to fetch placeholders:', error)
+      toast.error('获取占位符列表失败')
+      set({ placeholders: [], placeholderAnalytics: null })
+    } finally {
+      set({ placeholderLoading: false })
+    }
+  },
+
+  // 分析模板占位符
+  analyzePlaceholders: async (templateId: string, forceReparse = false) => {
+    try {
+      set({ placeholderLoading: true })
+      const response = await api.post(`/templates/${templateId}/analyze-placeholders`, {
+        force_reparse: forceReparse
+      })
+      
+      if (response.data?.success) {
+        toast.success('占位符分析完成')
+        // 重新获取占位符列表
+        await get().fetchPlaceholders(templateId)
+      } else {
+        toast.error(response.data?.message || '占位符分析失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to analyze placeholders:', error)
+      toast.error(error.response?.data?.detail || '占位符分析失败')
+    } finally {
+      set({ placeholderLoading: false })
+    }
+  },
+
+  // 使用Agent分析占位符
+  analyzeWithAgent: async (templateId: string, dataSourceId: string, forceReanalyze = false) => {
+    try {
+      set({ placeholderLoading: true })
+      const response = await api.post(`/templates/${templateId}/analyze-with-agent`, {}, {
+        params: { 
+          data_source_id: dataSourceId,
+          force_reanalyze: forceReanalyze
+        }
+      })
+      
+      if (response.data?.success) {
+        toast.success('Agent分析完成')
+        // 重新获取占位符列表
+        await get().fetchPlaceholders(templateId)
+      } else {
+        toast.error(response.data?.message || 'Agent分析失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to analyze with agent:', error)
+      toast.error(error.response?.data?.detail || 'Agent分析失败')
+    } finally {
+      set({ placeholderLoading: false })
+    }
+  },
+
+  // 更新占位符配置
+  updatePlaceholder: async (templateId: string, placeholderId: string, updates: Partial<PlaceholderConfig>) => {
+    try {
+      set({ placeholderLoading: true })
+      const response = await api.put(`/templates/${templateId}/placeholders/${placeholderId}`, updates)
+      
+      if (response.data?.success) {
+        toast.success('占位符更新成功')
+        // 重新获取占位符列表
+        await get().fetchPlaceholders(templateId)
+      } else {
+        toast.error(response.data?.message || '占位符更新失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to update placeholder:', error)
+      toast.error(error.response?.data?.detail || '占位符更新失败')
+    } finally {
+      set({ placeholderLoading: false })
+    }
+  },
+
+  // 获取模板就绪状态
+  getTemplateReadiness: async (templateId: string, dataSourceId?: string) => {
+    try {
+      const params = dataSourceId ? { data_source_id: dataSourceId } : {}
+      const response = await api.get(`/templates/${templateId}/readiness`, { params })
+      return response.data?.data || response.data
+    } catch (error: any) {
+      console.error('Failed to get template readiness:', error)
+      toast.error('获取模板就绪状态失败')
+      throw error
+    }
+  },
+
+  // 清除模板缓存
+  invalidateCache: async (templateId: string, cacheLevel?: string) => {
+    try {
+      const params = cacheLevel ? { cache_level: cacheLevel } : {}
+      const response = await api.post(`/templates/${templateId}/invalidate-cache`, {}, { params })
+      
+      if (response.data?.success) {
+        toast.success(`缓存清除完成，共清除 ${response.data.data?.cleared_cache_entries || 0} 个缓存条目`)
+      } else {
+        toast.error(response.data?.message || '缓存清除失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to invalidate cache:', error)
+      toast.error(error.response?.data?.detail || '缓存清除失败')
+    }
+  },
+
+  // 获取缓存统计
+  getCacheStatistics: async (templateId: string) => {
+    try {
+      const response = await api.get(`/templates/${templateId}/cache-statistics`)
+      return response.data?.data || response.data
+    } catch (error: any) {
+      console.error('Failed to get cache statistics:', error)
+      toast.error('获取缓存统计失败')
+      throw error
+    }
   },
 }))

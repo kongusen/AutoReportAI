@@ -7,16 +7,16 @@ Task Execution Components
 - 回退处理机制
 """
 
-from .pipeline import (
-    intelligent_report_generation_pipeline,
-    enhanced_intelligent_report_generation_pipeline
+from .unified_pipeline import (
+    unified_report_generation_pipeline,
+    PipelineMode
 )
 from .agent_executor import AgentExecutor
 from .fallback import FallbackHandler
 
 __all__ = [
-    "intelligent_report_generation_pipeline",
-    "enhanced_intelligent_report_generation_pipeline",
+    "unified_report_generation_pipeline",
+    "PipelineMode",
     "AgentExecutor",
     "FallbackHandler",
 ]

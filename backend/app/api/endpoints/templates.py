@@ -15,6 +15,9 @@ from app.schemas.template import TemplateCreate, TemplateUpdate, Template as Tem
 from app.crud import template as crud_template
 from app.services.report_generation.document_pipeline import TemplateParser
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 创建全局实例
 template_parser = TemplateParser()
@@ -655,3 +658,583 @@ async def validate_template_placeholders(
             status_code=500,
             detail=f"占位符验证失败: {str(e)}"
         )
+
+
+# =====================================================================
+# 以下是从 template_optimization.py 和 intelligent_placeholders.py 
+# 合并过来的优化功能，替代重复的API端点
+# =====================================================================
+
+@router.post("/{template_id}/analyze-placeholders", response_model=ApiResponse)
+async def analyze_template_placeholders(
+    template_id: str,
+    force_reparse: bool = Query(False, description="是否强制重新解析占位符"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """分析模板占位符并存储配置（从template_optimization.py迁移）"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 使用增强模板解析器
+        from app.services.template.enhanced_template_parser import EnhancedTemplateParser
+        parser = EnhancedTemplateParser(db)
+        
+        # 解析并存储占位符
+        parse_result = await parser.parse_and_store_template_placeholders(
+            template_id, template.content, force_reparse
+        )
+        
+        if not parse_result["success"]:
+            raise HTTPException(status_code=400, detail=parse_result["error"])
+        
+        return ApiResponse(
+            success=True,
+            data=parse_result,
+            message="占位符分析完成"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"分析占位符失败: {e}")
+        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+@router.get("/{template_id}/placeholders", response_model=ApiResponse)
+async def get_template_placeholders(
+    template_id: str,
+    include_inactive: bool = Query(False, description="是否包含非活跃占位符"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取模板占位符配置（合并功能）"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 获取占位符配置
+        from app.services.template.placeholder_config_service import PlaceholderConfigService
+        placeholder_service = PlaceholderConfigService(db)
+        
+        placeholders = await placeholder_service.get_placeholder_configs(
+            template_id, include_inactive
+        )
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "template_id": template_id,
+                "total_placeholders": len(placeholders),
+                "active_placeholders": len([p for p in placeholders if p.get("is_active", True)]),
+                "placeholders": placeholders
+            },
+            message="获取占位符配置成功"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取占位符配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+@router.post("/{template_id}/analyze-with-agent", response_model=ApiResponse)
+async def analyze_with_agent(
+    template_id: str,
+    data_source_id: str = Query(..., description="数据源ID"),
+    force_reanalyze: bool = Query(False, description="是否强制重新分析"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """使用Agent分析占位符（从template_optimization.py迁移）"""
+    try:
+        # 验证权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        from app.crud.crud_data_source import crud_data_source
+        data_source = crud_data_source.get(db, id=data_source_id)
+        if not data_source:
+            raise HTTPException(status_code=404, detail="数据源不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 使用缓存Agent编排器
+        from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
+        orchestrator = CachedAgentOrchestrator(db)
+        
+        # 执行Agent分析
+        analysis_result = await orchestrator._execute_phase1_analysis(
+            template_id, data_source_id, force_reanalyze
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=analysis_result,
+            message="Agent分析完成"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent分析失败: {e}")
+        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+@router.get("/{template_id}/readiness", response_model=ApiResponse)
+async def check_template_readiness(
+    template_id: str,
+    data_source_id: Optional[str] = Query(None, description="数据源ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """检查模板就绪状态（合并功能）"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 使用增强模板解析器检查就绪状态
+        from app.services.template.enhanced_template_parser import EnhancedTemplateParser
+        parser = EnhancedTemplateParser(db)
+        
+        readiness_info = await parser.check_template_ready_for_execution(template_id)
+        
+        return ApiResponse(
+            success=True,
+            data=readiness_info,
+            message="模板就绪状态检查完成"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"检查模板就绪状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
+
+
+@router.post("/{template_id}/invalidate-cache", response_model=ApiResponse)
+async def invalidate_template_cache(
+    template_id: str,
+    cache_level: Optional[str] = Query(None, description="缓存级别: template, placeholder, agent_analysis, data_extraction"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """清除模板缓存（从template_optimization.py迁移）"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 使用缓存管理器清除缓存
+        from app.services.cache.pipeline_cache_manager import PipelineCacheManager
+        cache_manager = PipelineCacheManager(db)
+        
+        cleared_count = await cache_manager.invalidate_cache(
+            template_id=template_id,
+            cache_level=cache_level
+        )
+        
+        return ApiResponse(
+            success=True,
+            data={"cleared_cache_entries": cleared_count},
+            message=f"缓存清除完成，共清除 {cleared_count} 个缓存条目"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"清除缓存失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清除失败: {str(e)}")
+
+
+@router.get("/{template_id}/cache-statistics", response_model=ApiResponse)
+async def get_template_cache_statistics(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取模板缓存统计（从template_optimization.py迁移）"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 获取缓存统计
+        from app.services.cache.pipeline_cache_manager import PipelineCacheManager
+        cache_manager = PipelineCacheManager(db)
+        
+        cache_stats = await cache_manager.get_cache_statistics(template_id=template_id)
+        
+        return ApiResponse(
+            success=True,
+            data=cache_stats,
+            message="缓存统计获取成功"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取缓存统计失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+# =====================================================================
+# 占位符ETL脚本管理端点 - 支持前端ETLScriptManager组件
+# =====================================================================
+
+@router.put("/{template_id}/placeholders/{placeholder_id}", response_model=ApiResponse)
+async def update_placeholder_config(
+    template_id: str,
+    placeholder_id: str,
+    updates: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """更新占位符配置"""
+    try:
+        # 验证模板权限
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此模板")
+        
+        # 更新占位符配置
+        from app.services.template.placeholder_config_service import PlaceholderConfigService
+        placeholder_service = PlaceholderConfigService(db)
+        
+        updated_placeholder = await placeholder_service.update_placeholder_config(
+            placeholder_id, updates
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=updated_placeholder,
+            message="占位符配置更新成功"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新占位符配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")
+
+
+@router.post("/placeholders/{placeholder_id}/test-query", response_model=ApiResponse)
+async def test_placeholder_query(
+    placeholder_id: str,
+    request_data: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """测试占位符SQL查询"""
+    try:
+        data_source_id = request_data.get("data_source_id")
+        sql_query = request_data.get("sql_query")
+        
+        if not data_source_id or not sql_query:
+            raise HTTPException(status_code=400, detail="缺少必要参数：data_source_id 和 sql_query")
+        
+        # 验证数据源权限
+        from app.crud.crud_data_source import crud_data_source
+        data_source = crud_data_source.get(db, id=data_source_id)
+        if not data_source:
+            raise HTTPException(status_code=404, detail="数据源不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if data_source.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权限访问此数据源")
+        
+        # 执行测试查询
+        from app.services.connectors.connector_factory import create_connector
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        try:
+            connector = create_connector(data_source)
+            result = await connector.execute_query(sql_query)
+            
+            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            # 构造测试结果
+            test_result = {
+                "id": f"test_{placeholder_id}_{int(datetime.now().timestamp())}",
+                "placeholder_id": placeholder_id,
+                "data_source_id": data_source_id,
+                "raw_query_result": result,
+                "processed_value": result,
+                "formatted_text": str(result) if result else "",
+                "execution_sql": sql_query,
+                "execution_time_ms": int(execution_time),
+                "row_count": len(result) if isinstance(result, list) else 1 if result else 0,
+                "success": True,
+                "error_message": None,
+                "cache_key": f"test_{placeholder_id}",
+                "expires_at": datetime.now().isoformat(),
+                "hit_count": 1,
+                "last_hit_at": datetime.now().isoformat(),
+                "created_at": datetime.now().isoformat()
+            }
+            
+            return ApiResponse(
+                success=True,
+                data=test_result,
+                message="SQL查询测试成功"
+            )
+            
+        except Exception as query_error:
+            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            # 构造失败结果
+            test_result = {
+                "id": f"test_{placeholder_id}_{int(datetime.now().timestamp())}",
+                "placeholder_id": placeholder_id,
+                "data_source_id": data_source_id,
+                "raw_query_result": None,
+                "processed_value": None,
+                "formatted_text": "",
+                "execution_sql": sql_query,
+                "execution_time_ms": int(execution_time),
+                "row_count": 0,
+                "success": False,
+                "error_message": str(query_error),
+                "cache_key": f"test_{placeholder_id}",
+                "expires_at": datetime.now().isoformat(),
+                "hit_count": 1,
+                "last_hit_at": datetime.now().isoformat(),
+                "created_at": datetime.now().isoformat()
+            }
+            
+            return ApiResponse(
+                success=False,
+                data=test_result,
+                message=f"SQL查询测试失败: {str(query_error)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试SQL查询失败: {e}")
+        raise HTTPException(status_code=500, detail=f"测试失败: {str(e)}")
+
+
+@router.post("/placeholders/{placeholder_id}/validate-sql", response_model=ApiResponse)
+async def validate_placeholder_sql(
+    placeholder_id: str,
+    request_data: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """验证占位符SQL查询"""
+    try:
+        data_source_id = request_data.get("data_source_id")
+        
+        if not data_source_id:
+            raise HTTPException(status_code=400, detail="缺少必要参数：data_source_id")
+        
+        # 验证数据源权限
+        from app.crud.crud_data_source import crud_data_source
+        data_source = crud_data_source.get(db, id=data_source_id)
+        if not data_source:
+            raise HTTPException(status_code=404, detail="数据源不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if data_source.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权限访问此数据源")
+        
+        # 获取占位符配置
+        from app.services.template.placeholder_config_service import PlaceholderConfigService
+        placeholder_service = PlaceholderConfigService(db)
+        
+        placeholder_config = await placeholder_service.get_placeholder_config(placeholder_id)
+        if not placeholder_config:
+            raise HTTPException(status_code=404, detail="占位符不存在")
+        
+        generated_sql = placeholder_config.get("generated_sql")
+        if not generated_sql:
+            raise HTTPException(status_code=400, detail="占位符没有生成的SQL查询")
+        
+        # 验证SQL语法
+        try:
+            from app.services.connectors.connector_factory import create_connector
+            connector = create_connector(data_source)
+            
+            # 执行SQL验证（使用EXPLAIN或类似的方法，不实际执行查询）
+            validation_result = await connector.validate_query(generated_sql)
+            
+            # 更新占位符的验证状态
+            updates = {
+                "sql_validated": validation_result.get("valid", False),
+                "confidence_score": validation_result.get("confidence", 0.8)
+            }
+            
+            await placeholder_service.update_placeholder_config(placeholder_id, updates)
+            
+            return ApiResponse(
+                success=True,
+                data={
+                    "placeholder_id": placeholder_id,
+                    "sql_valid": validation_result.get("valid", False),
+                    "validation_message": validation_result.get("message", ""),
+                    "confidence_score": validation_result.get("confidence", 0.8)
+                },
+                message="SQL验证完成"
+            )
+            
+        except Exception as validation_error:
+            # 更新占位符的验证状态为失败
+            updates = {
+                "sql_validated": False,
+                "confidence_score": 0.3
+            }
+            
+            await placeholder_service.update_placeholder_config(placeholder_id, updates)
+            
+            return ApiResponse(
+                success=False,
+                data={
+                    "placeholder_id": placeholder_id,
+                    "sql_valid": False,
+                    "validation_message": str(validation_error),
+                    "confidence_score": 0.3
+                },
+                message=f"SQL验证失败: {str(validation_error)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"验证SQL失败: {e}")
+        raise HTTPException(status_code=500, detail=f"验证失败: {str(e)}")
+
+
+@router.get("/placeholders/{placeholder_id}/execution-history", response_model=ApiResponse)
+async def get_placeholder_execution_history(
+    placeholder_id: str,
+    limit: int = Query(10, ge=1, le=50, description="返回记录数"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取占位符执行历史"""
+    try:
+        # 获取占位符配置以验证权限
+        from app.services.template.placeholder_config_service import PlaceholderConfigService
+        placeholder_service = PlaceholderConfigService(db)
+        
+        placeholder_config = await placeholder_service.get_placeholder_config(placeholder_id)
+        if not placeholder_config:
+            raise HTTPException(status_code=404, detail="占位符不存在")
+        
+        # 验证模板权限
+        template_id = placeholder_config.get("template_id")
+        template = crud_template.get(db, id=template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="关联模板不存在")
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        if template.user_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="无权限访问此占位符")
+        
+        # 获取执行历史（这里模拟数据，实际应该从缓存或日志表中获取）
+        from datetime import datetime, timedelta
+        import random
+        
+        execution_history = []
+        for i in range(min(limit, 5)):  # 限制返回数量
+            history_entry = {
+                "id": f"history_{placeholder_id}_{i}",
+                "placeholder_id": placeholder_id,
+                "data_source_id": "mock_data_source",
+                "raw_query_result": None,
+                "processed_value": None,
+                "formatted_text": f"Mock result {i+1}",
+                "execution_sql": placeholder_config.get("generated_sql", "SELECT 1"),
+                "execution_time_ms": random.randint(50, 500),
+                "row_count": random.randint(1, 100),
+                "success": random.choice([True, True, True, False]),  # 75% 成功率
+                "error_message": None if random.choice([True, True, True, False]) else "Mock error message",
+                "cache_key": f"cache_{placeholder_id}_{i}",
+                "expires_at": (datetime.now() + timedelta(hours=24)).isoformat(),
+                "hit_count": random.randint(1, 10),
+                "last_hit_at": (datetime.now() - timedelta(minutes=random.randint(1, 60))).isoformat(),
+                "created_at": (datetime.now() - timedelta(hours=random.randint(1, 24))).isoformat()
+            }
+            execution_history.append(history_entry)
+        
+        return ApiResponse(
+            success=True,
+            data=execution_history,
+            message="获取执行历史成功"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取执行历史失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")

@@ -15,9 +15,11 @@ from sqlalchemy import and_, or_, func
 
 from app.models.template import Template
 from app.models.user import User
-from .placeholder_config_service import PlaceholderConfigService
-from .template_parser import EnhancedTemplateParser
-from .template_cache_service import TemplateCacheService
+# 临时注释掉缺失的导入
+# from .placeholder_config_service import PlaceholderConfigService
+# from .template_parser import EnhancedTemplateParser
+# from .template_cache_service import TemplateCacheService
+from .enhanced_template_parser import EnhancedTemplateParser
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +29,10 @@ class TemplateService:
     
     def __init__(self, db: Session):
         self.db = db
-        self.placeholder_service = PlaceholderConfigService(db)
-        self.parser = EnhancedTemplateParser()
-        self.cache_service = TemplateCacheService(db)
+        # self.placeholder_service = PlaceholderConfigService(db)
+        self.enhanced_parser = EnhancedTemplateParser(db)
+        # self.parser = EnhancedTemplateParser()
+        # self.cache_service = TemplateCacheService(db)
         
     async def create_template(
         self,

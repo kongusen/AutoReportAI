@@ -107,6 +107,73 @@ export interface Placeholder {
   requirements?: Record<string, any>;
 }
 
+// 扩展的占位符配置类型 - 基于后端持久化能力
+export interface PlaceholderConfig {
+  id: string
+  template_id: string
+  placeholder_name: string
+  placeholder_text: string
+  placeholder_type: string
+  content_type: string
+  
+  // Agent分析结果
+  agent_analyzed: boolean
+  target_database?: string
+  target_table?: string
+  required_fields?: Record<string, any>
+  generated_sql?: string
+  sql_validated: boolean
+  confidence_score: number
+  
+  // ETL配置
+  execution_order: number
+  cache_ttl_hours: number
+  agent_config?: Record<string, any>
+  agent_workflow_id?: string
+  
+  // 状态
+  is_active: boolean
+  analyzed_at?: string
+  created_at: string
+  updated_at?: string
+}
+
+// 占位符值缓存类型
+export interface PlaceholderValue {
+  id: string
+  placeholder_id: string
+  data_source_id: string
+  raw_query_result: any
+  processed_value: any
+  formatted_text: string
+  execution_sql: string
+  execution_time_ms: number
+  row_count: number
+  success: boolean
+  error_message?: string
+  cache_key: string
+  expires_at: string
+  hit_count: number
+  last_hit_at?: string
+  created_at: string
+}
+
+// 占位符分析统计类型
+export interface PlaceholderAnalytics {
+  total_placeholders: number
+  analyzed_placeholders: number
+  sql_validated_placeholders: number
+  average_confidence_score: number
+  cache_hit_rate: number
+  analysis_coverage: number
+  execution_stats: {
+    total_executions: number
+    successful_executions: number
+    failed_executions: number
+    average_execution_time_ms: number
+  }
+}
+
 // 模板预览响应类型
 export interface TemplatePreview {
   template_type: string;

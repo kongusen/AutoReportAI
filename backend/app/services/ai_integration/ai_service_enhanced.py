@@ -438,6 +438,52 @@ class EnhancedAIService:
             return response.content
         except Exception as e:
             raise ValueError(f"Failed to generate insights: {str(e)}")
+    
+    async def analyze_with_context(
+        self,
+        context: str,
+        prompt: str,
+        task_type: str,
+        **kwargs
+    ) -> str:
+        """使用上下文进行分析 - 兼容旧版接口"""
+        
+        system_prompt = f"""
+        You are a professional data analyst and business intelligence expert.
+        Task Type: {task_type}
+        
+        Please analyze the provided data and context thoroughly, providing:
+        1. Clear data interpretation
+        2. Key insights and trends
+        3. Business implications
+        4. Actionable recommendations
+        
+        Respond in Chinese and provide detailed, structured analysis.
+        """
+        
+        user_prompt = f"""
+        Context: {context}
+        
+        Analysis Request: {prompt}
+        
+        Please provide a comprehensive analysis based on the above context and request.
+        """
+        
+        request = AIRequest(
+            model=self.provider.default_model_name or "gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=kwargs.get("temperature", 0.7),
+            max_tokens=kwargs.get("max_tokens", 2000)
+        )
+        
+        try:
+            response = await self.chat_completion(request)
+            return response.content
+        except Exception as e:
+            raise ValueError(f"Failed to analyze with context: {str(e)}")
 
     async def generate_chart_config(
         self,

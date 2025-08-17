@@ -13,8 +13,8 @@ from ..base import BaseAnalysisAgent
 class SchemaAnalysisAgent(BaseAnalysisAgent):
     """表结构分析Agent - 专注于数据库结构分析"""
     
-    def __init__(self, db_session: Session):
-        super().__init__(db_session)
+    def __init__(self, db_session: Session = None, suppress_ai_warning: bool = False):
+        super().__init__(db_session, suppress_ai_warning=suppress_ai_warning)
     
     async def analyze_schema_relationships(
         self, 

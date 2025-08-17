@@ -214,17 +214,15 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
               {/* 测试区域 */}
               <div className="flex items-center space-x-2">
                 <Select
+                  options={dataSources.map(ds => ({
+                    label: `${ds.name} (${ds.source_type})`,
+                    value: ds.id
+                  }))}
                   value={selectedDataSource}
-                  onValueChange={setSelectedDataSource}
+                  onChange={(value) => setSelectedDataSource(value as string)}
                   placeholder="选择数据源"
                   className="flex-1"
-                >
-                  {dataSources.map(ds => (
-                    <option key={ds.id} value={ds.id}>
-                      {ds.name} ({ds.source_type})
-                    </option>
-                  ))}
-                </Select>
+                />
                 <Button
                   size="sm"
                   onClick={handleTestQuery}

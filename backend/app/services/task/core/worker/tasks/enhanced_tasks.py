@@ -94,6 +94,3 @@ def enhanced_intelligent_report_generation_pipeline(self, task_id: int, user_id:
     except Exception as e:
         logger.error(f"增强版智能报告生成失败 - 任务ID: {task_id}: {e}")
         raise
-        
-    finally:
-        db.close()

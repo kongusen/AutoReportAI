@@ -96,9 +96,10 @@ class AgentOrchestrator(BaseAgent):
     def _initialize_agents(self):
         """Initialize and register default agents"""
         # Create default agent instances with proper parameters
+        # Suppress AI service warnings for template agents since they don't have database sessions
         data_agent = DataQueryAgent()
         content_agent = ContentGenerationAgent()
-        analysis_agent = AnalysisAgent(db_session=None)
+        analysis_agent = AnalysisAgent(db_session=None, suppress_ai_warning=True)
         viz_agent = VisualizationAgent()
         
         # Register agents

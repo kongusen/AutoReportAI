@@ -23,7 +23,9 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
     include=[
         "app.services.task.core.worker.tasks.basic_tasks",
-        "app.services.task.core.worker.tasks.enhanced_tasks"
+        "app.services.task.core.worker.tasks.enhanced_tasks",
+        "app.services.task.core.worker.tasks.two_phase_tasks",
+        "app.services.task.core.worker.tasks.ai_analysis_tasks"
     ]
 )
 

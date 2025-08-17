@@ -264,17 +264,14 @@ export default function TemplatePlaceholdersPage() {
             </Button>
             {dataSources.length > 0 && (
               <Select
-                value=""
-                onValueChange={handleAgentAnalysis}
+                options={dataSources.map(ds => ({
+                  label: `Agent分析 - ${ds.name}`,
+                  value: ds.id
+                }))}
                 placeholder="使用Agent分析"
                 disabled={analyzing}
-              >
-                {dataSources.map(ds => (
-                  <option key={ds.id} value={ds.id}>
-                    Agent分析 - {ds.name}
-                  </option>
-                ))}
-              </Select>
+                onChange={(value) => handleAgentAnalysis(value as string)}
+              />
             )}
           </div>
         }
@@ -485,7 +482,6 @@ export default function TemplatePlaceholdersPage() {
                     onUpdate={loadData}
                   />
                 </div>
-                </div>
               </CardContent>
             </Card>
           ))
@@ -515,14 +511,15 @@ export default function TemplatePlaceholdersPage() {
                 类型
               </label>
               <Select
+                options={[
+                  { label: '统计', value: '统计' },
+                  { label: '图表', value: '图表' },
+                  { label: '文本', value: '文本' },
+                  { label: '数据', value: '数据' }
+                ]}
                 value={editForm.placeholder_type}
-                onValueChange={(value) => setEditForm({...editForm, placeholder_type: value})}
-              >
-                <option value="统计">统计</option>
-                <option value="图表">图表</option>
-                <option value="文本">文本</option>
-                <option value="数据">数据</option>
-              </Select>
+                onChange={(value) => setEditForm({...editForm, placeholder_type: value as string})}
+              />
             </div>
           </div>
 
@@ -576,7 +573,7 @@ export default function TemplatePlaceholdersPage() {
           <div className="flex items-center">
             <Switch
               checked={editForm.is_active}
-              onCheckedChange={(checked) => setEditForm({...editForm, is_active: checked})}
+              onChange={(checked) => setEditForm({...editForm, is_active: checked})}
             />
             <label className="ml-2 text-sm font-medium text-gray-700">
               启用此占位符

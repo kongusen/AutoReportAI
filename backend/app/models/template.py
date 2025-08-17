@@ -39,6 +39,7 @@ class Template(Base):
     # 关系定义
     user = relationship("User", back_populates="templates")
     tasks = relationship("Task", back_populates="template")
+    placeholders = relationship("TemplatePlaceholder", back_populates="template", cascade="all, delete-orphan")
     processing_history = relationship(
         "PlaceholderProcessingHistory", back_populates="template"
     )

@@ -15,7 +15,7 @@ from ..core import get_ai_service, get_analysis_parser, get_error_handler
 class BaseAnalysisAgent(BaseAgent):
     """基础分析Agent - 提供通用的分析功能"""
     
-    def __init__(self, db_session: Session = None, config: AgentConfig = None):
+    def __init__(self, db_session: Session = None, config: AgentConfig = None, suppress_ai_warning: bool = False):
         # 如果没有提供配置，创建默认配置
         if config is None:
             config = AgentConfig(
@@ -27,7 +27,7 @@ class BaseAnalysisAgent(BaseAgent):
         
         super().__init__(config)
         self.db_session = db_session
-        self.ai_service = get_ai_service(db_session)
+        self.ai_service = get_ai_service(db_session, suppress_warning=suppress_ai_warning)
         self.response_parser = get_analysis_parser()
         self.error_handler = get_error_handler()
         self.logger = logging.getLogger(__name__)

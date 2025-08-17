@@ -24,6 +24,7 @@ class AgentType(Enum):
     DATA_QUERY = "data_query"
     CONTENT_GENERATION = "content_generation" 
     ANALYSIS = "analysis"
+    SCHEMA_ANALYSIS = "schema_analysis"
     VISUALIZATION = "visualization"
     ORCHESTRATOR = "orchestrator"
 

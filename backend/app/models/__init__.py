@@ -15,6 +15,7 @@ from .report_history import ReportHistory
 from .table_schema import TableSchema, ColumnSchema, TableRelationship, ColumnType
 from .task import Task, TaskExecution, TaskStatus, ProcessingMode, AgentWorkflowType
 from .template import Template
+from .template_placeholder import TemplatePlaceholder, PlaceholderValue, TemplateExecutionHistory
 from .user import User
 from .user_profile import UserProfile
 
@@ -26,6 +27,9 @@ __all__ = [
     "User",
     "UserProfile",
     "Template",
+    "TemplatePlaceholder",
+    "PlaceholderValue", 
+    "TemplateExecutionHistory",
     "DataSource",
     "ETLJob",
     "ReportHistory",

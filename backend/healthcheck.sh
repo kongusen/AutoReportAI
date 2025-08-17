@@ -9,7 +9,33 @@ case "$SERVICE_TYPE" in
         curl -f -s --max-time 10 http://localhost:8000/api/v1/health || exit 1
         ;;
     "worker")
-        celery -A app.services.task.core.worker.celery_app inspect ping --timeout=10 || exit 1
+        # Optimized worker health check with reduced noise
+        
+        # Check if celery process is running
+        if ! pgrep -f "celery.*worker" > /dev/null 2>&1; then
+            exit 1
+        fi
+        
+        # Check Redis connection quietly
+        python3 -c "
+import redis
+import os
+import sys
+import warnings
+warnings.filterwarnings('ignore')
+
+try:
+    redis_url = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
+    r = redis.from_url(redis_url)
+    r.ping()
+except Exception:
+    sys.exit(1)
+" 2>/dev/null || exit 1
+        
+        # Check worker ping with suppressed output
+        if ! celery -A app.services.task.core.worker.celery_app inspect ping --timeout=3 2>/dev/null | grep -q "pong"; then
+            exit 1
+        fi
         ;;
     "beat")
         # For beat, just check if process is running

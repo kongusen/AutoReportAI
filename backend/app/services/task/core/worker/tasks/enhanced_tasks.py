@@ -67,13 +67,18 @@ def execute_scheduled_task(self, task_id: int):
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.enhanced_tasks.intelligent_report_generation_pipeline')
-def intelligent_report_generation_pipeline(self, task_id: int, user_id: str):
+def intelligent_report_generation_pipeline(self, task_id: int, user_id: str, execution_context: Dict[str, Any] = None):
     """
-    智能占位符驱动的报告生成流水线 - 使用增强版本
+    智能占位符驱动的报告生成流水线 - 使用增强版本，支持执行上下文
     """
-    # 使用增强版本的函数
+    # 使用增强版本的函数，传递执行上下文
     from app.services.task.execution.unified_pipeline import unified_report_generation_pipeline, PipelineMode
-    return unified_report_generation_pipeline(task_id, user_id, mode=PipelineMode.ENHANCED)
+    return unified_report_generation_pipeline(
+        task_id, 
+        user_id, 
+        mode=PipelineMode.ENHANCED,
+        execution_context=execution_context
+    )
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.enhanced_tasks.enhanced_intelligent_report_generation_pipeline')

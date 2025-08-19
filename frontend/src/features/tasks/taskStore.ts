@@ -180,7 +180,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 执行任务 - 使用WebSocket实时更新
   executeTask: async (id: string) => {
     try {
-      const response = await api.post(`/tasks/${id}/execute?use_intelligent_placeholders=true`)
+      const response = await api.post(`/tasks/${id}/execute`)
       const result = response.data || response
       
       // 初始化任务进度状态

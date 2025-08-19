@@ -319,6 +319,137 @@ class TemplateParser:
             }
         
         return styles
+    
+    def parse_doc_placeholders(self, doc_path: str) -> Dict[str, Any]:
+        """解析DOC文档中的占位符（API兼容方法）"""
+        try:
+            # 读取文档内容
+            if HAS_DOCX:
+                try:
+                    doc = Document(doc_path)
+                    text_content = ""
+                    for paragraph in doc.paragraphs:
+                        text_content += paragraph.text + "\n"
+                except Exception as docx_error:
+                    self.logger.warning(f"python-docx解析失败，使用二进制方式: {docx_error}")
+                    # 降级到二进制读取
+                    with open(doc_path, 'rb') as f:
+                        binary_data = f.read()
+                    text_content = self._extract_text_from_word_doc(binary_data)
+            else:
+                # 如果没有python-docx，尝试二进制读取
+                with open(doc_path, 'rb') as f:
+                    binary_data = f.read()
+                text_content = self._extract_text_from_word_doc(binary_data)
+            
+            # 提取占位符
+            placeholders_info = self._extract_placeholders(text_content)
+            
+            # 分类占位符
+            stats_placeholders = []
+            chart_placeholders = []
+            
+            for placeholder in placeholders_info:
+                placeholder_dict = {
+                    "description": placeholder.description,
+                    "placeholder_text": f"{{{{{placeholder.name}}}}}",
+                    "placeholder_name": placeholder.name,
+                    "placeholder_type": placeholder.type,
+                    "content_type": placeholder.content_type.value if hasattr(placeholder.content_type, 'value') else str(placeholder.content_type)
+                }
+                
+                # 根据类型分类
+                if placeholder.type in ["统计", "statistic", "count", "sum", "average"]:
+                    placeholder_dict["analysis_requirements"] = {
+                        "data_operation": self._infer_data_operation(placeholder.name),
+                        "aggregation_type": self._infer_aggregation_type(placeholder.name),
+                        "time_dimension": "时间" in placeholder.name or "年" in placeholder.name or "月" in placeholder.name,
+                        "geographic_dimension": "地区" in placeholder.name or "区域" in placeholder.name,
+                        "requires_grouping": "分组" in placeholder.name or "按" in placeholder.name
+                    }
+                    stats_placeholders.append(placeholder_dict)
+                elif placeholder.type in ["图表", "chart", "graph"]:
+                    placeholder_dict["chart_requirements"] = {
+                        "chart_type": self._infer_chart_type(placeholder.name),
+                        "data_series": 1,
+                        "x_axis": "category",
+                        "y_axis": "value",
+                        "show_legend": True
+                    }
+                    chart_placeholders.append(placeholder_dict)
+                else:
+                    # 默认归类为统计
+                    placeholder_dict["analysis_requirements"] = {
+                        "data_operation": "unknown",
+                        "aggregation_type": None,
+                        "time_dimension": False,
+                        "geographic_dimension": False,
+                        "requires_grouping": False
+                    }
+                    stats_placeholders.append(placeholder_dict)
+            
+            return {
+                "success": True,
+                "stats_placeholders": stats_placeholders,
+                "chart_placeholders": chart_placeholders,
+                "total_placeholders": len(placeholders_info),
+                "document_path": doc_path
+            }
+            
+        except Exception as e:
+            self.logger.error(f"解析DOC占位符失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "stats_placeholders": [],
+                "chart_placeholders": [],
+                "total_placeholders": 0,
+                "document_path": doc_path
+            }
+    
+    def _infer_data_operation(self, placeholder_name: str) -> str:
+        """推断数据操作类型"""
+        name_lower = placeholder_name.lower()
+        if any(keyword in name_lower for keyword in ['总数', '数量', 'count', '个数']):
+            return 'count'
+        elif any(keyword in name_lower for keyword in ['总和', '合计', 'sum', '总计']):
+            return 'sum'
+        elif any(keyword in name_lower for keyword in ['平均', 'avg', 'average', '均值']):
+            return 'average'
+        elif any(keyword in name_lower for keyword in ['最大', 'max', '最高']):
+            return 'max'
+        elif any(keyword in name_lower for keyword in ['最小', 'min', '最低']):
+            return 'min'
+        else:
+            return 'unknown'
+    
+    def _infer_aggregation_type(self, placeholder_name: str) -> Optional[str]:
+        """推断聚合类型"""
+        name_lower = placeholder_name.lower()
+        if any(keyword in name_lower for keyword in ['按月', '月度', 'monthly']):
+            return 'monthly'
+        elif any(keyword in name_lower for keyword in ['按年', '年度', 'yearly']):
+            return 'yearly'
+        elif any(keyword in name_lower for keyword in ['按日', '日度', 'daily']):
+            return 'daily'
+        elif any(keyword in name_lower for keyword in ['按区域', '地区', 'region']):
+            return 'regional'
+        else:
+            return None
+    
+    def _infer_chart_type(self, placeholder_name: str) -> str:
+        """推断图表类型"""
+        name_lower = placeholder_name.lower()
+        if any(keyword in name_lower for keyword in ['柱状图', 'bar', '条形图']):
+            return 'bar'
+        elif any(keyword in name_lower for keyword in ['折线图', 'line', '趋势图']):
+            return 'line'
+        elif any(keyword in name_lower for keyword in ['饼图', 'pie', '饼状图']):
+            return 'pie'
+        elif any(keyword in name_lower for keyword in ['散点图', 'scatter']):
+            return 'scatter'
+        else:
+            return 'bar'  # 默认柱状图
 
 
 class ContentFormatter:

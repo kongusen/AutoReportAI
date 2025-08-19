@@ -308,12 +308,24 @@ export default function TasksPage() {
       key: 'schedule',
       title: '调度',
       dataIndex: 'schedule',
-      render: (schedule?: string) => (
-        <div className="flex items-center">
-          <ClockIcon className="w-4 h-4 text-gray-400 mr-1" />
-          <span className="text-sm font-mono text-gray-600">
-            {schedule || '手动执行'}
-          </span>
+      render: (schedule: string, record: Task) => (
+        <div className="space-y-1">
+          <div className="flex items-center">
+            <ClockIcon className="w-4 h-4 text-gray-400 mr-1" />
+            <span className="text-sm font-mono text-gray-600">
+              {schedule || '手动执行'}
+            </span>
+          </div>
+          {record.report_period && (
+            <div className="text-xs text-gray-500">
+              数据范围: {
+                record.report_period === 'daily' ? '每日' :
+                record.report_period === 'weekly' ? '每周' :
+                record.report_period === 'monthly' ? '每月' :
+                record.report_period === 'yearly' ? '每年' : record.report_period
+              }
+            </div>
+          )}
         </div>
       ),
     },

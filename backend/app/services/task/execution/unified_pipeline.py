@@ -35,6 +35,7 @@ def unified_report_generation_pipeline(
     mode: PipelineMode = PipelineMode.AUTO,
     force_reanalyze: bool = False,
     optimization_enabled: Optional[bool] = None,
+    execution_context: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -69,8 +70,10 @@ def unified_report_generation_pipeline(
                 **kwargs
             )
             
-            # 执行两阶段流水线
-            pipeline_result = asyncio.run(execute_two_phase_pipeline(task_id, user_id, config))
+            # 执行两阶段流水线，传递执行上下文
+            pipeline_result = asyncio.run(execute_two_phase_pipeline(
+                task_id, user_id, config, execution_context=execution_context
+            ))
             
             # 转换为统一格式
             result = {
@@ -115,7 +118,7 @@ def unified_report_generation_pipeline(
                 "optimization_used": True,
                 "execution_mode": config.execution_mode.value,
                 "cache_enabled": config.enable_caching,
-                "data": pipeline_result.data if pipeline_result.success else None,
+                "data": pipeline_result.final_output if pipeline_result.success else None,
                 "message": "优化模式（两阶段架构）执行成功" if pipeline_result.success else pipeline_result.error
             }
             if not pipeline_result.success:
@@ -142,7 +145,7 @@ def unified_report_generation_pipeline(
                 "optimization_used": True,
                 "execution_mode": config.execution_mode.value,
                 "cache_enabled": config.enable_caching,
-                "data": pipeline_result.data if pipeline_result.success else None,
+                "data": pipeline_result.final_output if pipeline_result.success else None,
                 "message": "增强模式（两阶段架构）执行成功" if pipeline_result.success else pipeline_result.error
             }
             if not pipeline_result.success:
@@ -169,7 +172,7 @@ def unified_report_generation_pipeline(
                 "optimization_used": True,
                 "execution_mode": config.execution_mode.value,
                 "cache_enabled": config.enable_caching,
-                "data": pipeline_result.data if pipeline_result.success else None,
+                "data": pipeline_result.final_output if pipeline_result.success else None,
                 "message": "标准模式（两阶段架构）执行成功" if pipeline_result.success else pipeline_result.error
             }
             if not pipeline_result.success:
@@ -203,7 +206,7 @@ def unified_report_generation_pipeline(
                     "optimization_used": False,
                     "execution_mode": fallback_config.execution_mode.value,
                     "cache_enabled": False,
-                    "data": fallback_pipeline_result.data if fallback_pipeline_result.success else None,
+                    "data": fallback_pipeline_result.final_output if fallback_pipeline_result.success else None,
                     "message": "降级模式执行成功" if fallback_pipeline_result.success else fallback_pipeline_result.error,
                     "fallback_reason": str(e)
                 }
@@ -215,7 +218,14 @@ def unified_report_generation_pipeline(
             except Exception as fallback_error:
                 logger.error(f"降级执行也失败 - 任务ID: {task_id}: {fallback_error}")
         
-        raise
+        # 返回失败结果而不是抛出异常
+        return {
+            "success": False,
+            "pipeline_mode": "failed",
+            "optimization_used": False,
+            "error": str(e),
+            "message": "流水线执行失败"
+        }
 
 
 def _select_pipeline_mode(

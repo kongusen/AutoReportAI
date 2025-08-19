@@ -27,6 +27,37 @@ class QueryResult:
     success: bool
     error_message: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为可序列化的字典"""
+        return {
+            "data": self.data.to_dict(orient="records") if not self.data.empty else [],
+            "columns": self.data.columns.tolist() if not self.data.empty else [],
+            "execution_time": self.execution_time,
+            "success": self.success,
+            "error_message": self.error_message,
+            "metadata": self.metadata or {},
+            "row_count": len(self.data)
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'QueryResult':
+        """从字典创建QueryResult对象"""
+        df_data = data.get("data", [])
+        columns = data.get("columns", [])
+        
+        if df_data and columns:
+            df = pd.DataFrame(df_data, columns=columns)
+        else:
+            df = pd.DataFrame()
+        
+        return cls(
+            data=df,
+            execution_time=data.get("execution_time", 0.0),
+            success=data.get("success", True),
+            error_message=data.get("error_message"),
+            metadata=data.get("metadata", {})
+        )
 
 
 class BaseConnector(ABC):

@@ -8,12 +8,48 @@ from sqlalchemy import text
 from typing import Dict, Any
 import time
 from datetime import datetime, timezone
+import pandas as pd
+import json
 
 from app.db.session import get_db
 from app.api.deps import get_all_services_health
 from app.core.config import settings
 
 router = APIRouter()
+
+
+def serialize_health_data(data: Any) -> Any:
+    """
+    Recursively serialize health data, converting pandas DataFrames and other
+    non-serializable objects to JSON-compatible formats
+    """
+    if isinstance(data, pd.DataFrame):
+        # Convert DataFrame to dictionary
+        return {
+            "type": "dataframe",
+            "shape": list(data.shape),
+            "columns": list(data.columns),
+            "data_preview": data.head(5).to_dict(orient='records') if not data.empty else [],
+            "empty": data.empty
+        }
+    elif isinstance(data, dict):
+        return {key: serialize_health_data(value) for key, value in data.items()}
+    elif isinstance(data, (list, tuple)):
+        return [serialize_health_data(item) for item in data]
+    elif hasattr(data, '__dict__'):
+        # Handle objects with attributes
+        return {
+            "type": type(data).__name__,
+            "attributes": {key: serialize_health_data(value) for key, value in data.__dict__.items()}
+        }
+    else:
+        # For basic types (str, int, bool, None) and other serializable objects
+        try:
+            json.dumps(data)  # Test if it's JSON serializable
+            return data
+        except (TypeError, ValueError):
+            # If not serializable, convert to string representation
+            return str(data)
 
 
 @router.get("/health", tags=["Health"])
@@ -50,7 +86,7 @@ async def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
         status = "healthy" if services_health["overall_status"] == "healthy" else "degraded"
         health_data["checks"]["services"] = {
             "status": status,
-            "details": services_health
+            "details": serialize_health_data(services_health)
         }
     except Exception as e:
         health_data["checks"]["services"] = {
@@ -94,7 +130,8 @@ async def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
     elif any(check.get("status") == "degraded" for check in health_data["checks"].values()):
         health_data["status"] = "degraded"
     
-    return health_data
+    # Ensure all data is serializable
+    return serialize_health_data(health_data)
 
 
 @router.get("/health/ready", tags=["Health"])
@@ -176,4 +213,4 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
         }
         health_data["status"] = "degraded"
     
-    return health_data
+    return serialize_health_data(health_data)

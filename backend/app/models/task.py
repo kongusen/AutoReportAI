@@ -35,6 +35,14 @@ class AgentWorkflowType(str, enum.Enum):
     CUSTOM_WORKFLOW = "custom_workflow"                # 自定义工作流
 
 
+class ReportPeriod(str, enum.Enum):
+    """报告周期"""
+    DAILY = "daily"         # 日报
+    WEEKLY = "weekly"       # 周报
+    MONTHLY = "monthly"     # 月报
+    YEARLY = "yearly"       # 年报
+
+
 class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = {'extend_existing': True}
@@ -43,6 +51,7 @@ class Task(Base):
     name = Column(String, index=True, nullable=False)
     description = Column(String, nullable=True)
     schedule = Column(String, nullable=True)
+    report_period = Column(Enum(ReportPeriod, name='reportperiod', values_callable=lambda obj: [e.value for e in obj]), default=ReportPeriod.MONTHLY)  # 报告周期
     recipients = Column(JSON, nullable=True)  # Store list of emails as JSON
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -80,6 +89,7 @@ class Task(Base):
     data_source = relationship("DataSource")
     template = relationship("Template", back_populates="tasks")
     executions = relationship("TaskExecution", back_populates="task")
+    report_histories = relationship("ReportHistory", back_populates="task", cascade="all, delete-orphan")
 
     @property
     def success_rate(self) -> float:

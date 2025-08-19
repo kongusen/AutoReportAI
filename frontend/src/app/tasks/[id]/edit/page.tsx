@@ -18,7 +18,7 @@ import { CronEditor } from '@/components/forms/CronEditor'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTemplateStore } from '@/features/templates/templateStore'
-import { TaskUpdate, ProcessingMode, AgentWorkflowType } from '@/types'
+import { TaskUpdate, ProcessingMode, AgentWorkflowType, ReportPeriod } from '@/types'
 import { isValidEmail, isValidCron } from '@/utils'
 import { TaskConfigForm } from '@/components/tasks/TaskConfigForm'
 
@@ -28,6 +28,7 @@ const taskSchema = z.object({
   template_id: z.string().min(1, '请选择模板'),
   data_source_id: z.string().min(1, '请选择数据源'),
   schedule: z.string().optional(),
+  report_period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('monthly'),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
   
@@ -102,6 +103,7 @@ export default function EditTaskPage() {
             template_id: task.template_id,
             data_source_id: task.data_source_id,
             schedule: task.schedule || '',
+            report_period: task.report_period || 'monthly',
             recipients: task.recipients || [],
             is_active: task.is_active,
           })
@@ -339,6 +341,28 @@ function TaskTabs({
                   <p className="mt-1 text-sm text-red-600">{errors.data_source_id.message}</p>
                 )}
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                报告周期 *
+              </label>
+              <Select
+                options={[
+                  { value: 'daily', label: '每日' },
+                  { value: 'weekly', label: '每周' },
+                  { value: 'monthly', label: '每月' },
+                  { value: 'yearly', label: '每年' }
+                ]}
+                value={getValues('report_period')}
+                onChange={(value) => setValue('report_period', value as ReportPeriod)}
+              />
+              {errors.report_period && (
+                <p className="mt-1 text-sm text-red-600">{errors.report_period.message}</p>
+              )}
+              <p className="mt-1 text-sm text-gray-500">
+                设置报告数据的时间范围，用于动态生成SQL时间参数
+              </p>
             </div>
           </CardContent>
         </Card>

@@ -161,7 +161,7 @@ class IntelligentETLExecutor:
         
         if connector_key not in self.connectors:
             if data_source.source_type == "doris":
-                self.connectors[connector_key] = DorisConnector(data_source)
+                self.connectors[connector_key] = DorisConnector.from_data_source(data_source)
             elif data_source.source_type in ["mysql", "postgresql"]:
                 self.connectors[connector_key] = self._create_sql_connector(data_source)
             else:

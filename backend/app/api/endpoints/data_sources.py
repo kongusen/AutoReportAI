@@ -18,8 +18,11 @@ from app.crud.crud_data_source import crud_data_source
 from app.core.dependencies import get_current_user
 from app.crud.crud_data_source import get_wide_table_data
 from app.core.data_source_utils import parse_data_source_id, format_data_source_info
+import logging
+import time
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def resolve_data_source_id(data_source_id: str, user_id: UUID, db: Session) -> DataSourceModel:
@@ -34,6 +37,36 @@ def resolve_data_source_id(data_source_id: str, user_id: UUID, db: Session) -> D
             detail="数据源不存在或无权限访问"
         )
     return data_source
+
+
+async def _discover_and_cache_schema(data_source: DataSourceModel):
+    """发现并缓存数据源的表结构"""
+    try:
+        logger.info(f"开始发现数据源表结构: {data_source.name}")
+        
+        from app.services.schema_management.schema_discovery_service import SchemaDiscoveryService
+        
+        # 使用后台任务发现表结构，避免阻塞用户请求
+        import asyncio
+        
+        async def discover_schema():
+            try:
+                from app.db.session import get_db_session
+                with get_db_session() as db:
+                    service = SchemaDiscoveryService(db)
+                    result = await service.discover_and_store_schemas(str(data_source.id))
+                    if result.get("success"):
+                        logger.info(f"表结构发现完成: {data_source.name}, 发现 {result.get('tables_count', 0)} 个表")
+                    else:
+                        logger.warning(f"表结构发现失败: {data_source.name}, 错误: {result.get('error')}")
+            except Exception as e:
+                logger.error(f"表结构发现失败: {data_source.name}, 错误: {e}")
+        
+        # 在后台执行表结构发现
+        asyncio.create_task(discover_schema())
+        
+    except Exception as e:
+        logger.error(f"启动表结构发现任务失败: {data_source.name}, 错误: {e}")
 
 
 @router.get("/", response_model=ApiResponse)
@@ -96,6 +129,10 @@ async def create_data_source(
             obj_in=data_source, 
             user_id=user_id
         )
+        
+        # 异步启动表结构发现任务
+        await _discover_and_cache_schema(data_source_obj)
+        
         data_source_schema = DataSourceSchema.model_validate(data_source_obj)
         data_source_dict = data_source_schema.model_dump()
         data_source_dict['unique_id'] = str(data_source_dict.get('id'))
@@ -356,3 +393,242 @@ async def get_wide_table(
         data={"fields": fields, "rows": rows, "limit": limit, "offset": offset},
         message="宽表数据获取成功"
     )
+
+
+@router.get("/{data_source_id}/tables", response_model=ApiResponse)
+async def get_data_source_tables(
+    data_source_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取数据源的表列表
+    支持多种ID格式：UUID、slug、name、display_name
+    """
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
+    
+    try:
+        from app.services.connectors.connector_factory import create_connector
+        
+        start_time = time.time()
+        connector = create_connector(data_source)
+        await connector.connect()
+        
+        try:
+            # 获取表列表
+            tables = await connector.get_tables()
+            
+            # 获取数据库列表
+            databases = await connector.get_databases()
+            
+            response_time = time.time() - start_time
+            
+            return ApiResponse(
+                success=True,
+                data={
+                    "tables": tables,
+                    "databases": databases,
+                    "total_tables": len(tables),
+                    "total_databases": len(databases),
+                    "response_time": round(response_time, 3),
+                    "data_source_name": data_source.name
+                },
+                message=f"成功获取 {len(tables)} 个表"
+            )
+            
+        finally:
+            await connector.disconnect()
+            
+    except Exception as e:
+        logger.error(f"获取表列表失败: {e}")
+        return ApiResponse(
+            success=False,
+            data={"error": str(e)},
+            message="获取表列表失败"
+        )
+
+
+@router.get("/{data_source_id}/tables/{table_name}/schema", response_model=ApiResponse)
+async def get_table_schema(
+    data_source_id: str,
+    table_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取指定表的结构信息
+    支持多种ID格式：UUID、slug、name、display_name
+    """
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
+    
+    try:
+        from app.services.connectors.connector_factory import create_connector
+        
+        start_time = time.time()
+        connector = create_connector(data_source)
+        await connector.connect()
+        
+        try:
+            # 获取表结构
+            schema_info = await connector.get_table_schema(table_name)
+            response_time = time.time() - start_time
+            
+            if "error" in schema_info:
+                return ApiResponse(
+                    success=False,
+                    data={"error": schema_info["error"]},
+                    message=f"获取表 {table_name} 结构失败"
+                )
+            
+            return ApiResponse(
+                success=True,
+                data={
+                    "table_name": table_name,
+                    "schema": schema_info,
+                    "response_time": round(response_time, 3),
+                    "data_source_name": data_source.name
+                },
+                message=f"成功获取表 {table_name} 的结构信息"
+            )
+            
+        finally:
+            await connector.disconnect()
+            
+    except Exception as e:
+        logger.error(f"获取表结构失败: {e}")
+        return ApiResponse(
+            success=False,
+            data={"error": str(e)},
+            message=f"获取表 {table_name} 结构失败"
+        )
+
+
+@router.get("/{data_source_id}/fields", response_model=ApiResponse)
+async def get_data_source_fields(
+    data_source_id: str,
+    table_name: Optional[str] = Query(None, description="指定表名，不指定则获取所有字段"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取数据源的字段列表
+    支持多种ID格式：UUID、slug、name、display_name
+    """
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
+    
+    try:
+        from app.services.connectors.connector_factory import create_connector
+        
+        start_time = time.time()
+        connector = create_connector(data_source)
+        await connector.connect()
+        
+        try:
+            # 获取字段列表
+            fields = await connector.get_fields(table_name)
+            response_time = time.time() - start_time
+            
+            return ApiResponse(
+                success=True,
+                data={
+                    "fields": fields,
+                    "table_name": table_name,
+                    "total_fields": len(fields),
+                    "response_time": round(response_time, 3),
+                    "data_source_name": data_source.name
+                },
+                message=f"成功获取 {len(fields)} 个字段"
+            )
+            
+        finally:
+            await connector.disconnect()
+            
+    except Exception as e:
+        logger.error(f"获取字段列表失败: {e}")
+        return ApiResponse(
+            success=False,
+            data={"error": str(e)},
+            message="获取字段列表失败"
+        )
+
+
+@router.post("/{data_source_id}/query", response_model=ApiResponse)
+async def execute_query(
+    data_source_id: str,
+    query_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    在数据源上执行SQL查询
+    支持多种ID格式：UUID、slug、name、display_name
+    """
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
+    
+    sql = query_data.get("sql", "").strip()
+    if not sql:
+        return ApiResponse(
+            success=False,
+            data={"error": "SQL查询不能为空"},
+            message="SQL查询不能为空"
+        )
+    
+    # 安全检查：只允许SELECT查询
+    if not sql.upper().startswith("SELECT"):
+        return ApiResponse(
+            success=False,
+            data={"error": "只允许SELECT查询"},
+            message="安全限制：只允许SELECT查询"
+        )
+    
+    try:
+        from app.services.connectors.connector_factory import create_connector
+        
+        start_time = time.time()
+        connector = create_connector(data_source)
+        await connector.connect()
+        
+        try:
+            # 执行查询
+            result = await connector.execute_query(sql)
+            response_time = time.time() - start_time
+            
+            if hasattr(result, 'data') and not result.data.empty:
+                data_dict = result.data.to_dict('records')
+                columns = result.data.columns.tolist()
+                
+                return ApiResponse(
+                    success=True,
+                    data={
+                        "rows": data_dict,
+                        "columns": columns,
+                        "row_count": len(data_dict),
+                        "response_time": round(response_time, 3),
+                        "execution_time": getattr(result, 'execution_time', response_time),
+                        "data_source_name": data_source.name
+                    },
+                    message=f"查询成功，返回 {len(data_dict)} 行数据"
+                )
+            else:
+                return ApiResponse(
+                    success=True,
+                    data={
+                        "rows": [],
+                        "columns": [],
+                        "row_count": 0,
+                        "response_time": round(response_time, 3),
+                        "data_source_name": data_source.name
+                    },
+                    message="查询成功，无数据返回"
+                )
+            
+        finally:
+            await connector.disconnect()
+            
+    except Exception as e:
+        logger.error(f"执行查询失败: {e}")
+        return ApiResponse(
+            success=False,
+            data={"error": str(e), "sql": sql},
+            message="查询执行失败"
+        )

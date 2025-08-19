@@ -63,3 +63,4 @@ seaborn
 plotly
 kaleido
 scikit-learn
+PyMySQL==1.1.0

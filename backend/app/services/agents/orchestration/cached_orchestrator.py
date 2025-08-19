@@ -94,15 +94,16 @@ class CachedAgentOrchestrator(AgentOrchestrator):
         self,
         template_id: str,
         data_source_id: str,
-        force_reanalyze: bool = False
+        force_reanalyze: bool = False,
+        execution_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """阶段1: Agent分析生成SQL"""
         start_time = datetime.now()
         
         try:
-            # 批量分析模板的所有占位符
+            # 批量分析模板的所有占位符，传递执行时间上下文
             analysis_result = await self.sql_analysis_service.batch_analyze_template_placeholders(
-                template_id, data_source_id, force_reanalyze
+                template_id, data_source_id, force_reanalyze, execution_context
             )
             
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -140,7 +141,8 @@ class CachedAgentOrchestrator(AgentOrchestrator):
         self,
         template_id: str,
         data_source_id: str,
-        user_id: str
+        user_id: str,
+        execution_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """阶段2: 数据提取和报告生成"""
         start_time = datetime.now()
@@ -156,9 +158,9 @@ class CachedAgentOrchestrator(AgentOrchestrator):
                     "execution_time": 0
                 }
             
-            # 2. 获取或计算占位符值（带缓存）
+            # 2. 获取或计算占位符值（带缓存），传递执行上下文
             placeholder_values = await self._get_or_compute_placeholder_values(
-                placeholders, data_source_id
+                placeholders, data_source_id, execution_context
             )
             
             # 3. 生成最终内容
@@ -192,7 +194,8 @@ class CachedAgentOrchestrator(AgentOrchestrator):
     async def _get_or_compute_placeholder_values(
         self,
         placeholders: List[Dict[str, Any]],
-        data_source_id: str
+        data_source_id: str,
+        execution_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Dict[str, Any]]:
         """获取或计算占位符值（带缓存）"""
         placeholder_values = {}
@@ -228,10 +231,10 @@ class CachedAgentOrchestrator(AgentOrchestrator):
                     
                     placeholder_values[placeholder_name] = computed_value
                     
-                    # 3. 保存到缓存
+                    # 3. 保存到缓存，包含时间上下文
                     if computed_value["success"]:
                         await self._save_placeholder_value_to_cache(
-                            placeholder_id, data_source_id, computed_value
+                            placeholder_id, data_source_id, computed_value, execution_context
                         )
                 
             except Exception as e:
@@ -398,7 +401,8 @@ class CachedAgentOrchestrator(AgentOrchestrator):
         self,
         placeholder_id: str,
         data_source_id: str,
-        computed_value: Dict[str, Any]
+        computed_value: Dict[str, Any],
+        execution_context: Optional[Dict[str, Any]] = None
     ):
         """保存占位符值到缓存"""
         try:
@@ -416,20 +420,67 @@ class CachedAgentOrchestrator(AgentOrchestrator):
             # 计算过期时间
             expires_at = datetime.now() + timedelta(hours=placeholder.cache_ttl_hours)
             
-            # 创建缓存记录
+            # 处理查询结果，确保可以JSON序列化
+            raw_result = computed_value.get("raw_result")
+            serializable_result = self._make_result_serializable(raw_result)
+            
+            # 准备时间相关字段
+            execution_time = None
+            report_period = None
+            period_start = None
+            period_end = None
+            sql_parameters_snapshot = None
+            execution_batch_id = None
+            version_hash = None
+            
+            if execution_context:
+                execution_time = datetime.fromisoformat(execution_context["execution_time"]) if execution_context.get("execution_time") else None
+                report_period = execution_context.get("report_period")
+                period_start = datetime.fromisoformat(execution_context["period_start"]) if execution_context.get("period_start") else None
+                period_end = datetime.fromisoformat(execution_context["period_end"]) if execution_context.get("period_end") else None
+                sql_parameters_snapshot = execution_context.get("sql_parameters", {})
+                
+                # 生成执行批次ID（同一次任务执行的所有占位符共享）
+                import hashlib
+                batch_components = f"{execution_time}_{report_period}_{placeholder_id}"
+                execution_batch_id = hashlib.md5(batch_components.encode()).hexdigest()[:16]
+                
+                # 生成版本哈希（基于SQL+参数+时间）
+                sql_executed = computed_value.get("sql_executed", "")
+                version_components = f"{sql_executed}_{str(sql_parameters_snapshot)}_{execution_time}"
+                version_hash = hashlib.sha256(version_components.encode()).hexdigest()
+                
+                # 标记旧版本为非最新
+                self.db.query(PlaceholderValue).filter(
+                    PlaceholderValue.placeholder_id == placeholder_id,
+                    PlaceholderValue.is_latest_version == True
+                ).update({"is_latest_version": False})
+                
+                logger.info(f"设置执行上下文 - 批次ID: {execution_batch_id}, 版本哈希: {version_hash}")
+            
+            # 创建缓存记录，包含时间相关字段
             cache_record = PlaceholderValue(
                 placeholder_id=placeholder_id,
                 data_source_id=data_source_id,
-                raw_query_result=computed_value.get("raw_result"),
+                raw_query_result=serializable_result,
                 processed_value={"formatted_text": computed_value["value"]},
                 formatted_text=computed_value["value"],
                 execution_sql=computed_value.get("sql_executed"),
                 execution_time_ms=computed_value["execution_time_ms"],
-                row_count=self._extract_row_count(computed_value.get("raw_result")),
+                row_count=self._extract_row_count(raw_result),
                 success=computed_value["success"],
                 cache_key=cache_key,
                 expires_at=expires_at,
-                hit_count=0
+                hit_count=0,
+                # 时间相关字段
+                execution_time=execution_time,
+                report_period=report_period,
+                period_start=period_start,
+                period_end=period_end,
+                sql_parameters_snapshot=sql_parameters_snapshot,
+                execution_batch_id=execution_batch_id,
+                version_hash=version_hash,
+                is_latest_version=True
             )
             
             self.db.add(cache_record)
@@ -471,23 +522,56 @@ class CachedAgentOrchestrator(AgentOrchestrator):
             if not template:
                 return "模板不存在"
             
-            template_content = template.content
+            # 检查模板类型和内容格式
+            template_type = getattr(template, 'template_type', 'text')
+            template_content = getattr(template, 'content', '') or ''
             
-            # 替换占位符
-            for placeholder_name, value_info in placeholder_values.items():
-                # 支持多种占位符格式
-                placeholder_patterns = [
-                    f"{{{{{placeholder_name}}}}}",  # {{占位符}}
-                    f"{{{placeholder_name}}}",      # {占位符}
-                ]
-                
-                replacement_value = value_info["value"]
-                
-                for pattern in placeholder_patterns:
-                    if pattern in template_content:
-                        template_content = template_content.replace(pattern, str(replacement_value))
+            # 处理二进制模板文件（如DOCX）
+            if template_type == 'docx' and template_content:
+                # 检查是否是hex编码的二进制内容
+                if all(c in '0123456789ABCDEFabcdef' for c in template_content.replace(' ', '').replace('\n', '')):
+                    # 是hex编码的二进制内容，不能直接处理占位符
+                    processed_placeholders = len([v for v in placeholder_values.values() if v.get("success", False)])
+                    failed_placeholders = len(placeholder_values) - processed_placeholders
+                    
+                    summary_parts = [f"Word模板处理完成"]
+                    if processed_placeholders > 0:
+                        summary_parts.append(f"成功处理 {processed_placeholders} 个占位符")
+                    if failed_placeholders > 0:
+                        summary_parts.append(f"{failed_placeholders} 个占位符处理失败")
+                    
+                    return "，".join(summary_parts)
+                else:
+                    # 文本格式的DOCX内容（少见情况）
+                    template_content = template_content
             
-            return template_content
+            # 对于文本类型模板，进行占位符替换
+            if template_type in ['text', 'html'] and template_content:
+                # 替换占位符
+                for placeholder_name, value_info in placeholder_values.items():
+                    # 支持多种占位符格式
+                    placeholder_patterns = [
+                        f"{{{{{placeholder_name}}}}}",  # {{占位符}}
+                        f"{{{placeholder_name}}}",      # {占位符}
+                    ]
+                    
+                    replacement_value = value_info["value"]
+                    
+                    for pattern in placeholder_patterns:
+                        if pattern in template_content:
+                            template_content = template_content.replace(pattern, str(replacement_value))
+            
+            # 生成处理摘要
+            processed_placeholders = len([v for v in placeholder_values.values() if v.get("success", False)])
+            failed_placeholders = len(placeholder_values) - processed_placeholders
+            
+            summary_parts = [f"模板处理完成"]
+            if processed_placeholders > 0:
+                summary_parts.append(f"成功处理 {processed_placeholders} 个占位符")
+            if failed_placeholders > 0:
+                summary_parts.append(f"{failed_placeholders} 个占位符处理失败")
+            
+            return "，".join(summary_parts)
             
         except Exception as e:
             logger.error(f"生成最终内容失败: {template_id}, 错误: {str(e)}")
@@ -502,9 +586,57 @@ class CachedAgentOrchestrator(AgentOrchestrator):
         cache_hits = len([v for v in placeholder_values.values() if v.get("cache_hit", False)])
         return round((cache_hits / total_placeholders) * 100, 2)
     
+    def _make_result_serializable(self, result: Any) -> Any:
+        """将查询结果转换为可JSON序列化的格式"""
+        try:
+            if result is None:
+                return None
+            
+            # 如果是DorisQueryResult对象，提取可序列化的部分
+            if hasattr(result, 'data') and hasattr(result, 'execution_time'):
+                # 这是DorisQueryResult对象
+                data_dict = []
+                if hasattr(result.data, 'to_dict'):
+                    # pandas DataFrame
+                    data_dict = result.data.to_dict('records')
+                elif hasattr(result.data, '__iter__'):
+                    # 其他可迭代对象
+                    data_dict = list(result.data)
+                
+                return {
+                    "data": data_dict,
+                    "execution_time": float(result.execution_time),
+                    "rows_scanned": getattr(result, 'rows_scanned', 0),
+                    "bytes_scanned": getattr(result, 'bytes_scanned', 0),
+                    "is_cached": getattr(result, 'is_cached', False),
+                    "query_id": getattr(result, 'query_id', ''),
+                    "fe_host": getattr(result, 'fe_host', '')
+                }
+            
+            # 如果是pandas DataFrame
+            if hasattr(result, 'to_dict'):
+                return result.to_dict('records')
+            
+            # 如果是普通的list/dict，直接返回
+            if isinstance(result, (list, dict, str, int, float, bool)):
+                return result
+            
+            # 其他情况转换为字符串
+            return str(result)
+            
+        except Exception as e:
+            logger.warning(f"序列化查询结果失败: {e}")
+            return {"error": "序列化失败", "original_type": str(type(result))}
+
     def _extract_row_count(self, raw_result: Any) -> int:
         """从原始结果中提取行数"""
         try:
+            # 如果是DorisQueryResult对象
+            if hasattr(raw_result, 'data'):
+                if hasattr(raw_result.data, '__len__'):
+                    return len(raw_result.data)
+                return getattr(raw_result, 'rows_scanned', 0)
+            
             if isinstance(raw_result, list):
                 return len(raw_result)
             elif isinstance(raw_result, dict) and "count" in raw_result:

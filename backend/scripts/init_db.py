@@ -1,148 +1,192 @@
-import logging
+#!/usr/bin/env python3
+"""
+AutoReportAI Database Initialization Script
+一键初始化数据库，包含所有表结构、索引和数据
+"""
+
 import os
 import sys
-import uuid
+import psycopg2
+from pathlib import Path
 
-# Add the project root to the Python path
-# This allows running the script from the 'scripts' directory
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add the backend directory to Python path
+backend_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_dir))
 
 from app.core.config import settings
-from app.db.session import SessionLocal
-from app.models.ai_provider import AIProvider, AIProviderType
-from app.models.user import User
-from app.core.security import get_password_hash
-from app.core.security_utils import encrypt_data
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def init_db(db_session):
-    """
-    Initialize the database with essential data only.
-    Creates superuser and AI providers based on environment configuration.
-    """
-    success = True
+def init_database():
+    """初始化数据库"""
+    print("🚀 开始初始化 AutoReportAI 数据库...")
     
     try:
-        # 1. 创建超级用户
-        user = db_session.query(User).filter(User.username == settings.FIRST_SUPERUSER).first()
-        if not user:
-            logger.info(f"Creating superuser: {settings.FIRST_SUPERUSER}")
-            user = User(
-                id=uuid.uuid4(),
-                username=settings.FIRST_SUPERUSER,
-                email=settings.FIRST_SUPERUSER_EMAIL,
-                hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
-                is_superuser=True,
-                is_active=True,
-                full_name="Administrator"
-            )
-            db_session.add(user)
-            db_session.commit()
-            db_session.refresh(user)
-            logger.info(f"✅ Superuser {settings.FIRST_SUPERUSER} created successfully.")
+        # 连接数据库
+        print(f"📡 连接数据库: {settings.DATABASE_URL}")
+        conn = psycopg2.connect(settings.DATABASE_URL)
+        cur = conn.cursor()
+        
+        # 读取完整初始化脚本
+        script_path = Path(__file__).parent / "init-db.sql"
+        if not script_path.exists():
+            print(f"❌ 初始化脚本不存在: {script_path}")
+            return False
+            
+        print("📄 读取数据库初始化脚本...")
+        with open(script_path, 'r', encoding='utf-8') as f:
+            sql_content = f.read()
+        
+        print("🔧 执行数据库初始化...")
+        cur.execute(sql_content)
+        conn.commit()
+        
+        # 验证表创建情况
+        print("✅ 验证表创建情况...")
+        cur.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+            ORDER BY table_name;
+        """)
+        
+        tables = [row[0] for row in cur.fetchall()]
+        print(f"📊 成功创建 {len(tables)} 个表:")
+        
+        # 按类别显示表
+        core_tables = [t for t in tables if t in ['users', 'ai_providers', 'data_sources', 'templates', 'tasks']]
+        schema_tables = [t for t in tables if 'schema' in t or t in ['databases', 'tables', 'table_columns']]
+        template_tables = [t for t in tables if 'template' in t or 'placeholder' in t]
+        other_tables = [t for t in tables if t not in core_tables + schema_tables + template_tables]
+        
+        if core_tables:
+            print("  📋 核心表:", ", ".join(core_tables))
+        if schema_tables:
+            print("  🗄️  架构表:", ", ".join(schema_tables))
+        if template_tables:
+            print("  📝 模板表:", ", ".join(template_tables))
+        if other_tables:
+            print("  🔧 其他表:", ", ".join(other_tables))
+        
+        # 检查关键表
+        key_tables = ['users', 'data_sources', 'templates', 'tasks']
+        missing_tables = [t for t in key_tables if t not in tables]
+        
+        if missing_tables:
+            print(f"⚠️  缺少关键表: {missing_tables}")
+            return False
+        
+        print("✅ 所有关键表创建成功!")
+        
+        # 创建默认管理员用户（如果不存在）
+        print("👤 检查默认管理员用户...")
+        cur.execute("SELECT COUNT(*) FROM users WHERE is_superuser = true")
+        superuser_count = cur.fetchone()[0]
+        
+        if superuser_count == 0:
+            print("🔑 创建默认管理员用户...")
+            from app.core.security import get_password_hash
+            
+            hashed_password = get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
+            cur.execute("""
+                INSERT INTO users (email, username, hashed_password, is_active, is_superuser, full_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (email) DO NOTHING
+            """, (
+                settings.FIRST_SUPERUSER_EMAIL,
+                settings.FIRST_SUPERUSER,
+                hashed_password,
+                True,
+                True,
+                "System Administrator"
+            ))
+            conn.commit()
+            print(f"✅ 创建管理员用户: {settings.FIRST_SUPERUSER_EMAIL}")
         else:
-            logger.info(f"ℹ️  Superuser {settings.FIRST_SUPERUSER} already exists.")
-
-        # 2. 创建AI提供商（仅在配置了API密钥时）
-        ai_providers_created = 0
+            print(f"ℹ️  已存在 {superuser_count} 个管理员用户")
         
-        # OpenAI Provider（如果配置了）
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key and openai_api_key not in ["sk-your-openai-api-key-here", "sk-your-api-key"]:
-            provider_name = "OpenAI"
-            existing_provider = db_session.query(AIProvider).filter(
-                AIProvider.provider_name == provider_name
-            ).first()
-            
-            if not existing_provider:
-                logger.info(f"Creating AI provider: {provider_name}")
-                encrypted_api_key = encrypt_data(openai_api_key)
-                provider = AIProvider(
-                    provider_name=provider_name,
-                    provider_type=AIProviderType.openai,
-                    api_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-                    api_key=encrypted_api_key,
-                    default_model_name=os.getenv("OPENAI_DEFAULT_MODEL", "gpt-3.5-turbo"),
-                    is_active=True,
-                    user_id=user.id,
-                )
-                db_session.add(provider)
-                ai_providers_created += 1
-                logger.info(f"✅ AI provider {provider_name} created successfully.")
-            else:
-                logger.info(f"ℹ️  AI provider {provider_name} already exists.")
-
-        # Azure OpenAI Provider（如果配置了）
-        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        if azure_api_key and azure_endpoint:
-            provider_name = "Azure OpenAI"
-            existing_provider = db_session.query(AIProvider).filter(
-                AIProvider.provider_name == provider_name
-            ).first()
-            
-            if not existing_provider:
-                logger.info(f"Creating AI provider: {provider_name}")
-                encrypted_api_key = encrypt_data(azure_api_key)
-                provider = AIProvider(
-                    provider_name=provider_name,
-                    provider_type=AIProviderType.azure_openai,
-                    api_base_url=azure_endpoint,
-                    api_key=encrypted_api_key,
-                    default_model_name=os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-35-turbo"),
-                    is_active=False,  # 默认不激活，避免冲突
-                    user_id=user.id,
-                )
-                db_session.add(provider)
-                ai_providers_created += 1
-                logger.info(f"✅ AI provider {provider_name} created successfully.")
-            else:
-                logger.info(f"ℹ️  AI provider {provider_name} already exists.")
-
-        if ai_providers_created > 0:
-            db_session.commit()
+        cur.close()
+        conn.close()
         
-        if ai_providers_created == 0:
-            logger.warning("⚠️  No AI providers were created. Please configure API keys in environment variables.")
-            logger.info("   - OPENAI_API_KEY: for OpenAI integration")
-            logger.info("   - AZURE_OPENAI_API_KEY & AZURE_OPENAI_ENDPOINT: for Azure OpenAI integration")
+        print("\n🎉 数据库初始化完成!")
+        print("=" * 50)
+        print(f"📊 创建表数量: {len(tables)}")
+        print(f"👤 管理员邮箱: {settings.FIRST_SUPERUSER_EMAIL}")
+        print(f"🔗 数据库连接: {settings.DATABASE_URL.replace(settings.DATABASE_URL.split('@')[0].split(':')[-1], '***')}")
+        print("=" * 50)
+        print("🚀 现在可以启动应用服务了!")
+        
+        return True
+        
+    except psycopg2.Error as e:
+        print(f"❌ 数据库错误: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ 初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
-        logger.info("🎉 Database initialization completed successfully!")
+def reset_database():
+    """重置数据库（危险操作）"""
+    print("⚠️  警告：即将重置数据库，所有数据将被删除！")
+    confirm = input("请输入 'RESET' 确认重置: ")
+    
+    if confirm != 'RESET':
+        print("❌ 操作已取消")
+        return False
+    
+    try:
+        # 解析数据库URL获取连接参数
+        db_url = settings.DATABASE_URL
+        parts = db_url.split('://')
+        user_pass, host_port_db = parts[1].split('@')
+        user, password = user_pass.split(':')
+        host_port, db_name = host_port_db.split('/')
+        host, port = (host_port.split(':') + ['5432'])[:2]
+        
+        # 连接到postgres数据库
+        conn = psycopg2.connect(
+            host=host, port=port, database='postgres',
+            user=user, password=password
+        )
+        conn.autocommit = True
+        cur = conn.cursor()
+        
+        print(f"🗑️  删除数据库: {db_name}")
+        
+        # 强制断开所有连接
+        cur.execute(f"""
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = '{db_name}'
+              AND pid <> pg_backend_pid();
+        """)
+        
+        # 删除数据库
+        cur.execute(f'DROP DATABASE IF EXISTS {db_name}')
+        
+        # 重新创建数据库
+        cur.execute(f'CREATE DATABASE {db_name} WITH OWNER = {user} ENCODING = "UTF8" LC_COLLATE = "C" LC_CTYPE = "C"')
+        
+        cur.close()
+        conn.close()
+        
+        print(f"✅ 数据库 {db_name} 重置完成")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error during database initialization: {e}")
-        db_session.rollback()
+        print(f"❌ 重置失败: {e}")
         return False
 
-
 def main():
-    """
-    Main function to initialize the database.
-    """
-    logger.info("🚀 --- Starting Database Initialization ---")
-    
-    db_session = None
-    try:
-        db_session = SessionLocal()
-        success = init_db(db_session)
-        
-        if success:
-            logger.info("✅ --- Database Initialization Completed Successfully ---")
-        else:
-            logger.error("❌ --- Database Initialization Failed ---")
-            sys.exit(1)
-            
-    except Exception as e:
-        logger.error(f"❌ Critical error during database initialization: {e}")
-        sys.exit(1)
-    finally:
-        if db_session:
-            db_session.close()
-
+    """主函数"""
+    if len(sys.argv) > 1 and sys.argv[1] == '--reset':
+        print("🔄 重置数据库模式")
+        if reset_database():
+            print("📝 开始初始化...")
+            init_database()
+    else:
+        print("🆕 初始化数据库模式")
+        init_database()
 
 if __name__ == "__main__":
     main()

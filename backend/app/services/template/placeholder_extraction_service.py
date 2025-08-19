@@ -281,8 +281,39 @@ class PlaceholderExtractionService:
         placeholder_info: Dict[str, Any], 
         execution_order: int
     ) -> TemplatePlaceholder:
-        """存储单个占位符到数据库"""
+        """存储单个占位符到数据库，避免重复插入"""
         
+        # 先检查是否已存在相同的占位符
+        existing_placeholder = self.db.query(TemplatePlaceholder).filter(
+            TemplatePlaceholder.template_id == template_id,
+            TemplatePlaceholder.placeholder_name == placeholder_info["name"]
+        ).first()
+        
+        if existing_placeholder:
+            # 如果已存在，更新现有记录
+            logger.info(f"占位符已存在，更新现有记录: {placeholder_info['name']}")
+            
+            # 更新字段
+            existing_placeholder.placeholder_text = placeholder_info["text"]
+            existing_placeholder.placeholder_type = placeholder_info["type"]
+            existing_placeholder.content_type = placeholder_info["content_type"]
+            existing_placeholder.execution_order = execution_order
+            existing_placeholder.cache_ttl_hours = self._calculate_cache_ttl(placeholder_info)
+            existing_placeholder.is_active = True  # 重新激活
+            existing_placeholder.agent_workflow_id = placeholder_info["suggested_workflow"]
+            existing_placeholder.agent_config = {
+                "intent_analysis": placeholder_info["intent_analysis"],
+                "context_keywords": placeholder_info["context_keywords"],
+                "priority": placeholder_info["priority"],
+                "complexity": placeholder_info["complexity"]
+            }
+            existing_placeholder.description = placeholder_info.get("description", "")
+            existing_placeholder.updated_at = datetime.now()
+            
+            self.db.flush()
+            return existing_placeholder
+        
+        # 创建新的占位符
         placeholder = TemplatePlaceholder(
             template_id=template_id,
             placeholder_name=placeholder_info["name"],

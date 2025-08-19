@@ -696,7 +696,7 @@ async def generate_agent_based_intelligent_report_task(
             
             if report:
                 if pipeline_result.success:
-                    pipeline_data = pipeline_result.data
+                    pipeline_data = pipeline_result.final_output
                     
                     # 提取报告内容
                     report_content = ""
@@ -732,7 +732,7 @@ async def generate_agent_based_intelligent_report_task(
                 
                 db.commit()
         
-        return pipeline_result.data if pipeline_result.success else None
+        return pipeline_result.final_output if pipeline_result.success else None
         
     except Exception as e:
         # 更新报告状态为失败

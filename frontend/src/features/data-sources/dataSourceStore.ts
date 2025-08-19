@@ -1,7 +1,17 @@
 'use client'
 
 import { create } from 'zustand'
-import { DataSource, DataSourceCreate, DataSourceUpdate } from '@/types'
+import { 
+  DataSource, 
+  DataSourceCreate, 
+  DataSourceUpdate, 
+  ConnectionTestResult,
+  DataSourceTablesResponse,
+  DataSourceFieldsResponse,
+  TableSchema,
+  QueryExecutionResult,
+  QueryRequest 
+} from '@/types'
 import { api } from '@/lib/api'
 import toast from 'react-hot-toast'
 
@@ -17,6 +27,12 @@ interface DataSourceState {
   updateDataSource: (id: string, data: DataSourceUpdate) => Promise<DataSource>
   deleteDataSource: (id: string) => Promise<void>
   testConnection: (id: string) => Promise<boolean>
+  
+  // New enhanced API methods
+  getTables: (id: string) => Promise<DataSourceTablesResponse>
+  getTableSchema: (id: string, tableName: string) => Promise<TableSchema>
+  getFields: (id: string, tableName?: string) => Promise<DataSourceFieldsResponse>
+  executeQuery: (id: string, query: QueryRequest) => Promise<QueryExecutionResult>
   
   // Internal methods
   setLoading: (loading: boolean) => void
@@ -161,6 +177,77 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
       const errorMessage = error?.response?.data?.message || error?.message || '连接测试失败'
       toast.error(errorMessage)
       return false
+    }
+  },
+
+  // 获取数据源表列表
+  getTables: async (id: string) => {
+    try {
+      const response = await api.get(`/data-sources/${id}/tables`)
+      if (response.success) {
+        return response.data as DataSourceTablesResponse
+      } else {
+        throw new Error(response.message || '获取表列表失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to get tables:', error)
+      const errorMessage = error?.response?.data?.message || error?.message || '获取表列表失败'
+      toast.error(errorMessage)
+      throw error
+    }
+  },
+
+  // 获取表结构信息
+  getTableSchema: async (id: string, tableName: string) => {
+    try {
+      const response = await api.get(`/data-sources/${id}/tables/${tableName}/schema`)
+      if (response.success) {
+        return response.data.schema as TableSchema
+      } else {
+        throw new Error(response.message || '获取表结构失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to get table schema:', error)
+      const errorMessage = error?.response?.data?.message || error?.message || '获取表结构失败'
+      toast.error(errorMessage)
+      throw error
+    }
+  },
+
+  // 获取数据源字段列表
+  getFields: async (id: string, tableName?: string) => {
+    try {
+      const url = tableName 
+        ? `/data-sources/${id}/fields?table_name=${tableName}`
+        : `/data-sources/${id}/fields`
+      const response = await api.get(url)
+      if (response.success) {
+        return response.data as DataSourceFieldsResponse
+      } else {
+        throw new Error(response.message || '获取字段列表失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to get fields:', error)
+      const errorMessage = error?.response?.data?.message || error?.message || '获取字段列表失败'
+      toast.error(errorMessage)
+      throw error
+    }
+  },
+
+  // 执行查询
+  executeQuery: async (id: string, query: QueryRequest) => {
+    try {
+      const response = await api.post(`/data-sources/${id}/query`, query)
+      if (response.success) {
+        return response.data as QueryExecutionResult
+      } else {
+        throw new Error(response.message || '查询执行失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to execute query:', error)
+      const errorMessage = error?.response?.data?.message || error?.message || '查询执行失败'
+      toast.error(errorMessage)
+      throw error
     }
   },
 

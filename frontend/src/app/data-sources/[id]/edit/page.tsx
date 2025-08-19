@@ -49,6 +49,7 @@ export default function EditDataSourcePage() {
   const { getDataSource, updateDataSource, loading } = useDataSourceStore()
   const [selectedType, setSelectedType] = useState<DataSourceType>('sql')
   const [isLoading, setIsLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   const {
     register,
@@ -104,6 +105,7 @@ export default function EditDataSourcePage() {
   }, [dataSourceId, getDataSource, reset])
 
   const onSubmit = async (data: FormData) => {
+    setSaving(true)
     try {
       // 处理JSON字段和数据转换
       const processedData: DataSourceUpdate = {
@@ -137,6 +139,8 @@ export default function EditDataSourcePage() {
       router.push('/data-sources')
     } catch (error) {
       // 错误处理在store中已处理
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -187,7 +191,7 @@ export default function EditDataSourcePage() {
           >
             取消
           </Button>
-          <Button type="submit" loading={loading}>
+          <Button type="submit" loading={saving}>
             保存更改
           </Button>
         </div>

@@ -80,6 +80,20 @@ class PlaceholderValue(Base):
     success = Column(Boolean, default=True)
     error_message = Column(Text)
     
+    # 时间相关字段 - 支持基于时间的动态SQL和历史数据管理
+    execution_time = Column(DateTime(timezone=True))        # 任务执行时间（来自execution_context）
+    report_period = Column(String(20))                      # 报告周期：daily/weekly/monthly/yearly
+    period_start = Column(DateTime(timezone=True))          # 报告周期开始时间
+    period_end = Column(DateTime(timezone=True))            # 报告周期结束时间
+    
+    # SQL参数快照 - 记录执行时使用的动态参数
+    sql_parameters_snapshot = Column(JSON)                  # SQL参数快照，便于历史追溯
+    
+    # 版本控制和历史管理
+    execution_batch_id = Column(String(100))               # 批次ID，同一次任务执行的所有占位符共享
+    version_hash = Column(String(64))                       # 基于SQL+参数+时间的版本哈希
+    is_latest_version = Column(Boolean, default=True)       # 是否为最新版本
+    
     # 缓存管理
     cache_key = Column(String(255), unique=True)            # 缓存键
     expires_at = Column(DateTime(timezone=True))

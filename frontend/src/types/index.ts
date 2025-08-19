@@ -99,6 +99,70 @@ export interface DataSource {
 export interface DataSourceCreate extends Omit<DataSource, 'id' | 'user_id' | 'created_at' | 'updated_at'> {}
 export interface DataSourceUpdate extends Partial<DataSourceCreate> {}
 
+// 数据源连接测试结果
+export interface ConnectionTestResult {
+  connection_status: 'success' | 'failed'
+  response_time: number
+  data_source_name: string
+  message?: string
+  error?: string
+  details?: Record<string, any>
+}
+
+// 表结构信息
+export interface TableSchema {
+  table_name: string
+  columns: TableColumn[]
+  total_columns: number
+  estimated_rows?: number
+  table_size?: number
+  last_analyzed?: string
+}
+
+export interface TableColumn {
+  name: string
+  type: string
+  nullable: boolean
+  key: string
+  default: string | null
+  extra: string
+}
+
+// 数据源表列表响应
+export interface DataSourceTablesResponse {
+  tables: string[]
+  databases: string[]
+  total_tables: number
+  total_databases: number
+  response_time: number
+  data_source_name: string
+}
+
+// 数据源字段列表响应
+export interface DataSourceFieldsResponse {
+  fields: string[]
+  table_name?: string
+  total_fields: number
+  response_time: number
+  data_source_name: string
+}
+
+// 查询执行结果
+export interface QueryExecutionResult {
+  rows: Record<string, any>[]
+  columns: string[]
+  row_count: number
+  response_time: number
+  execution_time?: number
+  data_source_name: string
+}
+
+// 查询请求
+export interface QueryRequest {
+  sql: string
+  parameters?: Record<string, any>
+}
+
 // 模板占位符类型
 export interface Placeholder {
   type: '统计' | '图表' | '文本' | string;
@@ -209,6 +273,9 @@ export type TaskStatus = 'pending' | 'processing' | 'agent_orchestrating' | 'gen
 export type ProcessingMode = 'simple' | 'intelligent' | 'hybrid'
 export type AgentWorkflowType = 'simple_report' | 'statistical_analysis' | 'chart_generation' | 'comprehensive_analysis' | 'custom_workflow'
 
+// 报告周期类型
+export type ReportPeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
+
 // 任务类型
 export interface Task {
   id: number
@@ -219,6 +286,7 @@ export interface Task {
   template_id: string
   data_source_id: string
   schedule?: string
+  report_period?: ReportPeriod  // 新增：报告周期字段
   recipients?: string[]
   is_active: boolean
   created_at: string

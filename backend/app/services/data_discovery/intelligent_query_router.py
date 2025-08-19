@@ -247,22 +247,28 @@ class TableMatcher:
                     Table.is_active == True
                 ).all()
                 
-                for table in tables:
-                    score = await self._calculate_relevance_score(table, context, db)
-                    if score > 0.3:  # 最低相关性阈值
-                        matching_columns = await self._find_matching_columns(table, context, db)
-                        business_context = self._generate_business_context(table, context)
-                        
-                        candidate = TableCandidate(
-                            table=table,
-                            relevance_score=score,
-                            matching_columns=matching_columns,
-                            business_context=business_context
-                        )
-                        candidates.append(candidate)
+                # 如果元数据中没有表，尝试直接查询数据源
+                if not tables:
+                    self.logger.warning(f"No tables found in metadata for data_source {data_source_id}, trying direct query")
+                    candidates = await self._discover_tables_directly(context, data_source_id)
+                else:
+                    for table in tables:
+                        score = await self._calculate_relevance_score(table, context, db)
+                        if score > 0.3:  # 最低相关性阈值
+                            matching_columns = await self._find_matching_columns(table, context, db)
+                            business_context = self._generate_business_context(table, context)
+                            
+                            candidate = TableCandidate(
+                                table=table,
+                                relevance_score=score,
+                                matching_columns=matching_columns,
+                                business_context=business_context
+                            )
+                            candidates.append(candidate)
+                    
+                    # 按相关性排序
+                    candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                 
-                # 按相关性排序
-                candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                 return candidates[:max_tables]
                 
         except Exception as e:
@@ -363,6 +369,91 @@ class TableMatcher:
             self.logger.error(f"Error finding matching columns for table {table.name}: {e}")
             
         return list(set(matching_columns))  # 去重
+    
+    async def _discover_tables_directly(
+        self,
+        context: QueryContext,
+        data_source_id: str
+    ) -> List[TableCandidate]:
+        """直接从数据源发现表"""
+        candidates = []
+        
+        try:
+            from ...models.data_source import DataSource
+            from ...services.connectors.connector_factory import create_connector
+            
+            with get_db_session() as db:
+                data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+                if not data_source:
+                    self.logger.error(f"Data source {data_source_id} not found")
+                    return candidates
+                
+                # 创建连接器直接查询表列表
+                connector = create_connector(data_source)
+                await connector.connect()
+                
+                try:
+                    tables = await connector.get_tables()
+                    self.logger.info(f"Direct discovery found {len(tables)} tables: {tables}")
+                    
+                    # 为每个表创建简单的候选对象
+                    for table_name in tables[:5]:  # 限制表数量
+                        # 创建一个简单的Table对象用于兼容性
+                        mock_table = type('Table', (), {
+                            'id': f"direct_{table_name}",
+                            'name': table_name,
+                            'display_name': table_name,
+                            'business_tags': [],
+                            'row_count': 0,
+                            'last_analyzed': None,
+                            'data_sensitivity': 'public'
+                        })()
+                        
+                        # 计算简单的相关性分数
+                        score = self._calculate_simple_relevance_score(table_name, context)
+                        
+                        if score > 0.1:  # 更低的阈值，因为这是兜底方案
+                            candidate = TableCandidate(
+                                table=mock_table,
+                                relevance_score=score,
+                                matching_columns=[],
+                                business_context="直接发现的表"
+                            )
+                            candidates.append(candidate)
+                    
+                finally:
+                    await connector.disconnect()
+                    
+        except Exception as e:
+            self.logger.error(f"Error in direct table discovery: {e}")
+            
+        return candidates
+    
+    def _calculate_simple_relevance_score(self, table_name: str, context: QueryContext) -> float:
+        """计算简单的相关性得分（用于直接发现的表）"""
+        score = 0.5  # 基础分数
+        
+        table_name_lower = table_name.lower()
+        
+        # 检查表名是否包含查询实体
+        for entity in context.parsed_entities:
+            entity_keywords = SemanticAnalyzer().business_entities.get(entity, [entity])
+            for keyword in entity_keywords:
+                if keyword.lower() in table_name_lower:
+                    score += 0.3
+                    break
+        
+        # 检查表名是否包含常见业务词汇
+        business_keywords = ['user', 'order', 'product', 'customer', 'sale', 'transaction', 
+                           'complaint', 'ticket', 'issue', '用户', '订单', '产品', '客户', 
+                           '销售', '交易', '投诉', '工单', '问题']
+        
+        for keyword in business_keywords:
+            if keyword in table_name_lower:
+                score += 0.2
+                break
+                
+        return min(score, 1.0)
     
     def _generate_business_context(self, table: Table, context: QueryContext) -> str:
         """生成业务上下文描述"""
@@ -628,7 +719,9 @@ class IntelligentQueryRouter:
             self.logger.info(f"Found {len(candidates)} relevant tables")
             
             if not candidates:
-                raise ValueError(f"No relevant tables found for query: {natural_query}")
+                self.logger.warning(f"No relevant tables found for query: {natural_query}, using fallback strategy")
+                # 创建一个默认的查询计划作为后备方案
+                return self._create_fallback_query_plan(context, data_source_id, natural_query)
             
             # 3. 查询规划
             plan = await self.query_planner.create_execution_plan(context, candidates, data_source_id)
@@ -639,3 +732,40 @@ class IntelligentQueryRouter:
         except Exception as e:
             self.logger.error(f"Error routing query: {e}")
             raise
+    
+    def _create_fallback_query_plan(
+        self, 
+        context: QueryContext, 
+        data_source_id: str, 
+        natural_query: str
+    ) -> QueryPlan:
+        """创建后备查询计划（当找不到相关表时）"""
+        
+        # 创建一个默认的表候选（使用通用表名）
+        fallback_table = "default_table"  # 这将被具体的连接器处理
+        
+        # 根据查询意图生成基础SQL
+        if context.intent == QueryIntent.STATISTICAL:
+            sql_template = "SELECT COUNT(*) as count FROM {table}"
+        elif context.intent == QueryIntent.AGGREGATION:
+            sql_template = "SELECT SUM(amount) as total FROM {table}"
+        elif context.intent == QueryIntent.DETAIL:
+            sql_template = "SELECT * FROM {table} LIMIT 100"
+        else:
+            sql_template = "SELECT COUNT(*) as count FROM {table}"
+        
+        # 应用表名替换
+        sql_query = sql_template.format(table=fallback_table)
+        
+        return QueryPlan(
+            primary_tables=[],
+            join_tables=[],
+            join_conditions=[],
+            where_conditions=[],
+            select_columns=["COUNT(*) as count"],
+            group_by_columns=[],
+            order_by_columns=[],
+            estimated_complexity="low",
+            cross_database=False,
+            execution_order=[f"fallback_{datetime.now().strftime('%Y%m%d_%H%M%S')}"]
+        )

@@ -8,7 +8,7 @@ from cron_validator import CronValidator
 from pydantic import BaseModel, field_validator
 
 # 导入Task状态枚举
-from app.models.task import TaskStatus, ProcessingMode, AgentWorkflowType
+from app.models.task import TaskStatus, ProcessingMode, AgentWorkflowType, ReportPeriod
 
 
 class TaskBase(BaseModel):
@@ -17,6 +17,7 @@ class TaskBase(BaseModel):
     template_id: UUID
     data_source_id: UUID
     schedule: Optional[str] = None
+    report_period: Optional[ReportPeriod] = ReportPeriod.MONTHLY
     recipients: Optional[List[str]] = []
     
     # 新增字段（可选，有默认值以保持向后兼容）
@@ -52,6 +53,7 @@ class TaskUpdate(BaseModel):
     template_id: Optional[UUID] = None
     data_source_id: Optional[UUID] = None
     schedule: Optional[str] = None
+    report_period: Optional[ReportPeriod] = None
     recipients: Optional[List[str]] = None
     
     # 新增可更新字段

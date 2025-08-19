@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.core.config import settings
+from app.db.session import get_db
 from app.services.notification.email_service import EmailService
 from app.websocket.manager import NotificationMessage, manager
 

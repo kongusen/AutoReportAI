@@ -45,16 +45,11 @@ def create_connector(data_source: DataSource) -> BaseConnector:
 
 def _create_doris_connector(data_source: DataSource) -> DorisConnector:
     """创建Doris连接器"""
-    from app.core.security_utils import decrypt_data
+    from app.core.data_source_utils import DataSourcePasswordManager
     
-    # 解密密码
-    password = ""
-    if data_source.doris_password:
-        try:
-            password = decrypt_data(data_source.doris_password)
-        except Exception as e:
-            logger.error(f"Failed to decrypt password for data source {data_source.id}: {e}")
-            password = ""
+    # 使用统一的密码管理器解密密码
+    password = DataSourcePasswordManager.get_password(data_source.doris_password)
+    logger.debug(f"Doris连接器密码处理完成，密码长度: {len(password)}")
     
     config = DorisConfig(
         source_type=data_source.source_type,

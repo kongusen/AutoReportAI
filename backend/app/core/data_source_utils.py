@@ -18,8 +18,48 @@ import gc
 
 from ..models.data_source import DataSource
 from ..models.user import User
+from .security_utils import decrypt_data
 
 logger = logging.getLogger(__name__)
+
+
+class DataSourcePasswordManager:
+    """数据源密码管理器，处理加密和明文密码"""
+    
+    @staticmethod
+    def get_password(password: Optional[str]) -> str:
+        """
+        获取解密后的密码
+        
+        Args:
+            password: 可能是加密或明文的密码
+            
+        Returns:
+            解密后的明文密码
+        """
+        if not password:
+            return ""
+        
+        # 检查是否是加密密码（以gAAAA开头且长度足够）
+        if len(password) > 10 and password.startswith('gAAAA'):
+            try:
+                decrypted = decrypt_data(password)
+                if decrypted and len(decrypted) > 0:
+                    logger.debug("密码解密成功")
+                    return decrypted
+            except Exception as e:
+                logger.warning(f"密码解密失败，使用明文处理: {e}")
+        
+        # 返回明文密码
+        logger.debug("使用明文密码")
+        return password
+    
+    @staticmethod
+    def is_encrypted(password: Optional[str]) -> bool:
+        """检查密码是否已加密"""
+        if not password:
+            return False
+        return len(password) > 10 and password.startswith('gAAAA')
 
 
 def generate_slug(name: str, user_id: uuid.UUID, db: Session) -> str:
@@ -496,7 +536,200 @@ class BatchQueryExecutor:
         return optimal_batch_size
 
 
+class DataSourcePasswordManager:
+    """数据源密码管理器"""
+    
+    @staticmethod
+    def get_password(password: Optional[str]) -> str:
+        """
+        安全获取密码，支持加密和明文两种形式
+        
+        Args:
+            password: 可能是加密或明文的密码
+            
+        Returns:
+            解密后的明文密码
+        """
+        if not password:
+            return ""
+        
+        # 如果密码看起来像是加密的（base64编码），尝试解密
+        if len(password) > 10 and password.startswith('gAAAA'):
+            try:
+                decrypted = decrypt_data(password)
+                if decrypted and len(decrypted) > 0:
+                    logger.debug("密码解密成功")
+                    return decrypted
+            except Exception as e:
+                # 解密失败，记录日志但不抛出异常
+                logger.warning(f"密码解密失败，使用明文处理: {e}")
+        
+        # 直接返回原密码（可能是明文）
+        logger.debug("使用明文密码")
+        return password
+    
+    @staticmethod
+    def validate_connection_params(data_source: DataSource) -> Dict[str, Any]:
+        """
+        验证并标准化数据源连接参数
+        
+        Args:
+            data_source: 数据源对象
+            
+        Returns:
+            标准化的连接参数字典
+        """
+        try:
+            if data_source.source_type == "doris":
+                return {
+                    "source_type": data_source.source_type,
+                    "name": data_source.name,
+                    # MySQL协议配置
+                    "mysql_host": (data_source.doris_fe_hosts or ["localhost"])[0],
+                    "mysql_port": data_source.doris_query_port or 9030,
+                    "mysql_database": data_source.doris_database or "default",
+                    "mysql_username": data_source.doris_username or "root",
+                    "mysql_password": DataSourcePasswordManager.get_password(data_source.doris_password),
+                    "mysql_charset": "utf8mb4",
+                    # HTTP API配置
+                    "fe_hosts": data_source.doris_fe_hosts or ["localhost"],
+                    "be_hosts": data_source.doris_be_hosts or ["localhost"], 
+                    "http_port": data_source.doris_http_port or 8030,
+                    "query_port": data_source.doris_query_port or 9030,
+                    "database": data_source.doris_database or "default",
+                    "username": data_source.doris_username or "root",
+                    "password": DataSourcePasswordManager.get_password(data_source.doris_password),
+                    "timeout": 30,
+                    "use_mysql_protocol": True
+                }
+            else:
+                # 其他数据源类型的处理
+                return {
+                    "source_type": data_source.source_type,
+                    "name": data_source.name
+                }
+                
+        except Exception as e:
+            logger.error(f"验证连接参数失败: {e}")
+            raise
+
+
+class DataSourceConnectionTester:
+    """数据源连接测试器"""
+    
+    @staticmethod
+    async def test_doris_connection(connector) -> Dict[str, Any]:
+        """
+        测试Doris连接
+        
+        Args:
+            connector: Doris连接器实例
+            
+        Returns:
+            连接测试结果
+        """
+        try:
+            # 测试基本连接
+            await connector.connect()
+            
+            # 测试查询
+            result = await connector.execute_query("SELECT 1 as test_column")
+            
+            # 测试表列表获取
+            tables = await connector.get_tables()
+            
+            # 测试数据库列表获取
+            databases = await connector.get_databases()
+            
+            return {
+                "success": True,
+                "message": "Doris连接测试成功",
+                "details": {
+                    "can_query": hasattr(result, 'data') and not result.data.empty,
+                    "tables_count": len(tables),
+                    "databases_count": len(databases),
+                    "databases": databases,
+                    "sample_tables": tables[:5] if tables else []
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Doris连接测试失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "details": {}
+            }
+        finally:
+            try:
+                await connector.disconnect()
+            except:
+                pass
+
+
+class DataSourceMetadataExtractor:
+    """数据源元数据提取器"""
+    
+    @staticmethod
+    async def extract_schema_metadata(connector) -> Dict[str, Any]:
+        """
+        提取数据源的schema元数据
+        
+        Args:
+            connector: 数据源连接器
+            
+        Returns:
+            schema元数据字典
+        """
+        try:
+            await connector.connect()
+            
+            # 获取数据库列表
+            databases = await connector.get_databases()
+            
+            # 获取表列表
+            tables = await connector.get_tables()
+            
+            # 获取表结构信息（限制数量避免过多查询）
+            table_schemas = {}
+            for table_name in tables[:10]:  # 只获取前10个表的详细结构
+                try:
+                    schema = await connector.get_table_schema(table_name)
+                    if "error" not in schema:
+                        table_schemas[table_name] = schema
+                        logger.info(f"获取表结构成功: {table_name}, 字段数量: {len(schema.get('columns', []))}")
+                except Exception as e:
+                    logger.warning(f"获取表结构失败: {table_name}, {str(e)}")
+            
+            return {
+                "databases": databases,
+                "tables": tables,
+                "table_schemas": table_schemas,
+                "extraction_success": True,
+                "total_tables": len(tables),
+                "extracted_schemas": len(table_schemas)
+            }
+            
+        except Exception as e:
+            logger.error(f"提取schema元数据失败: {e}")
+            return {
+                "databases": [],
+                "tables": [],
+                "table_schemas": {},
+                "extraction_success": False,
+                "error": str(e)
+            }
+        finally:
+            try:
+                await connector.disconnect()
+            except:
+                pass
+
+
 # 创建全局实例
 connection_manager = DataSourceConnectionManager()
 query_optimizer = QueryOptimizer()
 batch_executor = BatchQueryExecutor()
+password_manager = DataSourcePasswordManager()
+connection_tester = DataSourceConnectionTester()
+metadata_extractor = DataSourceMetadataExtractor()

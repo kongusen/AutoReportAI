@@ -1,4 +1,5 @@
 from typing import Any, List, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -52,6 +53,7 @@ async def get_tasks(
             "template_id": str(task.template_id) if task.template_id else None,
             "data_source_id": str(task.data_source_id) if task.data_source_id else None,
             "schedule": task.schedule,
+            "report_period": task.report_period.value if task.report_period else "monthly",
             "recipients": task.recipients or [],
             "owner_id": str(task.owner_id) if task.owner_id else None,
             "is_active": task.is_active,
@@ -192,6 +194,7 @@ async def delete_task(
 @router.post("/{task_id}/execute", response_model=ApiResponse)
 async def execute_task(
     task_id: int,
+    execution_time: Optional[str] = Query(None, description="任务执行时间 (YYYY-MM-DD HH:MM:SS，默认为当前时间)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -204,6 +207,19 @@ async def execute_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
 
+    # 处理执行时间参数
+    try:
+        if execution_time:
+            parsed_execution_time = datetime.fromisoformat(execution_time.replace('Z', '+00:00'))
+        else:
+            parsed_execution_time = datetime.now()
+            
+        # 从任务设置中获取报告周期
+        report_period = task.report_period.value if task.report_period else "monthly"
+        
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"无效的时间格式: {str(e)}")
+
     # 发送一个Celery任务来异步执行智能报告生成
     try:
         # 在Redis中保存任务所有者信息以便进度通知
@@ -214,10 +230,30 @@ async def execute_task(
         import asyncio
         asyncio.create_task(redis_client.set(f"report_task:{task.id}:owner", str(user_id), ex=3600))
         
+        # 立即设置初始任务状态
+        initial_status = {
+            "status": "processing", 
+            "progress": "0",
+            "message": "任务已提交，正在初始化...",
+            "current_step": "任务初始化",
+            "user_id": str(user_id),
+            "execution_time": parsed_execution_time.isoformat(),
+            "report_period": report_period,
+            "updated_at": datetime.now().isoformat()
+        }
+        asyncio.create_task(redis_client.hset(f"report_task:{task.id}:status", mapping=initial_status))
+        
         # 统一使用智能占位符驱动的报告生成流水线
+        execution_context = {
+            "execution_time": parsed_execution_time.isoformat(),
+            "report_period": report_period,
+            "period_start": None,  # 稍后计算
+            "period_end": None     # 稍后计算
+        }
+        
         task_result = celery_app.send_task(
             "app.services.task.core.worker.tasks.enhanced_tasks.intelligent_report_generation_pipeline", 
-            args=[task.id, str(user_id)]
+            args=[task.id, str(user_id), execution_context]
         )
         
         return ApiResponse(

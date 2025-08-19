@@ -36,5 +36,5 @@ class ReportHistory(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     # Relationships
-    task = relationship("Task")
+    task = relationship("Task", back_populates="report_histories")
     user = relationship("User", back_populates="report_histories")

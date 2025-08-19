@@ -1,5 +1,7 @@
 from typing import Generator, Optional, Dict, Any
 import logging
+import pandas as pd
+import json
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -329,6 +331,39 @@ def get_notification_service(db: Session = Depends(get_db)):
 # Service Health Check Functions
 # ============================================================================
 
+def serialize_health_data(data: Any) -> Any:
+    """
+    Recursively serialize health data, converting pandas DataFrames and other
+    non-serializable objects to JSON-compatible formats
+    """
+    if isinstance(data, pd.DataFrame):
+        # Convert DataFrame to dictionary
+        return {
+            "type": "dataframe",
+            "shape": list(data.shape),
+            "columns": list(data.columns),
+            "data_preview": data.head(5).to_dict(orient='records') if not data.empty else [],
+            "empty": data.empty
+        }
+    elif isinstance(data, dict):
+        return {key: serialize_health_data(value) for key, value in data.items()}
+    elif isinstance(data, (list, tuple)):
+        return [serialize_health_data(item) for item in data]
+    elif hasattr(data, '__dict__'):
+        # Handle objects with attributes
+        return {
+            "type": type(data).__name__,
+            "attributes": {key: serialize_health_data(value) for key, value in data.__dict__.items()}
+        }
+    else:
+        # For basic types (str, int, bool, None) and other serializable objects
+        try:
+            json.dumps(data)  # Test if it's JSON serializable
+            return data
+        except (TypeError, ValueError):
+            # If not serializable, convert to string representation
+            return str(data)
+
 def check_service_health(service_name: str, service_instance) -> dict:
     """Check service health status"""
     try:
@@ -338,10 +373,13 @@ def check_service_health(service_name: str, service_instance) -> dict:
         else:
             health_status = {"status": "unknown", "message": "No health check method available"}
         
+        # Serialize health_status to handle any DataFrames or non-serializable objects
+        serialized_health_status = serialize_health_data(health_status)
+        
         return {
             "service": service_name,
             "status": "healthy",
-            "details": health_status
+            "details": serialized_health_status
         }
     except Exception as e:
         return {

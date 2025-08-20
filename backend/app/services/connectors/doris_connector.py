@@ -696,6 +696,8 @@ class DorisConnector(BaseConnector):
                 try:
                     tables = await self.get_tables_mysql(self.config.database)
                     if tables:
+                        # 过滤异常占位内容
+                        tables = [t for t in tables if t and t.lower() != 'query not supported']
                         self.logger.info(f"✅ MySQL协议获取表列表成功: {len(tables)} 个表")
                         return tables
                 except Exception as e:
@@ -709,10 +711,10 @@ class DorisConnector(BaseConnector):
                 if hasattr(result, 'data') and not result.data.empty:
                     # 获取第一列的所有值作为表名
                     table_column = result.data.iloc[:, 0]  # 第一列
-                    tables = table_column.tolist()
+                    tables = [str(x) for x in table_column.tolist()]
                     
-                    # 过滤系统表
-                    tables = [table for table in tables if not table.startswith('__')]
+                    # 过滤系统表和异常占位行
+                    tables = [table for table in tables if table and not table.startswith('__') and table.lower() != 'query not supported']
                     
                     self.logger.info(f"✅ SHOW TABLES获取表列表成功: {len(tables)} 个表")
                     return tables
@@ -743,9 +745,9 @@ class DorisConnector(BaseConnector):
                     data = result.get("data", [])
                     for row in data:
                         if len(row) >= 2:
-                            table_name = row[1]  # 表名通常在第二列
-                            # 过滤系统表
-                            if not table_name.startswith('__'):
+                            table_name = str(row[1])  # 表名通常在第二列
+                            # 过滤系统表和异常占位
+                            if table_name and not table_name.startswith('__') and table_name.lower() != 'query not supported':
                                 tables.append(table_name)
                     
                     self.logger.info(f"✅ 管理API获取表列表成功: {len(tables)} 个表")
@@ -1145,6 +1147,45 @@ class DorisConnector(BaseConnector):
                 query_id="fallback_query",
                 fe_host=fe_host
             )
+
+    async def get_table_columns(self, table_name: str) -> List[Dict[str, Any]]:
+        """获取表结构信息"""
+        try:
+            # 使用 DESCRIBE 命令获取表结构
+            sql = f"DESCRIBE {table_name}"
+            result = await self.execute_query(sql)
+            
+            if hasattr(result, 'to_dict'):
+                result_dict = result.to_dict()
+                data = result_dict.get("data", [])
+                
+                # 转换格式
+                table_columns = []
+                for row in data:
+                    if len(row) >= 4:  # Field, Type, Null, Key, Default, Extra
+                        column_info = {
+                            "name": row[0] if len(row) > 0 else "",
+                            "type": row[1] if len(row) > 1 else "",
+                            "nullable": row[2] if len(row) > 2 else "",
+                            "key": row[3] if len(row) > 3 else "",
+                            "default": row[4] if len(row) > 4 else None,
+                            "extra": row[5] if len(row) > 5 else ""
+                        }
+                        table_columns.append(column_info)
+                
+                if table_columns:
+                    return table_columns
+                else:
+                    # 如果没有获取到列信息，返回默认结构
+                    return [{"name": "id", "type": "varchar", "nullable": "YES", "key": "", "default": None, "extra": ""}]
+            else:
+                # 如果结果格式不标准，返回基本结构
+                return [{"name": "id", "type": "varchar", "nullable": "YES", "key": "", "default": None, "extra": ""}]
+                
+        except Exception as e:
+            self.logger.warning(f"获取表 {table_name} 结构失败: {e}")
+            # 返回默认结构
+            return [{"name": "id", "type": "varchar", "nullable": "YES", "key": "", "default": None, "extra": ""}]
 
 
 # 工厂函数

@@ -126,8 +126,9 @@ class UserAIServiceFactory:
         if self._system_ai_service is None:
             db = SessionLocal()
             try:
-                self._system_ai_service = AIService(db)
-                logger.info("Created system default AI service")
+                # 使用增强版本，提供 analyze_with_context 等高级能力
+                self._system_ai_service = EnhancedAIService(db)
+                logger.info("Created system default EnhancedAIService")
             except Exception as e:
                 logger.error(f"Failed to create system AI service: {e}")
                 # 如果连系统服务都创建不了，创建一个模拟的服务
@@ -309,6 +310,24 @@ class MockAIService:
             response_time=0.1,
             cost_estimate=0.0
         )
+    
+    async def analyze_with_context(self, context: str, prompt: str, task_type: str, **kwargs) -> str:
+        """提供与 EnhancedAIService 兼容的分析接口，返回保守的默认结果"""
+        try:
+            if task_type == "placeholder_analysis":
+                # 返回严格JSON，避免上层解析失败
+                return (
+                    '{"intent":"statistical","data_operation":"count","business_domain":"generic",'
+                    '"target_metrics":[],"time_dimension":null,"grouping_dimensions":[],"filters":[],'
+                    '"aggregations":["count"],"reasoning":["mock service"],"confidence":0.5,"optimizations":[]}'
+                )
+            elif task_type == "sql_generation":
+                # 返回简单SQL，让上游模板/修复逻辑接管
+                return "SELECT COUNT(*) as total_count FROM default_table"
+            else:
+                return "{}"
+        except Exception:
+            return "{}"
 
 
 # 全局AI服务工厂实例

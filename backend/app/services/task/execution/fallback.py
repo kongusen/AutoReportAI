@@ -10,7 +10,7 @@ Fallback Handler
 import logging
 from typing import Any, Dict, Optional
 
-from app.services.ai_integration.llm_service import AIService
+from app.services.ai_integration.ai_service_enhanced import EnhancedAIService
 from app.services.data_processing.etl.intelligent_etl_executor import IntelligentETLExecutor
 from app.db.session import SessionLocal
 
@@ -22,7 +22,7 @@ class FallbackHandler:
     
     def __init__(self):
         self.db = SessionLocal()
-        self.ai_service = AIService(self.db)
+        self.ai_service = EnhancedAIService(self.db)
         self.etl_executor = IntelligentETLExecutor(self.db)
     
     def __del__(self):

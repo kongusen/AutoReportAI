@@ -54,7 +54,12 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
   const loadExecutionHistory = async () => {
     try {
       const response = await api.get(`/placeholders/${placeholder.id}/execution-history`)
-      setExecutionHistory(response.data?.data || [])
+      const payload = response.data?.data
+      // 后端可能返回 {history: [...]} 或直接返回数组，做兼容处理
+      const history: any[] = Array.isArray(payload)
+        ? payload
+        : (payload?.history ?? [])
+      setExecutionHistory(history as any)
     } catch (error) {
       console.error('Failed to load execution history:', error)
     }
@@ -75,7 +80,19 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
       })
 
       if (response.data?.success) {
-        setTestResult(response.data.data)
+        const d = response.data.data || {}
+        // 兼容不同字段命名/类型，进行一次归一化
+        const normalized: any = {
+          ...d,
+          success: Boolean(d.success),
+          execution_time_ms: Number(d.execution_time_ms ?? d.execution_time ?? 0),
+          row_count: Number(
+            d.row_count ?? (Array.isArray(d.data) ? d.data.length : 0)
+          ),
+          formatted_text: d.formatted_text ?? '',
+          error_message: d.error_message ?? d.error ?? null,
+        }
+        setTestResult(normalized)
         toast.success('SQL查询测试成功')
         loadExecutionHistory() // 重新加载历史
       } else {

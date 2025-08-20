@@ -22,7 +22,7 @@ class SchemaAnalysisService:
         self.db_session = db_session
         self.logger = logging.getLogger(__name__)
         self.relationship_analyzer = RelationshipAnalyzer()
-        self.ai_service = EnhancedAIService()
+        self.ai_service = EnhancedAIService(db_session)
         self.analysis_agent = SchemaAnalysisAgent(db_session)
     
     async def analyze_table_relationships(self, data_source_id: str) -> Dict[str, Any]:

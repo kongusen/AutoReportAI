@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.core.logging_config import get_module_logger, get_performance_logger
-from ..ai_integration import AIService
+from ..ai_integration import EnhancedAIService
 from ..data_processing import DataRetrievalService
 from .composer import ReportCompositionService
 from .document_pipeline import TemplateParser
@@ -36,7 +36,7 @@ class ReportGenerationService:
         self.agent_orchestrator = AgentOrchestrator()
         self.composition_service = ReportCompositionService()
         self.word_generator = WordGeneratorService()
-        self.ai_service = AIService(db)
+        self.ai_service = EnhancedAIService(db)
         self.data_retrieval = DataRetrievalService()
 
     async def generate_report(

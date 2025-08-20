@@ -787,7 +787,7 @@ async def analyze_with_agent(
         
         # 使用缓存Agent编排器
         from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
-        orchestrator = CachedAgentOrchestrator(db)
+        orchestrator = CachedAgentOrchestrator(db, user_id=str(user_id))
         
         # 执行Agent分析
         analysis_result = await orchestrator._execute_phase1_analysis(

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.core.time_utils import now, format_iso
 from app.db.session import SessionLocal
-from app.services.ai_integration.llm_service import AIService
+from app.services.ai_integration.ai_service_enhanced import EnhancedAIService
 from app.services.agents.orchestration import AgentOrchestrator
 from app.services.data_processing.etl.intelligent_etl_executor import IntelligentETLExecutor
 from app.services.notification.notification_service import NotificationService
@@ -166,7 +166,7 @@ def _fallback_ai_analysis(placeholder_data: Dict[str, Any], data_source_id: str)
     """回退的AI分析方法"""
     db = SessionLocal()
     try:
-        ai_service = AIService(db)
+        ai_service = EnhancedAIService(db)
         return asyncio.run(ai_service.analyze_placeholder_requirements(placeholder_data, data_source_id))
     finally:
         db.close()

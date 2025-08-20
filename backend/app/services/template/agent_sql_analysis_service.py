@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 class AgentSQLAnalysisService:
     """Agent SQL分析服务"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str = None):
         self.db = db
-        self.multi_db_agent = MultiDatabaseAgent(db_session=db)
+        self.user_id = user_id
+        self.multi_db_agent = MultiDatabaseAgent(db_session=db, user_id=user_id)
         # 使用create_connector函数而不是工厂类
     
     async def analyze_placeholder_with_agent(

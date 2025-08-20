@@ -38,10 +38,12 @@ class PlaceholderConfigService:
             
             return [
                 {
+                    # 统一与前端类型 PlaceholderConfig 的字段命名
                     "id": str(p.id),
-                    "name": p.placeholder_name,
-                    "text": p.placeholder_text,
-                    "type": p.placeholder_type,
+                    "template_id": str(p.template_id),
+                    "placeholder_name": p.placeholder_name,
+                    "placeholder_text": p.placeholder_text,
+                    "placeholder_type": p.placeholder_type,
                     "content_type": p.content_type,
                     "agent_analyzed": p.agent_analyzed,
                     "target_database": p.target_database,
@@ -53,9 +55,11 @@ class PlaceholderConfigService:
                     "execution_order": p.execution_order,
                     "cache_ttl_hours": p.cache_ttl_hours,
                     "agent_config": p.agent_config,
+                    "agent_workflow_id": p.agent_workflow_id,
                     "is_active": p.is_active,
                     "analyzed_at": p.analyzed_at.isoformat() if p.analyzed_at else None,
-                    "created_at": p.created_at.isoformat() if p.created_at else None
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
                 }
                 for p in placeholders
             ]
@@ -158,12 +162,47 @@ class PlaceholderConfigService:
                 sql_override=config_override.get("sql") if config_override else None
             )
             
+            # 统一格式化显示文本，便于前端直接展示
+            formatted_text = None
+            try:
+                data = test_result.get("data")
+                if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+                    first_row = data[0]
+                    if len(first_row) == 1:
+                        formatted_text = str(list(first_row.values())[0])
+                if not formatted_text:
+                    formatted_text = str(data) if data is not None else "无数据"
+            except Exception:
+                formatted_text = "无数据"
+
+            # 同步写入一次执行历史，便于“最新测试结果”和执行历史展示保持一致
+            try:
+                if test_result.get("success"):
+                    computed_value = {
+                        "success": True,
+                        "value": formatted_text,
+                        "execution_time_ms": test_result.get("execution_time_ms", 0),
+                        "cache_hit": False,
+                        "raw_result": {"data": test_result.get("data"), "execution_time": test_result.get("execution_time_ms", 0)},
+                        "sql_executed": test_result.get("sql_executed")
+                    }
+                    # 不需要时间上下文，直接保存为最新缓存/历史
+                    await orchestrator._save_placeholder_value_to_cache(
+                        placeholder_id, data_source_id, computed_value, execution_context=None
+                    )
+            except Exception:
+                # 写历史失败不影响测试返回
+                pass
+
             return {
                 "success": test_result.get("success", False),
                 "data": test_result.get("data"),
+                # 同时返回 execution_time_ms（前端新字段）与 execution_time（兼容旧字段）
+                "execution_time_ms": test_result.get("execution_time_ms", 0),
                 "execution_time": test_result.get("execution_time_ms", 0),
                 "row_count": test_result.get("row_count", 0),
                 "sql_executed": test_result.get("sql_executed"),
+                "formatted_text": formatted_text,
                 "error": test_result.get("error") if not test_result.get("success") else None
             }
             

@@ -29,11 +29,12 @@ logger = logging.getLogger(__name__)
 class CachedAgentOrchestrator(AgentOrchestrator):
     """支持缓存的Agent编排器"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str = None):
         super().__init__()
         self.db = db
+        self.user_id = user_id
         self.template_parser = EnhancedTemplateParser(db)
-        self.sql_analysis_service = AgentSQLAnalysisService(db)
+        self.sql_analysis_service = AgentSQLAnalysisService(db, user_id=user_id)
     
     async def execute_two_phase_pipeline(
         self,
@@ -848,9 +849,9 @@ class CachedAgentOrchestrator(AgentOrchestrator):
                     "error": "数据源不存在"
                 }
             
-            # 使用多数据库Agent进行分析
+            # 使用多数据库Agent进行分析，传递用户ID
             from app.services.agents.multi_database_agent import MultiDatabaseAgent
-            agent = MultiDatabaseAgent(db_session=self.db)
+            agent = MultiDatabaseAgent(db_session=self.db, user_id=self.user_id)
             
             # 构建Agent输入
             agent_input = {

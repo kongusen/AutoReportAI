@@ -7,6 +7,7 @@ AI服务统一接口
 
 import logging
 import weakref
+import uuid
 from typing import Dict, Any, Optional, Set
 from abc import ABC, abstractmethod
 from threading import Lock
@@ -16,6 +17,7 @@ from datetime import datetime, timedelta
 from app.services.ai_integration import EnhancedAIService
 from .cache_manager import get_cached_ai_response, cache_ai_response
 from .performance_monitor import performance_context
+from .llm_rate_limiter import get_llm_rate_limiter
 
 
 class AIServiceInterface(ABC):
@@ -79,6 +81,7 @@ class UnifiedAIService(AIServiceInterface):
         prompt: str,
         task_type: str,
         use_cache: bool = True,
+        use_rate_limiter: bool = True,
         **kwargs
     ) -> str:
         """使用上下文进行分析"""
@@ -94,37 +97,54 @@ class UnifiedAIService(AIServiceInterface):
                 **kwargs
             )
             if cached_response:
-                self.logger.debug("使用缓存的AI分析结果")
+                self.logger.debug(f"使用缓存的AI分析结果: {task_type}")
                 return cached_response
         
-        try:
+        # 生成请求ID
+        request_id = f"{task_type}_{uuid.uuid4().hex[:8]}"
+        
+        # 定义LLM调用函数
+        async def llm_call():
             with performance_context(f"ai_analyze_{task_type}"):
-                response = await self.ai_service.analyze_with_context(
+                return await self.ai_service.analyze_with_context(
                     context=context,
                     prompt=prompt,
                     task_type=task_type,
                     **kwargs
                 )
-                
-                # 缓存响应
-                if use_cache and response:
-                    cache_ai_response(
-                        response=response,
-                        prompt=prompt,
-                        context=context,
-                        task_type=task_type,
-                        **kwargs
-                    )
-                
-                return response
+        
+        try:
+            # 使用速度限制器执行LLM调用
+            if use_rate_limiter:
+                rate_limiter = get_llm_rate_limiter()
+                response = await rate_limiter.execute_with_rate_limit(
+                    request_id=request_id,
+                    task_type=f"analyze_{task_type}",
+                    llm_function=llm_call
+                )
+            else:
+                response = await llm_call()
+            
+            # 缓存响应
+            if use_cache and response:
+                cache_ai_response(
+                    response=response,
+                    prompt=prompt,
+                    context=context,
+                    task_type=task_type,
+                    **kwargs
+                )
+            
+            return response
         except Exception as e:
-            self.logger.error(f"AI分析失败: {e}")
+            self.logger.error(f"AI分析失败: {request_id}, 错误: {e}")
             raise
     
     async def generate_response(
         self,
         prompt: str,
         use_cache: bool = True,
+        use_rate_limiter: bool = True,
         **kwargs
     ) -> str:
         """生成响应"""
@@ -142,25 +162,41 @@ class UnifiedAIService(AIServiceInterface):
                 self.logger.debug("使用缓存的AI响应")
                 return cached_response
         
-        try:
+        # 生成请求ID
+        request_id = f"generate_{uuid.uuid4().hex[:8]}"
+        
+        # 定义LLM调用函数
+        async def llm_call():
             with performance_context("ai_generate_response"):
-                response = await self.ai_service.generate_response(
+                return await self.ai_service.generate_response(
                     prompt=prompt,
                     **kwargs
                 )
-                
-                # 缓存响应
-                if use_cache and response:
-                    cache_ai_response(
-                        response=response,
-                        prompt=prompt,
-                        task_type="generate_response",
-                        **kwargs
-                    )
-                
-                return response
+        
+        try:
+            # 使用速度限制器执行LLM调用
+            if use_rate_limiter:
+                rate_limiter = get_llm_rate_limiter()
+                response = await rate_limiter.execute_with_rate_limit(
+                    request_id=request_id,
+                    task_type="generate_response",
+                    llm_function=llm_call
+                )
+            else:
+                response = await llm_call()
+            
+            # 缓存响应
+            if use_cache and response:
+                cache_ai_response(
+                    response=response,
+                    prompt=prompt,
+                    task_type="generate_response",
+                    **kwargs
+                )
+            
+            return response
         except Exception as e:
-            self.logger.error(f"AI响应生成失败: {e}")
+            self.logger.error(f"AI响应生成失败: {request_id}, 错误: {e}")
             raise
     
     async def health_check(self) -> Dict[str, Any]:

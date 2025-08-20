@@ -9,6 +9,11 @@ import logging
 import json
 import hashlib
 from datetime import datetime, timedelta
+from datetime import date, time
+from decimal import Decimal
+import base64
+import numpy as np
+import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
@@ -119,7 +124,7 @@ class CachedAgentOrchestrator(AgentOrchestrator):
                     "total_placeholders": analysis_result["total_placeholders"],
                     "success_rate": analysis_result["success_rate"],
                     "execution_time": execution_time,
-                    "analysis_details": analysis_result["analysis_results"]
+                    "analysis_details": self._sanitize_for_serialization(analysis_result["analysis_results"])
                 }
             else:
                 return {
@@ -628,6 +633,80 @@ class CachedAgentOrchestrator(AgentOrchestrator):
             logger.warning(f"序列化查询结果失败: {e}")
             return {"error": "序列化失败", "original_type": str(type(result))}
 
+    def _sanitize_for_serialization(self, obj: Any) -> Any:
+        """递归清理对象，确保可被JSON序列化。
+
+        - 处理 pandas/numpy 类型
+        - 处理 datetime/date/time/Decimal
+        - 处理 set/tuple 为 list
+        - 处理 bytes 为 utf-8 字符串（无法解码则base64）
+        - 处理自定义对象为字符串表示
+        """
+        try:
+            # None 或基础可序列化类型
+            if obj is None or isinstance(obj, (str, int, float, bool)):
+                return obj
+
+            # datetime / date / time
+            if isinstance(obj, (datetime, date, time)):
+                return obj.isoformat()
+
+            # Decimal
+            if isinstance(obj, Decimal):
+                # 使用字符串避免精度丢失
+                return str(obj)
+
+            # bytes
+            if isinstance(obj, (bytes, bytearray)):
+                try:
+                    return obj.decode("utf-8")
+                except Exception:
+                    return {
+                        "__bytes_base64__": base64.b64encode(bytes(obj)).decode("ascii")
+                    }
+
+            # numpy 标量
+            if isinstance(obj, (np.generic,)):
+                return obj.item()
+
+            # numpy 数组
+            if isinstance(obj, (np.ndarray,)):
+                return obj.tolist()
+
+            # pandas DataFrame / Series
+            if isinstance(obj, pd.DataFrame):
+                return obj.to_dict(orient="records")
+            if isinstance(obj, pd.Series):
+                return obj.to_list()
+
+            # DorisQueryResult 或类似对象
+            if hasattr(obj, "data") and hasattr(obj, "execution_time"):
+                return self._make_result_serializable(obj)
+
+            # 映射类型
+            if isinstance(obj, dict):
+                sanitized_dict = {}
+                for k, v in obj.items():
+                    # 键转为字符串以确保可序列化
+                    sanitized_key = str(k)
+                    sanitized_dict[sanitized_key] = self._sanitize_for_serialization(v)
+                return sanitized_dict
+
+            # 序列类型
+            if isinstance(obj, (list, tuple, set)):
+                return [self._sanitize_for_serialization(v) for v in obj]
+
+            # 其他对象类型：尝试有意义的表示
+            if hasattr(obj, "__dict__"):
+                # 避免深层对象带来循环引用，尽量用字符串
+                return str(obj)
+
+            # 兜底：转字符串
+            return str(obj)
+        except Exception as e:
+            # 兜底，确保不会因为清理失败而中断
+            return {"__non_serializable__": str(type(obj)), "error": str(e)}
+
     def _extract_row_count(self, raw_result: Any) -> int:
         """从原始结果中提取行数"""
         try:
@@ -645,6 +724,191 @@ class CachedAgentOrchestrator(AgentOrchestrator):
                 return 1
         except:
             return 0
+    
+    async def _execute_single_placeholder_query(
+        self,
+        placeholder_id: str,
+        data_source_id: str,
+        sql_override: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """执行单个占位符查询"""
+        start_time = datetime.now()
+        
+        try:
+            # 获取占位符配置
+            placeholder = self.db.query(TemplatePlaceholder).filter(
+                TemplatePlaceholder.id == placeholder_id
+            ).first()
+            
+            if not placeholder:
+                return {
+                    "success": False,
+                    "error": "占位符不存在"
+                }
+            
+            # 确定要执行的SQL
+            sql_to_execute = sql_override or placeholder.generated_sql
+            
+            if not sql_to_execute:
+                return {
+                    "success": False,
+                    "error": "没有可执行的SQL"
+                }
+            
+            # 获取数据源
+            data_source = self.db.query(DataSource).filter(
+                DataSource.id == data_source_id
+            ).first()
+            
+            if not data_source:
+                return {
+                    "success": False,
+                    "error": "数据源不存在"
+                }
+            
+            # 执行查询
+            from app.services.connectors.connector_factory import create_connector
+            connector = create_connector(data_source)
+            
+            await connector.connect()
+            
+            try:
+                query_result = await connector.execute_query(sql_to_execute)
+                
+                # 处理查询结果
+                execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                
+                # 提取行数
+                row_count = self._extract_row_count(query_result)
+                
+                # 格式化结果数据
+                formatted_data = None
+                if hasattr(query_result, 'data'):
+                    if hasattr(query_result.data, 'to_dict'):
+                        # pandas DataFrame
+                        formatted_data = query_result.data.to_dict('records')
+                    elif hasattr(query_result.data, '__iter__'):
+                        # 其他可迭代对象
+                        formatted_data = list(query_result.data)
+                elif isinstance(query_result, (list, dict)):
+                    formatted_data = query_result
+                
+                return {
+                    "success": True,
+                    "data": formatted_data,
+                    "execution_time_ms": execution_time_ms,
+                    "row_count": row_count,
+                    "sql_executed": sql_to_execute,
+                    "placeholder_id": placeholder_id,
+                    "data_source_id": data_source_id
+                }
+                
+            finally:
+                # 暂时保持连接，避免过早断开导致后续查询失败
+                # TODO: 实现更好的连接池管理
+                try:
+                    if hasattr(connector, '_connected') and connector._connected:
+                        # 只在连接确实需要关闭时才断开
+                        pass  # 暂时不自动断开
+                except Exception as e:
+                    # 忽略断开连接时的错误
+                    logger.warning(f"连接管理警告: {e}")
+                    pass
+                
+        except Exception as e:
+            execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            logger.error(f"执行占位符查询失败: {placeholder_id}, 错误: {str(e)}")
+            
+            return {
+                "success": False,
+                "error": str(e),
+                "execution_time_ms": execution_time_ms,
+                "sql_executed": sql_override or "",
+                "placeholder_id": placeholder_id,
+                "data_source_id": data_source_id
+            }
+    
+    async def _analyze_placeholder_with_agent(
+        self,
+        placeholder_id: str,
+        data_source_id: str,
+        placeholder_config: Dict[str, Any],
+        force_reanalyze: bool = False
+    ) -> Dict[str, Any]:
+        """使用Agent分析占位符"""
+        try:
+            # 获取数据源
+            data_source = self.db.query(DataSource).filter(
+                DataSource.id == data_source_id
+            ).first()
+            
+            if not data_source:
+                return {
+                    "success": False,
+                    "error": "数据源不存在"
+                }
+            
+            # 使用多数据库Agent进行分析
+            from app.services.agents.multi_database_agent import MultiDatabaseAgent
+            agent = MultiDatabaseAgent(db_session=self.db)
+            
+            # 构建Agent输入
+            agent_input = {
+                "placeholder_name": placeholder_config.get("placeholder_text", ""),
+                "placeholder_type": placeholder_config.get("placeholder_type", ""),
+                "content_type": placeholder_config.get("content_type", ""),
+                "description": f"重新分析占位符: {placeholder_config.get('placeholder_text', '')}",
+                "data_source": {
+                    "id": str(data_source.id),
+                    "name": data_source.name,
+                    "source_type": data_source.source_type
+                }
+            }
+            
+            # 执行分析
+            analysis_result = await agent.analyze_placeholder_requirements(agent_input)
+            
+            if analysis_result.get("success"):
+                # 更新占位符记录
+                placeholder = self.db.query(TemplatePlaceholder).filter(
+                    TemplatePlaceholder.id == placeholder_id
+                ).first()
+                
+                if placeholder:
+                    placeholder.generated_sql = analysis_result.get("generated_sql")
+                    placeholder.confidence_score = analysis_result.get("confidence_score", 0.0)
+                    placeholder.target_database = analysis_result.get("target_database")
+                    placeholder.target_table = analysis_result.get("target_table")
+                    placeholder.required_fields = analysis_result.get("required_fields", [])
+                    placeholder.sql_validated = True
+                    placeholder.agent_analyzed = True
+                    placeholder.analyzed_at = datetime.now()
+                    
+                    self.db.commit()
+                
+                logger.info(f"占位符重新分析成功: {placeholder_id}")
+                
+                return {
+                    "success": True,
+                    "generated_sql": analysis_result.get("generated_sql"),
+                    "confidence_score": analysis_result.get("confidence_score", 0.0),
+                    "target_database": analysis_result.get("target_database"),
+                    "target_table": analysis_result.get("target_table"),
+                    "required_fields": analysis_result.get("required_fields", []),
+                    "analysis_details": analysis_result.get("reasoning", [])
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": analysis_result.get("error", "分析失败")
+                }
+                
+        except Exception as e:
+            logger.error(f"Agent分析占位符失败: {placeholder_id}, 错误: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     async def invalidate_template_cache(self, template_id: str) -> int:
         """清除模板相关的所有缓存"""

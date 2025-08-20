@@ -48,11 +48,35 @@ class AgentQueryResponse:
 class MultiDatabaseAgent:
     """多库多表智能Agent"""
     
-    def __init__(self):
+    def __init__(self, db_session=None, user_id=None):
         self.logger = logging.getLogger(__name__)
         self.metadata_service = MetadataDiscoveryService()
         self.query_router = IntelligentQueryRouter()
         self.executor = CrossDatabaseExecutor()
+        self.user_id = user_id
+        
+        # 初始化AI服务
+        try:
+            from app.services.agents.core.ai_service import UnifiedAIService
+            # 如果提供了用户ID，使用用户特定的AI服务
+            if user_id and db_session:
+                from app.core.ai_service_factory import UserAIServiceFactory
+                factory = UserAIServiceFactory()
+                self.ai_service = factory.get_user_ai_service(user_id)
+                self.logger.info(f"使用用户特定AI服务: {user_id}")
+            else:
+                # 使用系统默认AI服务
+                self.ai_service = UnifiedAIService(db_session=db_session)
+                self.logger.info("使用系统默认AI服务")
+        except Exception as e:
+            self.logger.warning(f"AI服务初始化失败: {e}")
+            # 尝试回退到系统默认服务
+            try:
+                self.ai_service = UnifiedAIService(db_session=db_session)
+                self.logger.info("回退到系统默认AI服务")
+            except Exception as e2:
+                self.logger.error(f"系统默认AI服务也失败: {e2}")
+                self.ai_service = None
         
         # 缓存已发现的元数据
         self._metadata_cache = {}
@@ -350,8 +374,8 @@ class MultiDatabaseAgent:
     
     async def analyze_placeholder_requirements(self, agent_input: Dict[str, Any], execution_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        分析占位符需求并生成对应的SQL查询 - 全新架构
-        使用增强的connector API和智能自我完善机制
+        分析占位符需求并生成对应的SQL查询 - 智能分析架构
+        使用AI驱动的分析和智能表选择机制
         
         Args:
             agent_input: 占位符分析输入
@@ -360,35 +384,70 @@ class MultiDatabaseAgent:
         Returns:
             分析结果，包含高质量的SQL和相关信息
         """
+        analysis_start_time = datetime.now()
+        placeholder_name = agent_input.get('placeholder_name', '')
+        placeholder_type = agent_input.get('placeholder_type', '')
+        
         try:
-            self.logger.info(f"Analyzing placeholder: {agent_input.get('placeholder_name')}")
+            self.logger.info(f"🚀 开始Agent分析占位符: {placeholder_name}")
             
             # 提取占位符信息
-            placeholder_name = agent_input.get('placeholder_name', '')
-            placeholder_type = agent_input.get('placeholder_type', '')
             data_source = agent_input.get('data_source', {})
             data_source_id = data_source.get('id', '')
             schema_info = agent_input.get('schema_info', {})
             
-            # 1. 获取实时数据源结构信息（全新API）
-            enhanced_schema = await self._get_enhanced_schema_info(data_source_id)
+            # 参数验证
+            if not data_source_id:
+                raise ValueError("数据源ID不能为空")
+            if not placeholder_name:
+                raise ValueError("占位符名称不能为空")
             
-            # 2. 智能分析占位符语义
-            semantic_analysis = await self._analyze_placeholder_semantics(
-                placeholder_name, placeholder_type, enhanced_schema
-            )
+            self.logger.info(f"📊 占位符类型: {placeholder_type}, 数据源: {data_source_id}")
+            
+            # 1. 获取实时数据源结构信息 - 基于AI语义筛选
+            self.logger.info("🔍 获取数据源结构信息...")
+            enhanced_schema = await self._get_enhanced_schema_info(data_source_id, placeholder_name)
+            
+            if not enhanced_schema.get('table_schemas'):
+                self.logger.warning("⚠️ 未获取到表结构信息，使用回退方案")
+                return await self._create_fallback_solution(placeholder_name, data_source_id)
+            
+            relevant_tables = list(enhanced_schema.get('table_schemas', {}).keys())
+            self.logger.info(f"✅ 获取到 {len(relevant_tables)} 个相关表: {relevant_tables}")
+            
+            # 2. 根据占位符类型选择分析方法
+            analysis_mode = "ai_agent" if placeholder_type in ["statistic", "statistical", "analysis", "chart", "table"] else "semantic"
+            self.logger.info(f"🧠 使用 {analysis_mode} 分析模式")
+            
+            if analysis_mode == "ai_agent":
+                # 使用AI Agent进行深度分析
+                semantic_analysis = await self._perform_ai_agent_analysis(
+                    placeholder_name, placeholder_type, enhanced_schema, data_source
+                )
+                self.logger.info(f"🎯 AI分析完成: {semantic_analysis.get('intent', 'unknown')}")
+            else:
+                # 使用语义分析作为后备
+                semantic_analysis = await self._analyze_placeholder_semantics(
+                    placeholder_name, placeholder_type, enhanced_schema
+                )
+                self.logger.info(f"📋 语义分析完成: {semantic_analysis.get('intent', 'unknown')}")
             
             # 3. 智能字段选择和表选择
+            self.logger.info("🎯 执行智能目标选择...")
             target_selection = await self._intelligent_target_selection(
                 semantic_analysis, enhanced_schema
             )
+            self.logger.info(f"✅ 智能目标选择完成: 表={target_selection.get('table', 'unknown')}, 字段数={len(target_selection.get('fields', []))}")
             
             # 4. 生成初始SQL（基于真实表结构）
+            self.logger.info("⚙️ 生成智能SQL...")
             initial_sql = await self._generate_intelligent_sql(
                 semantic_analysis, target_selection, enhanced_schema
             )
+            self.logger.info(f"✅ 生成智能SQL: {initial_sql}")
             
             # 5. SQL质量验证和自我修正
+            self.logger.info("🔧 执行SQL质量验证和改进...")
             validated_sql = await self._self_validate_and_improve_sql(
                 initial_sql, data_source_id, target_selection
             )
@@ -403,7 +462,10 @@ class MultiDatabaseAgent:
                 semantic_analysis, target_selection, validated_sql
             )
             
-            # 8. 构建增强的返回结果
+            # 8. 计算分析耗时
+            analysis_duration = (datetime.now() - analysis_start_time).total_seconds()
+            
+            # 9. 构建增强的返回结果
             result = {
                 "success": True,
                 "target_database": target_selection.get('database', 'default'),
@@ -411,26 +473,68 @@ class MultiDatabaseAgent:
                 "required_fields": target_selection.get('fields', ['*']),
                 "generated_sql": validated_sql,
                 "confidence_score": confidence_score,
+                "analysis_metadata": {
+                    "placeholder_name": placeholder_name,
+                    "placeholder_type": placeholder_type,
+                    "analysis_mode": analysis_mode,
+                    "intent": semantic_analysis.get('intent', ''),
+                    "data_operation": semantic_analysis.get('data_operation', ''),
+                    "business_domain": semantic_analysis.get('business_domain', ''),
+                    "relevant_tables_count": len(relevant_tables),
+                    "analysis_duration_seconds": round(analysis_duration, 3),
+                    "ai_service_available": self.ai_service is not None
+                },
                 "reasoning": semantic_analysis.get('reasoning', ''),
                 "suggested_optimizations": semantic_analysis.get('optimizations', []),
                 "estimated_execution_time": target_selection.get('estimated_time', 1000),
                 "schema_quality": enhanced_schema.get('quality_metrics', {}),
-                "field_mapping": target_selection.get('field_mapping', {})
+                "field_mapping": target_selection.get('field_mapping', {}),
+                "quality_metrics": {
+                    "table_relevance": len(relevant_tables),
+                    "field_coverage": len(target_selection.get('fields', [])),
+                    "sql_complexity": len(validated_sql.split()) if validated_sql else 0
+                }
             }
             
-            self.logger.info(f"Placeholder analysis completed with confidence: {confidence_score}")
+            self.logger.info(f"✅ Agent分析完成: {placeholder_name}")
+            self.logger.info(f"📊 分析结果: 表={result['target_table']}, 置信度={confidence_score:.2f}, 耗时={analysis_duration:.3f}s")
             return result
             
         except Exception as e:
-            self.logger.error(f"Error analyzing placeholder requirements: {e}")
-            # 即使失败也提供基础的降级方案
-            fallback_result = await self._create_fallback_solution(placeholder_name, data_source_id)
-            return {
-                "success": False,
-                "error": str(e),
-                "fallback_sql": fallback_result.get('sql', 'SELECT 1 as placeholder_value'),
-                "fallback_reasoning": fallback_result.get('reasoning', '使用系统降级方案')
-            }
+            analysis_duration = (datetime.now() - analysis_start_time).total_seconds()
+            self.logger.error(f"❌ Agent分析失败: {placeholder_name}, 错误: {e}, 耗时: {analysis_duration:.3f}s")
+            
+            # 创建回退解决方案
+            try:
+                fallback_result = await self._create_fallback_solution(placeholder_name, data_source_id)
+                fallback_result.update({
+                    "analysis_metadata": {
+                        "placeholder_name": placeholder_name,
+                        "placeholder_type": placeholder_type,
+                        "analysis_mode": "fallback",
+                        "analysis_duration_seconds": round(analysis_duration, 3),
+                        "error": str(e),
+                        "ai_service_available": self.ai_service is not None
+                    }
+                })
+                return fallback_result
+            except Exception as fallback_error:
+                self.logger.error(f"❌ 回退方案也失败: {fallback_error}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "fallback_error": str(fallback_error),
+                    "generated_sql": "SELECT 1 as placeholder_value",
+                    "target_table": "unknown",
+                    "confidence_score": 0.0,
+                    "analysis_metadata": {
+                        "placeholder_name": placeholder_name,
+                        "placeholder_type": placeholder_type,
+                        "analysis_mode": "emergency_fallback",
+                        "analysis_duration_seconds": round(analysis_duration, 3),
+                        "error": str(e)
+                    }
+                }
     
     def _build_natural_query_from_placeholder(self, placeholder_name: str, placeholder_type: str, schema_info: Dict) -> str:
         """从占位符信息构建自然语言查询"""
@@ -661,7 +765,7 @@ class MultiDatabaseAgent:
         
         return important_fields
     
-    async def _get_enhanced_schema_info(self, data_source_id: str) -> Dict[str, Any]:
+    async def _get_enhanced_schema_info(self, data_source_id: str, placeholder_name: str = "") -> Dict[str, Any]:
         """获取增强的数据源结构信息 - 完全使用新API"""
         try:
             from app.models.data_source import DataSource
@@ -681,9 +785,13 @@ class MultiDatabaseAgent:
                     databases = await connector.get_databases()
                     tables = await connector.get_tables()
                     
-                    # 获取详细表结构（增加到20个表以提高质量）
+                    # 基于LLM进行智能表选择
+                    relevant_tables = await self._ai_select_relevant_tables(tables, placeholder_name)
+                    self.logger.info(f"基于AI语义分析筛选到 {len(relevant_tables)} 个相关表: {relevant_tables}")
+                    
+                    # 获取相关表的详细结构
                     table_schemas = {}
-                    for table_name in tables[:20]:
+                    for table_name in relevant_tables:
                         try:
                             schema_info = await connector.get_table_schema(table_name)
                             table_schemas[table_name] = schema_info
@@ -874,51 +982,262 @@ class MultiDatabaseAgent:
             }
     
     async def _generate_intelligent_sql(self, semantic_analysis: Dict, target_selection: Dict, enhanced_schema: Dict) -> str:
-        """基于语义分析和目标选择生成智能SQL"""
+        """基于语义分析和目标选择生成智能SQL - 优化版本"""
         try:
-            table_name = target_selection['table']
-            fields = target_selection['fields']
+            table_name = target_selection.get('table', 'default_table')
+            fields = target_selection.get('fields', [])
             field_mapping = target_selection.get('field_mapping', {})
             
-            # 基于意图生成SQL
-            intent = semantic_analysis.get('intent', 'general')
-            data_operation = semantic_analysis.get('data_operation', 'select')
+            # 验证表名
+            if not table_name or not isinstance(table_name, str):
+                self.logger.warning(f"无效的表名: {table_name}")
+                return self._generate_fallback_sql()
             
-            if intent == 'statistical' and data_operation == 'count':
-                sql = f"SELECT COUNT(*) as total_count FROM {table_name}"
-            elif intent == 'financial' and data_operation == 'sum':
-                amount_field = field_mapping.get('amount_field')
-                if amount_field:
-                    sql = f"SELECT SUM({amount_field}) as total_amount FROM {table_name}"
-                else:
-                    sql = f"SELECT COUNT(*) as total_count FROM {table_name}"
-            elif intent == 'dimensional':
-                group_field = field_mapping.get('group_field')
-                if group_field:
-                    sql = f"SELECT {group_field}, COUNT(*) as count FROM {table_name} GROUP BY {group_field}"
-                else:
-                    sql = f"SELECT * FROM {table_name} LIMIT 10"
-            elif intent == 'temporal':
-                date_field = field_mapping.get('date_field')
-                if date_field:
-                    sql = f"SELECT DATE({date_field}) as date, COUNT(*) as count FROM {table_name} GROUP BY DATE({date_field})"
-                else:
-                    sql = f"SELECT * FROM {table_name} LIMIT 10"
-            else:
-                # 一般查询
-                fields_str = ', '.join(fields[:5]) if len(fields) <= 5 else ', '.join(fields[:5])
-                sql = f"SELECT {fields_str} FROM {table_name} LIMIT 100"
+            # 清理表名，确保安全
+            table_name = self._sanitize_identifier(table_name)
+            
+            # 尝试使用AI生成SQL
+            ai_generated_sql = await self._generate_sql_with_ai(semantic_analysis, target_selection, enhanced_schema)
+            
+            if ai_generated_sql and self._validate_sql_syntax(ai_generated_sql):
+                self.logger.info(f"AI生成SQL成功: {ai_generated_sql}")
+                return ai_generated_sql
+            
+            # 如果AI生成失败，使用模板化SQL生成
+            self.logger.info("AI生成SQL失败，使用模板化SQL生成")
+            sql = self._generate_sql_by_template(semantic_analysis.get('intent', 'general'), 
+                                               semantic_analysis.get('data_operation', 'select'), 
+                                               table_name, fields, field_mapping)
+            
+            # 验证生成的SQL
+            if not self._validate_sql_syntax(sql):
+                self.logger.warning(f"生成的SQL语法无效，使用备用方案: {sql}")
+                sql = self._generate_fallback_sql(table_name)
             
             self.logger.info(f"生成智能SQL: {sql}")
             return sql
             
         except Exception as e:
             self.logger.error(f"生成智能SQL失败: {e}")
-            return f"SELECT COUNT(*) as count FROM {target_selection.get('table', 'default_table')}"
+            return self._generate_fallback_sql()
+    
+    async def _generate_sql_with_ai(self, semantic_analysis: Dict, target_selection: Dict, enhanced_schema: Dict) -> str:
+        """使用AI生成SQL"""
+        try:
+            if not self.ai_service:
+                self.logger.warning("AI服务不可用，跳过AI SQL生成")
+                return None
+            
+            # 构建SQL生成提示
+            sql_prompt = self._build_sql_generation_prompt(semantic_analysis, target_selection, enhanced_schema)
+            
+            # 构建上下文
+            context = {
+                "semantic_analysis": semantic_analysis,
+                "target_selection": target_selection,
+                "table_schema": enhanced_schema.get('table_schemas', {}).get(target_selection.get('table', ''), {})
+            }
+            
+            # 调用AI服务生成SQL
+            response = await self.ai_service.analyze_with_context(
+                context=str(context),
+                prompt=sql_prompt,
+                task_type="sql_generation",
+                use_cache=True,
+                use_rate_limiter=True
+            )
+            
+            if response:
+                # 清理响应，提取SQL语句
+                sql = self._extract_sql_from_response(response)
+                if sql and self._validate_sql_syntax(sql):
+                    return sql
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"AI SQL生成失败: {e}")
+            return None
+    
+    def _extract_sql_from_response(self, response: str) -> str:
+        """从AI响应中提取SQL语句"""
+        if not response or not isinstance(response, str):
+            return None
+        
+        # 清理响应文本
+        response = response.strip()
+        
+        # 查找SQL语句的开始和结束
+        sql_keywords = ['SELECT', 'select']
+        for keyword in sql_keywords:
+            if keyword in response:
+                start_idx = response.find(keyword)
+                # 找到SQL语句的结束（通常是分号或换行）
+                end_idx = response.find(';', start_idx)
+                if end_idx == -1:
+                    # 如果没有分号，找到第一个换行符
+                    end_idx = response.find('\n', start_idx)
+                    if end_idx == -1:
+                        end_idx = len(response)
+                
+                sql = response[start_idx:end_idx].strip()
+                
+                # 验证SQL语法
+                if self._validate_sql_syntax(sql):
+                    return sql
+        
+        return None
+    
+    def _generate_sql_by_template(self, intent: str, data_operation: str, table_name: str, fields: List[str], field_mapping: Dict) -> str:
+        """使用模板生成SQL，避免字符串拼接错误"""
+        
+        # SQL模板定义
+        sql_templates = {
+            'statistical_count': "SELECT COUNT(*) as total_count FROM {table}",
+            'statistical_sum': "SELECT SUM({field}) as total_sum FROM {table}",
+            'statistical_avg': "SELECT AVG({field}) as average_value FROM {table}",
+            'dimensional_group': "SELECT {group_field}, COUNT(*) as count FROM {table} GROUP BY {group_field}",
+            'temporal_date': "SELECT DATE({date_field}) as date, COUNT(*) as count FROM {table} GROUP BY DATE({date_field})",
+            'general_select': "SELECT {fields} FROM {table} LIMIT 100",
+            'fallback_count': "SELECT COUNT(*) as total_count FROM {table}"
+        }
+        
+        try:
+            if intent == 'statistical':
+                if data_operation == 'count':
+                    return sql_templates['statistical_count'].format(table=table_name)
+                elif data_operation == 'sum':
+                    amount_field = field_mapping.get('amount_field')
+                    if amount_field and self._is_valid_field_name(amount_field):
+                        return sql_templates['statistical_sum'].format(field=amount_field, table=table_name)
+                    else:
+                        return sql_templates['statistical_count'].format(table=table_name)
+                elif data_operation == 'avg':
+                    numeric_field = field_mapping.get('numeric_field')
+                    if numeric_field and self._is_valid_field_name(numeric_field):
+                        return sql_templates['statistical_avg'].format(field=numeric_field, table=table_name)
+                    else:
+                        return sql_templates['statistical_count'].format(table=table_name)
+                else:
+                    return sql_templates['statistical_count'].format(table=table_name)
+                    
+            elif intent == 'dimensional':
+                group_field = field_mapping.get('group_field')
+                if group_field and self._is_valid_field_name(group_field):
+                    return sql_templates['dimensional_group'].format(group_field=group_field, table=table_name)
+                else:
+                    return sql_templates['general_select'].format(fields='*', table=table_name)
+                    
+            elif intent == 'temporal':
+                date_field = field_mapping.get('date_field')
+                if date_field and self._is_valid_field_name(date_field):
+                    return sql_templates['temporal_date'].format(date_field=date_field, table=table_name)
+                else:
+                    return sql_templates['general_select'].format(fields='*', table=table_name)
+                    
+            else:
+                # 一般查询
+                if fields and len(fields) > 0:
+                    cleaned_fields = self._clean_field_names(fields[:5])
+                    if cleaned_fields:
+                        fields_str = ', '.join(cleaned_fields)
+                        return sql_templates['general_select'].format(fields=fields_str, table=table_name)
+                    else:
+                        return sql_templates['fallback_count'].format(table=table_name)
+                else:
+                    return sql_templates['fallback_count'].format(table=table_name)
+                    
+        except Exception as e:
+            self.logger.error(f"SQL模板生成失败: {e}")
+            return sql_templates['fallback_count'].format(table=table_name)
+    
+    def _sanitize_identifier(self, identifier: str) -> str:
+        """清理和验证SQL标识符"""
+        if not identifier or not isinstance(identifier, str):
+            return 'default_table'
+        
+        # 移除危险字符，只保留字母、数字、下划线
+        cleaned = ''.join(c for c in identifier if c.isalnum() or c == '_')
+        
+        # 确保不以数字开头
+        if cleaned and cleaned[0].isdigit():
+            cleaned = 't_' + cleaned
+            
+        # 确保不为空
+        if not cleaned:
+            cleaned = 'default_table'
+            
+        return cleaned
+    
+    def _is_valid_field_name(self, field_name: str) -> bool:
+        """验证字段名是否有效"""
+        if not field_name or not isinstance(field_name, str):
+            return False
+        
+        # 检查是否只包含有效字符
+        if not all(c.isalnum() or c in ['_', '.'] for c in field_name):
+            return False
+        
+        # 检查是否为SQL关键字
+        sql_keywords = {'select', 'from', 'where', 'group', 'by', 'order', 'limit', 'count', 'sum', 'avg', 'max', 'min'}
+        if field_name.lower() in sql_keywords:
+            return False
+            
+        return True
+    
+    def _clean_field_names(self, fields: List[str]) -> List[str]:
+        """清理字段名列表"""
+        cleaned_fields = []
+        for field in fields:
+            if field and isinstance(field, str):
+                cleaned_field = self._sanitize_identifier(field)
+                if cleaned_field and self._is_valid_field_name(cleaned_field):
+                    cleaned_fields.append(cleaned_field)
+        return cleaned_fields
+    
+    def _validate_sql_syntax(self, sql: str) -> bool:
+        """基本的SQL语法验证"""
+        if not sql or not isinstance(sql, str):
+            return False
+        
+        sql_upper = sql.upper()
+        
+        # 检查基本结构
+        if not sql_upper.startswith('SELECT'):
+            return False
+        
+        # 检查是否包含FROM
+        if 'FROM' not in sql_upper:
+            return False
+        
+        # 检查是否有明显的语法错误
+        error_patterns = [
+            'SELECTSELECT', 'FROMFROM', 'WHEREWHERE', 'GROUPGROUP', 'ORDERORDER',
+            'SELECT*FROM', 'SELECTFROM', 'SELECT,FROM'
+        ]
+        
+        for pattern in error_patterns:
+            if pattern in sql_upper:
+                return False
+        
+        return True
+    
+    def _generate_fallback_sql(self, table_name: str = 'default_table') -> str:
+        """生成备用SQL"""
+        safe_table = self._sanitize_identifier(table_name)
+        return f"SELECT COUNT(*) as total_count FROM {safe_table}"
     
     async def _self_validate_and_improve_sql(self, sql: str, data_source_id: str, target_selection: Dict) -> str:
-        """SQL质量验证和自我改进"""
+        """SQL质量验证和自我改进 - 增强版本"""
         try:
+            # 第0轮：基本语法检查
+            if not self._validate_sql_syntax(sql):
+                self.logger.warning(f"SQL语法验证失败，尝试修复: {sql}")
+                sql = self._fix_sql_syntax_errors(sql)
+                if not self._validate_sql_syntax(sql):
+                    self.logger.error(f"SQL语法修复失败，使用备用SQL")
+                    return self._generate_fallback_sql(target_selection.get('table', 'default_table'))
+            
             from app.models.data_source import DataSource
             from app.services.connectors.connector_factory import create_connector
             from app.db.session import get_db_session
@@ -932,23 +1251,23 @@ class MultiDatabaseAgent:
                 await connector.connect()
                 
                 try:
-                    # 第1轮：语法验证
-                    if not self._basic_sql_validation(sql):
-                        sql = self._fix_basic_syntax(sql)
-                        self.logger.info(f"SQL语法修复: {sql}")
-                    
-                    # 第2轮：表存在性验证
+                    # 第1轮：表存在性验证
                     tables = await connector.get_tables()
                     sql = self._validate_and_fix_table_names(sql, tables)
                     
-                    # 第3轮：字段存在性验证
+                    # 第2轮：字段存在性验证
                     table_name = target_selection.get('table')
                     if table_name and table_name in tables:
                         schema_info = await connector.get_table_schema(table_name)
                         sql = self._validate_and_fix_field_names(sql, schema_info, target_selection)
                     
-                    # 第4轮：性能优化
+                    # 第3轮：性能优化
                     sql = self._optimize_sql_performance(sql, target_selection)
+                    
+                    # 第4轮：最终语法验证
+                    if not self._validate_sql_syntax(sql):
+                        self.logger.warning(f"最终SQL语法验证失败，使用备用SQL: {sql}")
+                        return self._generate_fallback_sql(table_name)
                     
                     self.logger.info(f"SQL验证和改进完成: {sql}")
                     return sql
@@ -958,7 +1277,53 @@ class MultiDatabaseAgent:
                     
         except Exception as e:
             self.logger.error(f"SQL验证和改进失败: {e}")
-            return sql
+            return self._generate_fallback_sql(target_selection.get('table', 'default_table'))
+    
+    def _fix_sql_syntax_errors(self, sql: str) -> str:
+        """修复常见的SQL语法错误"""
+        if not sql or not isinstance(sql, str):
+            return self._generate_fallback_sql()
+        
+        # 修复常见的语法错误模式
+        fixes = [
+            # 修复重复的SELECT
+            (r'SELECT\s+SELECT', 'SELECT'),
+            (r'SELECT\s+FROM', 'SELECT * FROM'),
+            (r'SELECT\s*,', 'SELECT *,'),
+            (r'SELECT\s*FROM', 'SELECT * FROM'),
+            
+            # 修复字段名错误
+            (r'SELEid', 'SELECT id'),
+            (r's_idT', 'SELECT'),
+            (r's_idOUNT', 'COUNT'),
+            
+            # 修复表名错误
+            (r'FROM\s+FROM', 'FROM'),
+            (r'FROM\s*,', 'FROM'),
+            
+            # 修复WHERE子句错误
+            (r'WHERE\s+WHERE', 'WHERE'),
+            (r'WHERE\s*,', 'WHERE'),
+            
+            # 修复GROUP BY错误
+            (r'GROUP\s+GROUP', 'GROUP'),
+            (r'GROUP\s*,', 'GROUP'),
+            
+            # 修复ORDER BY错误
+            (r'ORDER\s+ORDER', 'ORDER'),
+            (r'ORDER\s*,', 'ORDER'),
+        ]
+        
+        fixed_sql = sql
+        for pattern, replacement in fixes:
+            fixed_sql = re.sub(pattern, replacement, fixed_sql, flags=re.IGNORECASE)
+        
+        # 如果修复后仍然有问题，使用备用SQL
+        if not self._validate_sql_syntax(fixed_sql):
+            self.logger.warning(f"SQL语法修复后仍无效，使用备用SQL: {fixed_sql}")
+            return self._generate_fallback_sql()
+        
+        return fixed_sql
     
     # 新增的辅助方法
     def _identify_business_fields(self, columns: List[Dict]) -> List[str]:
@@ -1001,6 +1366,159 @@ class MultiDatabaseAgent:
                 date_fields.append(col.get('name', ''))
         return date_fields
     
+    async def _ai_select_relevant_tables(self, all_tables: List[str], placeholder_name: str) -> List[str]:
+        """基于AI语义分析智能选择相关表"""
+        if not placeholder_name or not self.ai_service:
+            # 回退到规则匹配
+            return self._select_relevant_tables(all_tables, placeholder_name)
+        
+        try:
+            # 构建分析上下文
+            context = f"""
+数据库中有以下表：
+{chr(10).join([f"- {table}" for table in all_tables])}
+
+用户需求占位符: {placeholder_name}
+"""
+            
+            # 构建分析提示
+            prompt = """
+作为数据分析专家，请分析用户需求占位符与数据表的相关性。
+
+分析要求：
+1. 理解占位符的业务含义和数据需求
+2. 分析每个表名可能对应的业务功能
+3. 选择最相关的1-3个表来满足该需求
+4. 优先选择核心业务表，避免辅助表
+
+请返回JSON格式的分析结果：
+{
+    "selected_tables": ["表名1", "表名2", "表名3"],
+    "reasoning": {
+        "表名1": "选择理由",
+        "表名2": "选择理由"
+    },
+    "confidence": 0.9
+}
+"""
+            
+            # 调用AI服务
+            response = await self.ai_service.analyze_with_context(
+                context=context,
+                prompt=prompt,
+                task_type="intelligent_table_selection",
+                use_cache=True,
+                use_rate_limiter=True
+            )
+            
+            # 解析AI响应
+            if response:
+                import json
+                try:
+                    result = json.loads(response)
+                    selected_tables = result.get("selected_tables", [])
+                    reasoning = result.get("reasoning", {})
+                    confidence = result.get("confidence", 0.0)
+                    
+                    # 验证选择的表是否存在
+                    valid_tables = [table for table in selected_tables if table in all_tables]
+                    
+                    self.logger.info(f"AI表选择结果: {valid_tables}, 置信度: {confidence}")
+                    for table, reason in reasoning.items():
+                        if table in valid_tables:
+                            self.logger.info(f"  {table}: {reason}")
+                    
+                    return valid_tables[:3] if valid_tables else all_tables[:3]
+                    
+                except json.JSONDecodeError as e:
+                    self.logger.warning(f"AI响应JSON解析失败: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"AI表选择失败: {e}")
+            
+        # 回退到规则匹配
+        return self._select_relevant_tables(all_tables, placeholder_name)
+    
+    def _select_relevant_tables(self, all_tables: List[str], placeholder_name: str) -> List[str]:
+        """基于占位符名称智能选择相关表"""
+        if not placeholder_name:
+            # 如果没有占位符名称，返回前5个表作为默认
+            return all_tables[:5]
+        
+        # 提取占位符中的关键词
+        keywords = self._extract_business_keywords(placeholder_name)
+        relevant_tables = []
+        scores = {}
+        
+        # 为每个表计算相关性分数
+        for table in all_tables:
+            score = 0
+            table_lower = table.lower()
+            
+            # 基于关键词匹配计算分数
+            for keyword in keywords:
+                if keyword in table_lower:
+                    score += 10  # 精确匹配得高分
+                elif any(keyword in part for part in table_lower.split('_')):
+                    score += 5   # 部分匹配得中等分
+            
+            # 基于表名常见模式的分数调整
+            if any(pattern in table_lower for pattern in ['complain', 'complaint', 'feedback']):
+                if any(kw in ['投诉', '反馈', '意见'] for kw in keywords):
+                    score += 8
+            
+            if any(pattern in table_lower for pattern in ['user', 'customer', 'tourist', 'client']):
+                if any(kw in ['用户', '客户', '游客', '身份证'] for kw in keywords):
+                    score += 6
+            
+            if any(pattern in table_lower for pattern in ['order', 'travel', 'itinerary']):
+                if any(kw in ['订单', '行程', '旅游'] for kw in keywords):
+                    score += 6
+            
+            scores[table] = score
+        
+        # 选择得分最高的表，最多选择3个
+        sorted_tables = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        relevant_tables = [table for table, score in sorted_tables if score > 0][:3]
+        
+        # 如果没有相关表，返回前3个表
+        if not relevant_tables:
+            relevant_tables = all_tables[:3]
+        
+        return relevant_tables
+    
+    def _extract_business_keywords(self, placeholder_name: str) -> List[str]:
+        """从占位符名称中提取业务关键词"""
+        # 移除常见的统计词汇，保留业务关键词
+        business_terms = []
+        name_lower = placeholder_name.lower()
+        
+        # 业务关键词映射
+        keyword_mapping = {
+            '投诉': ['complaint', 'complain'],
+            '反馈': ['feedback'],
+            '用户': ['user', 'customer'],
+            '客户': ['customer', 'client'], 
+            '游客': ['tourist', 'visitor'],
+            '身份证': ['id_card', 'identity'],
+            '微信': ['wechat', 'weixin'],
+            '小程序': ['miniprogram', 'applet'],
+            '订单': ['order'],
+            '行程': ['itinerary', 'travel'],
+            '住宿': ['accommodation', 'hotel'],
+            '景区': ['scenic', 'attraction'],
+            '导游': ['guide'],
+            '退费': ['refund']
+        }
+        
+        # 提取中文关键词
+        for chinese, english_variants in keyword_mapping.items():
+            if chinese in placeholder_name:
+                business_terms.append(chinese)
+                business_terms.extend(english_variants)
+        
+        return business_terms
+    
     def _identify_text_fields(self, columns: List[Dict]) -> List[str]:
         """识别文本字段"""
         text_fields = []
@@ -1009,6 +1527,227 @@ class MultiDatabaseAgent:
             if any(t in col_type for t in ['varchar', 'text', 'char', 'string']):
                 text_fields.append(col.get('name', ''))
         return text_fields
+    
+    async def _perform_ai_agent_analysis(
+        self, 
+        placeholder_name: str, 
+        placeholder_type: str, 
+        enhanced_schema: Dict, 
+        data_source: Dict
+    ) -> Dict[str, Any]:
+        """
+        使用AI Agent进行深度占位符分析
+        
+        Args:
+            placeholder_name: 占位符名称
+            placeholder_type: 占位符类型
+            enhanced_schema: 增强的数据库结构信息
+            data_source: 数据源信息
+            
+        Returns:
+            AI分析结果
+        """
+        try:
+            # 构建上下文信息
+            context = {
+                "placeholder_name": placeholder_name,
+                "placeholder_type": placeholder_type,
+                "available_tables": enhanced_schema.get('tables', []),  # 修复：tables是列表，不是字典
+                "table_relationships": enhanced_schema.get('relationships', []),
+                "business_domain": enhanced_schema.get('business_domain', ''),
+                "data_source_type": data_source.get('source_type', '')
+            }
+            
+            # 构建AI分析提示
+            analysis_prompt = self._build_ai_analysis_prompt(context, enhanced_schema)
+            
+            # 使用AI服务进行分析
+            if not self.ai_service:
+                raise Exception("AI服务未初始化")
+            
+            # 如果AI服务支持用户特定配置，记录用户信息
+            if hasattr(self.ai_service, 'user_id') and self.ai_service.user_id:
+                self.logger.info(f"使用用户特定AI服务进行分析: {self.ai_service.user_id}")
+            else:
+                self.logger.info("使用系统默认AI服务进行分析")
+            
+            response = await self.ai_service.analyze_with_context(
+                context=str(context),
+                prompt=analysis_prompt,
+                task_type=f"placeholder_agent_analysis_{placeholder_type}",
+                use_cache=True,
+                use_rate_limiter=True
+            )
+            
+            # 调试：查看AI响应内容
+            self.logger.info(f"AI响应内容: {response[:200]}...")  # 只显示前200个字符
+            
+            # 解析AI响应
+            ai_result = None
+            if response:
+                try:
+                    import json
+                    # 尝试直接解析JSON
+                    ai_result = {
+                        "success": True,
+                        "data": json.loads(response)
+                    }
+                    self.logger.info("AI响应JSON解析成功")
+                except json.JSONDecodeError as e:
+                    self.logger.warning(f"AI响应JSON解析失败: {e}")
+                    self.logger.warning(f"AI响应原始内容: {response}")
+                    
+                    # 尝试提取JSON部分
+                    json_start = response.find('{')
+                    json_end = response.rfind('}') + 1
+                    
+                    if json_start != -1 and json_end > json_start:
+                        try:
+                            json_str = response[json_start:json_end]
+                            ai_result = {
+                                "success": True,
+                                "data": json.loads(json_str)
+                            }
+                            self.logger.info("从响应中提取JSON成功")
+                        except json.JSONDecodeError:
+                            self.logger.error("提取的JSON仍然无效")
+                            # 如果不是JSON，尝试解析为文本
+                            ai_result = {
+                                "success": True,
+                                "data": {
+                                    "intent": "statistical",
+                                    "data_operation": "count",
+                                    "reasoning": [response]
+                                }
+                            }
+                    else:
+                        # 如果没有找到JSON，返回文本响应
+                        ai_result = {
+                            "success": True,
+                            "data": {
+                                "intent": "statistical",
+                                "data_operation": "count",
+                                "reasoning": [response]
+                            }
+                        }
+            
+            if ai_result and ai_result.get("success"):
+                analysis_data = ai_result.get("data", {})
+                
+                return {
+                    "intent": analysis_data.get("intent", "statistical"),
+                    "data_operation": analysis_data.get("data_operation", "count"),
+                    "business_domain": analysis_data.get("business_domain", ""),
+                    "target_metrics": analysis_data.get("target_metrics", []),
+                    "time_dimension": analysis_data.get("time_dimension"),
+                    "grouping_dimensions": analysis_data.get("grouping_dimensions", []),
+                    "filters": analysis_data.get("filters", []),
+                    "aggregations": analysis_data.get("aggregations", ["count"]),
+                    "reasoning": analysis_data.get("reasoning", []),
+                    "confidence": analysis_data.get("confidence", 0.8),
+                    "optimizations": analysis_data.get("optimizations", [])
+                }
+            else:
+                # AI分析失败时回退到语义分析
+                self.logger.warning(f"AI分析失败，回退到语义分析: {ai_result.get('error', 'Unknown error')}")
+                return await self._analyze_placeholder_semantics(placeholder_name, placeholder_type, enhanced_schema)
+                
+        except Exception as e:
+            self.logger.error(f"AI Agent分析失败: {e}")
+            # 回退到语义分析
+            return await self._analyze_placeholder_semantics(placeholder_name, placeholder_type, enhanced_schema)
+    
+    def _build_ai_analysis_prompt(self, context: Dict, enhanced_schema: Dict) -> str:
+        """构建AI分析提示 - 优化版本"""
+        
+        placeholder_name = context["placeholder_name"]
+        placeholder_type = context["placeholder_type"]
+        available_tables = context["available_tables"]
+        
+        # 获取表结构详情
+        table_details = []
+        for table_name, table_info in enhanced_schema.get('table_schemas', {}).items():
+            columns = table_info.get('columns', [])
+            column_names = [col.get('name', col.get('Field', '')) for col in columns]
+            table_details.append(f"- {table_name}: {', '.join(column_names[:10])}")  # 限制显示的字段数量
+        
+        prompt = f"""
+你是一个专业的数据分析师。请分析以下占位符的业务需求，并返回JSON格式的分析结果。
+
+占位符信息：
+- 名称: {placeholder_name}
+- 类型: {placeholder_type}
+- 业务领域: {context.get('business_domain', '未知')}
+
+可用数据表结构：
+{chr(10).join(table_details[:5])}  # 限制显示的表数量
+
+请严格按照以下JSON格式返回分析结果，不要包含任何其他文本：
+
+{{
+    "intent": "statistical",
+    "data_operation": "count",
+    "business_domain": "travel_service",
+    "target_metrics": ["导游数量"],
+    "time_dimension": null,
+    "grouping_dimensions": [],
+    "filters": ["city_id = '昆明'"],
+    "aggregations": ["count"],
+    "reasoning": ["根据占位符名称，目标是统计昆明注册的导游数量"],
+    "confidence": 0.9,
+    "optimizations": ["考虑建立索引在city_id字段上"]
+}}
+
+重要要求：
+1. 只返回JSON对象，不要包含任何解释、注释或其他文本
+2. 确保JSON语法完全正确
+3. 字段名必须是数据库中实际存在的字段名
+4. 聚合函数必须是标准的SQL聚合函数
+
+请直接返回JSON对象，不要有任何前缀或后缀。
+"""
+        
+        return prompt
+    
+    def _build_sql_generation_prompt(self, semantic_analysis: Dict, target_selection: Dict, enhanced_schema: Dict) -> str:
+        """构建专门的SQL生成提示"""
+        
+        table_name = target_selection.get('table', '')
+        fields = target_selection.get('fields', [])
+        intent = semantic_analysis.get('intent', '')
+        data_operation = semantic_analysis.get('data_operation', '')
+        
+        # 获取表结构信息
+        table_schema = enhanced_schema.get('table_schemas', {}).get(table_name, {})
+        columns = table_schema.get('columns', [])
+        column_names = [col.get('name', '') for col in columns if col.get('name')]
+        
+        prompt = f"""
+你是一个专业的SQL专家。请根据以下信息生成准确、有效的SQL查询语句。
+
+分析信息：
+- 业务意图: {intent}
+- 数据操作: {data_operation}
+- 目标表: {table_name}
+- 可用字段: {', '.join(column_names[:20])}  # 限制显示字段数量
+
+SQL生成要求：
+1. 生成标准的SQL SELECT语句
+2. 使用正确的表名和字段名
+3. 根据业务意图选择合适的聚合函数
+4. 添加适当的WHERE条件（如果需要）
+5. 使用LIMIT限制结果数量（建议100行以内）
+
+SQL模板示例：
+- 统计查询: SELECT COUNT(*) as total_count FROM {table_name}
+- 求和查询: SELECT SUM(amount_field) as total_amount FROM {table_name}
+- 分组查询: SELECT group_field, COUNT(*) as count FROM {table_name} GROUP BY group_field
+- 时间查询: SELECT DATE(date_field) as date, COUNT(*) as count FROM {table_name} GROUP BY DATE(date_field)
+
+请只返回SQL语句，不要包含任何解释、注释或其他内容。确保SQL语法完全正确。
+"""
+        
+        return prompt
     
     def _generate_semantic_optimizations(self, analysis: Dict) -> List[str]:
         """生成语义优化建议"""
@@ -1030,27 +1769,41 @@ class MultiDatabaseAgent:
     def _select_optimal_fields(self, semantic_analysis: Dict, schema: Dict) -> List[str]:
         """选择最优字段组合"""
         enhanced_metadata = schema.get('enhanced_metadata', {})
-        all_columns = [col.get('name') for col in schema.get('columns', [])]
+        all_columns = [col.get('name') for col in schema.get('columns', []) if col.get('name')]
         
         intent = semantic_analysis.get('intent', 'general')
         
+        # 清理字段名称的辅助函数
+        def clean_field_names(fields):
+            cleaned = []
+            for field in fields:
+                if field and isinstance(field, str):
+                    # 确保字段名称只包含有效字符
+                    clean_field = ''.join(c for c in field if c.isalnum() or c in ['_'])
+                    if clean_field and not clean_field.isdigit():  # 避免纯数字字段名
+                        cleaned.append(clean_field)
+            return cleaned
+        
         if intent == 'statistical':
-            # 统计查询通常只需要计数，不需要具体字段
-            return ['COUNT(*)']
+            # 统计查询使用计数，但在SQL生成阶段处理
+            return []  # 返回空，让SQL生成阶段决定使用COUNT(*)
         elif intent == 'dimensional':
             # 维度查询需要分组字段
             business_fields = enhanced_metadata.get('business_fields', [])
-            return business_fields[:3] if business_fields else all_columns[:3]
+            fields = business_fields[:3] if business_fields else all_columns[:3]
+            return clean_field_names(fields)
         elif intent == 'temporal':
             # 时间查询需要日期字段
             date_fields = enhanced_metadata.get('date_fields', [])
-            return date_fields[:2] if date_fields else all_columns[:2]
+            fields = date_fields[:2] if date_fields else all_columns[:2]
+            return clean_field_names(fields)
         else:
             # 一般查询选择关键字段
             key_fields = enhanced_metadata.get('key_fields', [])
             business_fields = enhanced_metadata.get('business_fields', [])
             selected = list(set(key_fields[:2] + business_fields[:3]))
-            return selected if selected else all_columns[:5]
+            fields = selected if selected else all_columns[:5]
+            return clean_field_names(fields)
     
     def _create_field_mapping(self, semantic_analysis: Dict, schema: Dict) -> Dict[str, str]:
         """创建字段映射"""

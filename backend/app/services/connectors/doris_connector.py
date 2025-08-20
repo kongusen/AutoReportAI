@@ -288,16 +288,51 @@ class DorisConnector(BaseConnector):
         # 直接返回原密码（可能是明文）
         return password
     
+    def _clean_sql(self, sql: str) -> str:
+        """清理和验证SQL查询"""
+        if not sql:
+            return sql
+            
+        # 移除多余的空格和换行符
+        cleaned = ' '.join(sql.split())
+        
+        # 修复各种可能的文本损坏模式（大小写不敏感）
+        import re
+        
+        # 修复 COUNT 函数的各种损坏形式
+        patterns_to_fix = [
+            (r's_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idOUNT(*), s_idount(*)
+            (r'c_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # c_idOUNT(*), c_idount(*)
+            (r's_id[cC][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idCOUNT(*)
+            (r'[sS]_[iI][dD][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # 各种大小写组合
+        ]
+        
+        for pattern, replacement in patterns_to_fix:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+        
+        # 确保COUNT(*)语法正确（通用清理）
+        cleaned = re.sub(r'\bCOUNT\s*\(\s*\*\s*\)', 'COUNT(*)', cleaned, flags=re.IGNORECASE)
+        
+        # 记录清理结果
+        if cleaned != sql:
+            self.logger.info(f"SQL已清理: {sql} -> {cleaned}")
+        
+        return cleaned
+    
     async def execute_mysql_query(self, sql: str, params: Optional[tuple] = None) -> Optional[pd.DataFrame]:
         """使用MySQL协议执行查询并返回DataFrame"""
         if not self.config.use_mysql_protocol or not self.mysql_connection:
             self.logger.warning("MySQL协议未启用或未连接，回退到HTTP API")
             return None
             
+        # 清理和验证SQL查询
+        cleaned_sql = self._clean_sql(sql)
+        self.logger.debug(f"执行SQL查询: {cleaned_sql}")
+        
         try:
             start_time = time.time()
             with self._get_mysql_cursor() as cursor:
-                cursor.execute(sql, params)
+                cursor.execute(cleaned_sql, params)
                 results = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description]
                 execution_time = time.time() - start_time
@@ -307,6 +342,10 @@ class DorisConnector(BaseConnector):
                 return df
         except Exception as e:
             self.logger.error(f"❌ MySQL查询执行失败: {e}")
+            # 检查是否是Doris特定错误，提供更详细的错误信息
+            if "can only be used in conjunction with COUNT" in str(e):
+                self.logger.error(f"Doris SQL语法错误，原始SQL: {sql}")
+                self.logger.error(f"清理后SQL: {cleaned_sql}")
             return None
     
     async def get_databases_mysql(self) -> List[str]:
@@ -442,60 +481,32 @@ class DorisConnector(BaseConnector):
                 execution_time = asyncio.get_event_loop().time() - start_time
                 
                 if df is not None:
-                    return QueryResult(
+                    return DorisQueryResult(
                         data=df,
                         execution_time=execution_time,
-                        success=True,
-                        metadata={
-                            "protocol": "mysql",
-                            "rows_returned": len(df),
-                            "columns": list(df.columns)
-                        }
+                        rows_scanned=len(df),
+                        bytes_scanned=len(df.to_string()) if hasattr(df, 'to_string') else 0,
+                        is_cached=False,
+                        query_id=f"mysql_query_{int(start_time)}",
+                        fe_host=self.config.fe_hosts[self.current_fe_index]
                     )
             except Exception as e:
-                self.logger.warning(f"MySQL协议查询失败，回退到HTTP API: {e}")
+                self.logger.error(f"MySQL协议查询失败: {e}")
+                execution_time = asyncio.get_event_loop().time() - start_time
+                raise Exception(f"MySQL query failed: {str(e)}")
         
-        # 回退到HTTP API
-        # 确保连接已建立
-        if not self.session:
-            await self.connect()
-        
-        # 选择可用的FE节点
-        fe_host = await self._get_available_fe_host()
-        
-        # 参数替换
-        formatted_sql = sql.strip().upper()
-        if parameters:
-            for key, value in parameters.items():
-                formatted_sql = formatted_sql.replace(f"${key}", str(value))
-        
+        # 如果没有MySQL连接，尝试HTTP API fallback
+        self.logger.warning("MySQL connection not available, attempting HTTP API fallback")
         try:
-            # 将 SQL 查询映射到管理 API 调用或使用HTTP查询接口
-            if formatted_sql == "SHOW DATABASES":
-                return await self._get_databases(fe_host, start_time)
-            elif formatted_sql.startswith("SELECT") and "information_schema.tables" in formatted_sql.lower():
-                return await self._get_tables_info(fe_host, start_time, formatted_sql)
-            elif formatted_sql.startswith("SELECT COUNT(*) as table_count FROM information_schema.tables"):
-                return await self._get_table_count(fe_host, start_time)
-            elif formatted_sql.startswith("SELECT COUNT(*) AS COUNT FROM UNKNOWN_TABLE"):
-                # 处理UNKNOWN_TABLE查询，返回模拟数据
-                return await self._handle_unknown_table_query(fe_host, start_time, formatted_sql)
-            elif formatted_sql.startswith("SELECT") or formatted_sql.startswith("SHOW"):
-                # 尝试使用HTTP查询接口执行一般查询
-                return await self._execute_http_query(fe_host, start_time, sql, parameters)
-            else:
-                # 对于其他查询，尝试使用HTTP查询接口
-                return await self._execute_http_query(fe_host, start_time, sql, parameters)
-                        
-        except aiohttp.ClientError as e:
+            # 清理SQL用于HTTP API
+            cleaned_sql = self._clean_sql(sql)
+            fe_host = await self._get_available_fe_host()
+            result = await self._execute_http_query(fe_host, start_time, cleaned_sql, parameters)
+            return result
+        except Exception as http_error:
             execution_time = asyncio.get_event_loop().time() - start_time
-            self.logger.error(f"Doris query client error: {e}")
-            await self._switch_fe_host()
-            raise Exception(f"Connection error: {str(e)}")
-        except Exception as e:
-            execution_time = asyncio.get_event_loop().time() - start_time
-            self.logger.error(f"Doris query failed: {e}")
-            raise Exception(f"Query execution failed: {str(e)}")
+            self.logger.error(f"HTTP API fallback也失败: {http_error}")
+            raise Exception(f"Both MySQL and HTTP API failed. MySQL: not available, HTTP: {str(http_error)}")
     
     async def _get_databases(self, fe_host: str, start_time: float) -> QueryResult:
         """通过管理API获取数据库列表"""
@@ -991,60 +1002,126 @@ class DorisConnector(BaseConnector):
             fe_host=fe_host
         )
     
+    async def _process_http_response(self, response, start_time: float, fe_host: str) -> DorisQueryResult:
+        """处理HTTP响应"""
+        if response.status == 200:
+            result = await response.json()
+            
+            # 解析Doris HTTP查询API响应
+            if result.get("code") == 0:
+                data = result.get("data", [])
+                columns = result.get("meta", [])
+                
+                # 构建DataFrame
+                if data and columns:
+                    column_names = [col.get("name", f"col_{i}") for i, col in enumerate(columns)]
+                    df = pd.DataFrame(data, columns=column_names)
+                else:
+                    df = pd.DataFrame()
+                
+                execution_time = asyncio.get_event_loop().time() - start_time
+                
+                return DorisQueryResult(
+                    data=df,
+                    execution_time=execution_time,
+                    rows_scanned=len(data),
+                    bytes_scanned=len(str(data)) if data else 0,
+                    is_cached=False,
+                    query_id=result.get("queryId", "http_query"),
+                    fe_host=fe_host
+                )
+            else:
+                raise Exception(f"查询执行失败: {result.get('exception', 'Unknown error')}")
+        else:
+            raise Exception(f"HTTP查询API返回错误状态: {response.status}")
+    
     async def _execute_http_query(self, fe_host: str, start_time: float, sql: str, parameters: Optional[Dict] = None) -> DorisQueryResult:
         """使用HTTP查询接口执行一般SQL查询"""
         try:
-            # 构建HTTP查询API URL
-            url = f"http://{fe_host}:{self.config.http_port}/api/{self.config.database}/_sql"
-            
             # 处理参数替换
             formatted_sql = sql
             if parameters:
                 for key, value in parameters.items():
                     formatted_sql = formatted_sql.replace(f"${key}", str(value))
             
-            # 构建请求数据
-            query_data = {
-                "sql": formatted_sql
-            }
+            # 尝试多个Doris HTTP查询API端点
+            endpoints_to_try = [
+                # Doris 2.x的查询API
+                f"http://{fe_host}:{self.config.http_port}/api/query/default_cluster/{self.config.database}",
+                # 老版本的查询API
+                f"http://{fe_host}:{self.config.http_port}/api/{self.config.database}/_sql",
+                # 通用查询API
+                f"http://{fe_host}:{self.config.http_port}/api/query/{self.config.database}",
+            ]
             
             auth = aiohttp.BasicAuth(self.config.username, self.config.password)
-            headers = {
-                "Content-Type": "application/json"
-            }
             
-            async with self.session.post(url, json=query_data, auth=auth, headers=headers) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    
-                    # 解析Doris HTTP查询API响应
-                    if result.get("code") == 0:
-                        data = result.get("data", [])
-                        columns = result.get("meta", [])
+            # 尝试不同的请求方式
+            request_methods = [
+                # 方法1: POST with JSON
+                {
+                    "method": "post",
+                    "headers": {"Content-Type": "application/json"},
+                    "data_type": "json",
+                    "data": {"sql": formatted_sql}
+                },
+                # 方法2: POST with form data
+                {
+                    "method": "post", 
+                    "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+                    "data_type": "form",
+                    "data": {"sql": formatted_sql}
+                },
+                # 方法3: GET with SQL parameter
+                {
+                    "method": "get",
+                    "headers": {},
+                    "data_type": "params",
+                    "data": {"sql": formatted_sql}
+                }
+            ]
+            
+            for url in endpoints_to_try:
+                for method_config in request_methods:
+                    try:
+                        self.logger.debug(f"尝试HTTP查询: {method_config['method'].upper()} {url}")
                         
-                        # 构建DataFrame
-                        if data and columns:
-                            column_names = [col.get("name", f"col_{i}") for i, col in enumerate(columns)]
-                            df = pd.DataFrame(data, columns=column_names)
-                        else:
-                            df = pd.DataFrame()
-                        
-                        execution_time = asyncio.get_event_loop().time() - start_time
-                        
-                        return DorisQueryResult(
-                            data=df,
-                            execution_time=execution_time,
-                            rows_scanned=len(data),
-                            bytes_scanned=len(str(data)) if data else 0,
-                            is_cached=False,
-                            query_id=result.get("queryId", "http_query"),
-                            fe_host=fe_host
-                        )
-                    else:
-                        raise Exception(f"查询执行失败: {result.get('exception', 'Unknown error')}")
-                else:
-                    # 如果HTTP查询API不可用，尝试降级处理
-                    raise Exception(f"HTTP查询API返回错误状态: {response.status}")
+                        if method_config["data_type"] == "json":
+                            async with getattr(self.session, method_config["method"])(
+                                url, 
+                                json=method_config["data"], 
+                                auth=auth, 
+                                headers=method_config["headers"]
+                            ) as response:
+                                return await self._process_http_response(response, start_time, fe_host)
+                                
+                        elif method_config["data_type"] == "form":
+                            form_data = aiohttp.FormData()
+                            for key, value in method_config["data"].items():
+                                form_data.add_field(key, value)
+                            async with getattr(self.session, method_config["method"])(
+                                url, 
+                                data=form_data, 
+                                auth=auth, 
+                                headers=method_config["headers"]
+                            ) as response:
+                                return await self._process_http_response(response, start_time, fe_host)
+                                
+                        elif method_config["data_type"] == "params":
+                            async with getattr(self.session, method_config["method"])(
+                                url, 
+                                params=method_config["data"], 
+                                auth=auth, 
+                                headers=method_config["headers"]
+                            ) as response:
+                                return await self._process_http_response(response, start_time, fe_host)
+                                
+                    except Exception as endpoint_error:
+                        self.logger.debug(f"端点 {url} 方法 {method_config['method']} 失败: {endpoint_error}")
+                        continue
+            
+            # 如果所有方法都失败，抛出异常
+            raise Exception("所有HTTP查询端点和方法都失败")
                     
         except Exception as e:
             # 如果HTTP查询失败，返回错误或模拟数据

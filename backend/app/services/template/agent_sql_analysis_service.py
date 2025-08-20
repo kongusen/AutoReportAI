@@ -23,7 +23,7 @@ class AgentSQLAnalysisService:
     
     def __init__(self, db: Session):
         self.db = db
-        self.multi_db_agent = MultiDatabaseAgent()
+        self.multi_db_agent = MultiDatabaseAgent(db_session=db)
         # 使用create_connector函数而不是工厂类
     
     async def analyze_placeholder_with_agent(

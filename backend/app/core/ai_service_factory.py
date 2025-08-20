@@ -10,6 +10,7 @@ User-specific AI Service Factory for Dynamic Configuration Loading
 
 import logging
 import os
+import openai
 from typing import Dict, Optional, List
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from app import crud
 from app.services.ai_integration.llm_service import LLMProviderManager, AIService
 from app.core.security_utils import decrypt_data
 from app.db.session import SessionLocal
+from app.services.ai_integration.ai_service_enhanced import EnhancedAIService
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +198,11 @@ class UserAIServiceFactory:
             db.close()
 
 
-class UserSpecificAIService(AIService):
-    """用户专属的AI服务，继承自基础AIService"""
+class UserSpecificAIService(EnhancedAIService):
+    """用户专属的AI服务，继承自EnhancedAIService"""
     
     def __init__(self, db: Session, user_id: str):
         self.user_id = user_id
-        self.db = db
         
         # 获取用户的激活AI提供商
         user_providers = crud.ai_provider.get_by_user_id(db, user_id=user_id)
@@ -214,18 +215,44 @@ class UserSpecificAIService(AIService):
         
         if not active_provider:
             raise ValueError(f"No active AI provider found for user {user_id}")
-            
-        # 设置用户专属的提供商
+        
+        # 调用父类构造函数，传入数据库会话
+        super().__init__(db)
+        
+        # 覆盖为用户特定的提供商
         self.provider = active_provider
-        self.client = None
         
-        # 创建用户专属的LLM管理器
-        self.llm_manager = UserSpecificLLMProviderManager(db, user_id)
-        
-        # 初始化客户端
+        # 重新初始化客户端以使用用户特定的配置
         self._initialize_client()
         
         logger.info(f"Initialized user-specific AI service for user {user_id} with provider {active_provider.provider_name}")
+    
+    def _initialize_client(self):
+        """初始化AI客户端 - 用户特定版本"""
+        if not self.provider:
+            raise ValueError("No active AI Provider found for user.")
+
+        decrypted_api_key = None
+        if self.provider.api_key:
+            try:
+                decrypted_api_key = decrypt_data(self.provider.api_key)
+            except Exception as e:
+                raise ValueError(f"Failed to decrypt API key: {e}")
+
+        if self.provider.provider_type.value == "openai":
+            if not decrypted_api_key:
+                raise ValueError("Active OpenAI provider has no API key.")
+
+            self.client = openai.AsyncOpenAI(
+                api_key=decrypted_api_key,
+                base_url=(
+                    str(self.provider.api_base_url)
+                    if self.provider.api_base_url
+                    else None
+                ),
+            )
+        else:
+            self.client = None
 
 
 class UserSpecificLLMProviderManager(LLMProviderManager):

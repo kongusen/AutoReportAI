@@ -244,8 +244,8 @@ class TableRelation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # 关系
-    parent_table = relationship("Table", foreign_keys=[parent_table_id])
-    child_table = relationship("Table", foreign_keys=[child_table_id])
+    parent_table = relationship("Table", foreign_keys=[parent_table_id], overlaps="relations_as_parent")
+    child_table = relationship("Table", foreign_keys=[child_table_id], overlaps="relations_as_child")
     
     __table_args__ = (
         UniqueConstraint('parent_table_id', 'child_table_id', 'name', name='unique_relation'),

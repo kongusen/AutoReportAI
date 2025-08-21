@@ -33,7 +33,7 @@ except Exception:
 " 2>/dev/null || exit 1
         
         # Check worker ping with suppressed output
-        if ! celery -A app.services.task.core.worker.celery_app inspect ping --timeout=3 2>/dev/null | grep -q "pong"; then
+        if ! celery -A app.services.application.task_management.core.worker.celery_app inspect ping --timeout=3 2>/dev/null | grep -q "pong"; then
             exit 1
         fi
         ;;

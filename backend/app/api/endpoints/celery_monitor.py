@@ -12,7 +12,7 @@ from app import crud
 from app.core.dependencies import get_current_active_user
 from app.db.session import get_db
 from app.core.celery_scheduler import get_scheduler_manager
-from app.services.task.core.worker import celery_app
+from app.services.application.task_management.core.worker import celery_app
 from app.models.user import User
 from app.schemas.base import APIResponse
 

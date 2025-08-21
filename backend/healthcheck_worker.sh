@@ -12,7 +12,7 @@ fi
 
 # Check if worker can respond to ping
 echo "📡 Checking worker ping response..."
-PING_OUTPUT=$(celery -A app.services.task.core.worker.celery_app inspect ping --timeout=5 2>/dev/null || echo "PING_FAILED")
+PING_OUTPUT=$(celery -A app.services.application.task_management.core.worker.celery_app inspect ping --timeout=5 2>/dev/null || echo "PING_FAILED")
 
 if echo "$PING_OUTPUT" | grep -q "pong"; then
     echo "✅ Worker ping successful"
@@ -41,7 +41,7 @@ fi
 
 # Check worker stats (optional, non-blocking)
 echo "📊 Checking worker stats..."
-STATS_OUTPUT=$(celery -A app.services.task.core.worker.celery_app inspect stats --timeout=3 2>/dev/null || echo "STATS_UNAVAILABLE")
+STATS_OUTPUT=$(celery -A app.services.application.task_management.core.worker.celery_app inspect stats --timeout=3 2>/dev/null || echo "STATS_UNAVAILABLE")
 
 if echo "$STATS_OUTPUT" | grep -q "total"; then
     echo "✅ Worker stats available"
@@ -57,7 +57,7 @@ fi
 # Check if worker can process tasks (optional quick test)
 echo "🔄 Testing task processing capability..."
 TASK_TEST=$(python3 -c "
-from app.services.task.core.worker.tasks.basic_tasks import test_celery_task
+from app.services.application.task_management.core.worker.tasks.basic_tasks import test_celery_task
 import asyncio
 import time
 

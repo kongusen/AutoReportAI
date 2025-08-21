@@ -16,7 +16,7 @@ import redis.asyncio as redis
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.services.notification.notification_service import NotificationService
+from app.services.infrastructure.notification.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 

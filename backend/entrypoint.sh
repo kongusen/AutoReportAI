@@ -168,7 +168,7 @@ case "$1" in
         # Worker also needs database access, so run startup check
         if run_startup_check; then
             echo "🚀 Starting Celery worker..."
-            exec celery -A app.services.task.core.worker.celery_app worker \
+            exec celery -A app.services.application.task_management.core.worker.celery_app worker \
                 --loglevel=info \
                 --queues=${CELERY_QUEUES:-default} \
                 --concurrency=${CELERY_CONCURRENCY:-4} \
@@ -184,7 +184,7 @@ case "$1" in
         # Beat scheduler needs database access for scheduling data
         if run_startup_check; then
             echo "🚀 Starting Celery beat scheduler..."
-            exec celery -A app.services.task.core.worker.celery_app beat --loglevel=info
+            exec celery -A app.services.application.task_management.core.worker.celery_app beat --loglevel=info
         else
             echo "❌ Startup check failed, cannot start beat scheduler"
             exit 1

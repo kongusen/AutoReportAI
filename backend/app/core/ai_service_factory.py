@@ -15,10 +15,10 @@ from typing import Dict, Optional, List
 from sqlalchemy.orm import Session
 
 from app import crud
-from app.services.ai_integration.llm_service import LLMProviderManager, AIService
+from app.services.ai.integration.llm_service import LLMProviderManager, AIService
 from app.core.security_utils import decrypt_data
 from app.db.session import SessionLocal
-from app.services.ai_integration.ai_service_enhanced import EnhancedAIService
+from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ class MockAIService:
         }
     
     def call_llm_unified(self, request, provider_name=None):
-        from app.services.ai_integration.llm_service import LLMResponse
+        from app.services.ai.integration.llm_service import LLMResponse
         return LLMResponse(
             content="Mock response: AI service is not properly configured",
             model="mock-model",

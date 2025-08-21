@@ -251,7 +251,7 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
 def get_ai_service(db: Session = Depends(get_db)):
     """Get AI service dependency"""
     try:
-        from app.services.ai_integration import AIService
+        from app.services.ai.integration import AIService
         return AIService(db)
     except Exception as e:
         logger.error(f"Failed to create AIService: {e}")
@@ -264,7 +264,7 @@ def get_ai_service(db: Session = Depends(get_db)):
 def get_enhanced_ai_service(db: Session = Depends(get_db)):
     """Get enhanced AI service dependency"""
     try:
-        from app.services.ai_integration import EnhancedAIService
+        from app.services.ai.integration import EnhancedAIService
         return EnhancedAIService(db)
     except Exception as e:
         logger.error(f"Failed to create EnhancedAIService: {e}")
@@ -431,7 +431,7 @@ def get_all_services_health(db: Session = Depends(get_db)) -> dict:
 def get_task_manager(db: Session = Depends(get_db)):
     """Get task manager dependency"""
     try:
-        from app.services.task.management.task_manager import TaskManager
+        from app.services.application.task_management.management.task_manager import TaskManager
         return TaskManager()
     except Exception as e:
         logger.error(f"Failed to create TaskManager: {e}")
@@ -444,7 +444,7 @@ def get_task_manager(db: Session = Depends(get_db)):
 def get_status_tracker(db: Session = Depends(get_db)):
     """Get status tracker dependency"""
     try:
-        from app.services.task.management.status_tracker import StatusTracker
+        from app.services.application.task_management.management.status_tracker import StatusTracker
         return StatusTracker()
     except Exception as e:
         logger.error(f"Failed to create StatusTracker: {e}")
@@ -457,7 +457,7 @@ def get_status_tracker(db: Session = Depends(get_db)):
 def get_task_scheduler(db: Session = Depends(get_db)):
     """Get task scheduler dependency"""
     try:
-        from app.services.task.core.scheduler import TaskScheduler
+        from app.services.application.task_management.core.scheduler import TaskScheduler
         return TaskScheduler()
     except Exception as e:
         logger.error(f"Failed to create TaskScheduler: {e}")
@@ -470,7 +470,7 @@ def get_task_scheduler(db: Session = Depends(get_db)):
 def get_agent_executor(db: Session = Depends(get_db)):
     """Get agent executor dependency"""
     try:
-        from app.services.task.execution.agent_executor import AgentExecutor
+        from app.services.application.task_management.execution.agent_executor import AgentExecutor
         return AgentExecutor()
     except Exception as e:
         logger.error(f"Failed to create AgentExecutor: {e}")
@@ -483,7 +483,7 @@ def get_agent_executor(db: Session = Depends(get_db)):
 def get_fallback_handler(db: Session = Depends(get_db)):
     """Get fallback handler dependency"""
     try:
-        from app.services.task.execution.fallback import FallbackHandler
+        from app.services.application.task_management.execution.fallback import FallbackHandler
         return FallbackHandler()
     except Exception as e:
         logger.error(f"Failed to create FallbackHandler: {e}")

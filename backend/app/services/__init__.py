@@ -1,78 +1,96 @@
 """
 Services module
 
-Provides access to all business logic services
+重构后的分层架构服务模块：
+- data: 数据访问层
+- domain: 领域层  
+- infrastructure: 基础设施层
+- application: 应用层
+- ai: AI层
 """
 
-# Import data processing services
-from .data_processing import (
-    DataRetrievalService,
-    DataAnalysisService,
-    StatisticsService,
-    VisualizationService,
-    data_sanitizer,
-    ETLService,
-    ETLJobStatus,
-    ETLTransformationEngine,
-    IntelligentETLExecutor,
-    CeleryETLScheduler,
-    ETLJobExecutionStatus
-)
+# =============================================================================
+# 分层架构导入
+# =============================================================================
 
-# Import schema management services
-from .schema_management import (
-    SchemaDiscoveryService,
-    SchemaAnalysisService,
-    SchemaQueryService,
-    SchemaMetadataService,
-    RelationshipAnalyzer,
-    TypeNormalizer
-)
+# 数据层
+from . import data
 
-# Import report generation services
-from .report_generation import (
-    ReportGenerationService,
-    ReportGenerationStatus,
-    ReportCompositionService,
-    TemplateParser,
-    WordGeneratorService
-)
+# 领域层
+from . import domain
 
-# Import data source services
-from .data_sources import (
-    DataSourceService,
-    data_source_service,
-    ConnectionPoolManager
-)
+# 基础设施层 
+from . import infrastructure
+
+# 应用层
+from . import application
+
+# AI层
+from . import ai
+
+# =============================================================================
+# 向后兼容导入 (Backward Compatibility)
+# =============================================================================
+
+# 关键服务的向后兼容导入
+from .data.processing.analysis import DataAnalysisService
+from .data.processing.retrieval import DataRetrievalService
+from .data.processing.statistics_service import StatisticsService
+from .data.sources.data_source_service import DataSourceService
+from .data.connectors.doris_connector import DorisConnector
+
+# 领域服务向后兼容
+from .domain.placeholder.agent_service import AgentAnalysisService
+from .domain.template.template_service import TemplateService
+from .domain.reporting.generator import ReportGenerationService
+
+# AI服务向后兼容（使用新的上下文工程）
+from .ai.integration.llm_service import AIService as LLMService
+from .ai.legacy_agents.multi_database_agent import MultiDatabaseAgent
+
+# 应用服务向后兼容
+from .application.task_management.execution.two_phase_pipeline import execute_two_phase_pipeline
+
+# 基础设施服务向后兼容  
+from .infrastructure.cache.pipeline_cache_manager import PipelineCacheManager
+from .infrastructure.notification.notification_service import NotificationService
+from .infrastructure.storage.file_storage_service import FileStorageService
 
 __all__ = [
-    # Data processing services
-    "DataRetrievalService",
+    # =========================================================================
+    # 分层架构模块
+    # =========================================================================
+    "data",           # 数据访问层
+    "domain",         # 领域层
+    "infrastructure", # 基础设施层  
+    "application",    # 应用层
+    "ai",            # AI层
+    
+    # =========================================================================
+    # 向后兼容导出
+    # =========================================================================
+    
+    # 数据服务
     "DataAnalysisService",
+    "DataRetrievalService", 
     "StatisticsService",
-    "VisualizationService",
-    "data_sanitizer",
-    "ETLService",
-    "ETLJobStatus",
-    "ETLTransformationEngine",
-    "IntelligentETLExecutor",
-    "CeleryETLScheduler",
-    "ETLJobExecutionStatus",
-    # Schema management services
-    "SchemaDiscoveryService",
-    "SchemaAnalysisService",
-    "SchemaQueryService",
-    "SchemaMetadataService",
-    "RelationshipAnalyzer",
-    "TypeNormalizer",
-    # Report generation services
-    "ReportGenerationService",
-    "ReportGenerationStatus",
-    "ReportCompositionService",
-    "TemplateParser",
-    "WordGeneratorService",
-    # Data source services
     "DataSourceService",
-    "data_source_service",
-    "ConnectionPoolManager",
+    "DorisConnector",
+    
+    # 领域服务
+    "AgentAnalysisService",
+    "TemplateService",
+    "ReportGenerationService",
+    
+    # AI服务
+    "LLMService",
+    "MultiDatabaseAgent",
+    
+    # 应用服务
+    "execute_two_phase_pipeline",
+    
+    # 基础设施服务
+    "PipelineCacheManager",
+    "NotificationService", 
+    "FileStorageService",
 ]

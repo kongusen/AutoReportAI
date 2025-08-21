@@ -13,7 +13,7 @@ from app.models.user import User
 from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema
 from app.crud import template as crud_template
-from app.services.report_generation.document_pipeline import TemplateParser
+from app.services.domain.template.services.template_domain_service import TemplateParser
 import re
 import logging
 
@@ -733,8 +733,8 @@ async def get_template_placeholders(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 获取占位符配置
-        from app.services.template.placeholder_config_service import PlaceholderConfigService
-        placeholder_service = PlaceholderConfigService(db)
+        from app.services.domain.placeholder import create_placeholder_config_service
+        placeholder_service = create_placeholder_config_service(db)
         
         placeholders = await placeholder_service.get_placeholder_configs(
             template_id, include_inactive
@@ -956,8 +956,8 @@ async def update_placeholder_config(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 更新占位符配置
-        from app.services.template.placeholder_config_service import PlaceholderConfigService
-        placeholder_service = PlaceholderConfigService(db)
+        from app.services.domain.placeholder import create_placeholder_config_service
+        placeholder_service = create_placeholder_config_service(db)
         
         updated_placeholder = await placeholder_service.update_placeholder_config(
             placeholder_id, updates
@@ -1005,7 +1005,7 @@ async def test_placeholder_query(
             raise HTTPException(status_code=403, detail="无权限访问此数据源")
         
         # 执行测试查询
-        from app.services.connectors.connector_factory import create_connector
+        from app.services.data.connectors.connector_factory import create_connector
         from datetime import datetime
         
         start_time = datetime.now()
@@ -1106,8 +1106,8 @@ async def validate_placeholder_sql(
             raise HTTPException(status_code=403, detail="无权限访问此数据源")
         
         # 获取占位符配置
-        from app.services.template.placeholder_config_service import PlaceholderConfigService
-        placeholder_service = PlaceholderConfigService(db)
+        from app.services.domain.placeholder import create_placeholder_config_service
+        placeholder_service = create_placeholder_config_service(db)
         
         placeholder_config = await placeholder_service.get_placeholder_config(placeholder_id)
         if not placeholder_config:
@@ -1119,7 +1119,7 @@ async def validate_placeholder_sql(
         
         # 验证SQL语法
         try:
-            from app.services.connectors.connector_factory import create_connector
+            from app.services.data.connectors.connector_factory import create_connector
             connector = create_connector(data_source)
             
             # 执行SQL验证（使用EXPLAIN或类似的方法，不实际执行查询）
@@ -1181,8 +1181,8 @@ async def get_placeholder_execution_history(
     """获取占位符执行历史"""
     try:
         # 获取占位符配置以验证权限
-        from app.services.template.placeholder_config_service import PlaceholderConfigService
-        placeholder_service = PlaceholderConfigService(db)
+        from app.services.domain.placeholder import create_placeholder_config_service
+        placeholder_service = create_placeholder_config_service(db)
         
         placeholder_config = await placeholder_service.get_placeholder_config(placeholder_id)
         if not placeholder_config:

@@ -90,13 +90,13 @@ test-debug:
 
 # Celery相关命令
 celery-worker:
-	celery -A app.services.task.core.worker.celery_app worker --loglevel=info --concurrency=2
+	celery -A app.services.application.task_management.core.worker.celery_app worker --loglevel=info --concurrency=2
 
 celery-beat:
-	celery -A app.services.task.core.worker.celery_app beat --loglevel=info
+	celery -A app.services.application.task_management.core.worker.celery_app beat --loglevel=info
 
 celery-monitor:
-	celery -A app.services.task.core.worker.celery_app flower
+	celery -A app.services.application.task_management.core.worker.celery_app flower
 
 # 启动完整服务
 start-all:

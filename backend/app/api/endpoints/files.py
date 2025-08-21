@@ -17,7 +17,7 @@ from app.core.dependencies import get_current_active_user
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.user import User
-from app.services.storage.file_storage_service import file_storage_service
+from app.services.infrastructure.storage.file_storage_service import file_storage_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

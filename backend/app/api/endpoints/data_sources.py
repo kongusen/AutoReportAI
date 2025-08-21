@@ -44,7 +44,7 @@ async def _discover_and_cache_schema(data_source: DataSourceModel):
     try:
         logger.info(f"开始发现数据源表结构: {data_source.name}")
         
-        from app.services.schema_management.schema_discovery_service import SchemaDiscoveryService
+        from app.services.data.schemas.schema_discovery_service import SchemaDiscoveryService
         
         # 使用后台任务发现表结构，避免阻塞用户请求
         import asyncio
@@ -408,7 +408,7 @@ async def get_data_source_tables(
     data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
     try:
-        from app.services.connectors.connector_factory import create_connector
+        from app.services.data.connectors.connector_factory import create_connector
         
         start_time = time.time()
         connector = create_connector(data_source)
@@ -462,7 +462,7 @@ async def get_table_schema(
     data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
     try:
-        from app.services.connectors.connector_factory import create_connector
+        from app.services.data.connectors.connector_factory import create_connector
         
         start_time = time.time()
         connector = create_connector(data_source)
@@ -517,7 +517,7 @@ async def get_data_source_fields(
     data_source = resolve_data_source_id(data_source_id, current_user.id, db)
     
     try:
-        from app.services.connectors.connector_factory import create_connector
+        from app.services.data.connectors.connector_factory import create_connector
         
         start_time = time.time()
         connector = create_connector(data_source)
@@ -582,7 +582,7 @@ async def execute_query(
         )
     
     try:
-        from app.services.connectors.connector_factory import create_connector
+        from app.services.data.connectors.connector_factory import create_connector
         
         start_time = time.time()
         connector = create_connector(data_source)

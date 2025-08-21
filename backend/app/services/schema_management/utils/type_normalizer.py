@@ -25,7 +25,7 @@ class TypeNormalizer:
         
         # 数值类型
         if any(t in type_lower for t in ["int", "integer"]):
-            return ColumnType.INT
+            return ColumnType.INTEGER
         elif "bigint" in type_lower:
             return ColumnType.BIGINT
         elif "float" in type_lower:
@@ -36,10 +36,8 @@ class TypeNormalizer:
             return ColumnType.DECIMAL
         
         # 字符串类型
-        elif "varchar" in type_lower:
-            return ColumnType.VARCHAR
-        elif "char" in type_lower:
-            return ColumnType.CHAR
+        elif any(t in type_lower for t in ["varchar", "char"]):
+            return ColumnType.STRING
         elif "text" in type_lower:
             return ColumnType.TEXT
         
@@ -113,7 +111,7 @@ class TypeNormalizer:
             是否为数值类型
         """
         numeric_types = [
-            ColumnType.INT,
+            ColumnType.INTEGER,
             ColumnType.BIGINT,
             ColumnType.FLOAT,
             ColumnType.DOUBLE,
@@ -132,8 +130,7 @@ class TypeNormalizer:
             是否为字符串类型
         """
         string_types = [
-            ColumnType.VARCHAR,
-            ColumnType.CHAR,
+            ColumnType.STRING,
             ColumnType.TEXT
         ]
         return column_type in string_types

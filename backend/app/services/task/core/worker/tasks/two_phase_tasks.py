@@ -28,12 +28,17 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.two_phase_tasks.execute_two_phase_report_task')
-def execute_two_phase_report_task(self, task_id: int, user_id: str = "system", force_reanalyze: bool = False):
+def execute_two_phase_report_task(self, task_id: int, user_id: str = None, force_reanalyze: bool = False):
     """
     执行两阶段架构的报告生成任务
     
     这是主要的Celery任务入口，使用新的两阶段架构
     """
+    # 如果没有提供user_id，使用系统用户ID
+    if user_id is None:
+        from app.core.config import settings
+        user_id = settings.SYSTEM_USER_ID
+    
     logger.info(f"开始执行两阶段报告任务: {task_id}")
     
     try:
@@ -76,12 +81,17 @@ def execute_two_phase_report_task(self, task_id: int, user_id: str = "system", f
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.two_phase_tasks.execute_phase_1_analysis_task')
-def execute_phase_1_analysis_task(self, template_id: str, data_source_id: str, user_id: str = "system", force_reanalyze: bool = False):
+def execute_phase_1_analysis_task(self, template_id: str, data_source_id: str, user_id: str = None, force_reanalyze: bool = False):
     """
     仅执行阶段1: 模板分析和占位符处理
     
     用于预先分析模板，为后续的报告生成做准备
     """
+    # 如果没有提供user_id，使用系统用户ID
+    if user_id is None:
+        from app.core.config import settings
+        user_id = settings.SYSTEM_USER_ID
+    
     logger.info(f"开始执行阶段1分析任务: 模板 {template_id}")
     
     start_time = datetime.now()
@@ -144,12 +154,17 @@ def execute_phase_1_analysis_task(self, template_id: str, data_source_id: str, u
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.two_phase_tasks.execute_smart_report_task')
-def execute_smart_report_task(self, task_id: int, user_id: str = "system"):
+def execute_smart_report_task(self, task_id: int, user_id: str = None):
     """
     智能报告生成任务 - 自动选择执行策略
     
     根据模板的准备状态，智能选择执行完整流水线还是仅执行阶段2
     """
+    # 如果没有提供user_id，使用系统用户ID
+    if user_id is None:
+        from app.core.config import settings
+        user_id = settings.SYSTEM_USER_ID
+    
     logger.info(f"开始执行智能报告任务: {task_id}")
     
     try:
@@ -181,12 +196,17 @@ def execute_smart_report_task(self, task_id: int, user_id: str = "system"):
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.two_phase_tasks.execute_batch_template_preparation')
-def execute_batch_template_preparation(self, template_ids: list, data_source_id: str, user_id: str = "system"):
+def execute_batch_template_preparation(self, template_ids: list, data_source_id: str, user_id: str = None):
     """
     批量模板预备任务 - 预先分析多个模板
     
     为多个模板执行阶段1分析，提高后续报告生成的效率
     """
+    # 如果没有提供user_id，使用系统用户ID
+    if user_id is None:
+        from app.core.config import settings
+        user_id = settings.SYSTEM_USER_ID
+    
     logger.info(f"开始批量模板预备: {len(template_ids)} 个模板")
     
     start_time = datetime.now()
@@ -264,12 +284,17 @@ def execute_scheduled_two_phase_task(self, task_id: int):
 
 
 @celery_app.task(bind=True, name='app.services.task.core.worker.tasks.two_phase_tasks.migrate_to_two_phase_task')
-def migrate_to_two_phase_task(self, task_id: int, user_id: str = "system"):
+def migrate_to_two_phase_task(self, task_id: int, user_id: str = None):
     """
     迁移任务到两阶段架构
     
     为现有任务执行两阶段架构迁移，包括模板分析和优化设置
     """
+    # 如果没有提供user_id，使用系统用户ID
+    if user_id is None:
+        from app.core.config import settings
+        user_id = settings.SYSTEM_USER_ID
+    
     logger.info(f"开始迁移任务到两阶段架构: {task_id}")
     
     db = SessionLocal()

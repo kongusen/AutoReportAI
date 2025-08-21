@@ -9,7 +9,7 @@ from fastapi_limiter import FastAPILimiter
 
 from app.api.router import api_router
 from app.api.versioning import APIVersionMiddleware
-from app.core.config import settings
+from app.core.config import settings, get_cors_origins
 from app.core.logging_config import setup_logging, RequestLoggingMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.websocket.router import router as websocket_router
@@ -23,7 +23,7 @@ def print_startup_config():
     print("-" * 50)
     
     # 获取前端地址
-    cors_origins = getattr(settings, "CORS_ORIGINS", "http://localhost:3000").split(",")
+    cors_origins = get_cors_origins()
     frontend_url = cors_origins[0].strip() if cors_origins else "http://localhost:3000"
     
     # 打印前后端地址
@@ -189,22 +189,29 @@ def create_application() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
 
     # CORS 配置 - 从环境变量动态配置
-    origins = []
-    if hasattr(settings, "CORS_ORIGINS") and settings.CORS_ORIGINS:
-        origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
-    
-    # 默认前端地址（如果环境变量未配置）
-    if not origins:
-        origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    origins = get_cors_origins()
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_origin_regex=getattr(settings, "CORS_ORIGIN_REGEX", None),
-        allow_credentials=getattr(settings, "CORS_ALLOW_CREDENTIALS", True),
-        allow_methods=getattr(settings, "CORS_ALLOW_METHODS", ["*"]),
-        allow_headers=getattr(settings, "CORS_ALLOW_HEADERS", ["*"]),
-    )
+    # 调试信息：打印CORS配置
+    print(f"CORS Origins: {origins}")
+    print(f"Allow Credentials: {settings.CORS_ALLOW_CREDENTIALS}")
+    print(f"Allow Methods: {settings.CORS_ALLOW_METHODS}")
+    print(f"Allow Headers: {settings.CORS_ALLOW_HEADERS}")
+    
+    cors_config = {
+        "allow_origins": origins,
+        "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
+        "allow_methods": settings.CORS_ALLOW_METHODS,
+        "allow_headers": settings.CORS_ALLOW_HEADERS,
+    }
+    
+    # 如果指定了正则表达式，则使用它
+    if settings.CORS_ORIGIN_REGEX and settings.CORS_ORIGIN_REGEX.strip():
+        cors_config["allow_origin_regex"] = settings.CORS_ORIGIN_REGEX.strip()
+        print(f"\ud83d\udd0d CORS Origin Regex: {settings.CORS_ORIGIN_REGEX}")
+        # 正则表达式优先级更高，移除具体的origins列表
+        cors_config.pop("allow_origins", None)
+
+    app.add_middleware(CORSMiddleware, **cors_config)
 
     # 自定义OpenAPI schema
     def custom_openapi():

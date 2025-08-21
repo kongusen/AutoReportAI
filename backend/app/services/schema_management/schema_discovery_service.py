@@ -91,6 +91,8 @@ class SchemaDiscoveryService:
                                 
                     except Exception as e:
                         self.logger.warning(f"处理表 {table_name} 时出错: {e}")
+                        # 回滚当前事务
+                        self.db_session.rollback()
                         continue
                 
                 return {
@@ -136,9 +138,13 @@ class SchemaDiscoveryService:
             )
             self.db_session.add(table_schema)
         
+        # 先提交表结构，确保有ID
+        self.db_session.commit()
+        
         # 存储列信息
         await self._store_column_schemas(table_schema, schema_info.get("columns", []))
         
+        # 再次提交列信息
         self.db_session.commit()
         return table_schema
     
@@ -164,7 +170,7 @@ class SchemaDiscoveryService:
             column_data = {
                 "column_name": col_info.get("name"),
                 "column_type": col_info.get("type", ""),
-                "normalized_type": normalized_type,
+                "normalized_type": normalized_type.value if hasattr(normalized_type, 'value') else str(normalized_type),  # 兼容字符串和枚举
                 "is_nullable": col_info.get("nullable", True),
                 "is_primary_key": col_info.get("key", "") == "PRI",
                 "default_value": col_info.get("default"),
@@ -193,8 +199,12 @@ class SchemaDiscoveryService:
     ):
         """更新表统计信息"""
         
-        table_schema.estimated_row_count = stats_info.get("rows")
-        table_schema.table_size_bytes = stats_info.get("data_length")
+        # 转换numpy类型为Python原生类型
+        rows = stats_info.get("rows")
+        data_length = stats_info.get("data_length")
+        
+        table_schema.estimated_row_count = int(rows) if rows is not None else None
+        table_schema.table_size_bytes = int(data_length) if data_length is not None else None
         table_schema.last_analyzed = datetime.utcnow()
         
         self.db_session.commit()

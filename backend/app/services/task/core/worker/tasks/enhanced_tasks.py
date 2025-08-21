@@ -36,7 +36,8 @@ def execute_scheduled_task(self, task_id: int):
     
     # 直接调用智能占位符驱动的报告生成流水线
     # 使用系统用户执行调度任务
-    system_user_id = "system"
+    from app.core.config import settings
+    system_user_id = settings.SYSTEM_USER_ID
     
     # 更新任务执行状态
     try:

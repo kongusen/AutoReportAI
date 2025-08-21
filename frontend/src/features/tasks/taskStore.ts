@@ -180,14 +180,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 执行任务 - 使用WebSocket实时更新
   executeTask: async (id: string) => {
     try {
+      // 初始化任务进度状态（在发送请求之前）
+      get().updateTaskProgress({
+        task_id: id,
+        status: 'pending',
+        progress: 0,
+        message: '正在启动任务...'
+      })
+      
       const response = await api.post(`/tasks/${id}/execute`)
       const result = response.data || response
       
-      // 初始化任务进度状态
+      // 更新为已提交状态
       get().updateTaskProgress({
         task_id: id,
         status: 'queued',
-        progress: 0,
+        progress: 5,
         message: '任务已提交，等待处理...'
       })
       

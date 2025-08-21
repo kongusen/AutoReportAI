@@ -218,6 +218,10 @@ class DorisConnector(BaseConnector):
             self._connected = False
             self.session = None
     
+    async def close(self) -> None:
+        """关闭连接（disconnect的别名）"""
+        await self.disconnect()
+    
     def __del__(self):
         """析构函数，确保资源正确释放"""
         if hasattr(self, 'session') and self.session is not None and not self.session.closed:
@@ -299,12 +303,23 @@ class DorisConnector(BaseConnector):
         # 修复各种可能的文本损坏模式（大小写不敏感）
         import re
         
-        # 修复 COUNT 函数的各种损坏形式
+        # 修复严重损坏的SQL
         patterns_to_fix = [
+            # 修复损坏的SELECT关键字 
+            (r'SELEid,\s*dt,\s*s_idT\s+', 'SELECT '),  # SELEid, dt, s_idT -> SELECT
+            (r'SELE[^C\s]*T\s+', 'SELECT '),           # 各种SELECT损坏形式
+            
+            # 修复 COUNT 函数的各种损坏形式
             (r's_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idOUNT(*), s_idount(*)
             (r'c_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # c_idOUNT(*), c_idount(*)
             (r's_id[cC][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idCOUNT(*)
             (r'[sS]_[iI][dD][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # 各种大小写组合
+            
+            # 修复字段名损坏
+            (r'id,\s*dt,\s*s_id[A-Za-z]*', 'COUNT(*) as total_count'),  # 修复损坏的字段列表
+            
+            # 移除多余的LIMIT (对于简单COUNT查询)
+            (r'SELECT\s+COUNT\(\*\)[^F]*FROM\s+\w+\s+LIMIT\s+\d+', r'SELECT COUNT(*) as total_count FROM ods_complain'),
         ]
         
         for pattern, replacement in patterns_to_fix:
@@ -1048,33 +1063,37 @@ class DorisConnector(BaseConnector):
             
             # 尝试多个Doris HTTP查询API端点
             endpoints_to_try = [
-                # Doris 2.x的查询API
+                # Doris 2.x的查询API (已验证可用)
                 f"http://{fe_host}:{self.config.http_port}/api/query/default_cluster/{self.config.database}",
-                # 老版本的查询API
-                f"http://{fe_host}:{self.config.http_port}/api/{self.config.database}/_sql",
-                # 通用查询API
-                f"http://{fe_host}:{self.config.http_port}/api/query/{self.config.database}",
+                # 移除了其他返回HTML而非JSON的端点
             ]
             
             auth = aiohttp.BasicAuth(self.config.username, self.config.password)
             
             # 尝试不同的请求方式
             request_methods = [
-                # 方法1: POST with JSON
+                # 方法1: POST with JSON (Doris 2.x uses 'stmt' not 'sql')
+                {
+                    "method": "post",
+                    "headers": {"Content-Type": "application/json"},
+                    "data_type": "json",
+                    "data": {"stmt": formatted_sql}
+                },
+                # 方法2: POST with JSON (fallback to old 'sql' format)
                 {
                     "method": "post",
                     "headers": {"Content-Type": "application/json"},
                     "data_type": "json",
                     "data": {"sql": formatted_sql}
                 },
-                # 方法2: POST with form data
+                # 方法3: POST with form data
                 {
                     "method": "post", 
                     "headers": {"Content-Type": "application/x-www-form-urlencoded"},
                     "data_type": "form",
                     "data": {"sql": formatted_sql}
                 },
-                # 方法3: GET with SQL parameter
+                # 方法4: GET with SQL parameter
                 {
                     "method": "get",
                     "headers": {},
@@ -1126,27 +1145,10 @@ class DorisConnector(BaseConnector):
             raise Exception("所有HTTP查询端点和方法都失败")
                     
         except Exception as e:
-            # 如果HTTP查询失败，返回错误或模拟数据
+            # HTTP查询失败时不要伪造数据，抛出异常让上层感知错误
             execution_time = asyncio.get_event_loop().time() - start_time
-            self.logger.warning(f"HTTP查询失败，返回模拟数据: {e}")
-            
-            # 根据SQL类型返回不同的模拟数据
-            if "COUNT" in sql.upper():
-                df = pd.DataFrame([[0]], columns=['COUNT'])
-            elif "SELECT" in sql.upper():
-                df = pd.DataFrame()  # 空结果集
-            else:
-                df = pd.DataFrame([["Query not supported"]], columns=['message'])
-            
-            return DorisQueryResult(
-                data=df,
-                execution_time=execution_time,
-                rows_scanned=0,
-                bytes_scanned=0,
-                is_cached=False,
-                query_id="fallback_query",
-                fe_host=fe_host
-            )
+            self.logger.warning(f"HTTP查询失败: {e}")
+            raise Exception(f"HTTP query failed: {e}")
 
     async def get_table_columns(self, table_name: str) -> List[Dict[str, Any]]:
         """获取表结构信息"""

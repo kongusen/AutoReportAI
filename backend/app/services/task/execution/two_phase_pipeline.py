@@ -22,6 +22,7 @@ from app import crud, schemas
 from app.models.template import Template
 from app.models.data_source import DataSource
 from app.models.task import Task
+from app.crud.crud_task import crud_task
 from app.services.template.enhanced_template_parser import EnhancedTemplateParser
 from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
 from app.services.report_generation.word_generator_service import WordGeneratorService
@@ -159,10 +160,23 @@ class TwoPhasePipeline:
                 phase_results[PipelinePhase.PHASE_1_ANALYSIS] = phase1_result
                 
                 if not phase1_result.success and execution_mode == ExecutionMode.FULL_PIPELINE:
+                    total_time = time.time() - start_time
+                    # 更新任务执行统计 - 失败（阶段1失败）
+                    try:
+                        crud_task.update_execution_stats(
+                            db=db,
+                            task_id=task_id,
+                            success=False,
+                            execution_time=total_time
+                        )
+                        logger.info(f"阶段1失败统计更新成功 - 任务ID: {task_id}")
+                    except Exception as stats_error:
+                        logger.error(f"更新阶段1失败统计失败: {stats_error}")
+                    
                     return PipelineResult(
                         pipeline_id=self.pipeline_id,
                         success=False,
-                        total_execution_time=time.time() - start_time,
+                        total_execution_time=total_time,
                         phase_results=phase_results,
                         error=f"阶段1执行失败: {phase1_result.error}"
                     )
@@ -173,10 +187,23 @@ class TwoPhasePipeline:
                 phase_results[PipelinePhase.PHASE_2_EXECUTION] = phase2_result
                 
                 if not phase2_result.success:
+                    total_time = time.time() - start_time
+                    # 更新任务执行统计 - 失败（阶段2失败）
+                    try:
+                        crud_task.update_execution_stats(
+                            db=db,
+                            task_id=task_id,
+                            success=False,
+                            execution_time=total_time
+                        )
+                        logger.info(f"阶段2失败统计更新成功 - 任务ID: {task_id}")
+                    except Exception as stats_error:
+                        logger.error(f"更新阶段2失败统计失败: {stats_error}")
+                    
                     return PipelineResult(
                         pipeline_id=self.pipeline_id,
                         success=False,
-                        total_execution_time=time.time() - start_time,
+                        total_execution_time=total_time,
                         phase_results=phase_results,
                         error=f"阶段2执行失败: {phase2_result.error}"
                     )
@@ -186,6 +213,18 @@ class TwoPhasePipeline:
             
             total_time = time.time() - start_time
             logger.info(f"两阶段流水线执行完成 - Pipeline ID: {self.pipeline_id}, 总耗时: {total_time:.2f}秒")
+            
+            # 更新任务执行统计 - 成功
+            try:
+                crud_task.update_execution_stats(
+                    db=db,
+                    task_id=task_id,
+                    success=True,
+                    execution_time=total_time
+                )
+                logger.info(f"任务统计更新成功 - 任务ID: {task_id}, 执行时间: {total_time:.2f}秒")
+            except Exception as stats_error:
+                logger.error(f"更新任务统计失败: {stats_error}")
             
             return PipelineResult(
                 pipeline_id=self.pipeline_id,
@@ -205,6 +244,18 @@ class TwoPhasePipeline:
             # 更新失败状态
             if self.config.enable_progress_tracking:
                 self._update_progress(task_id, user_id, "failed", 0, f"流水线执行失败: {str(e)}")
+            
+            # 更新任务执行统计 - 失败
+            try:
+                crud_task.update_execution_stats(
+                    db=db,
+                    task_id=task_id,
+                    success=False,
+                    execution_time=total_time
+                )
+                logger.info(f"任务失败统计更新成功 - 任务ID: {task_id}, 执行时间: {total_time:.2f}秒")
+            except Exception as stats_error:
+                logger.error(f"更新任务失败统计失败: {stats_error}")
             
             # 创建失败的报告记录
             try:
@@ -482,7 +533,7 @@ class TwoPhasePipeline:
             if parse_result["requires_agent_analysis"] > 0:
                 self._update_progress(task_id, user_id, "analyzing", 30, f"Agent分析 {parse_result['requires_agent_analysis']} 个占位符")
                 
-                cached_orchestrator = CachedAgentOrchestrator(db)
+                cached_orchestrator = CachedAgentOrchestrator(db, user_id=user_id)
                 # 从上下文中获取执行时间信息
                 execution_context = context.get("execution_context")
                 analysis_result = await cached_orchestrator._execute_phase1_analysis(
@@ -586,7 +637,7 @@ class TwoPhasePipeline:
             # 1. 缓存优先的数据提取
             self._update_progress(task_id, user_id, "extracting", 60, "提取占位符数据")
             
-            cached_orchestrator = CachedAgentOrchestrator(db)
+            cached_orchestrator = CachedAgentOrchestrator(db, user_id=user_id)
             # 从上下文中获取执行时间信息
             execution_context = context.get("execution_context")
             extraction_result = await cached_orchestrator._execute_phase2_extraction_and_generation(

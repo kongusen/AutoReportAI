@@ -164,48 +164,78 @@ class MultiDatabaseAgent:
             }
     
     async def _get_enhanced_schema(self, data_source: Dict[str, Any]) -> Dict[str, Any]:
-        """获取增强的数据源schema信息"""
+        """从缓存中获取增强的数据源schema信息"""
         try:
             data_source_id = data_source.get("id")
             source_type = data_source.get("source_type")
             
-            # 创建连接器
-            connector = await self._create_connector(data_source)
-            if not connector:
+            if not data_source_id or not self.db_session:
+                self.logger.error("缺少数据源ID或数据库会话")
                 return None
             
-            try:
-                # 连接数据库
-                await connector.connect()
+            # 使用SchemaQueryService获取缓存的表结构信息
+            from app.services.schema_management.schema_query_service import SchemaQueryService
+            schema_service = SchemaQueryService(self.db_session)
+            
+            # 获取所有表结构
+            table_schemas = schema_service.get_table_schemas(data_source_id)
+            
+            if not table_schemas:
+                self.logger.warning(f"数据源 {data_source_id} 没有缓存的表结构信息，请先执行表结构发现")
+                return None
+            
+            # 构建表结构详情
+            table_details = {}
+            tables = []
+            
+            for table_schema in table_schemas:
+                table_name = table_schema.table_name
+                tables.append(table_name)
                 
-                # 获取数据库和表信息
-                databases = await connector.get_databases()
-                tables = await connector.get_tables()
+                # 获取表的列信息
+                columns = schema_service.get_table_columns(table_schema.id)
+                column_details = []
                 
-                # 获取表结构详情
-                table_details = {}
-                for table in tables:
-                    try:
-                        columns = await connector.get_table_columns(table)
-                        table_details[table] = columns
-                    except Exception as e:
-                        self.logger.warning(f"获取表 {table} 结构失败: {e}")
-                        table_details[table] = []
+                for column in columns:
+                    column_info = {
+                        "name": column.column_name,
+                        "type": column.column_type,
+                        "normalized_type": column.normalized_type if column.normalized_type else "unknown",
+                        "nullable": column.is_nullable,
+                        "primary_key": column.is_primary_key,
+                        "business_name": column.business_name,  # 业务中文名
+                        "business_description": column.business_description,  # 业务描述
+                        "semantic_category": column.semantic_category,  # 语义分类
+                        "sample_values": column.sample_values,  # 样本值
+                        "data_patterns": column.data_patterns  # 数据模式
+                    }
+                    column_details.append(column_info)
                 
-                return {
-                    "source_type": source_type,
-                    "databases": databases,
-                    "tables": tables,
-                    "table_details": table_details,
-                    "total_tables": len(tables),
-                    "total_columns": sum(len(cols) for cols in table_details.values())
+                table_details[table_name] = {
+                    "columns": column_details,
+                    "business_category": table_schema.business_category,  # 表的业务分类
+                    "data_freshness": table_schema.data_freshness,  # 数据新鲜度
+                    "update_frequency": table_schema.update_frequency,  # 更新频率
+                    "estimated_row_count": table_schema.estimated_row_count,  # 预估行数
+                    "data_quality_score": table_schema.data_quality_score,  # 数据质量评分
+                    "table_size_bytes": table_schema.table_size_bytes  # 表大小
                 }
-                
-            finally:
-                await connector.disconnect()
+            
+            return {
+                "source_type": source_type,
+                "tables": tables,
+                "table_details": table_details,
+                "total_tables": len(tables),
+                "total_columns": sum(len(details["columns"]) for details in table_details.values()),
+                "schema_metadata": {
+                    "business_categories": list(set([t.business_category for t in table_schemas if t.business_category])),
+                    "semantic_categories": schema_service.get_semantic_categories(data_source_id),
+                    "data_quality_avg": sum([t.data_quality_score or 0 for t in table_schemas]) / len(table_schemas) if table_schemas else 0
+                }
+            }
                 
         except Exception as e:
-            self.logger.error(f"获取增强schema失败: {e}")
+            self.logger.error(f"从缓存获取增强schema失败: {e}")
             return None
     
     async def _create_connector(self, data_source: Dict[str, Any]) -> Optional[BaseConnector]:
@@ -284,16 +314,31 @@ class MultiDatabaseAgent:
                     self.logger.warning(f"AI响应JSON解析失败: {e}")
                     self.logger.warning(f"AI响应原始内容: {response}")
                     
-                    # 尝试从响应中提取JSON
-                    json_start = response.find('{')
-                    json_end = response.rfind('}') + 1
+                    # 尝试从响应中提取JSON（处理markdown包装）
+                    # 先尝试移除markdown代码块标记
+                    json_content = response
+                    if "```json" in response:
+                        # 提取markdown代码块中的JSON
+                        start_marker = "```json"
+                        end_marker = "```"
+                        start_idx = response.find(start_marker)
+                        if start_idx != -1:
+                            start_idx += len(start_marker)
+                            end_idx = response.find(end_marker, start_idx)
+                            if end_idx != -1:
+                                json_content = response[start_idx:end_idx].strip()
+                    
+                    # 现在尝试解析清理后的JSON
+                    json_start = json_content.find('{')
+                    json_end = json_content.rfind('}') + 1
                     if json_start != -1 and json_end > json_start:
                         try:
-                            json_str = response[json_start:json_end]
+                            json_str = json_content[json_start:json_end]
                             ai_result = {"success": True, "data": json.loads(json_str)}
                             self.logger.info("从响应中提取JSON成功")
-                        except json.JSONDecodeError:
-                            self.logger.error("提取的JSON仍然无效")
+                        except json.JSONDecodeError as e2:
+                            self.logger.error(f"提取的JSON仍然无效: {e2}")
+                            self.logger.error(f"尝试解析的JSON: {json_str[:200]}...")
                             ai_result = {"success": True, "data": {"intent": "statistical", "data_operation": "count", "reasoning": [response]}}
                     else:
                         ai_result = {"success": True, "data": {"intent": "statistical", "data_operation": "count", "reasoning": [response]}}
@@ -302,16 +347,22 @@ class MultiDatabaseAgent:
             
             if ai_result.get("success"):
                 analysis_data = ai_result.get("data", {})
+                
+                # 从"分析结果"中提取信息，如果不存在则从根级别提取
+                analysis_result = analysis_data.get("分析结果", analysis_data)
+                
                 return {
                     "success": True,
-                    "intent": analysis_data.get("intent", "statistical"),
-                    "data_operation": analysis_data.get("data_operation", "count"),
-                    "business_domain": analysis_data.get("business_domain", ""),
-                    "target_metrics": analysis_data.get("target_metrics", []),
-                    "time_dimension": analysis_data.get("time_dimension"),
-                    "grouping_dimensions": analysis_data.get("grouping_dimensions", []),
-                    "filters": analysis_data.get("filters", []),
-                    "aggregations": analysis_data.get("aggregations", []),
+                    "intent": analysis_result.get("intent", "statistical"),
+                    "data_operation": analysis_result.get("data_operation", "count"),
+                    "business_domain": analysis_result.get("business_domain", ""),
+                    "target_table": analysis_result.get("target_table", ""),  # 添加目标表
+                    "target_fields": analysis_result.get("target_fields", []),  # 添加目标字段
+                    "target_metrics": analysis_result.get("target_metrics", []),
+                    "time_dimension": analysis_result.get("time_dimension"),
+                    "grouping_dimensions": analysis_result.get("grouping_dimensions", []),
+                    "filters": analysis_result.get("filters", []),
+                    "aggregations": analysis_result.get("aggregations", []),
                     "reasoning": analysis_data.get("reasoning", []),
                     "confidence": analysis_data.get("confidence", 0.8),
                     "optimizations": analysis_data.get("optimizations", [])
@@ -330,157 +381,182 @@ class MultiDatabaseAgent:
             }
     
     def _build_ai_analysis_prompt(self, context: Dict, enhanced_schema: Dict) -> str:
-        """构建AI分析提示 - 优化版本"""
+        """构建AI分析提示 - 基于真实缓存schema的多轮思考分析"""
         placeholder_name = context.get("placeholder_name", "")
         placeholder_type = context.get("placeholder_type", "")
         data_source = context.get("data_source", {})
         
-        # 构建表结构信息
+        # 基于真实缓存的表结构构建详细信息
         tables_info = []
-        for table_name, columns in enhanced_schema.get("table_details", {}).items():
-            table_info = f"表名: {table_name}\n字段: {', '.join([col.get('name', '') for col in columns])}"
+        business_mappings = []
+        
+        for table_name, table_data in enhanced_schema.get("table_details", {}).items():
+            columns = table_data.get("columns", [])
+            business_category = table_data.get("business_category", "")
+            estimated_rows = table_data.get("estimated_row_count", 0)
+            
+            # 构建列信息，包含业务含义
+            column_descriptions = []
+            for col in columns[:15]:  # 限制列数避免提示词过长
+                col_desc = col.get("name", "")
+                if col.get("business_name"):
+                    col_desc += f" ({col['business_name']})"
+                if col.get("semantic_category"):
+                    col_desc += f" [{col['semantic_category']}]"
+                column_descriptions.append(col_desc)
+            
+            table_info = f"""表名: {table_name}
+业务分类: {business_category or '未分类'}
+记录数: 约{estimated_rows:,}条
+关键字段: {', '.join(column_descriptions)}"""
             tables_info.append(table_info)
+            
+            # 构建业务映射关系
+            if business_category:
+                business_mappings.append(f"- {business_category}相关数据 → {table_name}表")
+            
+            # 基于列的业务名称和语义分类构建映射
+            for col in columns:
+                if col.get("business_name") or col.get("semantic_category"):
+                    business_name = col.get("business_name", col.get("name", ""))
+                    semantic_cat = col.get("semantic_category", "")
+                    if business_name:
+                        business_mappings.append(f"- '{business_name}'{f'({semantic_cat})' if semantic_cat else ''} → {table_name}.{col.get('name', '')}")
         
         tables_text = "\n\n".join(tables_info)
+        business_mappings_text = "\n".join(list(set(business_mappings))[:20])  # 去重并限制数量
+        
+        # 获取业务领域信息
+        schema_metadata = enhanced_schema.get("schema_metadata", {})
+        business_categories = schema_metadata.get("business_categories", [])
+        semantic_categories = schema_metadata.get("semantic_categories", [])
         
         prompt = f"""
-你是一个专业的数据分析师。请分析以下占位符的业务需求，并返回JSON格式的分析结果。
+你是专业的数据分析AI，需要分析中文占位符的业务需求并选择最合适的数据表。请进行多轮思考分析。
 
-占位符信息:
-- 名称: {placeholder_name}
-- 类型: {placeholder_type}
+【数据源概况】
 - 数据源: {data_source.get('name', 'unknown')}
+- 业务领域: {', '.join(business_categories) if business_categories else '通用业务'}
+- 语义分类: {', '.join(semantic_categories[:10]) if semantic_categories else '未分类'}
+- 表总数: {enhanced_schema.get('total_tables', 0)}
+- 字段总数: {enhanced_schema.get('total_columns', 0)}
 
-数据库结构信息:
+【当前分析任务】
+占位符: {placeholder_name}
+类型: {placeholder_type}
+
+【可用数据表详情】
 {tables_text}
 
-请严格按照以下JSON格式返回分析结果，不要包含任何其他文本：
+【业务语义映射】
+{business_mappings_text}
+
+【分析要求】
+请按以下步骤进行多轮思考：
+
+1. 【语义理解】- 分析占位符的中文含义，识别关键业务概念
+2. 【表选择】- 基于真实表结构和业务分类，选择最合适的数据表
+3. 【字段映射】- 根据列的业务名称和语义分类，确定目标字段
+4. 【操作确定】- 确定需要的数据操作（统计、去重、聚合等）
+5. 【结果验证】- 验证选择的表和字段是否能满足业务需求
+
+请严格按以下JSON格式返回分析结果：
+
 {{
-    "intent": "statistical",
-    "data_operation": "count",
-    "business_domain": "travel_service",
-    "target_metrics": ["导游数量"],
-    "time_dimension": null,
-    "grouping_dimensions": [],
-    "filters": ["city_id = '昆明'"],
-    "aggregations": ["count"],
-    "reasoning": ["根据占位符名称，目标是统计昆明注册的导游数量"],
-    "confidence": 0.9,
-    "optimizations": ["考虑建立索引在city_id字段上"]
+    "思考过程": {{
+        "语义理解": "对占位符中文含义的理解",
+        "关键概念": ["识别出的业务概念1", "概念2"],
+        "表选择推理": "为什么选择这个表的详细推理",
+        "字段匹配": "字段选择的依据",
+        "操作确定": "数据操作类型的确定理由"
+    }},
+    "分析结果": {{
+        "intent": "statistical/analytical/reporting",
+        "data_operation": "count/sum/avg/count_distinct/group_by等",
+        "business_domain": "业务领域",
+        "target_table": "选定的目标表名",
+        "target_fields": ["字段1", "字段2"],
+        "target_metrics": ["指标1", "指标2"],
+        "time_dimension": "时间维度字段或null",
+        "grouping_dimensions": ["分组字段"],
+        "filters": ["过滤条件"],
+        "aggregations": ["聚合操作"],
+        "confidence": 0.0-1.0,
+        "reasoning": ["详细推理步骤"],
+        "optimizations": ["性能优化建议"]
+    }}
 }}
 
-重要要求：
-1. 只返回JSON对象，不要包含任何解释、注释或其他文本
-2. 确保JSON语法完全正确
-3. 字段名必须是数据库中实际存在的字段名
-4. 聚合函数必须是标准的SQL聚合函数
-请直接返回JSON对象，不要有任何前缀或后缀。
+【关键要求】
+1. 仔细理解中文占位符的业务含义
+2. 选择最符合业务逻辑的数据表  
+3. 只返回JSON，不要任何其他文本
+4. confidence值应反映分析的确定程度
+5. 特别注意"去重"、"同比"、"占比"等统计需求的准确理解
 """
         return prompt
+    
     
     async def _perform_intelligent_target_selection(
         self, 
         semantic_analysis: Dict, 
         enhanced_schema: Dict
     ) -> Dict[str, Any]:
-        """执行智能目标选择"""
+        """基于AI分析结果执行目标选择"""
         try:
-            intent = semantic_analysis.get("intent", "statistical")
-            business_domain = semantic_analysis.get("business_domain", "")
-            target_metrics = semantic_analysis.get("target_metrics", [])
+            # 从AI分析结果中获取目标表
+            if "分析结果" in semantic_analysis:
+                analysis_result = semantic_analysis["分析结果"]
+                target_table = analysis_result.get("target_table")
+                target_fields = analysis_result.get("target_fields", [])
+            else:
+                # 兼容老格式
+                target_table = semantic_analysis.get("target_table")
+                target_fields = semantic_analysis.get("target_fields", [])
             
-            # 基于语义分析筛选相关表
-            relevant_tables = []
-            for table_name, columns in enhanced_schema.get("table_details", {}).items():
-                relevance_score = self._calculate_table_relevance(
-                    table_name, columns, intent, business_domain, target_metrics
-                )
-                if relevance_score > 0.3:  # 相关性阈值
-                    relevant_tables.append((table_name, relevance_score))
+            if target_table:
+                # 验证目标表是否存在
+                if target_table in enhanced_schema.get("table_details", {}):
+                    self.logger.info(f"✅ AI选择的目标表: {target_table}")
+                    
+                    return {
+                        "success": True,
+                        "table": target_table,
+                        "fields": target_fields,
+                        "field_mapping": {},
+                        "relevance_score": semantic_analysis.get("confidence", 0.8),
+                        "alternative_tables": []
+                    }
+                else:
+                    self.logger.warning(f"AI选择的表 {target_table} 不存在，使用第一个可用表")
             
-            # 按相关性排序
-            relevant_tables.sort(key=lambda x: x[1], reverse=True)
-            
-            if relevant_tables:
-                best_table = relevant_tables[0][0]
-                self.logger.info(f"✅ 获取到 {len(relevant_tables)} 个相关表: {[t[0] for t in relevant_tables]}")
-                
-                # 选择最佳表的字段
-                table_columns = enhanced_schema.get("table_details", {}).get(best_table, [])
-                selected_fields = self._select_relevant_fields(
-                    table_columns, semantic_analysis
-                )
+            # 如果AI没有指定表或表不存在，使用第一个可用表
+            available_tables = list(enhanced_schema.get("table_details", {}).keys())
+            if available_tables:
+                fallback_table = available_tables[0]
+                self.logger.info(f"使用备用表: {fallback_table}")
                 
                 return {
                     "success": True,
-                    "table": best_table,
-                    "fields": selected_fields,
+                    "table": fallback_table,
+                    "fields": target_fields,
                     "field_mapping": {},
-                    "relevance_score": relevant_tables[0][1],
-                    "alternative_tables": [t[0] for t in relevant_tables[1:3]]
+                    "relevance_score": 0.5,
+                    "alternative_tables": available_tables[1:3]
                 }
             else:
-                # 如果没有找到相关表，使用默认表
-                default_table = list(enhanced_schema.get("table_details", {}).keys())[0] if enhanced_schema.get("table_details") else "default_table"
-                self.logger.warning(f"未找到相关表，使用默认表: {default_table}")
-                
                 return {
-                    "success": True,
-                    "table": default_table,
-                    "fields": [],
-                    "field_mapping": {},
-                    "relevance_score": 0.1,
-                    "alternative_tables": []
+                    "success": False,
+                    "error": "没有可用的数据表"
                 }
                 
         except Exception as e:
-            self.logger.error(f"智能目标选择失败: {e}")
+            self.logger.error(f"目标选择失败: {e}")
             return {
                 "success": False,
                 "error": str(e)
             }
     
-    def _calculate_table_relevance(
-        self, 
-        table_name: str, 
-        columns: List[Dict], 
-        intent: str, 
-        business_domain: str, 
-        target_metrics: List[str]
-    ) -> float:
-        """计算表相关性分数"""
-        score = 0.0
-        
-        # 基于表名的相关性
-        table_name_lower = table_name.lower()
-        if business_domain.lower() in table_name_lower:
-            score += 0.4
-        if any(metric.lower() in table_name_lower for metric in target_metrics):
-            score += 0.3
-        
-        # 基于字段名的相关性
-        column_names = [col.get("name", "").lower() for col in columns]
-        for metric in target_metrics:
-            if any(metric.lower() in col for col in column_names):
-                score += 0.2
-        
-        return min(score, 1.0)
-    
-    def _select_relevant_fields(
-        self, 
-        columns: List[Dict], 
-        semantic_analysis: Dict
-    ) -> List[str]:
-        """选择相关字段"""
-        relevant_fields = []
-        target_metrics = semantic_analysis.get("target_metrics", [])
-        
-        for column in columns:
-            column_name = column.get("name", "").lower()
-            if any(metric.lower() in column_name for metric in target_metrics):
-                relevant_fields.append(column.get("name", ""))
-        
-        return relevant_fields
     
     async def _generate_intelligent_sql(
         self, 

@@ -91,6 +91,8 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
           ),
           formatted_text: d.formatted_text ?? '',
           error_message: d.error_message ?? d.error ?? null,
+          data: d.data || [],
+          sql_executed: d.sql_executed || ''
         }
         setTestResult(normalized)
         toast.success('SQL查询测试成功')

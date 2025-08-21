@@ -129,10 +129,10 @@ export default function TaskDetailPage() {
             <Button
               variant="outline"
               onClick={() => executeTask(task.id.toString())}
-              disabled={!task.is_active}
+              disabled={!task.is_active || !!progress}
             >
               <PlayIcon className="w-4 h-4 mr-2" />
-              立即执行
+              {progress ? '执行中...' : '立即执行'}
             </Button>
             <Button
               variant="outline"
@@ -280,24 +280,21 @@ export default function TaskDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">{progress.status}</span>
-                      <span className="text-sm text-gray-500">{progress.progress}%</span>
-                    </div>
-                    <Progress 
-                      value={progress.progress} 
-                      variant={
-                        progress.status === 'completed' ? 'success' :
-                        progress.status === 'failed' ? 'error' : 'info'
+                  <Progress 
+                    value={progress.progress} 
+                    status={progress.status as any}
+                    message={progress.message}
+                    showPercent={true}
+                    showMessage={true}
+                    size="default"
+                    onRetry={progress.status === 'failed' ? async () => {
+                      try {
+                        await executeTask(task.id.toString())
+                      } catch (error) {
+                        // 错误处理已在store中处理
                       }
-                    />
-                  </div>
-                  {progress.message && (
-                    <div className="p-3 bg-gray-50 rounded-md">
-                      <p className="text-sm text-gray-600">{progress.message}</p>
-                    </div>
-                  )}
+                    } : undefined}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -313,10 +310,10 @@ export default function TaskDetailPage() {
                 className="w-full justify-start"
                 variant="ghost"
                 onClick={() => executeTask(task.id.toString())}
-                disabled={!task.is_active}
+                disabled={!task.is_active || !!progress}
               >
                 <PlayIcon className="w-4 h-4 mr-2" />
-                立即执行
+                {progress ? '执行中...' : '立即执行'}
               </Button>
               <Button 
                 className="w-full justify-start"
@@ -363,23 +360,36 @@ export default function TaskDetailPage() {
             <CardContent className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">总执行次数</span>
-                <span className="text-sm font-medium">-</span>
+                <span className="text-sm font-medium">{task.execution_count || 0}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">成功次数</span>
-                <span className="text-sm font-medium text-green-600">-</span>
+                <span className="text-sm font-medium text-green-600">{task.success_count || 0}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">失败次数</span>
-                <span className="text-sm font-medium text-red-600">-</span>
+                <span className="text-sm font-medium text-red-600">{task.failure_count || 0}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">成功率</span>
-                <span className="text-sm font-medium">-</span>
+                <span className={`text-sm font-medium ${
+                  (task.success_rate || 0) >= 0.8 ? 'text-green-600' : 
+                  (task.success_rate || 0) >= 0.5 ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  {((task.success_rate || 0) * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600">平均执行时间</span>
+                <span className="text-sm font-medium text-blue-600">
+                  {task.average_execution_time ? `${task.average_execution_time.toFixed(1)}s` : '-'}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">上次执行</span>
-                <span className="text-sm font-medium">-</span>
+                <span className="text-sm font-medium">
+                  {task.last_execution_at ? formatRelativeTime(task.last_execution_at) : '从未执行'}
+                </span>
               </div>
             </CardContent>
           </Card>

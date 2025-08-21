@@ -186,7 +186,7 @@ class SchemaQueryService:
                 "column_name": column.column_name,
                 "table_name": table.table_name,
                 "table_id": str(table.id),
-                "column_type": column.normalized_type.value,
+                "column_type": column.normalized_type,
                 "business_name": column.business_name,
                 "semantic_category": column.semantic_category
             })
@@ -279,9 +279,10 @@ class SchemaQueryService:
         ).count()
         
         # 数据类型统计
+        from sqlalchemy import func
         type_stats = self.db_session.query(
             ColumnSchema.normalized_type,
-            self.db_session.func.count(ColumnSchema.id)
+            func.count(ColumnSchema.id)
         ).join(
             TableSchema,
             ColumnSchema.table_schema_id == TableSchema.id

@@ -319,7 +319,7 @@ class ColumnSchema(Base):
     # 列基本信息
     column_name = Column(String, nullable=False, index=True)
     column_type = Column(String, nullable=False)  # 原始数据类型
-    normalized_type = Column(Enum(ColumnType), nullable=False)  # 标准化类型
+    normalized_type = Column(String(50), nullable=False)  # 标准化类型
     column_size = Column(Integer, nullable=True)  # 列大小/长度
     precision = Column(Integer, nullable=True)  # 精度（用于decimal类型）
     scale = Column(Integer, nullable=True)  # 小数位数

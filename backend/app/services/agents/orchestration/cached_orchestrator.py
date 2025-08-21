@@ -329,7 +329,15 @@ class CachedAgentOrchestrator(AgentOrchestrator):
             from app.services.connectors.connector_factory import create_connector
             connector = create_connector(data_source)
             
-            query_result = await connector.execute_query(generated_sql)
+            # 重要：先建立连接，避免在独立进程/任务中直接走HTTP回退
+            await connector.connect()
+            try:
+                query_result = await connector.execute_query(generated_sql)
+            finally:
+                try:
+                    await connector.disconnect()
+                except Exception:
+                    pass
             
             # 处理查询结果
             formatted_text = self._format_query_result(query_result, placeholder)
@@ -367,6 +375,25 @@ class CachedAgentOrchestrator(AgentOrchestrator):
         try:
             if not query_result:
                 return "无数据"
+            
+            # 处理 DorisQueryResult 对象
+            if hasattr(query_result, 'data') and hasattr(query_result, 'execution_time'):
+                # 这是一个 DorisQueryResult 对象，提取其中的 data DataFrame
+                df = query_result.data
+                if df is None or df.empty:
+                    return "0"
+                
+                # 单行单列结果（常见的统计查询）
+                if len(df) == 1 and len(df.columns) == 1:
+                    value = df.iloc[0, 0]
+                    return str(value)
+                elif len(df) == 1:
+                    # 单行多列，取第一个值
+                    value = df.iloc[0, 0]
+                    return str(value)
+                else:
+                    # 多行结果
+                    return f"共 {len(df)} 条记录"
             
             # 如果是列表格式
             if isinstance(query_result, list):

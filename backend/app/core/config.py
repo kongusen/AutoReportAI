@@ -197,6 +197,28 @@ class Settings(BaseSettings):
     # API限流配置
     API_RATE_LIMIT: str = os.getenv("API_RATE_LIMIT", "100/minute")
     
+    # CORS配置
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
+    CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
+    CORS_ALLOW_METHODS: List[str] = os.getenv("CORS_ALLOW_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH").split(",")
+    CORS_ALLOW_HEADERS: List[str] = os.getenv("CORS_ALLOW_HEADERS", "*").split(",")
+    
+    def get_cors_origins(self) -> List[str]:
+        """获取CORS允许的来源列表"""
+        if self.CORS_ORIGINS == "*":
+            return ["*"]
+        
+        origins = []
+        if self.CORS_ORIGINS:
+            origins = [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        
+        # 默认允许的来源
+        if not origins:
+            origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+        
+        return origins
+    
     # 健康检查配置
     HEALTH_CHECK_ENABLED: bool = os.getenv("HEALTH_CHECK_ENABLED", "true").lower() == "true"
     
@@ -204,6 +226,9 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: str = os.getenv("FIRST_SUPERUSER", "admin")
     FIRST_SUPERUSER_EMAIL: str = os.getenv("FIRST_SUPERUSER_EMAIL", "admin@autoreportai.com")
     FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "password")
+    
+    # 系统用户UUID配置 - 用于系统级别的任务执行
+    SYSTEM_USER_ID: str = os.getenv("SYSTEM_USER_ID", "94ba5da3-ee9d-40fe-b34d-ea3a90553f54")
     
     # AI Provider初始化配置
     DEFAULT_AI_PROVIDER_NAME: str = os.getenv("DEFAULT_AI_PROVIDER_NAME", "OpenAI")
@@ -218,3 +243,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+def get_cors_origins() -> List[str]:
+    """获取CORS允许的来源列表（全局函数）"""
+    return settings.get_cors_origins()

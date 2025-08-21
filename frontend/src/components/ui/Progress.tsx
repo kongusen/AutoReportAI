@@ -80,7 +80,14 @@ export function Progress({
       case 'warning':
         return 'warning'
       case 'processing':
+      case 'agent_orchestrating':
+      case 'generating':
+      case 'analyzing':
+      case 'extracting':
         return 'info'
+      case 'queued':
+      case 'pending':
+        return 'default'
       default:
         return variant
     }
@@ -110,10 +117,11 @@ export function Progress({
         {/* 状态消息 */}
         {showMessage && message && (
           <div className={cn(
-            "text-xs flex-1",
+            "text-xs flex-1 truncate",
             status === 'failed' ? 'text-red-600' : 
             status === 'completed' ? 'text-green-600' :
             status === 'warning' ? 'text-yellow-600' :
+            ['processing', 'agent_orchestrating', 'generating', 'analyzing', 'extracting'].includes(status || '') ? 'text-blue-600' :
             'text-gray-600'
           )}>
             {message}
@@ -122,7 +130,14 @@ export function Progress({
         
         {/* 百分比显示 */}
         {showPercent && (
-          <div className="text-xs text-gray-600 ml-2">
+          <div className={cn(
+            "text-xs ml-2 font-medium",
+            status === 'failed' ? 'text-red-600' : 
+            status === 'completed' ? 'text-green-600' :
+            status === 'warning' ? 'text-yellow-600' :
+            ['processing', 'agent_orchestrating', 'generating'].includes(status || '') ? 'text-blue-600' :
+            'text-gray-600'
+          )}>
             {Math.round(percentage)}%
           </div>
         )}

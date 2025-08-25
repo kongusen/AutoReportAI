@@ -18,7 +18,7 @@ def create_agent_sql_analysis_service(db: Session, user_id: Optional[str] = None
     降低互相依赖风险。
     """
     # 延迟导入，避免在导入期触发循环依赖
-    from app.services.template.agent_sql_analysis_service import AgentSQLAnalysisService
+    from app.services.domain.template.agent_sql_analysis_service import AgentSQLAnalysisService
 
     return AgentSQLAnalysisService(db, user_id=user_id)
 
@@ -26,7 +26,7 @@ def create_agent_sql_analysis_service(db: Session, user_id: Optional[str] = None
 def create_enhanced_template_parser(db: Session):
     """创建 EnhancedTemplateParser 的中立工厂方法。"""
     # 延迟导入，避免在导入期触发循环依赖
-    from app.services.template.enhanced_template_parser import EnhancedTemplateParser
+    from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
 
     return EnhancedTemplateParser(db)
 
@@ -46,16 +46,15 @@ def create_two_phase_report_workflow(db: Session):
     return TwoPhaseReportWorkflow(db)
 
 
+def create_placeholder_sql_agent(db: Session, user_id: Optional[str] = None):
+    """创建占位符SQL分析代理"""
+    from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+    return PlaceholderSQLAnalyzer(db_session=db, user_id=user_id)
+
+
 def create_multi_database_agent(db: Session, user_id: Optional[str] = None):
-    """创建多数据库智能代理的工厂方法"""
-    from app.services.agents.multi_database_agent import MultiDatabaseAgent
-    return MultiDatabaseAgent(db_session=db, user_id=user_id)
-
-
-def create_context_aware_multi_database_agent(db: Session, user_id: Optional[str] = None):
-    """创建上下文感知的多数据库智能代理"""
-    from app.services.ai.agents.context_aware_multi_db_agent import ContextAwareMultiDatabaseAgent
-    return ContextAwareMultiDatabaseAgent(db_session=db, user_id=user_id)
+    """创建多数据库智能代理的工厂方法（向后兼容）"""
+    return create_placeholder_sql_agent(db, user_id)
 
 
 def create_context_aware_agent_registry():

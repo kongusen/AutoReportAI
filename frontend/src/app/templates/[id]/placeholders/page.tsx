@@ -74,35 +74,19 @@ export default function TemplatePlaceholdersPage() {
       // 并行加载数据
       const [templateResult, placeholdersResult, dataSourcesResult] = await Promise.allSettled([
         getTemplate(templateId),
-        api.get(`/templates/${templateId}/placeholders`),
+        api.get(`/templates/${templateId}/placeholders`), // 使用混合占位符API
         api.get('/data-sources')
       ])
 
-      // 处理占位符数据
+      // 处理占位符数据 - 从混合占位符API获取
       if (placeholdersResult.status === 'fulfilled') {
-        const placeholderData = placeholdersResult.value.data?.data || placeholdersResult.value.data || []
-        setPlaceholders(placeholderData.placeholders || [])
+        const placeholderData = placeholdersResult.value.data?.data || placeholdersResult.value.data || {}
+        const storedPlaceholders = placeholderData.placeholders || []
+        const analytics = placeholderData.analytics || null
         
-        // 计算分析统计
-        const totalPlaceholders = placeholderData.total_placeholders || 0
-        const analyzedPlaceholders = placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0
-        const sqlValidatedPlaceholders = placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.sql_validated).length || 0
-        const avgConfidence = placeholderData.placeholders?.reduce((sum: number, p: PlaceholderConfig) => sum + p.confidence_score, 0) / totalPlaceholders || 0
-        
-        setAnalytics({
-          total_placeholders: totalPlaceholders,
-          analyzed_placeholders: analyzedPlaceholders,
-          sql_validated_placeholders: sqlValidatedPlaceholders,
-          average_confidence_score: avgConfidence,
-          cache_hit_rate: 0, // 暂时设为0，后续从缓存统计API获取
-          analysis_coverage: totalPlaceholders > 0 ? (analyzedPlaceholders / totalPlaceholders) * 100 : 0,
-          execution_stats: {
-            total_executions: 0,
-            successful_executions: 0,
-            failed_executions: 0,
-            average_execution_time_ms: 0
-          }
-        })
+        // 直接使用存储的占位符配置
+        setPlaceholders(storedPlaceholders)
+        setAnalytics(analytics)
       }
 
       // 处理数据源数据
@@ -119,23 +103,26 @@ export default function TemplatePlaceholdersPage() {
     }
   }
 
-  // 分析占位符
+  // 重新解析占位符
   const handleAnalyzePlaceholders = async () => {
     try {
       setAnalyzing(true)
-      const response = await api.post(`/templates/${templateId}/analyze-placeholders`, {
-        force_reparse: true
+      toast.loading('正在重新解析占位符...', { duration: 1000 })
+      
+      // 使用混合管理器重新解析并存储占位符
+      const response = await api.post(`/templates/${templateId}/placeholders/reparse`, {}, {
+        params: { force_reparse: true }
       })
       
       if (response.data?.success) {
-        toast.success('占位符分析完成')
-        await loadData() // 重新加载数据
+        toast.success(response.data.message || '占位符重新解析完成')
+        await loadData() // 重新加载数据以显示新解析的占位符
       } else {
-        toast.error(response.data?.message || '占位符分析失败')
+        toast.error(response.data?.message || '占位符重新解析失败')
       }
     } catch (error: any) {
-      console.error('Failed to analyze placeholders:', error)
-      toast.error(error.response?.data?.detail || '占位符分析失败')
+      console.error('Failed to re-analyze placeholders:', error)
+      toast.error(error.response?.data?.detail || '占位符重新解析失败')
     } finally {
       setAnalyzing(false)
     }
@@ -214,7 +201,28 @@ export default function TemplatePlaceholdersPage() {
     if (placeholder.agent_analyzed) {
       return <Badge variant="warning">需验证</Badge>
     }
-    return <Badge variant="destructive">待分析</Badge>
+    // 存储的占位符默认状态
+    return <Badge variant="info">已存储</Badge>
+  }
+
+  // 获取类型Badge样式
+  const getTypeBadgeVariant = (type: string) => {
+    const typeMap: Record<string, any> = {
+      '统计': 'success',
+      '图表': 'info',
+      '表格': 'info',
+      '分析': 'warning',
+      '日期时间': 'warning',
+      '标题': 'info',
+      '摘要': 'secondary',
+      '作者': 'secondary',
+      '变量': 'secondary',
+      '中文': 'secondary',
+      '文本': 'secondary',
+      '错误': 'destructive',
+      '系统错误': 'destructive'
+    }
+    return typeMap[type] || 'secondary'
   }
 
   // 获取置信度颜色
@@ -260,7 +268,7 @@ export default function TemplatePlaceholdersPage() {
               disabled={analyzing}
             >
               <BeakerIcon className="w-4 h-4 mr-2" />
-              {analyzing ? '分析中...' : '重新分析'}
+              {analyzing ? '解析中...' : '重新解析'}
             </Button>
             {dataSources.length > 0 && (
               <Select
@@ -271,6 +279,7 @@ export default function TemplatePlaceholdersPage() {
                 placeholder="使用Agent分析"
                 disabled={analyzing}
                 onChange={(value) => handleAgentAnalysis(value as string)}
+                className="min-w-[200px]"
               />
             )}
           </div>
@@ -355,7 +364,7 @@ export default function TemplatePlaceholdersPage() {
               </p>
               <Button onClick={handleAnalyzePlaceholders} disabled={analyzing}>
                 <BeakerIcon className="w-4 h-4 mr-2" />
-                开始分析
+                开始解析
               </Button>
             </CardContent>
           </Card>
@@ -371,12 +380,22 @@ export default function TemplatePlaceholdersPage() {
                       </span>
                     </div>
                     <div>
-                      <h3 className="text-lg font-medium text-gray-900">
-                        {placeholder.placeholder_name}
-                      </h3>
+                      <div className="flex items-center space-x-2 mb-1">
+                        <h3 className="text-lg font-medium text-gray-900">
+                          {placeholder.description || placeholder.placeholder_name}
+                        </h3>
+                        <Badge variant={getTypeBadgeVariant(placeholder.placeholder_type)}>
+                          {placeholder.placeholder_type}
+                        </Badge>
+                      </div>
                       <p className="text-sm text-gray-500">
-                        {placeholder.placeholder_type} • {placeholder.content_type}
+                        内容类型: {placeholder.content_type}
                       </p>
+                      {placeholder.generated_sql && (
+                        <p className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded mt-1">
+                          ✓ 已生成SQL查询
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -423,7 +442,7 @@ export default function TemplatePlaceholdersPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-sm font-medium text-gray-600">缓存TTL</label>
+                        <label className="text_sm font-medium text-gray-600">缓存TTL</label>
                         <p className="text-sm text-gray-900 mt-1">
                           {placeholder.cache_ttl_hours} 小时
                         </p>
@@ -448,6 +467,17 @@ export default function TemplatePlaceholdersPage() {
 
                   {/* SQL和配置 */}
                   <div className="space-y-3">
+                    {placeholder.generated_sql && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-600">生成的SQL</label>
+                        <div className="mt-1 p-3 bg-gray-50 rounded-md border border-gray-100">
+                          <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono">
+                            {placeholder.generated_sql}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+
                     {placeholder.required_fields && Object.keys(placeholder.required_fields).length > 0 && (
                       <div>
                         <label className="text-sm font-medium text-gray-600">所需字段</label>

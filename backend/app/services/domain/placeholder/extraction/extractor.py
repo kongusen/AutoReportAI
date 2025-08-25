@@ -128,13 +128,13 @@ class PlaceholderExtractor(PlaceholderExtractorInterface):
         # 支持的占位符模式
         patterns = [
             # {{placeholder_name | description}}
-            r'\\{\\{\\s*([\\w_]+)\\s*\\|\\s*([^}]+)\\s*\\}\\}',
+            r'\{\{\s*([\w_]+)\s*\|\s*([^}]+)\s*\}\}',
             # {{placeholder_name:type}}  
-            r'\\{\\{\\s*([\\w_]+)\\s*:\\s*([\\w_]+)\\s*\\}\\}',
+            r'\{\{\s*([\w_]+)\s*:\s*([\w_]+)\s*\}\}',
             # ${placeholder_name}
-            r'\\$\\{([\\w_]+)\\}',
+            r'\$\{([\w_]+)\}',
             # {placeholder_name}
-            r'\\{([\\w_]+)\\}',
+            r'\{([\w_]+)\}',
         ]
         
         for pattern in patterns:
@@ -312,9 +312,12 @@ class PlaceholderExtractor(PlaceholderExtractorInterface):
                 {
                     "id": str(p.id),
                     "template_id": str(p.template_id),
-                    "placeholder_name": p.placeholder_name,
-                    "placeholder_text": p.placeholder_text,
-                    "placeholder_type": p.placeholder_type,
+                    "name": p.placeholder_name,  # 保持一致的字段名
+                    "placeholder_name": p.placeholder_name,  # 保留兼容性
+                    "text": p.placeholder_text,  # 保持一致的字段名
+                    "placeholder_text": p.placeholder_text,  # 保留兼容性
+                    "type": p.placeholder_type,  # 保持一致的字段名
+                    "placeholder_type": p.placeholder_type,  # 保留兼容性
                     "content_type": p.content_type,
                     "description": p.description,
                     "execution_order": p.execution_order,

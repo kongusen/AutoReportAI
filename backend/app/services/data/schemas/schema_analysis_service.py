@@ -11,7 +11,7 @@ from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
 from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
-from app.services.ai.legacy_agents.multi_database_agent import MultiDatabaseAgent
+from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer, PlaceholderSQLAgent
 from .utils.relationship_analyzer import RelationshipAnalyzer
 
 
@@ -23,7 +23,7 @@ class SchemaAnalysisService:
         self.logger = logging.getLogger(__name__)
         self.relationship_analyzer = RelationshipAnalyzer()
         self.ai_service = EnhancedAIService(db_session)
-        self.analysis_agent = SchemaAnalysisAgent(db_session)
+        self.analysis_agent = PlaceholderSQLAgent(db_session)
     
     async def analyze_table_relationships(self, data_source_id: str) -> Dict[str, Any]:
         """

@@ -27,7 +27,7 @@ class ServiceCoordinator:
             create_enhanced_template_parser,
             create_agent_sql_analysis_service,
         )
-        from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
+        from app.services.application.orchestration.cached_agent_orchestrator import CachedAgentOrchestrator
 
         self.template_parser = create_enhanced_template_parser(db)
         self.sql_analysis_service = create_agent_sql_analysis_service(db, user_id)

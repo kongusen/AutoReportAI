@@ -17,44 +17,70 @@ security = HTTPBearer()
 async def get_current_user_from_token(token: str, db: Session):
     """从WebSocket token中获取当前用户"""
     try:
+        logger.info(f"正在验证WebSocket token: {token[:20]}...")
         payload = decode_access_token(token)
+        logger.info(f"Token解码结果: {payload}")
+        
         if payload is None:
+            logger.warning("Token解码失败: payload为None")
             return None
 
-        username = payload.get("sub")
-        if username is None:
+        user_id = payload.get("sub")
+        logger.info(f"从token中提取的用户ID: {user_id}")
+        
+        if user_id is None:
+            logger.warning("Token中没有找到sub字段")
             return None
 
-        from app import crud
+        from app.crud.crud_user import crud_user
 
-        user = crud.user.get_by_username(db, username=username)
+        user = crud_user.get(db, id=user_id)
+        if user:
+            logger.info(f"找到用户: {user.id}")
+        else:
+            logger.warning(f"未找到用户ID为 {user_id} 的用户")
         return user
     except Exception as e:
-        logger.error(f"Error decoding WebSocket token: {e}")
+        logger.error(f"WebSocket token验证异常: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(deps.get_db)):
+async def websocket_endpoint(websocket: WebSocket, token: str = None, db: Session = Depends(deps.get_db)):
     """WebSocket连接端点"""
     user_id = None
 
     try:
+        logger.info(f"WebSocket连接请求，查询参数token: {token[:20] if token else 'None'}...")
+        
+        # 首先尝试从查询参数获取token
+        query_token = token
+        
         await websocket.accept()
+        logger.info("WebSocket连接已接受")
+        
+        # 如果没有查询参数token，等待认证消息
+        if not query_token:
+            logger.info("没有查询参数token，等待认证消息...")
+            auth_message = await websocket.receive_text()
+            logger.info(f"收到认证消息: {auth_message}")
+            auth_data = json.loads(auth_message)
 
-        # 等待认证消息
-        auth_message = await websocket.receive_text()
-        auth_data = json.loads(auth_message)
+            if auth_data.get("type") != "auth":
+                logger.warning(f"收到非认证消息: {auth_data.get('type')}")
+                await websocket.send_text(
+                    json.dumps({"type": "error", "message": "Authentication required"})
+                )
+                await websocket.close()
+                return
 
-        if auth_data.get("type") != "auth":
-            await websocket.send_text(
-                json.dumps({"type": "error", "message": "Authentication required"})
-            )
-            await websocket.close()
-            return
+            query_token = auth_data.get("token")
+            logger.info(f"从认证消息中提取token: {query_token[:20] if query_token else 'None'}...")
 
-        token = auth_data.get("token")
-        if not token:
+        if not query_token:
+            logger.warning("没有提供token")
             await websocket.send_text(
                 json.dumps({"type": "error", "message": "Token required"})
             )
@@ -62,8 +88,10 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(deps.ge
             return
 
         # 验证用户
-        user = await get_current_user_from_token(token, db)
+        logger.info("开始验证用户token...")
+        user = await get_current_user_from_token(query_token, db)
         if not user:
+            logger.warning("用户token验证失败")
             await websocket.send_text(
                 json.dumps({"type": "error", "message": "Invalid token"})
             )
@@ -71,6 +99,7 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(deps.ge
             return
 
         user_id = str(user.id)
+        logger.info(f"WebSocket用户认证成功: {user_id}")
 
         # 建立连接
         await manager.connect(websocket, user_id)

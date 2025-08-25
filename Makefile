@@ -23,6 +23,23 @@ help:
 	@echo "  docker-health  - Check service health"
 	@echo "  docker-clean   - Clean Docker resources"
 	@echo ""
+	@echo "Celery Commands:"
+	@echo "  celery-worker        - Start Celery worker"
+	@echo "  celery-worker-stop   - Stop Celery worker"
+	@echo "  celery-worker-restart- Restart Celery worker"
+	@echo "  celery-worker-logs   - Show Celery worker logs"
+	@echo "  celery-beat          - Start Celery beat scheduler"
+	@echo "  celery-beat-stop     - Stop Celery beat scheduler"
+	@echo "  celery-beat-restart  - Restart Celery beat scheduler"
+	@echo "  celery-beat-logs     - Show Celery beat logs"
+	@echo "  celery-flower        - Start Flower monitoring"
+	@echo "  celery-flower-stop   - Stop Flower monitoring"
+	@echo "  celery-flower-logs   - Show Flower logs"
+	@echo "  celery-all           - Start all Celery services"
+	@echo "  celery-all-stop      - Stop all Celery services"
+	@echo "  celery-all-restart   - Restart all Celery services"
+	@echo "  celery-status        - Check Celery services status"
+	@echo ""
 	@echo "Legacy Commands:"
 	@echo "  build          - Build services (legacy)"
 	@echo "  up             - Start services (legacy)"
@@ -76,11 +93,11 @@ clean:
 # Docker Commands
 docker-build:
 	@echo "Building Docker images..."
-	docker-compose build --no-cache
+	cd autoreporait-docker && docker-compose build --no-cache
 
 docker-up:
 	@echo "Starting services with Docker..."
-	docker-compose up -d
+	cd autoreporait-docker && docker-compose up -d
 	@echo "Services started. Access:"
 	@echo "  Frontend: http://localhost:3000"
 	@echo "  Backend:  http://localhost:8000"
@@ -88,25 +105,86 @@ docker-up:
 
 docker-down:
 	@echo "Stopping Docker services..."
-	docker-compose down
+	cd autoreporait-docker && docker-compose down
+
+# Celery Commands
+celery-worker:
+	@echo "Starting Celery worker..."
+	cd autoreporait-docker && docker-compose up -d celery-worker
+
+celery-worker-stop:
+	@echo "Stopping Celery worker..."
+	cd autoreporait-docker && docker-compose stop celery-worker
+
+celery-worker-restart:
+	@echo "Restarting Celery worker..."
+	cd autoreporait-docker && docker-compose restart celery-worker
+
+celery-worker-logs:
+	@echo "Showing Celery worker logs..."
+	cd autoreporait-docker && docker-compose logs -f celery-worker
+
+celery-beat:
+	@echo "Starting Celery beat scheduler..."
+	cd autoreporait-docker && docker-compose up -d celery-beat
+
+celery-beat-stop:
+	@echo "Stopping Celery beat scheduler..."
+	cd autoreporait-docker && docker-compose stop celery-beat
+
+celery-beat-restart:
+	@echo "Restarting Celery beat scheduler..."
+	cd autoreporait-docker && docker-compose restart celery-beat
+
+celery-beat-logs:
+	@echo "Showing Celery beat logs..."
+	cd autoreporait-docker && docker-compose logs -f celery-beat
+
+celery-flower:
+	@echo "Starting Flower monitoring..."
+	cd autoreporait-docker && docker-compose --profile monitoring up -d flower
+
+celery-flower-stop:
+	@echo "Stopping Flower monitoring..."
+	cd autoreporait-docker && docker-compose --profile monitoring stop flower
+
+celery-flower-logs:
+	@echo "Showing Flower logs..."
+	cd autoreporait-docker && docker-compose --profile monitoring logs -f flower
+
+celery-all:
+	@echo "Starting all Celery services..."
+	cd autoreporait-docker && docker-compose up -d celery-worker celery-beat
+
+celery-all-stop:
+	@echo "Stopping all Celery services..."
+	cd autoreporait-docker && docker-compose stop celery-worker celery-beat
+
+celery-all-restart:
+	@echo "Restarting all Celery services..."
+	cd autoreporait-docker && docker-compose restart celery-worker celery-beat
+
+celery-status:
+	@echo "Checking Celery services status..."
+	@cd autoreporait-docker && docker-compose ps celery-worker celery-beat flower 2>/dev/null || echo "Some Celery services not found"
 
 docker-dev:
 	@echo "Starting development environment..."
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	cd autoreporait-docker && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 	@echo "Development environment started with hot reload enabled"
 
 docker-test:
 	@echo "Running tests in Docker..."
-	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
-	docker-compose -f docker-compose.test.yml down -v
+	cd autoreporait-docker && docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
+	cd autoreporait-docker && docker-compose -f docker-compose.test.yml down -v
 
 docker-logs:
 	@echo "Showing Docker logs..."
-	docker-compose logs -f
+	cd autoreporait-docker && docker-compose logs -f
 
 docker-health:
 	@echo "Checking service health..."
-	@docker-compose ps
+	@cd autoreporait-docker && docker-compose ps
 	@echo ""
 	@echo "Backend health:"
 	@curl -f http://localhost:8000/health 2>/dev/null || echo "Backend not responding"
@@ -116,7 +194,7 @@ docker-health:
 
 docker-clean:
 	@echo "Cleaning Docker resources..."
-	docker-compose down -v --remove-orphans
+	cd autoreporait-docker && docker-compose down -v --remove-orphans
 	docker system prune -f
 	docker volume prune -f
 

@@ -52,8 +52,9 @@ from .core import (
 from .integration.llm_service import AIService as LLMService
 from .integration.ai_service_enhanced import EnhancedAIService
 
-# 旧版代理 (向后兼容) - 只保留核心的多数据库代理
-from .legacy_agents.multi_database_agent import MultiDatabaseAgent
+
+# 新版Agent系统
+from .agents.placeholder_sql_agent import PlaceholderSQLAgent, PlaceholderSQLAnalyzer
 
 __all__ = [
     # 核心AI功能 - 增强版
@@ -95,6 +96,7 @@ __all__ = [
     "LLMService",
     "EnhancedAIService",
     
-    # 旧版代理 (向后兼容)
-    "MultiDatabaseAgent",
+    # 新版Agent系统
+    "PlaceholderSQLAgent",
+    "PlaceholderSQLAnalyzer",
 ]

@@ -47,14 +47,17 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
   }, [dataSources, selectedDataSource])
 
   useEffect(() => {
-    loadExecutionHistory()
+    // 加载执行历史
+    if (placeholder.id) {
+      loadExecutionHistory()
+    }
   }, [placeholder.id])
 
   // 加载执行历史
   const loadExecutionHistory = async () => {
     try {
-      const response = await api.get(`/placeholders/${placeholder.id}/execution-history`)
-      const payload = response.data?.data
+      const res = await api.get(`/placeholders/${placeholder.id}/execution-history`)
+      const payload = res?.data ?? res
       // 后端可能返回 {history: [...]} 或直接返回数组，做兼容处理
       const history: any[] = Array.isArray(payload)
         ? payload
@@ -62,6 +65,7 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
       setExecutionHistory(history as any)
     } catch (error) {
       console.error('Failed to load execution history:', error)
+      setExecutionHistory([])
     }
   }
 
@@ -74,13 +78,13 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
 
     try {
       setExecuting(true)
-      const response = await api.post(`/placeholders/${placeholder.id}/test-query`, {
+      const res = await api.post(`/placeholders/${placeholder.id}/test-query`, {
         data_source_id: selectedDataSource,
         sql_query: placeholder.generated_sql
       })
 
-      if (response.data?.success) {
-        const d = response.data.data || {}
+      if (res?.success) {
+        const d = res.data || res || {}
         // 兼容不同字段命名/类型，进行一次归一化
         const normalized: any = {
           ...d,
@@ -98,7 +102,7 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
         toast.success('SQL查询测试成功')
         loadExecutionHistory() // 重新加载历史
       } else {
-        toast.error(response.data?.message || 'SQL查询测试失败')
+        toast.error(res?.message || 'SQL查询测试失败')
       }
     } catch (error: any) {
       console.error('Failed to test query:', error)

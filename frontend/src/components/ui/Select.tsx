@@ -90,7 +90,7 @@ export function Select({
       </button>
 
       {isOpen && (
-        <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+        <div className="absolute z-10 mt-1 max-h-60 w-full min-w-max overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
           {options.length === 0 ? (
             <div className="relative cursor-default select-none py-2 px-3 text-gray-500">
               暂无选项
@@ -100,7 +100,7 @@ export function Select({
               <div
                 key={`${option.value}-${index}`}
                 className={cn(
-                  'relative cursor-pointer select-none py-2 pl-3 pr-9 hover:bg-gray-100',
+                  'relative cursor-pointer select-none py-2 pl-3 pr-9 hover:bg-gray-100 whitespace-nowrap',
                   option.disabled && 'cursor-not-allowed text-gray-400',
                   selectedOption?.value === option.value && 'bg-gray-100'
                 )}
@@ -108,7 +108,7 @@ export function Select({
               >
                 <span
                   className={cn(
-                    'block truncate',
+                    'block',
                     selectedOption?.value === option.value && 'font-semibold'
                   )}
                 >

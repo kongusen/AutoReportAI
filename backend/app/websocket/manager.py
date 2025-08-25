@@ -80,6 +80,23 @@ class ConnectionManager:
             del self.connection_user_map[websocket]
             logger.info(f"User {user_id} disconnected from WebSocket")
 
+    async def send_to_user(self, user_id: str, message_dict: dict):
+        """发送消息字典给特定用户"""
+        if user_id in self.active_connections:
+            message_data = json.dumps(message_dict)
+            disconnected_connections = []
+
+            for connection in self.active_connections[user_id]:
+                try:
+                    await connection.send_text(message_data)
+                except Exception as e:
+                    logger.error(f"Error sending message to user {user_id}: {e}")
+                    disconnected_connections.append(connection)
+
+            # 清理断开的连接
+            for connection in disconnected_connections:
+                self.disconnect(connection)
+
     async def send_personal_message(self, message: NotificationMessage, user_id: str):
         """发送消息给特定用户"""
         if user_id in self.active_connections:

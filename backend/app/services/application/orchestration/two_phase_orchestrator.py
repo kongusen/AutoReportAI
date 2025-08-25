@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
-from app.services.template.enhanced_template_parser import EnhancedTemplateParser
-from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
+from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
+from app.services.application.orchestration.cached_agent_orchestrator import CachedAgentOrchestrator
 from app.services.report_generation.word_generator_service import WordGeneratorService
 from app.services.application.task_management.execution.two_phase_pipeline import (
     PipelineConfiguration,
@@ -135,14 +135,26 @@ class TwoPhaseOrchestrator:
                     format=output_format
                 )
 
-            report_data = {
-                "task_id": ctx.task_id,
-                "user_id": ctx.user_id,
-                "file_path": report_path,
-                "status": "completed",
-                "result": f"报告生成成功"
-            }
-            report_record = crud.report_history.create(self.db, obj_in=schemas.ReportHistoryCreate(**report_data))
+            # 使用新的数据库会话避免事务问题
+            from app.db.session import get_db_session
+            report_id = None
+            try:
+                with get_db_session() as new_db:
+                    report_data = {
+                        "task_id": ctx.task_id,
+                        "user_id": ctx.user_id,
+                        "file_path": report_path,
+                        "status": "completed",
+                        "result": f"报告生成成功",
+                        "processing_metadata": {}  # 使用空字典而不是None
+                    }
+                    report_record = crud.report_history.create(new_db, obj_in=schemas.ReportHistoryCreate(**report_data))
+                    new_db.commit()
+                    report_id = report_record.id  # 在会话关闭前获取ID
+            except Exception as db_error:
+                logger.error(f"创建报告历史记录失败: {db_error}")
+                report_id = None
+            
             return PhaseResult(
                 PipelinePhase.PHASE_2_EXECUTION,
                 True,
@@ -150,7 +162,7 @@ class TwoPhaseOrchestrator:
                 data={
                     "extraction_result": extraction_result,
                     "report_path": report_path,
-                    "report_id": report_record.id,
+                    "report_id": report_id,
                     "processed_content": extraction_result.get("processed_content", "报告生成成功"),
                 },
                 metadata={

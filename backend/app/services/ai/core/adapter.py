@@ -29,8 +29,8 @@ class AIServiceAdapter(AIServiceInterface):
                 factory = UserAIServiceFactory()
                 self._service = factory.get_user_ai_service(self.user_id)
             else:
-                from app.services.agents.core.ai_service import UnifiedAIService
-                self._service = UnifiedAIService(db_session=self.db_session, suppress_warning=True)
+                from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+                self._service = EnhancedAIService(db=self.db_session)
         except Exception as e:
             self.logger.error(f"Initialize AI service failed: {e}")
             self._service = None

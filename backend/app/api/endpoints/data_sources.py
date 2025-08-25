@@ -225,7 +225,7 @@ async def test_data_source(
 ):
     """测试数据源连接，支持多种ID格式"""
     import time
-    from ...services.data_sources import data_source_service
+    from app.services.data.sources.data_source_service import data_source_service
     
     # 使用新的ID解析系统
     data_source = resolve_data_source_id(data_source_id, current_user.id, db)
@@ -284,7 +284,7 @@ async def sync_data_source(
     
     # 实际执行数据源同步逻辑
     try:
-        from ...services.data_sources import data_source_service
+        from app.services.data.sources.data_source_service import data_source_service
         sync_result = await data_source_service.sync_data_source(str(data_source.id))
         
         if sync_result.get("success"):
@@ -549,6 +549,57 @@ async def get_data_source_fields(
             success=False,
             data={"error": str(e)},
             message="获取字段列表失败"
+        )
+
+
+@router.post("/{data_source_id}/analyze-schema", response_model=ApiResponse)
+async def analyze_data_source_schema(
+    data_source_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    触发数据源的表结构分析并缓存
+    支持多种ID格式：UUID、slug、name、display_name
+    """
+    data_source = resolve_data_source_id(data_source_id, current_user.id, db)
+    
+    try:
+        from app.services.data.schemas.schema_discovery_service import SchemaDiscoveryService
+        
+        start_time = time.time()
+        service = SchemaDiscoveryService(db)
+        result = await service.discover_and_store_schemas(str(data_source.id))
+        response_time = time.time() - start_time
+        
+        if result.get("success"):
+            return ApiResponse(
+                success=True,
+                data={
+                    "tables_discovered": result.get("tables_count", 0),
+                    "tables": result.get("tables", []),
+                    "response_time": round(response_time, 3),
+                    "data_source_name": data_source.name
+                },
+                message=f"成功分析并缓存 {result.get('tables_count', 0)} 个表的结构信息"
+            )
+        else:
+            return ApiResponse(
+                success=False,
+                data={
+                    "error": result.get("error", "未知错误"),
+                    "response_time": round(response_time, 3),
+                    "data_source_name": data_source.name
+                },
+                message="表结构分析失败"
+            )
+            
+    except Exception as e:
+        logger.error(f"表结构分析失败: {e}")
+        return ApiResponse(
+            success=False,
+            data={"error": str(e)},
+            message="表结构分析失败"
         )
 
 

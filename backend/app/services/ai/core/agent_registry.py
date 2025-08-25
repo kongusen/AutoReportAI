@@ -301,6 +301,16 @@ class AgentRegistry:
         if not agent_instance:
             raise ValueError(f"No available agent found for capability: {capability_name}")
         
+        # 确保上下文存在
+        context = self.context_manager.get_context(session_id)
+        if not context:
+            # 创建新的上下文
+            context = self.context_manager.create_context(
+                session_id=session_id,
+                task_id=f"capability_{capability_name}",
+                user_id=parameters.get('user_id') if parameters else None
+            )
+        
         # 更新并发计数
         agent_instance.current_concurrent_requests += 1
         agent_instance.status = AgentStatus.BUSY

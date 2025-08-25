@@ -122,89 +122,192 @@ class WordGeneratorService:
 
     def _replace_placeholders_in_doc(self, doc, placeholder_values: Dict[str, Any]):
         """在Word文档中替换占位符"""
+        logger.error("🔥🔥🔥 CLAUDE修复的占位符替换代码正在运行! 🔥🔥🔥")
+        logger.info(f"开始占位符替换 - 输入 {len(placeholder_values)} 个占位符")
+        
         # 处理占位符值，提取实际值
         processed_values = {}
+        logger.info("处理占位符值详情:")
         for key, value_info in placeholder_values.items():
+            logger.info(f"处理占位符: {key}, 原始值: {value_info}")
+            
             if isinstance(value_info, dict) and "value" in value_info:
                 extracted_value = self._extract_value_from_result(value_info["value"])
-                processed_values[key] = str(extracted_value)
+                processed_values[key] = str(extracted_value) if extracted_value is not None else ""
             else:
                 extracted_value = self._extract_value_from_result(value_info)
-                processed_values[key] = str(extracted_value)
+                processed_values[key] = str(extracted_value) if extracted_value is not None else ""
+            
+            logger.info(f"提取后的值: {key} = '{processed_values[key]}'")
+            
+            # 如果值为空或者是 "None"，为常见占位符提供默认值
+            if not processed_values[key] or processed_values[key] in ["None", "null", ""]:
+                default_value = self._get_default_placeholder_value(key)
+                if default_value:
+                    processed_values[key] = default_value
+                    logger.warning(f"⚠️  使用默认值: {key} = {default_value}")
+                else:
+                    logger.error(f"❌ 占位符无法处理: {key} (无默认值)")
+        
+        # 显示处理后的占位符值（仅显示前5个）
+        logger.info(f"处理后的占位符值（显示前5个）:")
+        count = 0
+        for key, value in processed_values.items():
+            if count >= 5:
+                break
+            logger.info(f"  {key} = '{value}' (长度: {len(value)})")
+            count += 1
         
         # 替换段落中的占位符
+        replacements_made = 0
         for paragraph in doc.paragraphs:
             original_text = paragraph.text
-            for key, value in processed_values.items():
-                # 支持多种占位符格式
-                patterns = [
-                    f"{{{{{key}}}}}",  # {{key}}
-                    f"{{{key}}}",      # {key}
-                ]
-                for pattern in patterns:
-                    if pattern in paragraph.text:
-                        paragraph.text = paragraph.text.replace(pattern, value)
+            if original_text.strip() and "{{" in original_text:  # 只处理包含占位符的非空段落
+                logger.debug(f"检查段落文本: {original_text}")
+                paragraph_changed = False
+                for key, value in processed_values.items():
+                    # 支持多种占位符格式，包括中文冒号分隔符
+                    patterns = [
+                        f"{{{{{key}}}}}",    # {{key}}
+                        f"{{{key}}}",        # {key}
+                    ]
+                        
+                    for pattern in patterns:
+                        if pattern in paragraph.text:
+                            paragraph.text = paragraph.text.replace(pattern, value)
+                            replacements_made += 1
+                            logger.info(f"段落替换成功: {pattern} -> {value}")
+                            paragraph_changed = True
+                            break  # 找到一个匹配就跳出，避免重复替换
+                
+                if paragraph_changed:
+                    logger.debug(f"段落替换后: {paragraph.text}")
+        
+        logger.info(f"段落中完成 {replacements_made} 个占位符替换")
         
         # 替换表格中的占位符
+        table_replacements = 0
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
-                    for key, value in processed_values.items():
-                        # 支持多种占位符格式
-                        patterns = [
-                            f"{{{{{key}}}}}",  # {{key}}
-                            f"{{{key}}}",      # {key}
-                        ]
-                        for pattern in patterns:
-                            if pattern in cell.text:
-                                cell.text = cell.text.replace(pattern, value)
+                    if cell.text.strip() and "{{" in cell.text:  # 只处理包含占位符的非空单元格
+                        logger.debug(f"检查表格单元格文本: {cell.text}")
+                        cell_changed = False
+                        for key, value in processed_values.items():
+                            # 支持多种占位符格式，包括中文冒号分隔符
+                            patterns = [
+                                f"{{{{{key}}}}}",    # {{key}}
+                                f"{{{key}}}",        # {key}
+                            ]
+                                
+                            for pattern in patterns:
+                                if pattern in cell.text:
+                                    cell.text = cell.text.replace(pattern, value)
+                                    table_replacements += 1
+                                    logger.info(f"表格替换成功: {pattern} -> {value}")
+                                    cell_changed = True
+                                    break  # 找到一个匹配就跳出，避免重复替换
+                        
+                        if cell_changed:
+                            logger.debug(f"表格单元格替换后: {cell.text}")
+        
+        logger.info(f"表格中完成 {table_replacements} 个占位符替换")
+        total_replacements = replacements_made + table_replacements
+        logger.info(f"总共完成 {total_replacements} 个占位符替换")
+
+    def _get_default_placeholder_value(self, key: str) -> str:
+        """为常见占位符提供默认值"""
+        from datetime import datetime
+        current_time = datetime.now()
+        
+        # 时间相关占位符
+        if "报告年份" in key:
+            return str(current_time.year)
+        elif "统计开始日期" in key:
+            return f"{current_time.year}-{current_time.month:02d}-01"
+        elif "统计结束日期" in key:
+            next_month = current_time.month + 1 if current_time.month < 12 else 1
+            next_year = current_time.year if current_time.month < 12 else current_time.year + 1
+            return f"{next_year}-{next_month:02d}-01"
+        elif "地区名称" in key:
+            return "云南省"  # 默认地区
+        
+        # 数量相关占位符
+        elif "投诉件数" in key or "件数" in key:
+            return "0"
+        elif "占比" in key or "百分比" in key:
+            return "0.0"
+        elif "时长" in key:
+            return "0"
+        
+        return None
 
     def _extract_value_from_result(self, value: Any) -> Any:
         """从查询结果中提取实际数值"""
         try:
-            # 如果是DorisQueryResult对象
-            if hasattr(value, 'data') and hasattr(value, 'execution_time'):
-                # 提取DataFrame中的数据
-                if hasattr(value.data, 'iloc') and len(value.data) > 0:
-                    # pandas DataFrame，获取第一行第一列的值
-                    return value.data.iloc[0, 0] if not value.data.empty else 0
-                elif hasattr(value.data, '__iter__'):
-                    # 其他可迭代对象
-                    data_list = list(value.data)
-                    if data_list and len(data_list) > 0:
-                        first_row = data_list[0]
-                        if isinstance(first_row, dict) and first_row:
-                            # 获取第一个值
-                            return next(iter(first_row.values()))
-                        return first_row
-                return 0
+            # 如果是None或简单类型，直接返回
+            if value is None or isinstance(value, (str, int, float, bool)):
+                return value
             
-            # 如果是包含DorisQueryResult的字典
-            if isinstance(value, dict):
-                if 'data' in value and hasattr(value['data'], 'data'):
-                    return self._extract_value_from_result(value['data'])
-                # 普通字典，尝试获取常见的数值字段
-                for key in ['count', 'total', 'value', 'result']:
-                    if key in value:
-                        return self._extract_value_from_result(value[key])
+            # 如果是DorisQueryResult对象或类似结构
+            if hasattr(value, 'data') and hasattr(value, 'execution_time'):
+                return self._extract_value_from_result(value.data)
             
             # 如果是pandas DataFrame
-            if hasattr(value, 'iloc') and len(value) > 0:
-                return value.iloc[0, 0] if not value.empty else 0
+            if hasattr(value, 'iloc') and hasattr(value, '__len__'):
+                try:
+                    if len(value) > 0 and hasattr(value, 'empty') and not value.empty:
+                        return value.iloc[0, 0]
+                    return 0
+                except Exception:
+                    # 如果DataFrame访问失败，尝试其他方法
+                    pass
+            
+            # 如果是包含data字段的字典
+            if isinstance(value, dict):
+                # 首先检查是否有嵌套的data结构
+                if 'data' in value:
+                    nested_result = self._extract_value_from_result(value['data'])
+                    if nested_result != value['data']:  # 避免无限递归
+                        return nested_result
+                
+                # 尝试从常见字段中获取数值
+                for key in ['count', 'total', 'sum', 'avg', 'value', 'result', 'amount']:
+                    if key in value:
+                        extracted = self._extract_value_from_result(value[key])
+                        if extracted != value[key]:  # 避免无限递归
+                            return extracted
+                
+                # 如果字典只有一个键值对，返回值
+                if len(value) == 1:
+                    return next(iter(value.values()))
+                    
+                # 如果没有找到特定字段，返回第一个非None值
+                for v in value.values():
+                    if v is not None and not isinstance(v, dict):
+                        return self._extract_value_from_result(v)
                 
             # 如果是列表或元组
             if isinstance(value, (list, tuple)) and value:
                 first_item = value[0]
-                if isinstance(first_item, dict) and first_item:
-                    return next(iter(first_item.values()))
-                return first_item
+                if isinstance(first_item, dict):
+                    # 如果第一个元素是字典，尝试获取其值
+                    return self._extract_value_from_result(first_item)
+                else:
+                    # 如果是简单值，直接返回
+                    return first_item
                 
-            # 直接返回原值
-            return value
+            # 如果是其他对象类型，尝试转换为字符串
+            if hasattr(value, '__str__') and not str(value).startswith('<'):
+                return str(value)
+                
+            # 最后返回"无数据"而不是对象引用
+            return "无数据"
             
         except Exception as e:
-            logger.warning(f"提取查询结果数值失败: {e}, 使用原值: {value}")
-            return value
+            logger.warning(f"提取查询结果数值失败: {e}, 值类型: {type(value)}")
+            # 发生异常时返回"无数据"而不是原值
+            return "无数据"
 
     def _replace_placeholders_in_text(self, content: str, placeholder_values: Dict[str, Any]) -> str:
         """在文本中替换占位符"""

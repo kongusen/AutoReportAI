@@ -107,8 +107,21 @@ class TemplateParser:
     
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        # 支持单花括号和双花括号格式的占位符
-        self.placeholder_pattern = r'\{\{([^}]+)\}\}|\{([^}]+)\}'
+        # 支持多种占位符格式：
+        # 1. {{type:description}} - 标准格式
+        # 2. {{variable}} - 简单变量
+        # 3. {variable} - 单花括号格式
+        # 4. {{@variable=value}} - 带默认值的变量
+        # 5. 【中文占位符】- 中文格式
+        # 6. [占位符] - 方括号格式
+        self.placeholder_patterns = [
+            r'\{\{([^:}]+):([^}]+)\}\}',  # {{type:description}}
+            r'\{\{@(\w+)\s*=\s*([^}]+)\}\}',  # {{@variable=value}}
+            r'\{\{([^}]+)\}\}',  # {{variable}}
+            r'\{([^}]+)\}',  # {variable}
+            r'【([^】]+)】',  # 【中文占位符】
+            r'\[([^\]]+)\]'  # [占位符]
+        ]
     
     def parse_template(self, template_content: str) -> DocumentTemplate:
         """解析模板内容"""
@@ -134,9 +147,14 @@ class TemplateParser:
     
     def extract_placeholders(self, content: str) -> List[Dict[str, Any]]:
         """提取占位符（公共方法）"""
+        self.logger.info(f"开始解析模板占位符，内容长度: {len(content)}")
+        
         # 首先尝试检测是否为二进制Word文档
         text_content = self._extract_text_from_content(content)
-        placeholders_info = self._extract_placeholders(text_content)
+        self.logger.info(f"提取文本内容，长度: {len(text_content)}")
+        
+        placeholders_info = self._extract_placeholders_improved(text_content)
+        self.logger.info(f"提取到 {len(placeholders_info)} 个占位符")
         
         # 转换为字典格式以兼容现有代码
         result = []
@@ -157,15 +175,31 @@ class TemplateParser:
         if self._is_binary_content(content):
             self.logger.info("检测到二进制Word文档，尝试解析...")
             try:
+                # 清理十六进制内容（去除空格和换行符）
+                clean_hex = content.replace(' ', '').replace('\n', '').replace('\r', '')
+                
+                # 验证十六进制长度
+                if len(clean_hex) % 2 != 0:
+                    self.logger.warning("十六进制内容长度不正确")
+                    return content
+                
                 # 尝试将十六进制字符串转换为二进制数据
-                binary_data = bytes.fromhex(content)
+                binary_data = bytes.fromhex(clean_hex)
                 
                 # 检查是否为Word文档（ZIP格式）
                 if binary_data.startswith(b'PK'):
-                    return self._extract_text_from_word_doc(binary_data)
+                    # 进一步验证是否为DOCX文件
+                    if b'word/' in binary_data or b'[Content_Types].xml' in binary_data:
+                        return self._extract_text_from_word_doc(binary_data)
+                    else:
+                        self.logger.warning("ZIP文件但非DOCX格式")
+                        return ""
                 else:
                     self.logger.warning("无法识别的二进制格式")
                     return content
+            except ValueError as e:
+                self.logger.error(f"十六进制解码失败: {e}")
+                return content
             except Exception as e:
                 self.logger.error(f"解析二进制文档失败: {e}")
                 return content
@@ -175,17 +209,39 @@ class TemplateParser:
     
     def _is_binary_content(self, content: str) -> bool:
         """检查内容是否为二进制数据的十六进制表示"""
-        if len(content) > 20 and all(c in '0123456789abcdef' for c in content.lower()):
-            # 检查是否以常见的文档格式魔术字节开头
-            hex_prefix = content[:20].lower()
-            # PK（ZIP/Word文档）= 504b
-            # PDF = 255044462d
-            if hex_prefix.startswith('504b') or hex_prefix.startswith('255044462d'):
-                return True
+        if not content or len(content) < 20:
+            return False
+        
+        # 清理内容（去除空格和换行符）
+        clean_content = content.replace(' ', '').replace('\n', '').replace('\r', '')
+        
+        # 检查长度是否为偶数（十六进制必须是偶数长度）
+        if len(clean_content) % 2 != 0:
+            return False
+        
+        # 检查是否只包含十六进制字符
+        if not all(c in '0123456789ABCDEFabcdef' for c in clean_content):
+            return False
+        
+        # 检查是否以常见的文档格式魔术字节开头
+        hex_prefix = clean_content[:20].lower()
+        # PK（ZIP/Word文档）= 504b
+        # PDF = 255044462d
+        # Microsoft Office documents often start with 504b (ZIP format)
+        if hex_prefix.startswith('504b') or hex_prefix.startswith('255044462d'):
+            return True
+        
+        # 如果内容很长且全是十六进制字符，也可能是二进制文件
+        if len(clean_content) > 1000:
+            return True
+            
         return False
     
     def _extract_text_from_word_doc(self, binary_data: bytes) -> str:
         """从Word文档二进制数据中提取文本"""
+        text_parts = []
+        temp_file_path = None
+        
         try:
             import tempfile
             import os
@@ -202,71 +258,178 @@ class TemplateParser:
                     doc = Document(temp_file_path)
                     
                     # 提取所有段落文本
-                    text_parts = []
                     for paragraph in doc.paragraphs:
-                        if paragraph.text.strip():
-                            text_parts.append(paragraph.text)
+                        text = paragraph.text.strip()
+                        if text:
+                            text_parts.append(text)
                     
                     # 提取表格文本
                     for table in doc.tables:
                         for row in table.rows:
                             for cell in row.cells:
-                                if cell.text.strip():
-                                    text_parts.append(cell.text)
+                                text = cell.text.strip()
+                                if text:
+                                    text_parts.append(text)
+                    
+                    # 提取页眉页脚（如果可能）
+                    try:
+                        for section in doc.sections:
+                            # 页眉
+                            header = section.header
+                            for paragraph in header.paragraphs:
+                                text = paragraph.text.strip()
+                                if text:
+                                    text_parts.append(text)
+                            
+                            # 页脚
+                            footer = section.footer
+                            for paragraph in footer.paragraphs:
+                                text = paragraph.text.strip()
+                                if text:
+                                    text_parts.append(text)
+                    except Exception as header_footer_error:
+                        self.logger.debug(f"提取页眉页脚失败: {header_footer_error}")
                     
                     extracted_text = '\n'.join(text_parts)
                     self.logger.info(f"成功从Word文档提取文本，长度: {len(extracted_text)}")
                     return extracted_text
+                
                 else:
-                    self.logger.warning("python-docx不可用，无法解析Word文档")
-                    return ""
+                    self.logger.warning("python-docx不可用，尝试备用方法")
+                    # 备用方法：作为ZIP文件读取
+                    return self._extract_text_fallback(temp_file_path)
+            
             finally:
                 # 清理临时文件
-                try:
-                    os.unlink(temp_file_path)
-                except:
-                    pass
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as cleanup_error:
+                        self.logger.warning(f"删除临时文件失败: {cleanup_error}")
                     
         except Exception as e:
             self.logger.error(f"解析Word文档失败: {e}")
             return ""
     
+    def _extract_text_fallback(self, file_path: str) -> str:
+        """备用文本提取方法（当python-docx不可用时）"""
+        try:
+            import zipfile
+            text_parts = []
+            
+            with zipfile.ZipFile(file_path, 'r') as zip_file:
+                # 查找document.xml文件
+                if 'word/document.xml' in zip_file.namelist():
+                    document_xml = zip_file.read('word/document.xml')
+                    # 简单的XML文本提取
+                    xml_text = document_xml.decode('utf-8', errors='ignore')
+                    # 使用正则表达式提取文本内容
+                    text_matches = re.findall(r'<w:t[^>]*>([^<]+)</w:t>', xml_text)
+                    text_parts.extend(text_matches)
+            
+            extracted_text = ' '.join(text_parts)
+            self.logger.info(f"备用方法提取文本，长度: {len(extracted_text)}")
+            return extracted_text
+        
+        except Exception as e:
+            self.logger.error(f"备用文本提取方法失败: {e}")
+            return ""
+    
     def _extract_placeholders(self, content: str) -> List[PlaceholderInfo]:
         """提取占位符（私有方法）"""
         placeholders = []
-        matches = re.findall(self.placeholder_pattern, content)
+        seen_placeholders = set()  # 用于去重
         
-        for match in matches:
-            # match是一个元组，包含两个组：(双花括号匹配, 单花括号匹配)
-            # 取非空的那个
-            placeholder_name = (match[0] or match[1]).strip()
+        self.logger.info(f"从内容中提取占位符，内容长度: {len(content)}")
+        
+        # 使用多个正则表达式模式
+        for i, pattern in enumerate(self.placeholder_patterns):
+            try:
+                matches = re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE)
+                
+                for match in matches:
+                    placeholder_info = self._parse_placeholder_match(match, i)
+                    
+                    if placeholder_info and placeholder_info.name:
+                        # 去重处理
+                        placeholder_key = f"{placeholder_info.name}_{placeholder_info.type}"
+                        if placeholder_key not in seen_placeholders:
+                            seen_placeholders.add(placeholder_key)
+                            placeholders.append(placeholder_info)
+                            self.logger.debug(f"提取占位符: {placeholder_info.name} - {placeholder_info.description}")
             
-            if not placeholder_name:
-                continue
+            except Exception as e:
+                self.logger.warning(f"模式 {i} 匹配失败: {e}")
+        
+        self.logger.info(f"提取到 {len(placeholders)} 个唯一占位符")
+        return placeholders
+    
+    def _parse_placeholder_match(self, match, pattern_index: int) -> Optional[PlaceholderInfo]:
+        """解析正则匹配结果为占位符信息"""
+        groups = match.groups()
+        full_text = match.group(0)
+        
+        placeholder_name = ""
+        placeholder_description = ""
+        placeholder_type = "text"
+        
+        try:
+            if pattern_index == 0:  # {{type:description}} 格式
+                if len(groups) >= 2 and groups[0] and groups[1]:
+                    placeholder_type = groups[0].strip()
+                    placeholder_description = groups[1].strip()
+                    placeholder_name = f"{placeholder_type}_{hash(placeholder_description) % 1000}"
             
-            # 分析占位符类型
+            elif pattern_index == 1:  # {{@variable=value}} 格式
+                if len(groups) >= 2 and groups[0] and groups[1]:
+                    placeholder_name = groups[0].strip()
+                    placeholder_description = f"默认值: {groups[1].strip()}"
+                    placeholder_type = "variable"
+            
+            elif pattern_index == 2:  # {{variable}} 格式
+                if len(groups) >= 1 and groups[0]:
+                    placeholder_name = groups[0].strip()
+                    placeholder_description = f"变量: {placeholder_name}"
+            
+            elif pattern_index == 3:  # {variable} 格式
+                if len(groups) >= 1 and groups[0]:
+                    placeholder_name = groups[0].strip()
+                    placeholder_description = f"简单变量: {placeholder_name}"
+            
+            elif pattern_index == 4:  # 【中文占位符】格式
+                if len(groups) >= 1 and groups[0]:
+                    placeholder_name = groups[0].strip()
+                    placeholder_description = f"中文占位符: {placeholder_name}"
+                    placeholder_type = "chinese"
+            
+            elif pattern_index == 5:  # [占位符] 格式
+                if len(groups) >= 1 and groups[0]:
+                    placeholder_name = groups[0].strip()
+                    placeholder_description = f"方括号占位符: {placeholder_name}"
+            
+            # 验证占位符名称
+            if not placeholder_name or len(placeholder_name) < 1:
+                return None
+            
+            # 推断更精确的类型
+            inferred_type = self._infer_placeholder_type(placeholder_name)
+            if inferred_type != "text":
+                placeholder_type = inferred_type
+            
+            # 推断内容类型
             content_type = self._infer_content_type(placeholder_name)
             
-            placeholder = PlaceholderInfo(
+            return PlaceholderInfo(
                 name=placeholder_name,
-                type=self._infer_placeholder_type(placeholder_name),
-                description=f"占位符: {placeholder_name}",
+                type=placeholder_type,
+                description=placeholder_description,
                 content_type=content_type,
                 required=True
             )
-            
-            placeholders.append(placeholder)
         
-        # 去重
-        unique_placeholders = []
-        seen_names = set()
-        
-        for placeholder in placeholders:
-            if placeholder.name not in seen_names:
-                unique_placeholders.append(placeholder)
-                seen_names.add(placeholder.name)
-        
-        return unique_placeholders
+        except Exception as e:
+            self.logger.warning(f"解析占位符匹配失败: {e}")
+            return None
     
     def _infer_content_type(self, placeholder_name: str) -> ContentType:
         """推断内容类型"""
@@ -295,6 +458,312 @@ class TemplateParser:
             return "chart"
         else:
             return "text"
+    
+    def _extract_placeholders_improved(self, content: str) -> List[PlaceholderInfo]:
+        """改进的占位符提取方法 - 解决重复和过度匹配问题"""
+        if not content:
+            return []
+        
+        placeholders = []
+        seen_placeholders = set()  # 用于去重
+        
+        # 定义优先级排序的正则表达式
+        patterns = [
+            # 高优先级：具体格式的占位符
+            (r'\{\{([^:}]+):([^}]+)\}\}', 'typed_placeholder'),  # {{type:description}}
+            (r'\{\{@(\w+)\s*=\s*([^}]+)\}\}', 'default_value'),  # {{@var=value}}
+            
+            # 中优先级：简单双括号占位符  
+            (r'\{\{([^{}]+)\}\}', 'simple_double'),  # {{variable}}
+            
+            # 低优先级：单括号和其他格式（避免过度匹配）
+            (r'\{([^{}\[\]【】]+)\}', 'simple_single'),  # {variable}
+            (r'【([^】]+)】', 'chinese_bracket'),  # 【中文】
+            (r'\[([^\[\]{}【】]+)\]', 'square_bracket'),  # [variable]
+        ]
+        
+        # 记录已匹配的位置，避免重复匹配
+        matched_positions = set()
+        
+        for pattern, pattern_type in patterns:
+            try:
+                matches = list(re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE))
+                
+                for match in matches:
+                    start, end = match.span()
+                    
+                    # 检查是否与已匹配的位置重叠
+                    if any(start < pos[1] and end > pos[0] for pos in matched_positions):
+                        continue
+                    
+                    placeholder_info = self._parse_improved_match(match, pattern_type)
+                    
+                    if placeholder_info and self._is_valid_placeholder(placeholder_info):
+                        # 更强的去重逻辑
+                        placeholder_key = self._get_placeholder_key(placeholder_info)
+                        
+                        if placeholder_key not in seen_placeholders:
+                            seen_placeholders.add(placeholder_key)
+                            matched_positions.add((start, end))
+                            placeholders.append(placeholder_info)
+                        else:
+                            # 如果已存在，选择更好的版本（优先带描述的格式）
+                            existing_idx = next((i for i, p in enumerate(placeholders) 
+                                               if self._get_placeholder_key(p) == placeholder_key), None)
+                            
+                            if existing_idx is not None:
+                                existing = placeholders[existing_idx]
+                                if self._is_better_placeholder(placeholder_info, existing):
+                                    placeholders[existing_idx] = placeholder_info
+                            
+            except Exception as e:
+                self.logger.warning(f"模式匹配失败 {pattern_type}: {e}")
+        
+        self.logger.info(f"改进提取器提取到 {len(placeholders)} 个唯一占位符")
+        return placeholders
+    
+    def _parse_improved_match(self, match, pattern_type: str) -> Optional[PlaceholderInfo]:
+        """解析改进的匹配结果"""
+        groups = match.groups()
+        full_text = match.group(0)
+        
+        if pattern_type == 'typed_placeholder':
+            # {{type:description}}
+            if len(groups) >= 2:
+                placeholder_type = groups[0].strip()
+                description = groups[1].strip()
+                
+                # 验证内容质量
+                if self._is_meaningful_content(placeholder_type) and self._is_meaningful_content(description):
+                    return PlaceholderInfo(
+                        name=f"{placeholder_type}:{description}",
+                        type=self._normalize_type(placeholder_type),
+                        description=description,
+                        content_type=self._infer_content_type(placeholder_type)
+                    )
+                    
+        elif pattern_type == 'default_value':
+            # {{@var=value}}
+            if len(groups) >= 2:
+                var_name = groups[0].strip()
+                default_val = groups[1].strip()
+                
+                if self._is_meaningful_content(var_name):
+                    return PlaceholderInfo(
+                        name=var_name,
+                        type="variable",
+                        description=f"变量，默认值: {default_val}",
+                        content_type=ContentType.TEXT,
+                        default_value=default_val
+                    )
+                    
+        elif pattern_type == 'simple_double':
+            # {{variable}}
+            if len(groups) >= 1:
+                var_name = groups[0].strip()
+                
+                if self._is_meaningful_content(var_name) and ':' in var_name:
+                    # 尝试解析为 type:description 格式
+                    parts = var_name.split(':', 1)
+                    if len(parts) == 2 and self._is_meaningful_content(parts[0]) and self._is_meaningful_content(parts[1]):
+                        return PlaceholderInfo(
+                            name=var_name,
+                            type=self._normalize_type(parts[0]),
+                            description=parts[1].strip(),
+                            content_type=self._infer_content_type(parts[0])
+                        )
+                elif self._is_meaningful_content(var_name):
+                    return PlaceholderInfo(
+                        name=var_name,
+                        type=self._infer_placeholder_type(var_name),
+                        description=var_name,
+                        content_type=ContentType.TEXT
+                    )
+                    
+        elif pattern_type in ['simple_single', 'chinese_bracket', 'square_bracket']:
+            # 单括号、中文括号、方括号格式
+            if len(groups) >= 1:
+                var_name = groups[0].strip()
+                
+                # 只有内容有意义且不太长才提取
+                if (self._is_meaningful_content(var_name) and 
+                    len(var_name) <= 50 and  # 限制长度
+                    not self._contains_common_text_patterns(var_name)):
+                    
+                    return PlaceholderInfo(
+                        name=var_name,
+                        type=self._infer_placeholder_type(var_name),
+                        description=f"简单占位符: {var_name}",
+                        content_type=ContentType.TEXT
+                    )
+        
+        return None
+    
+    def _is_valid_placeholder(self, placeholder: PlaceholderInfo) -> bool:
+        """验证占位符是否有效"""
+        if not placeholder or not placeholder.name:
+            return False
+        
+        # 排除过短或过长的占位符
+        if len(placeholder.name) < 2 or len(placeholder.name) > 100:
+            return False
+        
+        # 排除纯数字或特殊字符
+        if placeholder.name.isdigit() or not any(c.isalnum() or c in '：:_-' for c in placeholder.name):
+            return False
+        
+        # 排除明显的文档结构内容
+        exclude_patterns = [
+            r'^\s*第[一二三四五六七八九十\d]+[章节部分]\s*$',  # 章节标题
+            r'^\s*\d+\.\d+\s*$',  # 纯数字编号
+            r'^\s*[第\d]+[页条项]\s*$',  # 页码等
+        ]
+        
+        for pattern in exclude_patterns:
+            if re.match(pattern, placeholder.name):
+                return False
+        
+        return True
+    
+    def _is_meaningful_content(self, text: str) -> bool:
+        """检查文本是否有意义"""
+        if not text or len(text.strip()) < 2:
+            return False
+        
+        # 排除纯数字、纯符号
+        if text.isdigit() or not any(c.isalnum() for c in text):
+            return False
+        
+        return True
+    
+    def _contains_common_text_patterns(self, text: str) -> bool:
+        """检查是否包含常见文本模式（非占位符内容）"""
+        text_patterns = [
+            r'二、数据图表',  # 文档标题
+            r'第[一二三四五六七八九十\d]+[章节]',  # 章节标题
+            r'[\d]+\.\d+',  # 编号
+        ]
+        
+        for pattern in text_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        return False
+    
+    def _normalize_type(self, type_str: str) -> str:
+        """标准化类型名称"""
+        type_mapping = {
+            '统计': 'statistic', '数量': 'statistic', '计算': 'statistic',
+            '图表': 'chart', 'chart': 'chart',
+            '表格': 'table', 'table': 'table',
+            '分析': 'analysis', 'analysis': 'analysis',
+            '时间': 'datetime', '日期': 'datetime', '周期': 'datetime',
+            '区域': 'text', '地区': 'text', '标题': 'text',
+            '变量': 'variable', 'variable': 'variable'
+        }
+        
+        return type_mapping.get(type_str.lower(), 'text')
+    
+    def _infer_content_type(self, type_str: str) -> ContentType:
+        """推断内容类型"""
+        if any(keyword in type_str.lower() for keyword in ['图表', 'chart']):
+            return ContentType.CHART
+        elif any(keyword in type_str.lower() for keyword in ['表格', 'table']):
+            return ContentType.TABLE
+        else:
+            return ContentType.TEXT
+    
+    def _get_placeholder_key(self, placeholder: PlaceholderInfo) -> str:
+        """生成占位符的唯一标识键 - 用于去重"""
+        normalized_name = placeholder.name.lower()
+        
+        # 移除数字后缀 (如 _955, _87)
+        normalized_name = re.sub(r'[_\d]+$', '', normalized_name)
+        
+        # 处理类型:描述格式，提取核心语义
+        if ':' in normalized_name:
+            parts = normalized_name.split(':', 1)
+            type_part = parts[0].strip()
+            desc_part = parts[1].strip()
+        else:
+            # 对于没有冒号的占位符，尝试从名称推断语义
+            type_part = ""
+            desc_part = normalized_name
+            
+            # 从名称中提取类型信息
+            if desc_part.startswith('周期') or '年份' in desc_part:
+                type_part = '周期'
+                # 像 "周期_955" 这种应与 "周期:报告年份" 归并
+                if re.fullmatch(r'周期[_\d]*', placeholder.name):
+                    desc_part = '年份'
+                else:
+                    desc_part = '年份' if '年份' in desc_part else desc_part.replace('周期', '').strip('_')
+            elif desc_part.startswith('区域') or '地区' in desc_part:
+                type_part = '区域'  
+                # 像 "区域_87" 这种应与 "区域:地区名称" 归并
+                if re.fullmatch(r'区域[_\d]*', placeholder.name):
+                    desc_part = '地区'
+                else:
+                    desc_part = '地区' if '地区' in desc_part else desc_part.replace('区域', '').strip('_')
+            elif desc_part.startswith('统计') or '总数' in desc_part or '件数' in desc_part:
+                type_part = '统计'
+                # 像 "统计_627" 这种应与 "统计:总投诉件数" 归并
+                if re.fullmatch(r'统计[_\d]*', placeholder.name):
+                    desc_part = '总数'
+                else:
+                    desc_part = '总数' if ('总数' in desc_part or '件数' in desc_part) else desc_part.replace('统计', '').strip('_')
+        
+        # 标准化描述部分
+        desc_mapping = {
+            '报告年份': '年份',
+            '地区名称': '地区', 
+            '统计开始日期': '开始日期',
+            '统计结束日期': '结束日期',
+            '总投诉件数': '总数',
+            '投诉趋势折线图': '趋势图'
+        }
+        
+        desc_part = desc_mapping.get(desc_part, desc_part)
+        
+        # 生成标准化的键
+        if type_part:
+            semantic_key = f"{type_part}:{desc_part}"
+        else:
+            semantic_key = desc_part
+            
+        return semantic_key
+    
+    def _is_better_placeholder(self, new_placeholder: PlaceholderInfo, existing_placeholder: PlaceholderInfo) -> bool:
+        """判断新占位符是否比现有占位符更好"""
+        # 1. 优先选择类型:描述格式的占位符
+        if ':' in new_placeholder.name and ':' not in existing_placeholder.name:
+            return True
+        elif ':' not in new_placeholder.name and ':' in existing_placeholder.name:
+            return False
+        
+        # 2. 优先选择描述更具体的占位符
+        if len(new_placeholder.description) > len(existing_placeholder.description):
+            return True
+        elif len(new_placeholder.description) < len(existing_placeholder.description):
+            return False
+        
+        # 3. 优先选择不带数字后缀的占位符
+        if not re.search(r'_\d+$', new_placeholder.name) and re.search(r'_\d+$', existing_placeholder.name):
+            return True
+        elif re.search(r'_\d+$', new_placeholder.name) and not re.search(r'_\d+$', existing_placeholder.name):
+            return False
+        
+        # 4. 优先选择内容类型更精确的占位符
+        content_type_priority = {
+            'chart': 3,
+            'table': 2, 
+            'text': 1
+        }
+        
+        new_priority = content_type_priority.get(new_placeholder.content_type.value if hasattr(new_placeholder.content_type, 'value') else str(new_placeholder.content_type), 0)
+        existing_priority = content_type_priority.get(existing_placeholder.content_type.value if hasattr(existing_placeholder.content_type, 'value') else str(existing_placeholder.content_type), 0)
+        
+        return new_priority > existing_priority
     
     def _analyze_template_styles(self, content: str) -> Dict[str, Any]:
         """分析模板样式"""

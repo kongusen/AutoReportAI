@@ -56,15 +56,15 @@ from .config import (
     PlaceholderConfigValidator,
 )
 
-# 分析层
-from .agent_service import AgentAnalysisService
+# 分析层（使用新的Agent系统）
+# AgentAnalysisService 已迁移到 app.services.ai.agents.placeholder_sql_agent
 from .rule_service import TemplateRuleService
 
 # 执行层
 from .execution_service import DataExecutionService
 
 # 缓存层
-from .cache_service import CacheService, CacheMetrics
+from .cache_service import CacheService
 
 # 编排层
 from .router import PlaceholderRouter, PlaceholderBatchRouter
@@ -102,13 +102,12 @@ __all__ = [
     "PlaceholderConfigValidator",
     
     # 分析和执行层
-    "AgentAnalysisService", 
+    # "AgentAnalysisService",  # 已迁移到新的Agent系统
     "TemplateRuleService",
     "DataExecutionService",
     
     # 缓存层
     "CacheService",
-    "CacheMetrics",
     
     # 异常类
     "PlaceholderError",
@@ -127,6 +126,13 @@ __all__ = [
     
     # 工具类
     "global_container_manager",
+    
+    # 工厂函数
+    "create_placeholder_service",
+    "create_placeholder_router", 
+    "create_batch_router",
+    "create_placeholder_extractor",
+    "create_placeholder_config_service",
 ]
 
 

@@ -13,7 +13,8 @@ from .models import (
 )
 from .router import PlaceholderRouter, PlaceholderBatchRouter
 from .cache_service import CacheService
-from .agent_service import AgentAnalysisService
+# 旧的AgentAnalysisService已移除，使用新的Agent系统
+# from .agent_service import AgentAnalysisService
 from .rule_service import TemplateRuleService
 from .execution_service import DataExecutionService
 
@@ -46,9 +47,9 @@ class PlaceholderServiceContainer:
             # 2. 缓存层
             self._cache_service = CacheService(self.db_session)
             
-            # 3. Agent分析层
-            self._agent_service = AgentAnalysisService(self.db_session, self.user_id)
-            self._agent_service.set_execution_service(self._execution_service)
+            # 3. Agent分析层（使用新的Agent系统）
+            # 新的Agent系统通过门面服务调用，不在容器中直接初始化
+            self._agent_service = None  # 将使用新的PlaceholderSQLAgent
             
             # 4. 模板规则层
             self._rule_service = TemplateRuleService(self.db_session)

@@ -90,7 +90,16 @@ class CRUDTemplate:
         return db_obj
 
     def remove(self, db: Session, id: str) -> Template:
-        """删除模板（软删除）"""
+        """删除模板（硬删除，会级联删除相关占位符）"""
+        db_obj = db.query(Template).filter(Template.id == id).first()
+        if db_obj:
+            # 硬删除，会触发级联删除占位符和占位符值
+            db.delete(db_obj)
+            db.commit()
+        return db_obj
+    
+    def soft_remove(self, db: Session, id: str) -> Template:
+        """软删除模板（仅标记为非活跃）"""
         db_obj = db.query(Template).filter(Template.id == id).first()
         if db_obj:
             db_obj.is_active = False

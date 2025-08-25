@@ -17,7 +17,6 @@ from .placeholder.services.placeholder_domain_service import (
     PlaceholderDomainService, PlaceholderParser, PlaceholderSemanticAnalyzer
 )
 # Placeholder业务服务（合并后）
-from .placeholder.agent_service import AgentAnalysisService
 from .placeholder.cache_service import CacheService
 from .placeholder.execution_service import DataExecutionService
 from .placeholder.rule_service import TemplateRuleService
@@ -64,7 +63,6 @@ __all__ = [
     "PlaceholderParser",
     "PlaceholderSemanticAnalyzer",
     # Placeholder业务服务
-    "AgentAnalysisService",
     "CacheService", 
     "DataExecutionService",
     "TemplateRuleService",

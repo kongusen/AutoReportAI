@@ -24,36 +24,8 @@ from app.models.data_source import DataSource
 from app.models.task import Task
 from app.crud.crud_task import crud_task
 from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
-# CachedAgentOrchestrator not available, using placeholder
-class CachedAgentOrchestrator:
-    def __init__(self, db, user_id=None):
-        self.db = db
-        self.user_id = user_id
-    
-    async def execute(self, agent_input, context):
-        # Placeholder implementation
-        return type('obj', (object,), {
-            'success': True,
-            'data': type('obj', (object,), {
-                'results': {
-                    'fetch_data': type('obj', (object,), {
-                        'success': True,
-                        'data': {'etl_instruction': 'SELECT * FROM placeholder_table'}
-                    })()
-                }
-            })()
-        })()
-    
-    async def _execute_phase2_extraction_and_generation(self, template_id, data_source_id, user_id, context):
-        # Placeholder implementation for phase 2
-        return type('obj', (object,), {
-            'success': True,
-            'message': 'Phase 2 execution completed (placeholder)',
-            'data': {
-                'extracted_data': {'count': 100},
-                'generated_report': 'placeholder_report.docx'
-            }
-        })()
+# Import the real CachedAgentOrchestrator
+from app.services.application.orchestration.cached_agent_orchestrator import CachedAgentOrchestrator
 from app.services.domain.reporting.word_generator_service import WordGeneratorService
 from app.services.infrastructure.notification.notification_service import NotificationService
 from ..core.progress_manager import update_task_progress_dict
@@ -666,12 +638,15 @@ class TwoPhasePipeline:
             # 1. 缓存优先的数据提取
             self._update_progress(task_id, user_id, "extracting", 60, "提取占位符数据")
             
-            cached_orchestrator = CachedAgentOrchestrator(db, user_id=user_id)
-            # 从上下文中获取执行时间信息
-            execution_context = context.get("execution_context")
-            extraction_result = await cached_orchestrator._execute_phase2_extraction_and_generation(
-                template_id, data_source_id, user_id, execution_context
-            )
+            # 使用独立的数据库会话创建编排器
+            from app.db.session import get_db_session
+            with get_db_session() as orchestrator_db:
+                cached_orchestrator = CachedAgentOrchestrator(orchestrator_db, user_id=user_id)
+                # 从上下文中获取执行时间信息
+                execution_context = context.get("execution_context")
+                extraction_result = await cached_orchestrator._execute_phase2_extraction_and_generation(
+                    template_id, data_source_id, user_id, execution_context
+                )
             
             if not extraction_result["success"]:
                 return PhaseResult(
@@ -736,18 +711,31 @@ class TwoPhasePipeline:
                 "user_id": context["user_id"],
                 "file_path": report_path,
                 "status": "completed",
-                "result": report_summary
+                "result": report_summary,
+                "processing_metadata": {}  # 使用空字典而不是None
             }
             
-            report_record = crud.report_history.create(
-                db=db,
-                obj_in=schemas.ReportHistoryCreate(**report_data)
-            )
+            # 使用独立的数据库会话避免事务问题
+            from app.db.session import get_db_session
+            report_id = None
+            try:
+                with get_db_session() as new_db:
+                    report_record = crud.report_history.create(
+                        db=new_db,
+                        obj_in=schemas.ReportHistoryCreate(**report_data)
+                    )
+                    new_db.commit()
+                    report_id = report_record.id  # 在会话关闭前获取ID
+                    logger.info(f"成功创建报告历史记录 - ID: {report_id}")
+            except Exception as db_error:
+                logger.error(f"创建报告历史记录失败: {db_error}")
+                # 即使数据库操作失败，也不影响报告生成的成功
+                report_id = None
             
             phase2_data = {
                 "extraction_result": extraction_result,
                 "report_path": report_path,
-                "report_id": report_record.id,
+                "report_id": report_id,
                 "processed_content": extraction_result.get("processed_content", "报告生成成功")
             }
             
@@ -759,9 +747,14 @@ class TwoPhasePipeline:
             
             logger.info(f"阶段2执行完成 - 耗时: {execution_time:.2f}秒, 缓存命中率: {cache_stats['cache_hit_rate']:.1f}%")
             
+            # 即使数据库操作失败，报告生成仍然是成功的
+            success = True
+            if report_id is None:
+                logger.warning("报告历史记录保存失败，但报告生成成功")
+            
             return PhaseResult(
                 phase=PipelinePhase.PHASE_2_EXECUTION,
-                success=True,
+                success=success,
                 execution_time=execution_time,
                 data=phase2_data,
                 metadata=cache_stats
@@ -775,21 +768,24 @@ class TwoPhasePipeline:
             if self.config.enable_progress_tracking:
                 self._update_progress(task_id, user_id, "failed", 0, f"阶段2执行失败: {str(e)}")
             
-            # 创建失败的报告记录
+            # 创建失败的报告记录 - 使用独立的数据库会话
             try:
-                report_data = {
-                    "task_id": task_id,
-                    "user_id": context["user_id"],
-                    "file_path": None,  # 失败时没有文件
-                    "status": "failed",
-                    "result": f"报告生成失败: {str(e)}"
-                }
-                
-                crud.report_history.create(
-                    db=db,
-                    obj_in=schemas.ReportHistoryCreate(**report_data)
-                )
-                logger.info(f"已创建失败报告记录 - 任务ID: {task_id}")
+                from app.db.session import get_db_session
+                with get_db_session() as new_db:
+                    report_data = {
+                        "task_id": task_id,
+                        "user_id": context["user_id"],
+                        "file_path": None,  # 失败时没有文件
+                        "status": "failed",
+                        "result": f"报告生成失败: {str(e)}"
+                    }
+                    
+                    crud.report_history.create(
+                        db=new_db,
+                        obj_in=schemas.ReportHistoryCreate(**report_data)
+                    )
+                    new_db.commit()
+                    logger.info(f"已创建失败报告记录 - 任务ID: {task_id}")
             except Exception as record_error:
                 logger.warning(f"创建失败报告记录失败: {record_error}")
             
@@ -824,7 +820,7 @@ class TwoPhasePipeline:
                 if self.config.enable_notifications:
                     try:
                         notification_service = NotificationService()
-                        notification_service.send_task_completion_notification(
+                        await notification_service.send_task_completion_notification(
                             task_id=task_id,
                             report_path=final_data.get("report_path"),
                             user_id=user_id
@@ -895,6 +891,29 @@ class TwoPhasePipeline:
                 "user_id": user_id
             }
             update_task_progress_dict(task_id, status_data)
+            
+            # 尝试发送WebSocket通知（异步方式）
+            try:
+                import asyncio
+                from app.services.infrastructure.notification.notification_service import NotificationService
+                
+                async def send_websocket_notification():
+                    try:
+                        notification_service = NotificationService()
+                        await notification_service.send_task_progress_update(task_id, status_data)
+                    except Exception as e:
+                        logger.debug(f"WebSocket通知发送失败: {e}")
+                
+                # 尝试在现有事件循环中运行
+                try:
+                    loop = asyncio.get_running_loop()
+                    # 创建任务但不等待
+                    loop.create_task(send_websocket_notification())
+                except RuntimeError:
+                    # 没有运行的事件循环，跳过WebSocket通知
+                    pass
+            except Exception as e:
+                logger.debug(f"WebSocket通知初始化失败: {e}")
 
 
 # 便捷函数

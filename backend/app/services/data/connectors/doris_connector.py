@@ -315,37 +315,26 @@ class DorisConnector(BaseConnector):
         # 移除多余的空格和换行符
         cleaned = ' '.join(sql.split())
         
-        # 修复各种可能的文本损坏模式（大小写不敏感）
+        # 只进行基本的SQL格式化，避免过度修复
         import re
         
-        # 修复严重损坏的SQL
-        patterns_to_fix = [
-            # 修复损坏的SELECT关键字 
-            (r'SELEid,\s*dt,\s*s_idT\s+', 'SELECT '),  # SELEid, dt, s_idT -> SELECT
-            (r'SELE[^C\s]*T\s+', 'SELECT '),           # 各种SELECT损坏形式
-            
-            # 修复 COUNT 函数的各种损坏形式
-            (r's_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idOUNT(*), s_idount(*)
-            (r'c_id[oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # c_idOUNT(*), c_idount(*)
-            (r's_id[cC][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # s_idCOUNT(*)
-            (r'[sS]_[iI][dD][oO][uU][nN][tT]\s*\(\s*\*\s*\)', 'COUNT(*)'),  # 各种大小写组合
-            
-            # 修复字段名损坏
-            (r'id,\s*dt,\s*s_id[A-Za-z]*', 'COUNT(*) as total_count'),  # 修复损坏的字段列表
-            
-            # 移除多余的LIMIT (对于简单COUNT查询)
-            (r'SELECT\s+COUNT\(\*\)[^F]*FROM\s+\w+\s+LIMIT\s+\d+', r'SELECT COUNT(*) as total_count FROM ods_complain'),
+        # 只修复明显的语法错误，不要过度处理
+        basic_fixes = [
+            # 确保COUNT(*)语法正确（通用清理）
+            (r'\bCOUNT\s*\(\s*\*\s*\)', 'COUNT(*)'),
+            # 修复多余的空格
+            (r'\s+', ' '),
+            # 移除首尾空格
         ]
         
-        for pattern, replacement in patterns_to_fix:
+        for pattern, replacement in basic_fixes:
             cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
         
-        # 确保COUNT(*)语法正确（通用清理）
-        cleaned = re.sub(r'\bCOUNT\s*\(\s*\*\s*\)', 'COUNT(*)', cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip()
         
-        # 记录清理结果
+        # 记录清理结果（仅在有变化时）
         if cleaned != sql:
-            self.logger.info(f"SQL已清理: {sql} -> {cleaned}")
+            self.logger.debug(f"SQL已清理: {sql} -> {cleaned}")
         
         return cleaned
     
@@ -371,11 +360,23 @@ class DorisConnector(BaseConnector):
                 self.logger.info(f"✅ MySQL查询执行成功，耗时: {execution_time:.3f}秒，返回 {len(df)} 行")
                 return df
         except Exception as e:
-            self.logger.error(f"❌ MySQL查询执行失败: {e}")
-            # 检查是否是Doris特定错误，提供更详细的错误信息
-            if "can only be used in conjunction with COUNT" in str(e):
-                self.logger.error(f"Doris SQL语法错误，原始SQL: {sql}")
+            error_msg = str(e)
+            self.logger.error(f"❌ MySQL查询执行失败: {error_msg}")
+            
+            # 检查是否是连接问题
+            if any(keyword in error_msg.lower() for keyword in ['connection', 'timeout', 'refused', 'lost']):
+                self.logger.error("MySQL连接问题，可能需要检查网络或Doris服务状态")
+            
+            # 检查是否是Doris特定的SQL语法错误
+            elif "can only be used in conjunction with COUNT" in error_msg:
+                self.logger.error(f"Doris SQL语法错误")
+                self.logger.error(f"原始SQL: {sql}")
                 self.logger.error(f"清理后SQL: {cleaned_sql}")
+                
+            # 检查是否是表不存在错误
+            elif "doesn't exist" in error_msg.lower() or "table not found" in error_msg.lower():
+                self.logger.error(f"表不存在错误，请检查表名和数据库")
+                
             return None
     
     async def get_databases_mysql(self) -> List[str]:
@@ -1182,9 +1183,11 @@ class DorisConnector(BaseConnector):
                         self.logger.debug(f"端点 {url} 方法 {method_config['method']} 失败: {endpoint_error}")
                         continue
             
-            # 如果所有方法都失败，抛出异常
-            self.logger.error(f"所有HTTP查询端点和方法都失败，SQL: {formatted_sql[:200]}...")
-            raise Exception("所有HTTP查询端点和方法都失败")
+            # 如果所有方法都失败，抛出详细的异常信息
+            self.logger.error(f"所有HTTP查询端点和方法都失败")
+            self.logger.error(f"尝试的SQL: {formatted_sql[:200]}...")
+            self.logger.error(f"尝试的端点: {endpoints_to_try}")
+            raise Exception(f"HTTP query failed: 所有HTTP查询端点和方法都失败。请检查Doris服务状态和网络连接。")
                     
         except Exception as e:
             # HTTP查询失败时不要伪造数据，抛出异常让上层感知错误

@@ -9,11 +9,11 @@
 - notification: 通知服务
 """
 
-# 缓存服务（合并后）
+# 缓存服务（统一缓存系统）
 from .cache.cache_interfaces import CacheInterface
 from .cache.memory_cache import MemoryCache
-from .cache.pipeline_cache_manager import (
-    PipelineCacheManager, CacheLevel
+from .cache.unified_cache_system import (
+    UnifiedCacheManager, CacheLevel, CacheType
 )
 
 # 配置服务
@@ -33,8 +33,9 @@ __all__ = [
     # 缓存
     "CacheInterface",
     "MemoryCache", 
-    "PipelineCacheManager",
+    "UnifiedCacheManager",
     "CacheLevel",
+    "CacheType",
     
     # 配置
     "ServiceLayerSettings",

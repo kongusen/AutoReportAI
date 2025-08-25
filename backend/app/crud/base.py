@@ -40,7 +40,11 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     def create(
         self, db: Session, *, obj_in: CreateSchemaType, **extra_data
     ) -> ModelType:
-        obj_in_data = obj_in.model_dump()
+        # 支持传入 Pydantic 模型或原始字典
+        if isinstance(obj_in, dict):
+            obj_in_data = obj_in
+        else:
+            obj_in_data = obj_in.model_dump()
         obj_in_data.update(extra_data)
         db_obj = self.model(**obj_in_data)
         db.add(db_obj)

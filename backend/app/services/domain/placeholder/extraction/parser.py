@@ -134,7 +134,7 @@ class PlaceholderParser:
     def _detect_language(self, text: str) -> str:
         """检测语言"""
         # 简单的中英文检测
-        chinese_chars = len(re.findall(r'[\\u4e00-\\u9fff]', text))
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
         english_chars = len(re.findall(r'[a-zA-Z]', text))
         
         if chinese_chars > english_chars:
@@ -152,11 +152,11 @@ class PlaceholderParser:
         score += min(len(text) / 100, 0.3)
         
         # 基于特殊字符
-        special_chars = len(re.findall(r'[^\\w\\s\\u4e00-\\u9fff]', text))
+        special_chars = len(re.findall(r'[^\w\s\u4e00-\u9fff]', text))
         score += min(special_chars / 10, 0.2)
         
         # 基于数字
-        numbers = len(re.findall(r'\\d+', text))
+        numbers = len(re.findall(r'\d+', text))
         score += min(numbers / 5, 0.1)
         
         return min(score, 1.0)

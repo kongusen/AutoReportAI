@@ -314,56 +314,59 @@ async def preview_template(
                 temp_path = temp_file.name
             
             try:
-                # 使用DOC占位符解析器
-                placeholder_data = template_parser.parse_doc_placeholders(temp_path)
+                # 使用改进的占位符提取器
+                from app.services.domain.reporting.document_pipeline import TemplateParser
+                enhanced_parser = TemplateParser()
                 
-                # 转换为统一格式
-                stats_placeholders = placeholder_data.get("stats_placeholders", [])
-                chart_placeholders = placeholder_data.get("chart_placeholders", [])
+                # 直接从十六进制内容提取占位符
+                extracted_placeholders = enhanced_parser.extract_placeholders(content)
                 
-                for p in stats_placeholders:
-                    placeholders.append({
-                        "type": "统计",
-                        "description": p.get("description", ""),
-                        "placeholder_text": p.get("placeholder_text", ""),
-                        "requirements": p.get("analysis_requirements", {})
-                    })
-                
-                for p in chart_placeholders:
-                    placeholders.append({
-                        "type": "图表", 
-                        "description": p.get("description", ""),
-                        "placeholder_text": p.get("placeholder_text", ""),
-                        "requirements": p.get("chart_requirements", {})
-                    })
+                # 转换为API响应格式
+                for p in extracted_placeholders:
+                    # 根据类型进行分类
+                    placeholder_type = p.get("type", "text")
                     
+                    # 映射类型到中文
+                    type_mapping = {
+                        "statistic": "统计",
+                        "chart": "图表", 
+                        "table": "表格",
+                        "analysis": "分析",
+                        "datetime": "日期时间",
+                        "title": "标题",
+                        "summary": "摘要",
+                        "author": "作者",
+                        "variable": "变量",
+                        "chinese": "中文",
+                        "text": "文本"
+                    }
+                    
+                    display_type = type_mapping.get(placeholder_type, placeholder_type)
+                    
+                    placeholders.append({
+                        "type": display_type,
+                        "description": p.get("description", ""),
+                        "placeholder_text": f"{{{{{p.get('name', '')}}}}}",
+                        "requirements": {
+                            "content_type": p.get("content_type", "text"),
+                            "original_type": placeholder_type,
+                            "required": p.get("required", True)
+                        }
+                    })
+                
+                logger.info(f"从DOCX模板提取到 {len(placeholders)} 个占位符")
             except Exception as parser_error:
-                # 如果DOC解析器失败，尝试从原始内容中提取占位符
-                try:
-                    # 如果是hex编码的内容，先解码
-                    text_content = content
-                    if content and all(c in '0123456789ABCDEFabcdef' for c in content.replace(' ', '').replace('\n', '')):
-                        try:
-                            binary_data = bytes.fromhex(content.replace(' ', '').replace('\n', ''))
-                            text_content = binary_data.decode('utf-8', errors='ignore')
-                        except:
-                            text_content = content
-                    
-                    # 使用正则表达式提取占位符
-                    placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
-                    for match in placeholder_pattern.finditer(text_content):
-                        placeholders.append({
-                            "type": match.group(1).strip(),
-                            "description": match.group(2).strip(),
-                            "placeholder_text": match.group(0)
-                        })
-                except:
-                    # 最后的fallback：返回默认占位符信息
-                    placeholders.append({
-                        "type": "文档",
-                        "description": f"DOCX模板文件: {template.original_filename}",
-                        "placeholder_text": "{{文档:DOCX内容}}"
-                    })
+                logger.error(f"DOCX占位符提取失败: {parser_error}")
+                # 最后的fallback：返回提示信息
+                placeholders.append({
+                    "type": "错误",
+                    "description": f"无法解析DOCX文档: {template.original_filename}。请检查文档格式或联系技术支持。",
+                    "placeholder_text": "{{错误:解析失败}}",
+                    "requirements": {
+                        "error": str(parser_error),
+                        "template_type": "docx"
+                    }
+                })
             finally:
                 # 安全删除临时文件
                 try:
@@ -373,33 +376,93 @@ async def preview_template(
                     pass
                 
         except Exception as e:
-            # 完全降级到基本解析
+            logger.error(f"DOCX模板处理完全失败: {e}")
+            # 完全降级：使用新解析器的文本模式
+            try:
+                from app.services.domain.reporting.document_pipeline import TemplateParser
+                fallback_parser = TemplateParser()
+                # 尝试直接从content中提取（可能是文本格式）
+                fallback_placeholders = fallback_parser.extract_placeholders(content or "")
+                
+                for p in fallback_placeholders:
+                    placeholders.append({
+                        "type": p.get("type", "文本"),
+                        "description": p.get("description", ""),
+                        "placeholder_text": f"{{{{{p.get('name', '')}}}}}",
+                        "requirements": {"fallback_mode": True}
+                    })
+            except Exception as fallback_error:
+                logger.error(f"Fallback解析也失败: {fallback_error}")
+                placeholders.append({
+                    "type": "系统错误",
+                    "description": f"系统无法解析模板文件，请联系技术支持。错误：{str(e)}",
+                    "placeholder_text": "{{系统错误:无法解析}}"
+                })
+    else:
+        # 使用新的解析器处理其他格式
+        try:
+            from app.services.domain.reporting.document_pipeline import TemplateParser
+            text_parser = TemplateParser()
+            extracted_placeholders = text_parser.extract_placeholders(content or "")
+            
+            for p in extracted_placeholders:
+                placeholder_type = p.get("type", "text")
+                
+                # 映射类型到中文
+                type_mapping = {
+                    "statistic": "统计",
+                    "chart": "图表", 
+                    "table": "表格",
+                    "analysis": "分析",
+                    "datetime": "日期时间",
+                    "title": "标题",
+                    "summary": "摘要",
+                    "author": "作者",
+                    "variable": "变量",
+                    "chinese": "中文",
+                    "text": "文本"
+                }
+                
+                display_type = type_mapping.get(placeholder_type, placeholder_type)
+                
+                placeholders.append({
+                    "type": display_type,
+                    "description": p.get("description", ""),
+                    "placeholder_text": f"{{{{{p.get('name', '')}}}}}",
+                    "requirements": {
+                        "content_type": p.get("content_type", "text"),
+                        "original_type": placeholder_type,
+                        "required": p.get("required", True)
+                    }
+                })
+        except Exception as text_parse_error:
+            logger.error(f"文本模板解析失败: {text_parse_error}")
+            # 基本的fallback
             placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
             for match in placeholder_pattern.finditer(content or ""):
                 placeholders.append({
                     "type": match.group(1).strip(),
-                    "description": match.group(2).strip(),
+                    "description": match.group(2).strip(), 
                     "placeholder_text": match.group(0)
                 })
-    else:
-        # 传统占位符解析
-        placeholder_pattern = re.compile(r"\{\{([^:]+):([^}]+)\}\}")
-        for match in placeholder_pattern.finditer(content):
-            placeholders.append({
-                "type": match.group(1).strip(),
-                "description": match.group(2).strip(), 
-                "placeholder_text": match.group(0)
-            })
         
-        # 兼容旧格式
-        old_pattern = re.compile(r"{{\s*([\w\-]+)\s*}}")
-        for match in old_pattern.finditer(content):
-            if not any(p["placeholder_text"] == match.group(0) for p in placeholders):
-                placeholders.append({
-                    "type": "文本",
-                    "description": match.group(1),
-                    "placeholder_text": match.group(0)
-                })
+        # 新解析器已经包含所有格式支持，无需额外兼容处理
+    
+    # 计算各类型统计
+    type_counts = {}
+    content_type_stats = {}
+    error_count = 0
+    
+    for p in placeholders:
+        ptype = p.get("type", "未知")
+        type_counts[ptype] = type_counts.get(ptype, 0) + 1
+        
+        if ptype in ["错误", "系统错误"]:
+            error_count += 1
+        
+        # 统计内容类型
+        content_type = p.get("requirements", {}).get("content_type", "unknown")
+        content_type_stats[content_type] = content_type_stats.get(content_type, 0) + 1
     
     return ApiResponse(
         success=True,
@@ -407,11 +470,179 @@ async def preview_template(
             "template_type": template.template_type,
             "placeholders": placeholders,
             "total_count": len(placeholders),
-            "stats_count": len([p for p in placeholders if p["type"] == "统计"]),
-            "chart_count": len([p for p in placeholders if p["type"] == "图表"])
+            "stats_count": type_counts.get("统计", 0),
+            "chart_count": type_counts.get("图表", 0),
+            "table_count": type_counts.get("表格", 0),
+            "analysis_count": type_counts.get("分析", 0),
+            "datetime_count": type_counts.get("日期时间", 0),
+            "title_count": type_counts.get("标题", 0),
+            "variable_count": type_counts.get("变量", 0),
+            "content_type_stats": content_type_stats,
+            "has_errors": error_count > 0,
+            "error_count": error_count,
+            "type_distribution": type_counts
         },
         message="模板预览成功"
     )
+
+
+# 混合占位符管理端点
+@router.post("/{template_id}/placeholders/reparse", response_model=ApiResponse)
+async def reparse_template_placeholders(
+    template_id: str,
+    force_reparse: bool = Query(False, description="是否强制重新解析"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """重新解析模板占位符并存储到数据库"""
+    # 验证模板权限
+    template = crud_template.get(db, id=template_id)
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="模板不存在或无权限访问"
+        )
+    
+    try:
+        # 使用混合占位符管理器
+        from app.services.domain.placeholder.hybrid_placeholder_manager import create_hybrid_placeholder_manager
+        manager = create_hybrid_placeholder_manager(db)
+        
+        # 解析并存储占位符
+        result = manager.parse_and_store_placeholders(
+            template_id=template_id,
+            template_content=template.content or "",
+            force_reparse=force_reparse
+        )
+        
+        if result["success"]:
+            return ApiResponse(
+                success=True,
+                data=result,
+                message=result.get("message", "占位符解析完成")
+            )
+        else:
+            return ApiResponse(
+                success=False,
+                message=result.get("error", "占位符解析失败"),
+                data=result
+            )
+            
+    except Exception as e:
+        logger.error(f"重新解析占位符失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"重新解析占位符失败: {str(e)}"
+        )
+
+
+@router.get("/{template_id}/placeholders", response_model=ApiResponse)
+async def get_template_placeholders(
+    template_id: str,
+    include_inactive: bool = Query(False, description="是否包含未激活的占位符"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取模板的占位符配置列表"""
+    # 验证模板权限
+    template = crud_template.get(db, id=template_id)
+    if not template or not template.is_active or (template.user_id != current_user.id and not template.is_public):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="模板不存在或无权限访问"
+        )
+    
+    try:
+        from app.services.domain.placeholder.hybrid_placeholder_manager import create_hybrid_placeholder_manager
+        manager = create_hybrid_placeholder_manager(db)
+        
+        # 获取占位符列表
+        placeholders = manager.get_template_placeholders(
+            template_id=template_id,
+            include_inactive=include_inactive
+        )
+        
+        # 计算统计信息
+        total_count = len(placeholders)
+        analyzed_count = sum(1 for p in placeholders if p.get("agent_analyzed", False))
+        validated_count = sum(1 for p in placeholders if p.get("sql_validated", False))
+        avg_confidence = (sum(p.get("confidence_score", 0) for p in placeholders) / total_count) if total_count > 0 else 0
+        
+        analytics = {
+            "total_placeholders": total_count,
+            "analyzed_placeholders": analyzed_count, 
+            "sql_validated_placeholders": validated_count,
+            "average_confidence_score": avg_confidence,
+            "analysis_coverage": (analyzed_count / total_count * 100) if total_count > 0 else 0,
+            "cache_hit_rate": 0  # TODO: 从缓存统计获取
+        }
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "placeholders": placeholders,
+                "analytics": analytics
+            },
+            message="获取占位符列表成功"
+        )
+        
+    except Exception as e:
+        logger.error(f"获取占位符列表失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取占位符列表失败: {str(e)}"
+        )
+
+
+@router.put("/{template_id}/placeholders/{placeholder_id}", response_model=ApiResponse)
+async def update_placeholder(
+    template_id: str,
+    placeholder_id: str,
+    placeholder_update: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """更新占位符配置"""
+    # 验证模板权限
+    template = crud_template.get(db, id=template_id)
+    if not template or not template.is_active or template.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="模板不存在或无权限访问"
+        )
+    
+    try:
+        from app.crud.crud_template_placeholder import template_placeholder as crud_placeholder
+        from app.schemas.template_placeholder import TemplatePlaceholderUpdate
+        
+        # 验证占位符存在
+        placeholder = crud_placeholder.get(db, id=placeholder_id)
+        if not placeholder or placeholder.template_id != template_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="占位符不存在"
+            )
+        
+        # 创建更新schema
+        update_data = TemplatePlaceholderUpdate(**placeholder_update)
+        
+        # 执行更新
+        updated_placeholder = crud_placeholder.update(
+            db, db_obj=placeholder, obj_in=update_data
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=crud_placeholder._serialize_placeholder(updated_placeholder) if hasattr(crud_placeholder, '_serialize_placeholder') else updated_placeholder.__dict__,
+            message="占位符更新成功"
+        )
+        
+    except Exception as e:
+        logger.error(f"更新占位符失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新占位符失败: {str(e)}"
+        )
 
 
 @router.post("/{template_id}/generate-report", response_model=ApiResponse)
@@ -687,7 +918,7 @@ async def analyze_template_placeholders(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 使用增强模板解析器
-        from app.services.template.enhanced_template_parser import EnhancedTemplateParser
+        from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
         parser = EnhancedTemplateParser(db)
         
         # 解析并存储占位符
@@ -786,7 +1017,7 @@ async def analyze_with_agent(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 使用缓存Agent编排器
-        from app.services.agents.orchestration.cached_orchestrator import CachedAgentOrchestrator
+        from app.services.application.orchestration.cached_agent_orchestrator import CachedAgentOrchestrator
         orchestrator = CachedAgentOrchestrator(db, user_id=str(user_id))
         
         # 执行Agent分析
@@ -829,7 +1060,7 @@ async def check_template_readiness(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 使用增强模板解析器检查就绪状态
-        from app.services.template.enhanced_template_parser import EnhancedTemplateParser
+        from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
         parser = EnhancedTemplateParser(db)
         
         readiness_info = await parser.check_template_ready_for_execution(template_id)
@@ -868,14 +1099,11 @@ async def invalidate_template_cache(
         if template.user_id != user_id and not template.is_public:
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
-        # 使用缓存管理器清除缓存
-        from app.services.cache.pipeline_cache_manager import PipelineCacheManager
-        cache_manager = PipelineCacheManager(db)
+        # 使用统一缓存服务清除缓存
+        from app.services.domain.placeholder.unified_cache_service import UnifiedCacheService
+        cache_service = UnifiedCacheService(db)
         
-        cleared_count = await cache_manager.invalidate_cache(
-            template_id=template_id,
-            cache_level=cache_level
-        )
+        cleared_count = await cache_service.invalidate_by_template(template_id)
         
         return ApiResponse(
             success=True,
@@ -911,10 +1139,10 @@ async def get_template_cache_statistics(
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
         # 获取缓存统计
-        from app.services.cache.pipeline_cache_manager import PipelineCacheManager
-        cache_manager = PipelineCacheManager(db)
+        from app.services.domain.placeholder.unified_cache_service import UnifiedCacheService
+        cache_service = UnifiedCacheService(db)
         
-        cache_stats = await cache_manager.get_cache_statistics(template_id=template_id)
+        cache_stats = await cache_service.get_cache_statistics()
         
         return ApiResponse(
             success=True,

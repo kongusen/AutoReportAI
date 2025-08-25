@@ -138,6 +138,46 @@ class PlaceholderConfigService:
             logger.error(f"更新占位符配置失败: {placeholder_id}, 错误: {e}")
             raise PlaceholderConfigError(f"更新配置失败: {str(e)}")
     
+    def _extract_table_from_sql(self, sql: str) -> str:
+        """从SQL中提取主要表名"""
+        try:
+            import re
+            # 简单的表名提取，支持 FROM 和 JOIN 语句
+            # 匹配 FROM table_name 或 FROM schema.table_name
+            from_pattern = r'FROM\s+([`"]?)([^`"\s,()]+)\1'
+            match = re.search(from_pattern, sql, re.IGNORECASE)
+            if match:
+                return match.group(2)
+            return "未知表"
+        except Exception:
+            return "未知表"
+    
+    def _format_sample_data(self, sample_data: List[Dict[str, Any]]) -> str:
+        """格式化样本数据为显示文本"""
+        if not sample_data:
+            return ""
+        
+        try:
+            # 如果只有一行且只有一个值，直接返回该值
+            if len(sample_data) == 1 and len(sample_data[0]) == 1:
+                value = list(sample_data[0].values())[0]
+                return str(value)
+            
+            # 如果是多行或多列，格式化为简洁的文本
+            if len(sample_data) <= 3:
+                formatted_parts = []
+                for row in sample_data:
+                    if len(row) == 1:
+                        formatted_parts.append(str(list(row.values())[0]))
+                    else:
+                        formatted_parts.append(str(row))
+                return "; ".join(formatted_parts)
+            else:
+                # 太多数据时只显示前几行
+                return f"{len(sample_data)} 行数据"
+        except Exception:
+            return f"{len(sample_data)} 行数据"
+    
     async def create_placeholder_config(
         self, 
         template_id: str, 
@@ -245,19 +285,311 @@ class PlaceholderConfigService:
             测试结果
         """
         try:
-            # TODO: 实现查询测试逻辑
-            # 这里需要与新的执行服务集成
+            # 验证占位符ID格式
+            try:
+                from uuid import UUID
+                placeholder_uuid = UUID(placeholder_id)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": "无效的占位符ID格式",
+                    "error_message": "无效的占位符ID格式",  # 前端期望字段
+                    "placeholder_id": placeholder_id,
+                    "execution_status": "失败",
+                    "execution_time": 0,
+                    "execution_time_ms": 0,  # 前端期望字段
+                    "execution_time_display": "0ms",
+                    "row_count": 0,
+                    "target_database": "未设置",
+                    "target_table": "未设置",
+                    "cache_ttl": "24小时",
+                    "data": [],
+                    "formatted_text": "",
+                    "sql_executed": ""
+                }
             
-            return {
-                "success": True,
-                "message": "查询测试功能待实现",
-                "placeholder_id": placeholder_id,
-                "data_source_id": data_source_id
-            }
+            # 获取占位符配置
+            placeholder = self.db.query(TemplatePlaceholder).filter(
+                TemplatePlaceholder.id == placeholder_uuid
+            ).first()
+            
+            if not placeholder:
+                return {
+                    "success": False,
+                    "error": "占位符不存在",
+                    "error_message": "占位符不存在",  # 前端期望字段
+                    "placeholder_id": placeholder_id,
+                    "execution_status": "失败",
+                    "execution_time": 0,
+                    "execution_time_ms": 0,  # 前端期望字段
+                    "execution_time_display": "0ms",
+                    "row_count": 0,
+                    "target_database": "未设置",
+                    "target_table": "未设置",
+                    "cache_ttl": "24小时",
+                    "data": [],
+                    "formatted_text": "",
+                    "sql_executed": ""
+                }
+            
+            # 应用配置覆盖
+            sql = placeholder.generated_sql
+            if config_override and config_override.get("sql_query"):
+                sql = config_override["sql_query"]
+            
+            if not sql:
+                return {
+                    "success": False,
+                    "error": "没有可执行的SQL查询",
+                    "error_message": "没有可执行的SQL查询",  # 前端期望字段
+                    "placeholder_id": placeholder_id,
+                    "execution_status": "失败",
+                    "execution_time": 0,
+                    "execution_time_ms": 0,  # 前端期望字段
+                    "execution_time_display": "0ms",
+                    "row_count": 0,
+                    "target_database": "未设置",
+                    "target_table": "未设置",
+                    "cache_ttl": "24小时",
+                    "data": [],
+                    "formatted_text": "",
+                    "sql_executed": ""
+                }
+            
+            # 执行查询测试
+            try:
+                from app.services.data.connectors.connector_factory import create_connector
+                from app.models.data_source import DataSource
+                
+                # 获取数据源
+                data_source = self.db.query(DataSource).filter(
+                    DataSource.id == data_source_id
+                ).first()
+                
+                if not data_source:
+                    return {
+                        "success": False,
+                        "error": "数据源不存在",
+                        "error_message": "数据源不存在",  # 前端期望字段
+                        "placeholder_id": placeholder_id,
+                        "execution_status": "失败",
+                        "execution_time": 0,
+                        "execution_time_ms": 0,  # 前端期望字段
+                        "execution_time_display": "0ms",
+                        "row_count": 0,
+                        "target_database": "未设置",
+                        "target_table": "未设置",
+                        "cache_ttl": "24小时",
+                        "data": [],
+                        "formatted_text": "",
+                        "sql_executed": ""
+                    }
+                
+                # 创建连接器并执行查询
+                connector = create_connector(data_source)
+                await connector.connect()
+                
+                # 添加LIMIT以避免大量数据返回
+                test_sql = sql.rstrip('; \n\t')  # 移除末尾的分号和空白
+                if 'LIMIT' not in test_sql.upper():
+                    test_sql = f"{test_sql} LIMIT 10"
+                
+                result = await connector.execute_query(test_sql)
+                await connector.disconnect()
+                
+                # 标准响应格式
+                row_count = len(result.data) if hasattr(result, 'data') and not result.data.empty else 0
+                sample_data = result.data.to_dict('records') if hasattr(result, 'data') and not result.data.empty else []
+                execution_time_ms = int(result.execution_time * 1000) if hasattr(result, 'execution_time') else 0
+                
+                return {
+                    "success": True,
+                    "message": "查询测试成功",
+                    "placeholder_id": placeholder_id,
+                    "data_source_id": data_source_id,
+                    "sql": test_sql,
+                    "sql_executed": test_sql,  # 前端期望字段
+                    # 前端期望的字段格式
+                    "execution_status": "成功",
+                    "execution_time": execution_time_ms,
+                    "execution_time_ms": execution_time_ms,  # 前端期望字段
+                    "execution_time_display": f"{result.execution_time:.3f}s" if hasattr(result, 'execution_time') else "< 1s",
+                    "row_count": row_count,
+                    "target_database": data_source.doris_database if data_source.doris_database else "默认数据库",
+                    "target_table": self._extract_table_from_sql(test_sql),
+                    "cache_ttl": "24小时",
+                    # 前端期望的数据结构
+                    "data": sample_data,  # 前端期望字段
+                    "formatted_text": self._format_sample_data(sample_data),  # 前端期望字段
+                    "result": {
+                        "row_count": row_count,
+                        "sample_data": sample_data,
+                        "execution_time": f"{result.execution_time:.3f}s" if hasattr(result, 'execution_time') else "< 1s"
+                    }
+                }
+                
+            except Exception as exec_error:
+                error_msg = str(exec_error)
+                # 提供更友好的错误信息
+                if "connection" in error_msg.lower() or "connect" in error_msg.lower():
+                    friendly_error = "数据源连接失败，请检查数据源配置和网络连接"
+                elif "authentication" in error_msg.lower() or "access denied" in error_msg.lower():
+                    friendly_error = "数据源认证失败，请检查用户名和密码"
+                elif "table" in error_msg.lower() and "not found" in error_msg.lower():
+                    friendly_error = "SQL中引用的表不存在，请重新分析占位符"
+                else:
+                    friendly_error = f"查询执行失败: {error_msg}"
+                
+                return {
+                    "success": False,
+                    "error": friendly_error,
+                    "error_message": friendly_error,  # 前端期望字段
+                    "placeholder_id": placeholder_id,
+                    "sql": sql,
+                    "sql_executed": sql,  # 前端期望字段
+                    "technical_details": error_msg,
+                    # 前端期望的字段格式（失败状态）
+                    "execution_status": "失败",
+                    "execution_time": 0,
+                    "execution_time_ms": 0,  # 前端期望字段
+                    "execution_time_display": "0ms",
+                    "row_count": 0,
+                    "target_database": "未设置",
+                    "target_table": "未设置",
+                    "cache_ttl": "24小时",
+                    # 前端期望的数据结构
+                    "data": [],
+                    "formatted_text": ""
+                }
             
         except Exception as e:
             logger.error(f"测试占位符查询失败: {placeholder_id}, 错误: {e}")
             raise PlaceholderConfigError(f"查询测试失败: {str(e)}")
+    
+    async def validate_placeholder_sql(
+        self, 
+        placeholder_id: str, 
+        data_source_id: str
+    ) -> Dict[str, Any]:
+        """
+        验证占位符SQL查询
+        
+        Args:
+            placeholder_id: 占位符ID
+            data_source_id: 数据源ID
+            
+        Returns:
+            验证结果
+        """
+        try:
+            # 获取占位符配置
+            placeholder = self.db.query(TemplatePlaceholder).filter(
+                TemplatePlaceholder.id == placeholder_id
+            ).first()
+            
+            if not placeholder:
+                return {
+                    "valid": False,
+                    "error": "占位符不存在",
+                    "error_type": "placeholder_not_found"
+                }
+            
+            # 检查是否有生成的SQL
+            if not placeholder.generated_sql:
+                return {
+                    "valid": False,
+                    "error": "占位符没有生成的SQL查询",
+                    "error_type": "no_sql_generated"
+                }
+            
+            # 基本的SQL语法检查
+            sql = placeholder.generated_sql.strip()
+            if not sql.upper().startswith('SELECT'):
+                return {
+                    "valid": False,
+                    "error": "SQL必须以SELECT开头",
+                    "error_type": "invalid_sql_syntax",
+                    "sql": sql
+                }
+            
+            # 尝试连接数据源并验证SQL
+            try:
+                from app.services.data.connectors.doris_connector import DorisConnector
+                from app.models.data_source import DataSource
+                
+                # 获取数据源配置
+                data_source = self.db.query(DataSource).filter(
+                    DataSource.id == data_source_id
+                ).first()
+                
+                if not data_source:
+                    return {
+                        "valid": False,
+                        "error": "数据源不存在",
+                        "error_type": "data_source_not_found"
+                    }
+                
+                # 创建连接器
+                connector = DorisConnector.from_data_source(data_source)
+                
+                # 验证SQL（执行EXPLAIN或限制行数的查询）
+                explain_sql = f"EXPLAIN {sql}"
+                try:
+                    # 首先尝试EXPLAIN
+                    await connector.execute_query(explain_sql)
+                    
+                    # 如果EXPLAIN成功，尝试执行限制结果的查询
+                    if 'LIMIT' not in sql.upper():
+                        test_sql = f"{sql} LIMIT 1"
+                    else:
+                        test_sql = sql
+                    
+                    result = await connector.execute_query(test_sql)
+                    
+                    return {
+                        "valid": True,
+                        "message": "SQL验证成功",
+                        "sql": sql,
+                        "test_result": {
+                            "row_count": len(result) if isinstance(result, list) else 1,
+                            "sample_data": result[:3] if isinstance(result, list) else result
+                        }
+                    }
+                    
+                except Exception as exec_error:
+                    error_msg = str(exec_error)
+                    # 提供更友好的错误信息
+                    if "connection" in error_msg.lower() or "connect" in error_msg.lower():
+                        friendly_error = "数据源连接失败，请检查数据源配置和网络连接"
+                    elif "authentication" in error_msg.lower() or "access denied" in error_msg.lower():
+                        friendly_error = "数据源认证失败，请检查用户名和密码"
+                    elif "table" in error_msg.lower() and "not found" in error_msg.lower():
+                        friendly_error = "SQL中引用的表不存在，请重新分析占位符"
+                    else:
+                        friendly_error = f"SQL执行失败: {error_msg}"
+                    
+                    return {
+                        "valid": False,
+                        "error": friendly_error,
+                        "error_type": "sql_execution_error",
+                        "sql": sql,
+                        "technical_details": error_msg
+                    }
+                    
+            except Exception as conn_error:
+                return {
+                    "valid": False,
+                    "error": f"数据源连接失败: {str(conn_error)}",
+                    "error_type": "connection_error"
+                }
+            
+        except Exception as e:
+            logger.error(f"验证占位符SQL失败: {placeholder_id}, 错误: {e}")
+            return {
+                "valid": False,
+                "error": f"验证过程出错: {str(e)}",
+                "error_type": "validation_error"
+            }
     
     async def reanalyze_placeholder(
         self, 
@@ -311,25 +643,26 @@ class PlaceholderConfigService:
             "execution_order": placeholder.execution_order or 0,
             "is_active": placeholder.is_active,
             
-            # 分析信息
+            # 分析信息 - 使用前端期望的字段名
             "agent_analyzed": placeholder.agent_analyzed,
-            "analysis_confidence": placeholder.confidence_score or 0.0,
+            "confidence_score": placeholder.confidence_score or 0.0,  # 前端期望的字段名
+            "sql_validated": placeholder.sql_validated,  # 前端期望的字段名
             
             # 数据库信息
             "target_database": placeholder.target_database,
             "target_table": placeholder.target_table,
             "required_fields": placeholder.required_fields,
             
-            # SQL信息
-            "suggested_sql": placeholder.generated_sql,
-            "optimized_sql": placeholder.generated_sql,  # Using generated_sql as base
-            "validation_sql": None,  # Field not available in current model
+            # SQL信息 - 使用前端期望的字段名
+            "generated_sql": placeholder.generated_sql,  # 前端期望的字段名
             
-            # 默认值和格式
-            "default_value": None,  # Field not available in current model
-            "format_template": None,  # Field not available in current model
+            # ETL配置 - 前端期望的字段
+            "cache_ttl_hours": placeholder.cache_ttl_hours or 24,
+            "agent_config": placeholder.agent_config or {},
+            "agent_workflow_id": placeholder.agent_workflow_id,
             
             # 时间信息
+            "analyzed_at": placeholder.analyzed_at.isoformat() if placeholder.analyzed_at else None,
             "created_at": placeholder.created_at.isoformat() if placeholder.created_at else None,
             "updated_at": placeholder.updated_at.isoformat() if placeholder.updated_at else None,
         }
@@ -337,9 +670,17 @@ class PlaceholderConfigService:
         # 包含元数据
         if include_metadata:
             config.update({
-                "extraction_metadata": placeholder.extraction_metadata or {},
-                "analysis_metadata": placeholder.analysis_metadata or {},
-                "execution_metadata": placeholder.execution_metadata or {},
+                "extraction_metadata": placeholder.agent_config or {},
+                "analysis_metadata": {
+                    "confidence_score": placeholder.confidence_score,
+                    "analyzed_at": placeholder.analyzed_at.isoformat() if placeholder.analyzed_at else None,
+                    "agent_analyzed": placeholder.agent_analyzed
+                },
+                "execution_metadata": {
+                    "execution_order": placeholder.execution_order,
+                    "cache_ttl_hours": placeholder.cache_ttl_hours,
+                    "sql_validated": placeholder.sql_validated
+                },
                 "runtime_config": self._get_runtime_config(placeholder)
             })
         

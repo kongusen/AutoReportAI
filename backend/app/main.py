@@ -261,6 +261,29 @@ async def startup():
     )
     await FastAPILimiter.init(redis_connection)
     
+    # 初始化统一缓存管理器
+    try:
+        from app.services.infrastructure.cache.unified_cache_system import initialize_cache_manager
+        from app.core.database import get_db
+        
+        # 获取数据库会话
+        db_gen = get_db()
+        db = next(db_gen)
+        
+        # 初始化缓存管理器
+        cache_manager = initialize_cache_manager(
+            enable_memory=True,
+            enable_redis=True,
+            enable_database=True,
+            redis_client=redis_connection,
+            db_session=db
+        )
+        
+        print("🗄️  统一缓存系统初始化成功")
+        
+    except Exception as e:
+        print(f"⚠️  缓存系统初始化失败: {e}")
+        # 缓存系统初始化失败不应该阻止应用启动
 
     # 启动时打印关键配置
     print_startup_config()

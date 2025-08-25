@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 from datetime import datetime
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, computed_field
 
 
 class DataSourceBase(BaseModel):
@@ -109,6 +109,7 @@ class DataSource(DataSourceBase):
     created_at: datetime
     updated_at: Optional[datetime]
 
+    @computed_field
     @property
     def unique_id(self) -> str:
         return str(self.id)
@@ -120,4 +121,9 @@ class DataSource(DataSourceBase):
 
 class DataSourceResponse(DataSource):
     """Data Source API response schema"""
+    pass
+
+
+class DataSourceInDB(DataSource):
+    """Data Source database schema"""
     pass

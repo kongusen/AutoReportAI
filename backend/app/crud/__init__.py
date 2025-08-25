@@ -7,6 +7,8 @@ from .crud_report_history import report_history
 from .crud_task import crud_task as task
 from .crud_task_execution import crud_task_execution
 from .crud_template import crud_template as template
+from .crud_template_placeholder import CRUDTemplatePlaceholder
+from app.models.template_placeholder import TemplatePlaceholder
 from .crud_user import crud_user
 from .crud_user_profile import user_profile
 
@@ -16,6 +18,7 @@ from .crud_user_profile import user_profile
 ai_provider = crud_ai_provider
 etl_job = crud_etl_job
 user = crud_user
+template_placeholder = CRUDTemplatePlaceholder(TemplatePlaceholder)
 
 __all__ = [
     # 原有CRUD
@@ -30,6 +33,8 @@ __all__ = [
     "task",
     "crud_task_execution",
     "template",
+    "template_placeholder",
+    "CRUDTemplatePlaceholder",
     "crud_user",
     "user",
     "user_profile",

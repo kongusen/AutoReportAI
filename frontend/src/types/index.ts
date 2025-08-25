@@ -163,12 +163,19 @@ export interface QueryRequest {
   parameters?: Record<string, any>
 }
 
-// 模板占位符类型
+// 模板占位符类型 - 扩展支持新解析器的所有类型
 export interface Placeholder {
-  type: '统计' | '图表' | '文本' | string;
+  type: '统计' | '图表' | '表格' | '分析' | '日期时间' | '标题' | '摘要' | '作者' | '变量' | '中文' | '文本' | '错误' | '系统错误' | string;
   description: string;
   placeholder_text: string;
-  requirements?: Record<string, any>;
+  requirements?: {
+    content_type?: string;
+    original_type?: string;
+    required?: boolean;
+    error?: string;
+    template_type?: string;
+    fallback_mode?: boolean;
+  };
 }
 
 // 扩展的占位符配置类型 - 基于后端持久化能力
@@ -179,6 +186,7 @@ export interface PlaceholderConfig {
   placeholder_text: string
   placeholder_type: string
   content_type: string
+  description?: string  // 占位符描述
   
   // Agent分析结果
   agent_analyzed: boolean
@@ -200,6 +208,12 @@ export interface PlaceholderConfig {
   analyzed_at?: string
   created_at: string
   updated_at?: string
+  
+  // 解析元数据
+  content_hash?: string
+  original_type?: string
+  extracted_description?: string
+  parsing_metadata?: Record<string, any>
 }
 
 // 占位符值缓存类型
@@ -245,6 +259,17 @@ export interface TemplatePreview {
   total_count: number;
   stats_count: number;
   chart_count: number;
+  // 新增统计字段
+  table_count?: number;
+  analysis_count?: number;
+  datetime_count?: number;
+  title_count?: number;
+  variable_count?: number;
+  // 按内容类型统计
+  content_type_stats?: Record<string, number>;
+  // 错误信息
+  has_errors?: boolean;
+  error_count?: number;
 }
 
 

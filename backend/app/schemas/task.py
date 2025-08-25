@@ -5,7 +5,7 @@ from uuid import UUID
 from enum import Enum
 
 from cron_validator import CronValidator
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, computed_field
 
 # 导入Task状态枚举
 from app.models.task import TaskStatus, ProcessingMode, AgentWorkflowType, ReportPeriod
@@ -55,8 +55,9 @@ class TaskUpdate(BaseModel):
     schedule: Optional[str] = None
     report_period: Optional[ReportPeriod] = None
     recipients: Optional[List[str]] = None
+    is_active: Optional[bool] = None
     
-    # 新增可更新字段
+    # 新增字段
     processing_mode: Optional[ProcessingMode] = None
     workflow_type: Optional[AgentWorkflowType] = None
     max_context_tokens: Optional[int] = None
@@ -82,8 +83,8 @@ class TaskUpdate(BaseModel):
 class Task(TaskBase):
     id: int
     owner_id: UUID
-    unique_id: str
 
+    @computed_field
     @property
     def unique_id(self) -> str:
         return str(self.id)
@@ -96,8 +97,19 @@ class TaskRead(TaskBase):
     id: int
     owner_id: UUID
     is_active: bool
-    unique_id: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    # 新增字段
+    status: Optional[TaskStatus] = None
+    execution_count: Optional[int] = 0
+    success_count: Optional[int] = 0
+    failure_count: Optional[int] = 0
+    success_rate: Optional[float] = 0.0
+    last_execution_at: Optional[datetime] = None
+    average_execution_time: Optional[float] = 0.0
 
+    @computed_field
     @property
     def unique_id(self) -> str:
         return str(self.id)
@@ -106,29 +118,41 @@ class TaskRead(TaskBase):
         from_attributes = True
 
 
-class TaskResponse(TaskBase):
+class TaskInDB(Task):
+    pass
+
+
+class TaskResponse(BaseModel):
+    """Task response schema for API compatibility"""
     id: int
-    owner_id: UUID
+    name: str
+    description: Optional[str] = None
+    template_id: Optional[str] = None
+    data_source_id: Optional[str] = None
+    schedule: Optional[str] = None
+    report_period: str = "monthly"
+    recipients: List[str] = []
+    owner_id: Optional[str] = None
     is_active: bool = True
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    unique_id: str
     
-    # 新增返回字段
-    status: Optional[TaskStatus] = TaskStatus.PENDING
-    execution_count: Optional[int] = 0
-    success_count: Optional[int] = 0
-    failure_count: Optional[int] = 0
-    success_rate: Optional[float] = 0.0
-    last_execution_at: Optional[datetime] = None
-    average_execution_time: Optional[float] = 0.0
+    # 新增字段
+    status: str = "pending"
+    processing_mode: str = "intelligent"
+    workflow_type: str = "simple_report"
+    execution_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    success_rate: float = 0.0
+    last_execution_at: Optional[str] = None
+    average_execution_time: float = 0.0
+    max_context_tokens: int = 32000
+    enable_compression: bool = True
 
-    @property
-    def unique_id(self) -> str:
-        return str(self.id)
-
-    model_config = {
-        "from_attributes": True
-    }
+    class Config:
+        from_attributes = True
 
 
 # TaskExecution相关schemas

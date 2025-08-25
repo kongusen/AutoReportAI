@@ -47,6 +47,12 @@ class TemplatePlaceholder(Base):
     # 元数据
     description = Column(Text)
     confidence_score = Column(Float, default=0.0)           # Agent分析的置信度
+    content_hash = Column(String(16), index=True)           # 内容哈希，用于去重
+    
+    # 解析元数据
+    original_type = Column(String(50))                      # 原始解析类型
+    extracted_description = Column(Text)                    # 提取的描述
+    parsing_metadata = Column(JSON, default=dict)          # 解析元数据
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -79,6 +85,9 @@ class PlaceholderValue(Base):
     row_count = Column(Integer, default=0)                  # 返回行数
     success = Column(Boolean, default=True)
     error_message = Column(Text)
+    source = Column(String(50), default="agent")            # 数据来源：agent, rule, cache
+    confidence_score = Column(Float, default=0.0)           # 置信度分数
+    analysis_metadata = Column(JSON, default=dict)          # 分析元数据
     
     # 时间相关字段 - 支持基于时间的动态SQL和历史数据管理
     execution_time = Column(DateTime(timezone=True))        # 任务执行时间（来自execution_context）

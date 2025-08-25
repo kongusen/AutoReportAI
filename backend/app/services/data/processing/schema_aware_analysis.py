@@ -9,7 +9,8 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.models.table_schema import TableSchema, ColumnSchema, ColumnType
-from app.services.data.schemas import SchemaQueryService, SchemaAnalysisService
+# Lazy import to avoid circular dependency
+# from app.services.data.schemas import SchemaQueryService, SchemaAnalysisService
 from .analysis import DataAnalysisService
 
 
@@ -19,9 +20,26 @@ class SchemaAwareAnalysisService:
     def __init__(self, db_session: Session):
         self.db_session = db_session
         self.logger = logging.getLogger(__name__)
-        self.schema_query_service = SchemaQueryService(db_session)
-        self.schema_analysis_service = SchemaAnalysisService(db_session)
+        # Lazy initialization to avoid circular imports
+        self._schema_query_service = None
+        self._schema_analysis_service = None
         self.data_analysis_service = DataAnalysisService(db_session)
+    
+    @property
+    def schema_query_service(self):
+        """Lazy-loaded schema query service"""
+        if self._schema_query_service is None:
+            from app.services.data.schemas import SchemaQueryService
+            self._schema_query_service = SchemaQueryService(self.db_session)
+        return self._schema_query_service
+    
+    @property
+    def schema_analysis_service(self):
+        """Lazy-loaded schema analysis service"""
+        if self._schema_analysis_service is None:
+            from app.services.data.schemas import SchemaAnalysisService
+            self._schema_analysis_service = SchemaAnalysisService(self.db_session)
+        return self._schema_analysis_service
     
     async def analyze_data_source_with_schema(self, data_source_id: str) -> Dict[str, Any]:
         """

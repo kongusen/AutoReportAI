@@ -66,16 +66,22 @@ class EnhancedTemplateParser:
             if not extraction_result["success"]:
                 return extraction_result
             
-            logger.info(f"模板解析完成: {template_id}, 提取 {extraction_result['stored_placeholders']} 个占位符")
+            # 计算存储的占位符总数
+            stored_count = (
+                extraction_result.get("new_placeholders", 0) + 
+                extraction_result.get("updated_placeholders", 0)
+            )
+            
+            logger.info(f"模板解析完成: {template_id}, 提取 {stored_count} 个占位符")
             
             return {
                 "success": True,
                 "template_id": template_id,
                 "total_placeholders": extraction_result["total_placeholders"],
-                "stored_placeholders": extraction_result["stored_placeholders"],
-                "placeholders": extraction_result["placeholders"],
-                "type_distribution": extraction_result["type_distribution"],
-                "requires_agent_analysis": self._count_requires_analysis(extraction_result["placeholders"]),
+                "stored_placeholders": stored_count,
+                "new_placeholders": extraction_result.get("new_placeholders", 0),
+                "updated_placeholders": extraction_result.get("updated_placeholders", 0),
+                "skipped_placeholders": extraction_result.get("skipped_placeholders", 0),
                 "message": "模板占位符解析并存储成功"
             }
             

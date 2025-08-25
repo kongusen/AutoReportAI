@@ -58,16 +58,18 @@ class SchemaDiscoveryService:
         
         try:
             # 创建Doris连接器
-            connector = create_doris_connector(data_source)
+            from app.services.data.connectors.connector_factory import create_connector
+            connector = create_connector(data_source)
             
-            async with connector:
+            await connector.connect()
+            try:
                 # 测试连接
                 connection_test = await connector.test_connection()
                 if not connection_test.get("success"):
                     return {"success": False, "error": f"连接失败: {connection_test.get('error')}"}
                 
                 # 获取所有表
-                tables = await connector.get_all_tables()
+                tables = await connector.get_tables()
                 if not tables:
                     return {"success": False, "error": "未发现任何表"}
                 
@@ -84,16 +86,22 @@ class SchemaDiscoveryService:
                             )
                             stored_tables.append(table_schema)
                             
-                            # 获取表统计信息
-                            stats_info = await connector.get_table_statistics(table_name)
-                            if "error" not in stats_info:
-                                await self._update_table_statistics(table_schema, stats_info)
+                            # 获取表统计信息（如果连接器支持的话）
+                            if hasattr(connector, 'get_table_statistics'):
+                                try:
+                                    stats_info = await connector.get_table_statistics(table_name)
+                                    if "error" not in stats_info:
+                                        await self._update_table_statistics(table_schema, stats_info)
+                                except Exception as stats_e:
+                                    self.logger.warning(f"获取表 {table_name} 统计信息失败: {stats_e}")
                                 
                     except Exception as e:
                         self.logger.warning(f"处理表 {table_name} 时出错: {e}")
                         # 回滚当前事务
                         self.db_session.rollback()
                         continue
+            finally:
+                await connector.disconnect()
                 
                 return {
                     "success": True,

@@ -11,7 +11,8 @@ User-specific AI Service Factory for Dynamic Configuration Loading
 import logging
 import os
 import openai
-from typing import Dict, Optional, List
+import threading
+from typing import Dict, Optional, List, Any
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -33,6 +34,14 @@ class UserAIServiceFactory:
         self._user_llm_managers: Dict[str, LLMProviderManager] = {}
         # 系统默认AI服务
         self._system_ai_service: Optional[AIService] = None
+        # 系统默认LLM管理器
+        self._system_llm_manager: Optional[LLMProviderManager] = None
+        # 线程锁，确保线程安全
+        self._lock = threading.RLock()
+        # 系统默认LLM管理器
+        self._system_llm_manager: Optional[LLMProviderManager] = None
+        # 线程锁，确保线程安全
+        self._lock = threading.RLock()
         
     def get_user_ai_service(self, user_id: str, refresh_cache: bool = False) -> AIService:
         """
@@ -45,16 +54,24 @@ class UserAIServiceFactory:
         Returns:
             AIService: 用户专属的AI服务实例
         """
-        # 如果需要刷新缓存或者缓存中没有，则重新创建
-        if refresh_cache or user_id not in self._user_ai_services:
-            try:
-                ai_service = self._create_user_ai_service(user_id)
-                self._user_ai_services[user_id] = ai_service
-                logger.info(f"Created AI service for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to create AI service for user {user_id}: {e}")
-                # 回退到系统默认AI服务
-                return self._get_system_ai_service()
+        with self._lock:
+            # 如果需要刷新缓存或者缓存中没有，则重新创建
+            if refresh_cache or user_id not in self._user_ai_services:
+                try:
+                    # 检查是否已经存在服务实例
+                    if user_id in self._user_ai_services and not refresh_cache:
+                        logger.debug(f"Using cached AI service for user {user_id}")
+                        return self._user_ai_services[user_id]
+                    
+                    ai_service = self._create_user_ai_service(user_id)
+                    self._user_ai_services[user_id] = ai_service
+                    logger.info(f"Created AI service for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to create AI service for user {user_id}: {e}")
+                    # 回退到系统默认AI服务
+                    return self._get_system_ai_service()
+            else:
+                logger.debug(f"Using cached AI service for user {user_id}")
         
         return self._user_ai_services[user_id]
     
@@ -69,15 +86,23 @@ class UserAIServiceFactory:
         Returns:
             LLMProviderManager: 用户专属的LLM管理器
         """
-        if refresh_cache or user_id not in self._user_llm_managers:
-            try:
-                llm_manager = self._create_user_llm_manager(user_id)
-                self._user_llm_managers[user_id] = llm_manager
-                logger.info(f"Created LLM manager for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to create LLM manager for user {user_id}: {e}")
-                # 回退到系统级别的LLM管理器
-                return self._get_system_llm_manager()
+        with self._lock:
+            if refresh_cache or user_id not in self._user_llm_managers:
+                try:
+                    # 检查是否已经存在管理器实例
+                    if user_id in self._user_llm_managers and not refresh_cache:
+                        logger.debug(f"Using cached LLM manager for user {user_id}")
+                        return self._user_llm_managers[user_id]
+                    
+                    llm_manager = self._create_user_llm_manager(user_id)
+                    self._user_llm_managers[user_id] = llm_manager
+                    logger.info(f"Created LLM manager for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to create LLM manager for user {user_id}: {e}")
+                    # 回退到系统级别的LLM管理器
+                    return self._get_system_llm_manager()
+            else:
+                logger.debug(f"Using cached LLM manager for user {user_id}")
                 
         return self._user_llm_managers[user_id]
     
@@ -85,86 +110,73 @@ class UserAIServiceFactory:
         """创建用户专属的AI服务"""
         db = SessionLocal()
         try:
-            # 获取用户的AI配置
-            user_providers = crud.ai_provider.get_by_user_id(db, user_id=user_id)
-            
-            if not user_providers:
-                logger.info(f"No AI providers found for user {user_id}, using system default")
-                return self._get_system_ai_service()
-            
-            # 找到用户激活的AI提供商
-            active_provider = None
-            for provider in user_providers:
-                if provider.is_active:
-                    active_provider = provider
-                    break
-                    
-            if not active_provider:
-                logger.info(f"No active AI provider for user {user_id}, using system default")
-                return self._get_system_ai_service()
-            
-            # 创建用户专属的AI服务
-            user_ai_service = UserSpecificAIService(db, user_id)
-            logger.info(f"Successfully created AI service for user {user_id} using provider {active_provider.provider_name}")
-            return user_ai_service
-            
-        finally:
+            return UserSpecificAIService(db, user_id)
+        except Exception as e:
             db.close()
+            raise e
     
     def _create_user_llm_manager(self, user_id: str) -> LLMProviderManager:
         """创建用户专属的LLM管理器"""
         db = SessionLocal()
         try:
-            # 创建用户专属的LLM管理器，只加载该用户的配置
-            user_llm_manager = UserSpecificLLMProviderManager(db, user_id)
-            return user_llm_manager
-        finally:
+            return UserSpecificLLMProviderManager(db, user_id)
+        except Exception as e:
             db.close()
+            raise e
     
     def _get_system_ai_service(self) -> AIService:
         """获取系统默认AI服务"""
         if self._system_ai_service is None:
             db = SessionLocal()
             try:
-                # 使用增强版本，提供 analyze_with_context 等高级能力
                 self._system_ai_service = EnhancedAIService(db)
-                logger.info("Created system default EnhancedAIService")
+                logger.info("Created system default AI service")
             except Exception as e:
                 logger.error(f"Failed to create system AI service: {e}")
-                # 如果连系统服务都创建不了，创建一个模拟的服务
-                self._system_ai_service = MockAIService()
-            finally:
-                db.close()
-                
+                # 返回模拟服务
+                return MockAIService()
         return self._system_ai_service
     
     def _get_system_llm_manager(self) -> LLMProviderManager:
         """获取系统默认LLM管理器"""
-        db = SessionLocal()
-        try:
-            return LLMProviderManager(db)
-        finally:
-            db.close()
+        if self._system_llm_manager is None:
+            db = SessionLocal()
+            try:
+                self._system_llm_manager = LLMProviderManager(db)
+                logger.info("Created system default LLM manager")
+            except Exception as e:
+                logger.error(f"Failed to create system LLM manager: {e}")
+                # 返回一个基本的LLM管理器
+                return LLMProviderManager(db)
+        return self._system_llm_manager
     
-    def clear_user_cache(self, user_id: str):
-        """清理特定用户的缓存"""
-        if user_id in self._user_ai_services:
-            del self._user_ai_services[user_id]
-            logger.info(f"Cleared AI service cache for user {user_id}")
-            
-        if user_id in self._user_llm_managers:
-            del self._user_llm_managers[user_id]
-            logger.info(f"Cleared LLM manager cache for user {user_id}")
+    def clear_user_cache(self, user_id: str = None):
+        """清除用户缓存"""
+        with self._lock:
+            if user_id:
+                if user_id in self._user_ai_services:
+                    del self._user_ai_services[user_id]
+                if user_id in self._user_llm_managers:
+                    del self._user_llm_managers[user_id]
+                logger.info(f"Cleared cache for user {user_id}")
+            else:
+                self._user_ai_services.clear()
+                self._user_llm_managers.clear()
+                logger.info("Cleared all user caches")
     
-    def clear_all_cache(self):
-        """清理所有缓存"""
-        self._user_ai_services.clear()
-        self._user_llm_managers.clear()
-        self._system_ai_service = None
-        logger.info("Cleared all AI service caches")
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        with self._lock:
+            return {
+                "ai_services_count": len(self._user_ai_services),
+                "llm_managers_count": len(self._user_llm_managers),
+                "cached_users": list(self._user_ai_services.keys()),
+                "has_system_ai_service": self._system_ai_service is not None,
+                "has_system_llm_manager": self._system_llm_manager is not None
+            }
     
     def get_user_provider_summary(self, user_id: str) -> Dict[str, any]:
-        """获取用户AI配置摘要"""
+        """获取用户提供商摘要"""
         db = SessionLocal()
         try:
             user_providers = crud.ai_provider.get_by_user_id(db, user_id=user_id)
@@ -172,26 +184,23 @@ class UserAIServiceFactory:
             summary = {
                 "user_id": user_id,
                 "total_providers": len(user_providers),
-                "active_providers": [],
-                "inactive_providers": [],
-                "system_fallback": False
+                "active_providers": 0,
+                "providers": []
             }
             
             for provider in user_providers:
                 provider_info = {
+                    "id": str(provider.id),
                     "name": provider.provider_name,
                     "type": provider.provider_type.value,
-                    "model": provider.default_model_name
+                    "is_active": provider.is_active,
+                    "has_api_key": bool(provider.api_key),
+                    "base_url": str(provider.api_base_url) if provider.api_base_url else None
                 }
+                summary["providers"].append(provider_info)
                 
                 if provider.is_active:
-                    summary["active_providers"].append(provider_info)
-                else:
-                    summary["inactive_providers"].append(provider_info)
-            
-            # 如果没有激活的提供商，将使用系统回退
-            if not summary["active_providers"]:
-                summary["system_fallback"] = True
+                    summary["active_providers"] += 1
                 
             return summary
             
@@ -290,42 +299,10 @@ class UserSpecificLLMProviderManager(LLMProviderManager):
 class MockAIService:
     """模拟AI服务，当所有配置都失败时使用"""
     
-    def __init__(self):
-        self.provider = None
-        self.client = None
-    
-    def health_check(self):
-        return {
-            "status": "mock",
-            "message": "Using mock AI service due to configuration issues"
-        }
-    
-    def call_llm_unified(self, request, provider_name=None):
-        from app.services.ai.integration.llm_service import LLMResponse
-        return LLMResponse(
-            content="Mock response: AI service is not properly configured",
-            model="mock-model",
-            provider="mock",
-            usage={"input_tokens": 0, "output_tokens": 10},
-            response_time=0.1,
-            cost_estimate=0.0
-        )
-    
     async def analyze_with_context(self, context: str, prompt: str, task_type: str, **kwargs) -> str:
-        """提供与 EnhancedAIService 兼容的分析接口，返回保守的默认结果"""
+        """模拟分析响应"""
         try:
-            if task_type == "placeholder_analysis":
-                # 返回严格JSON，避免上层解析失败
-                return (
-                    '{"intent":"statistical","data_operation":"count","business_domain":"generic",'
-                    '"target_metrics":[],"time_dimension":null,"grouping_dimensions":[],"filters":[],'
-                    '"aggregations":["count"],"reasoning":["mock service"],"confidence":0.5,"optimizations":[]}'
-                )
-            elif task_type == "sql_generation":
-                # 返回简单SQL，让上游模板/修复逻辑接管
-                return "SELECT COUNT(*) as total_count FROM default_table"
-            else:
-                return "{}"
+            return "{}"
         except Exception:
             return "{}"
 
@@ -353,20 +330,10 @@ def get_user_llm_manager(user_id: str, refresh_cache: bool = False) -> LLMProvid
     获取用户专属LLM管理器的便捷函数
     
     Args:
-        user_id: 用户ID  
+        user_id: 用户ID
         refresh_cache: 是否刷新缓存
         
     Returns:
         LLMProviderManager: 用户专属的LLM管理器
     """
     return ai_service_factory.get_user_llm_manager(user_id, refresh_cache)
-
-
-def get_user_provider_summary(user_id: str) -> Dict[str, any]:
-    """获取用户AI配置摘要的便捷函数"""
-    return ai_service_factory.get_user_provider_summary(user_id)
-
-
-def clear_user_ai_cache(user_id: str):
-    """清理用户AI服务缓存的便捷函数"""
-    ai_service_factory.clear_user_cache(user_id)

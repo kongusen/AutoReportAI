@@ -228,8 +228,22 @@ class ResultFormatter:
                     value = df.iloc[0, 0]
                     return self._format_single_value(value)
                 else:
-                    # 多行结果
+                    # 多行结果 - 尝试提取第一行第一列的值
+                    if hasattr(df, 'iloc') and len(df) > 0:
+                        try:
+                            # 对于多行结果，通常第一行第一列包含我们需要的主要信息
+                            value = df.iloc[0, 0]
+                            formatted_value = self._format_single_value(value)
+                            # 如果提取的值有意义（不为空且不是NaN），返回它
+                            if formatted_value and formatted_value != "nan" and formatted_value != "None":
+                                self.logger.debug(f"从多行结果中提取第一行第一列值: {formatted_value}")
+                                return formatted_value
+                        except Exception as e:
+                            self.logger.warning(f"无法从多行结果提取值: {e}")
+                    
+                    # 如果无法提取有效值，则返回行数
                     row_count = len(df) if hasattr(df, '__len__') else 0
+                    self.logger.debug(f"多行结果无有效值，返回记录数: {row_count}")
                     return f"共 {row_count} 条记录"
             
             # 处理列表格式
@@ -249,7 +263,23 @@ class ResultFormatter:
                         value = list(first_row.values())[0]
                         return self._format_single_value(value)
                 
-                # 多行结果
+                # 多行结果 - 尝试提取第一行的第一个值
+                if len(raw_data) > 0:
+                    try:
+                        first_row = raw_data[0]
+                        if isinstance(first_row, dict) and first_row:
+                            # 获取第一个字典的第一个值
+                            first_value = list(first_row.values())[0]
+                            formatted_value = self._format_single_value(first_value)
+                            # 如果提取的值有意义，返回它
+                            if formatted_value and formatted_value != "nan" and formatted_value != "None":
+                                self.logger.debug(f"从多行列表结果中提取第一行第一列值: {formatted_value}")
+                                return formatted_value
+                    except Exception as e:
+                        self.logger.warning(f"无法从多行列表结果提取值: {e}")
+                
+                # 如果无法提取有效值，则返回行数
+                self.logger.debug(f"多行列表结果无有效值，返回记录数: {len(raw_data)}")
                 return f"共 {len(raw_data)} 条记录"
             
             # 处理字典格式

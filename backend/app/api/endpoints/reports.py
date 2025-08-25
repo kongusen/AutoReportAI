@@ -1,9 +1,12 @@
 """报告管理API端点 - v2版本"""
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
+import os
+from pathlib import Path
 from uuid import UUID
 
 from app.core.architecture import ApiResponse, PaginatedResponse
@@ -319,6 +322,69 @@ async def get_report(
         },
         message="获取报告成功"
     )
+
+
+@router.delete("/batch", response_model=ApiResponse)
+async def batch_delete_reports(
+    request: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """批量删除报告"""
+    try:
+        report_ids = request.get("report_ids", [])
+        if not report_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请提供要删除的报告ID列表"
+            )
+        
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        # 查找用户有权限删除的报告
+        reports_to_delete = db.query(ReportHistory).join(
+            ReportHistory.task
+        ).filter(
+            ReportHistory.id.in_(report_ids),
+            ReportHistory.task.has(owner_id=user_id)
+        ).all()
+        
+        if not reports_to_delete:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未找到可删除的报告或无权限访问"
+            )
+        
+        # 执行批量删除
+        deleted_count = 0
+        deleted_ids = []
+        for report in reports_to_delete:
+            db.delete(report)
+            deleted_ids.append(report.id)
+            deleted_count += 1
+        
+        db.commit()
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "deleted_count": deleted_count,
+                "deleted_ids": deleted_ids,
+                "requested_count": len(report_ids)
+            },
+            message=f"成功删除 {deleted_count} 个报告"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"批量删除报告失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"批量删除失败: {str(e)}"
+        )
 
 
 @router.delete("/{report_id}", response_model=ApiResponse)
@@ -815,3 +881,134 @@ async def regenerate_report_task(report_id: int):
             
     except Exception as e:
         logger.error(f"Report regeneration failed: {e}")
+
+
+@router.get("/{report_id}/download")
+async def download_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """下载报告文件"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        # 查找报告记录
+        report = db.query(ReportHistory).join(
+            ReportHistory.task
+        ).filter(
+            ReportHistory.id == report_id,
+            ReportHistory.task.has(owner_id=user_id)
+        ).first()
+        
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="报告不存在或没有访问权限"
+            )
+        
+        if report.status != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"报告尚未生成完成，当前状态: {report.status}"
+            )
+        
+        if not report.file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="报告文件路径不存在"
+            )
+        
+        # 检查文件是否存在
+        file_path = Path(report.file_path)
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail="报告文件已被删除或移动"
+            )
+        
+        # 生成友好的文件名
+        task_name = report.task.name if report.task else f"报告_{report_id}"
+        timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S") if report.generated_at else "unknown"
+        filename = f"{task_name}_{timestamp}.{file_path.suffix.lstrip('.')}"
+        
+        # 清理文件名中的非法字符
+        import re
+        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        
+        logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {file_path}")
+        
+        return FileResponse(
+            path=str(file_path),
+            filename=filename,
+            media_type='application/octet-stream'
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"下载报告失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="文件下载失败"
+        )
+
+
+@router.get("/{report_id}/info", response_model=ApiResponse)
+async def get_report_info(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取报告详细信息"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+        
+        report = db.query(ReportHistory).join(
+            ReportHistory.task
+        ).filter(
+            ReportHistory.id == report_id,
+            ReportHistory.task.has(owner_id=user_id)
+        ).first()
+        
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail="报告不存在或没有访问权限"
+            )
+        
+        # 获取文件大小
+        file_size = 0
+        if report.file_path and Path(report.file_path).exists():
+            file_size = Path(report.file_path).stat().st_size
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "id": report.id,
+                "task_id": report.task_id,
+                "task_name": report.task.name if report.task else f"任务_{report.task_id}",
+                "status": report.status,
+                "file_path": report.file_path,
+                "file_size": file_size,
+                "file_size_mb": round(file_size / (1024 * 1024), 2) if file_size > 0 else 0,
+                "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+                "error_message": report.error_message,
+                "processing_metadata": report.processing_metadata,
+                "can_download": report.status == "completed" and report.file_path and Path(report.file_path).exists(),
+                "download_url": f"/api/v1/reports/{report_id}/download" if report.status == "completed" else None
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取报告信息失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="获取报告信息失败"
+        )

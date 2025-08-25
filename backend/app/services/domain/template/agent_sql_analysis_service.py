@@ -35,6 +35,53 @@ class AgentSQLAnalysisService:
             from app.services.application.factories import create_multi_database_agent
             self._multi_db_agent = create_multi_database_agent(self.db, self.user_id)
         return self._multi_db_agent
+
+    def _extract_context_from_template(self, template_id: str, placeholder_text: str) -> str:
+        """从模板内容中提取与占位符最近的三个句子作为上下文。
+        优先使用中文标点进行分句，其次英文标点和换行。
+        """
+        try:
+            from app.models.template import Template
+            tpl = self.db.query(Template).filter(Template.id == template_id).first()
+            if not tpl or not tpl.content:
+                return ""
+            content = tpl.content
+            # 简化：若是hex或二进制，则无法抽取语义上下文
+            # 仅处理文本模板
+            if isinstance(content, str) and len(content) < 200000:
+                # 分句：中文句号、问号、感叹号；英文 .!?；保留分隔符
+                sentences = re.split(r"(?<=[。！？!?\.])\s+|\n+", content)
+                # 去除空白
+                sentences = [s.strip() for s in sentences if s and s.strip()]
+                if not sentences:
+                    return ""
+                # 在content中定位占位符出现的字符位置
+                idx = content.find(placeholder_text) if placeholder_text else -1
+                if idx == -1 and placeholder_text:
+                    # 尝试去掉花括号匹配
+                    stripped = placeholder_text.replace("{{", "").replace("}}", "").strip()
+                    idx = content.find(stripped)
+                if idx == -1:
+                    # Fallback: 返回前两句
+                    join_ctx = "\n".join(sentences[:3])
+                    return join_ctx[:600]
+                # 找到该字符位置所属句子的索引
+                # 通过累积长度定位
+                cumulative = 0
+                target_i = 0
+                for i, s in enumerate(sentences):
+                    cumulative += len(s) + 1  # 粗略加分隔
+                    if cumulative >= idx:
+                        target_i = i
+                        break
+                start = max(0, target_i - 1)
+                end = min(len(sentences), target_i + 2)
+                context_block = "\n".join(sentences[start:end])
+                return context_block[:600]
+            return ""
+        except Exception as e:
+            logger.debug(f"提取模板上下文失败: {e}")
+            return ""
     
     async def analyze_placeholder_with_agent(
         self,
@@ -45,14 +92,6 @@ class AgentSQLAnalysisService:
     ) -> Dict[str, Any]:
         """
         使用Agent分析单个占位符，生成SQL查询
-        
-        Args:
-            placeholder_id: 占位符ID
-            data_source_id: 数据源ID  
-            force_reanalyze: 是否强制重新分析
-            
-        Returns:
-            分析结果
         """
         try:
             # 1. 获取占位符信息
@@ -76,25 +115,32 @@ class AgentSQLAnalysisService:
             if not data_source:
                 raise ValueError(f"数据源不存在: {data_source_id}")
             
-            logger.info(f"开始Agent分析占位符: {placeholder.placeholder_name}")
+            logger.info(f"🔍 开始Agent分析占位符: 【{placeholder.placeholder_name}】")
             
-            # 4. 使用Multi-Database Agent进行分析
-            analysis_result = await self._perform_agent_analysis(placeholder, data_source, execution_context)
+            # 4. 组装占位符上下文（来自模板最近三句）
+            context_text = self._extract_context_from_template(placeholder.template_id, placeholder.placeholder_text or placeholder.placeholder_name)
             
-            # 5. 验证生成的SQL
+            # 5. 使用Multi-Database Agent进行分析
+            analysis_result = await self._perform_agent_analysis(
+                placeholder,
+                data_source,
+                {**(execution_context or {}), "context_text": context_text}
+            )
+            
+            # 6. 验证生成的SQL
             validation_result = await self._validate_generated_sql(
                 analysis_result["generated_sql"], 
                 data_source
             )
             
-            # 6. 持久化分析结果
+            # 7. 持久化分析结果
             await self._save_analysis_result(
                 placeholder, 
                 analysis_result, 
                 validation_result
             )
             
-            logger.info(f"Agent分析完成: {placeholder.placeholder_name}")
+            logger.info(f"✅ Agent分析完成: 【{placeholder.placeholder_name}】")
             
             return {
                 "success": True,
@@ -106,7 +152,8 @@ class AgentSQLAnalysisService:
             }
             
         except Exception as e:
-            logger.error(f"Agent分析失败: {placeholder_id}, 错误: {str(e)}")
+            placeholder_name = placeholder.placeholder_name if 'placeholder' in locals() else "unknown"
+            logger.error(f"Agent分析失败: 【{placeholder_name}】, 错误: {str(e)}")
             
             # 记录失败状态
             if 'placeholder' in locals():
@@ -208,13 +255,17 @@ class AgentSQLAnalysisService:
         execution_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """执行Agent分析"""
+        execution_context = execution_context or {}
         
         # 1. 准备Agent分析的输入数据
         agent_input = {
+            "placeholder_id": str(placeholder.id),
             "placeholder_name": placeholder.placeholder_name,
+            "placeholder_text": placeholder.placeholder_text,  # 传递占位符原始文本
             "placeholder_type": placeholder.placeholder_type,
             "content_type": placeholder.content_type,
             "description": placeholder.description,
+            "context_text": execution_context.get("context_text", ""),  # 模板最近三句上下文
             "intent_analysis": placeholder.agent_config.get("intent_analysis", {}),
             "context_keywords": placeholder.agent_config.get("context_keywords", []),
             "data_source": {
@@ -413,7 +464,8 @@ class AgentSQLAnalysisService:
         })
         
         self.db.commit()
-        logger.info(f"分析结果已保存: {placeholder.placeholder_name}")
+        logger.info(f"💾 分析结果已保存: 【{placeholder.placeholder_name}】")
+        logger.info(f"📝 存储SQL: {analysis_result.get('generated_sql', '')[:100]}{'...' if len(analysis_result.get('generated_sql', '')) > 100 else ''}")
     
     def _get_safe_connection_config(self, data_source: DataSource) -> Dict[str, Any]:
         """获取安全的连接配置（不包含密码）"""

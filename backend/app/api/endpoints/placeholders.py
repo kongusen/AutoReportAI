@@ -28,7 +28,8 @@ from app.services.domain.placeholder import (
     PlaceholderRouter,
     PlaceholderBatchRouter,
     PlaceholderServiceContainer,
-    create_placeholder_router
+    create_placeholder_router,
+    create_placeholder_config_service
 )
 
 logger = logging.getLogger(__name__)
@@ -43,11 +44,14 @@ async def analyze_placeholder_with_new_architecture(
     current_user: User = Depends(get_current_user)
 ):
     """
-    使用新架构分析单个占位符
+    使用新的占位符SQL构建Agent分析单个占位符
     
-    支持完整的 Agent分析 -> 缓存 -> 规则fallback 流程
+    这个端点现在使用新的Agent系统而不是旧的统一架构
     """
     try:
+        # 使用新的占位符SQL构建Agent系统
+        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+        
         # 验证占位符ID
         try:
             placeholder_uuid = UUID(placeholder_id)
@@ -76,8 +80,8 @@ async def analyze_placeholder_with_new_architecture(
                 detail="无权限访问此占位符"
             )
 
-        # 获取数据源ID
-        data_source_id = request_data.get("data_source_id")
+        # 获取数据源ID（从模板或请求中获取）
+        data_source_id = request_data.get("data_source_id") or template.data_source_id
         if not data_source_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -92,38 +96,48 @@ async def analyze_placeholder_with_new_architecture(
                 detail="无权限访问此数据源"
             )
 
-        # 创建占位符请求
-        placeholder_request = PlaceholderRequest(
+        # 创建新的Agent分析器
+        analyzer = PlaceholderSQLAnalyzer(db_session=db, user_id=str(current_user.id))
+        
+        # 执行分析
+        result = await analyzer.analyze_placeholder(
             placeholder_id=str(placeholder_uuid),
-            placeholder_name=placeholder.placeholder_name,
+            placeholder_text=placeholder.placeholder_name,
+            data_source_id=str(data_source_id),
             placeholder_type=placeholder.placeholder_type,
-            data_source_id=data_source_id,
-            user_id=str(current_user.id),
-            force_reanalyze=request_data.get("force_reanalyze", False),
-            execution_time=datetime.fromisoformat(
-                request_data.get("execution_time", datetime.now().isoformat())
-            ),
-            metadata=request_data.get("metadata", {})
+            template_id=str(template.id),
+            force_reanalyze=request_data.get('force_reanalyze', False)
         )
-
-        # 使用新架构处理占位符
-        router_service = create_placeholder_router(db, str(current_user.id))
-        response = await router_service.process_placeholder(placeholder_request)
-
-        return APIResponse(
-            success=response.success,
-            message="占位符分析完成" if response.success else "占位符分析失败",
-            data={
-                "placeholder_id": placeholder_id,
-                "placeholder_name": placeholder.placeholder_name,
-                "value": response.value,
-                "source": response.source.value,
-                "execution_time_ms": response.execution_time_ms,
-                "confidence": response.confidence,
-                "error_message": response.error_message,
-                "metadata": response.metadata
-            }
-        )
+        
+        if result.success:
+            return APIResponse(
+                code=200,
+                message="占位符分析成功",
+                data={
+                    "placeholder_id": str(placeholder_uuid),
+                    "placeholder_name": placeholder.placeholder_name,
+                    "generated_sql": result.generated_sql,
+                    "confidence": result.confidence,
+                    "semantic_type": result.semantic_type,
+                    "semantic_subtype": result.semantic_subtype,
+                    "data_intent": result.data_intent,
+                    "target_table": result.target_table,
+                    "explanation": result.explanation,
+                    "suggestions": result.suggestions,
+                    "metadata": result.metadata,
+                    "analysis_timestamp": result.analysis_timestamp.isoformat()
+                }
+            )
+        else:
+            return APIResponse(
+                code=400,
+                message=f"占位符分析失败: {result.error_message}",
+                data={
+                    "placeholder_id": str(placeholder_uuid),
+                    "error_message": result.error_message,
+                    "error_context": result.error_context
+                }
+            )
 
     except HTTPException:
         raise
@@ -145,9 +159,12 @@ async def analyze_template_placeholders_batch(
     """
     批量分析模板的所有占位符
     
-    使用新架构并行处理所有占位符
+    使用新的Agent系统和门面服务并行处理所有占位符
     """
     try:
+        # 使用新的门面服务
+        from app.services.ai.facades.placeholder_analysis_facade import create_placeholder_analysis_facade
+        
         # 验证模板ID
         try:
             template_uuid = UUID(template_id)
@@ -165,41 +182,17 @@ async def analyze_template_placeholders_batch(
                 detail="无权限访问此模板"
             )
 
-        # 获取数据源ID
-        data_source_id = request_data.get("data_source_id")
-        if not data_source_id:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="缺少数据源ID"
-            )
-
-        # 验证数据源权限
-        data_source = crud.data_source.get(db, id=UUID(data_source_id))
-        if not data_source or data_source.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="无权限访问此数据源"
-            )
-
-        # 使用新架构批量处理
-        batch_router = create_batch_router(db, str(current_user.id))
-        
-        execution_context = {
-            "execution_time": request_data.get("execution_time", datetime.now().isoformat()),
-            "metadata": request_data.get("metadata", {})
-        }
-        
-        result = await batch_router.process_template_placeholders(
+        # 创建门面服务并分析模板占位符
+        facade = create_placeholder_analysis_facade(db)
+        result = await facade.analyze_template_placeholders(
             template_id=str(template_uuid),
-            data_source_id=data_source_id,
             user_id=str(current_user.id),
-            force_reanalyze=request_data.get("force_reanalyze", False),
-            execution_context=execution_context
+            force_reanalyze=request_data.get('force_reanalyze', False)
         )
-
+        
         return APIResponse(
-            success=result["success"],
-            message="批量分析完成" if result["success"] else "批量分析失败",
+            code=200 if result['success'] else 400,
+            message=result['message'],
             data=result
         )
 
@@ -315,6 +308,95 @@ async def test_placeholder_query(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"测试查询失败: {str(e)}"
+        )
+
+
+@router.post("/{placeholder_id}/validate-sql", response_model=APIResponse)
+async def validate_placeholder_sql(
+    placeholder_id: str,
+    request_data: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    验证占位符SQL查询
+    """
+    try:
+        # 验证占位符ID
+        try:
+            placeholder_uuid = UUID(placeholder_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="无效的占位符ID格式"
+            )
+
+        # 获取占位符配置
+        from app.models.template_placeholder import TemplatePlaceholder
+        placeholder = db.query(TemplatePlaceholder).filter(
+            TemplatePlaceholder.id == placeholder_uuid
+        ).first()
+        if not placeholder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="占位符不存在"
+            )
+
+        # 检查权限（通过模板所有权）
+        template = crud.template.get(db, id=placeholder.template_id)
+        if not template or template.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权限访问此占位符"
+            )
+
+        # 获取数据源ID
+        data_source_id = request_data.get("data_source_id")
+        if not data_source_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="缺少数据源ID"
+            )
+
+        # 验证数据源权限
+        data_source = crud.data_source.get(db, id=UUID(data_source_id))
+        if not data_source or data_source.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权限访问此数据源"
+            )
+
+        # 检查是否有生成的SQL
+        if not placeholder.generated_sql:
+            return APIResponse(
+                success=False,
+                message="占位符没有生成的SQL查询",
+                data={
+                    "valid": False,
+                    "error": "占位符尚未分析或未生成SQL"
+                }
+            )
+
+        # 验证SQL语法和执行
+        config_service = create_placeholder_config_service(db)
+        validation_result = await config_service.validate_placeholder_sql(
+            placeholder_id=str(placeholder_uuid),
+            data_source_id=data_source_id
+        )
+
+        return APIResponse(
+            success=True,
+            message="SQL验证完成",
+            data=validation_result
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"验证占位符SQL失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SQL验证失败: {str(e)}"
         )
 
 

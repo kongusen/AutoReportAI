@@ -40,19 +40,18 @@ from .data.sources.data_source_service import DataSourceService
 from .data.connectors.doris_connector import DorisConnector
 
 # 领域服务向后兼容
-from .domain.placeholder.agent_service import AgentAnalysisService
 from .domain.template.template_service import TemplateService
 from .domain.reporting.generator import ReportGenerationService
 
 # AI服务向后兼容（使用新的上下文工程）
 from .ai.integration.llm_service import AIService as LLMService
-from .ai.legacy_agents.multi_database_agent import MultiDatabaseAgent
+from .ai.agents.placeholder_sql_agent import PlaceholderSQLAgent, PlaceholderSQLAnalyzer
 
 # 应用服务向后兼容
 from .application.task_management.execution.two_phase_pipeline import execute_two_phase_pipeline
 
 # 基础设施服务向后兼容  
-from .infrastructure.cache.pipeline_cache_manager import PipelineCacheManager
+# PipelineCacheManager已被统一缓存系统替代
 from .infrastructure.notification.notification_service import NotificationService
 from .infrastructure.storage.file_storage_service import FileStorageService
 
@@ -78,19 +77,18 @@ __all__ = [
     "DorisConnector",
     
     # 领域服务
-    "AgentAnalysisService",
     "TemplateService",
     "ReportGenerationService",
     
     # AI服务
     "LLMService",
-    "MultiDatabaseAgent",
+    "PlaceholderSQLAgent",
+    "PlaceholderSQLAnalyzer",
     
     # 应用服务
     "execute_two_phase_pipeline",
     
     # 基础设施服务
-    "PipelineCacheManager",
     "NotificationService", 
     "FileStorageService",
 ]

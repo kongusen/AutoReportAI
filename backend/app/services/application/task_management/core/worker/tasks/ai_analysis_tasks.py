@@ -20,19 +20,18 @@ def custom_ai_analysis_task(data_context: str, analysis_prompt: str) -> Dict[str
     logger.info(f"开始执行AI分析任务")
     
     async def run_analysis():
-        from app.services.agents.factory import create_agent, AgentType
+        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
         from app.db.session import get_db_session
         
         with get_db_session() as db:
-            # 创建分析Agent
-            agent = create_agent(AgentType.ANALYSIS, db_session=db)
+            # 创建AI服务
+            ai_service = EnhancedAIService(db=db)
             
             # 执行AI分析
-            result = await agent.analyze_with_ai(
+            result = await ai_service.analyze_with_context(
                 context=data_context,
                 prompt=analysis_prompt,
-                task_type="celery_ai_analysis",
-                use_cache=True
+                task_type="celery_ai_analysis"
             )
             
             return result
@@ -68,16 +67,16 @@ def ai_pipeline_task(pipeline_config: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"开始执行AI Pipeline任务")
     
     async def run_pipeline():
-        from app.services.agents.factory import create_agent, AgentType
+        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
         from app.db.session import get_db_session
         
         results = {}
         
         with get_db_session() as db:
             # 阶段1: 数据分析
-            analysis_agent = create_agent(AgentType.ANALYSIS, db_session=db)
+            ai_service = EnhancedAIService(db=db)
             
-            stage1_result = await analysis_agent.analyze_with_ai(
+            stage1_result = await ai_service.analyze_with_context(
                 context=pipeline_config["data"],
                 prompt="请进行数据质量分析和初步洞察",
                 task_type="pipeline_stage1"
@@ -138,21 +137,20 @@ def batch_ai_analysis_task(batch_data: list) -> Dict[str, Any]:
     logger.info(f"开始执行批量AI分析任务，数量: {len(batch_data)}")
     
     async def run_batch_analysis():
-        from app.services.agents.factory import create_agent, AgentType
+        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
         from app.db.session import get_db_session
         
         results = []
         
         with get_db_session() as db:
-            agent = create_agent(AgentType.ANALYSIS, db_session=db)
+            ai_service = EnhancedAIService(db=db)
             
             for i, item in enumerate(batch_data):
                 try:
-                    result = await agent.analyze_with_ai(
+                    result = await ai_service.analyze_with_context(
                         context=item.get('context', ''),
                         prompt=item.get('prompt', '请分析这个数据'),
-                        task_type=f"batch_analysis_{i}",
-                        use_cache=True
+                        task_type=f"batch_analysis_{i}"
                     )
                     
                     results.append({

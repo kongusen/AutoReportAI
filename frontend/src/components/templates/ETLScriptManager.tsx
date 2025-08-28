@@ -22,6 +22,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { Modal } from '@/components/ui/Modal'
+import { ChartPreview } from '@/components/ui/ChartPreview'
 import { PlaceholderConfig, PlaceholderValue, DataSource } from '@/types'
 import { api } from '@/lib/api'
 import toast from 'react-hot-toast'
@@ -35,6 +36,7 @@ interface ETLScriptManagerProps {
 export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScriptManagerProps) {
   const [executing, setExecuting] = useState(false)
   const [testResult, setTestResult] = useState<PlaceholderValue | null>(null)
+  const [isChartPlaceholder, setIsChartPlaceholder] = useState(false)
   const [selectedDataSource, setSelectedDataSource] = useState<string>('')
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [sqlQuery, setSqlQuery] = useState(placeholder.generated_sql || '')
@@ -45,6 +47,15 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
       setSelectedDataSource(dataSources[0].id)
     }
   }, [dataSources, selectedDataSource])
+
+  // 检查是否为图表类占位符
+  useEffect(() => {
+    const isChart = placeholder.content_type === 'chart' || 
+                   placeholder.content_type === 'image' ||
+                   placeholder.placeholder_type === 'chart' ||
+                   placeholder.placeholder_type === 'visualization'
+    setIsChartPlaceholder(isChart)
+  }, [placeholder])
 
   useEffect(() => {
     // 加载执行历史
@@ -69,7 +80,7 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
     }
   }
 
-  // 测试SQL查询
+  // 测试SQL查询并生成图表
   const handleTestQuery = async () => {
     if (!selectedDataSource || !placeholder.generated_sql) {
       toast.error('请选择数据源并确保有SQL查询')
@@ -78,35 +89,64 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
 
     try {
       setExecuting(true)
-      const res = await api.post(`/placeholders/${placeholder.id}/test-query`, {
+      
+      // 使用新的图表测试接口
+      const res = await api.post(`/chart-test/placeholders/${placeholder.id}/test-chart`, {
         data_source_id: selectedDataSource,
-        sql_query: placeholder.generated_sql
+        execution_mode: 'test_with_chart'  // 完整测试模式，生成图表
       })
 
       if (res?.success) {
         const d = res.data || res || {}
-        // 兼容不同字段命名/类型，进行一次归一化
+        
+        // 兼容旧格式的同时支持新的图表功能
         const normalized: any = {
           ...d,
           success: Boolean(d.success),
           execution_time_ms: Number(d.execution_time_ms ?? d.execution_time ?? 0),
-          row_count: Number(
-            d.row_count ?? (Array.isArray(d.data) ? d.data.length : 0)
-          ),
+          row_count: Number(d.row_count ?? (Array.isArray(d.raw_data) ? d.raw_data.length : 0)),
           formatted_text: d.formatted_text ?? '',
           error_message: d.error_message ?? d.error ?? null,
-          data: d.data || [],
-          sql_executed: d.sql_executed || ''
+          data: d.raw_data || d.data || [],
+          sql_executed: d.sql_executed || '',
+          
+          // 新增图表相关字段
+          chart_config: d.chart_config,
+          chart_type: d.chart_type,
+          echarts_config: d.echarts_config,
+          chart_ready: Boolean(d.chart_ready),
+          test_summary: d.test_summary,
+          
+          // 占位符类型信息
+          is_chart_placeholder: d.is_chart_placeholder,
+          placeholder_type_info: d.placeholder_type_info,
+          
+          full_result: d.full_result
         }
+        
         setTestResult(normalized)
-        toast.success('SQL查询测试成功')
+        
+        // 根据占位符类型和结果显示不同的成功消息
+        if (normalized.is_chart_placeholder === false) {
+          toast.success('SQL查询测试成功')
+        } else if (normalized.chart_ready) {
+          toast.success(`图表生成成功！类型：${normalized.chart_type}，数据点：${normalized.row_count}`)
+        } else {
+          toast.success('SQL查询测试成功')
+        }
+        
         loadExecutionHistory() // 重新加载历史
       } else {
-        toast.error(res?.message || 'SQL查询测试失败')
+        // 根据占位符类型提供更友好的错误提示
+        const baseMessage = res?.message || '测试失败'
+        const errorMessage = isChartPlaceholder ? `图表生成失败: ${baseMessage}` : `SQL查询测试失败: ${baseMessage}`
+        toast.error(errorMessage)
       }
     } catch (error: any) {
       console.error('Failed to test query:', error)
-      toast.error(error.response?.data?.detail || 'SQL查询测试失败')
+      const errorDetail = error.response?.data?.detail || '网络错误或服务异常'
+      const errorMessage = isChartPlaceholder ? `图表生成异常: ${errorDetail}` : `SQL查询测试异常: ${errorDetail}`
+      toast.error(errorMessage)
     } finally {
       setExecuting(false)
     }
@@ -252,7 +292,7 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
                   disabled={executing || !placeholder.generated_sql || !selectedDataSource}
                 >
                   <PlayIcon className="w-3 h-3 mr-1" />
-                  {executing ? '测试中...' : '测试查询'}
+                  {executing ? '生成中...' : isChartPlaceholder ? '测试并生成图表' : '测试SQL查询'}
                 </Button>
                 <Button
                   size="sm"
@@ -269,9 +309,11 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
             {/* 执行结果 */}
             <div className="space-y-3">
               {testResult ? (
-                <div>
+                <div className="space-y-4">
                   <label className="text-sm font-medium text-gray-600">最新测试结果</label>
-                  <div className="mt-1 space-y-2">
+                  
+                  {/* 基础执行信息 */}
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
                       <span className="text-xs text-gray-600">执行状态</span>
                       <Badge variant={testResult.success ? 'success' : 'destructive'}>
@@ -289,30 +331,98 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
                       <span className="text-xs font-mono">{testResult.row_count}</span>
                     </div>
                     
-                    {testResult.success && testResult.formatted_text && (
-                      <div>
-                        <label className="text-xs font-medium text-gray-600">格式化结果</label>
-                        <div className="mt-1 p-2 bg-blue-50 rounded text-xs">
-                          {testResult.formatted_text}
-                        </div>
+                    {/* 显示实际查询结果值 */}
+                    {testResult.actual_result_value && (
+                      <div className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                        <span className="text-xs text-gray-600">查询结果</span>
+                        <span className="text-xs font-mono font-semibold text-blue-700">
+                          {testResult.actual_result_value}
+                        </span>
                       </div>
                     )}
                     
-                    {!testResult.success && testResult.error_message && (
-                      <div>
-                        <label className="text-xs font-medium text-gray-600">错误信息</label>
-                        <div className="mt-1 p-2 bg-red-50 rounded text-xs text-red-700">
-                          {testResult.error_message}
-                        </div>
+                    {/* 图表类型信息 */}
+                    {testResult.chart_ready && testResult.chart_type && (
+                      <div className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                        <span className="text-xs text-gray-600">图表类型</span>
+                        <Badge variant="outline" className="text-xs">
+                          {testResult.chart_type}
+                        </Badge>
                       </div>
                     )}
                   </div>
+                  
+                  {/* 图表预览（仅图表类占位符显示） */}
+                  {testResult.success && testResult.chart_ready && testResult.echarts_config && isChartPlaceholder && (
+                    <div>
+                      <ChartPreview
+                        echartsConfig={testResult.echarts_config}
+                        chartType={testResult.chart_type || 'bar_chart'}
+                        chartData={testResult.data || []}
+                        metadata={{
+                          data_points: testResult.row_count,
+                          generation_time: new Date().toISOString(),
+                          data_source: {
+                            sql_query: testResult.sql_executed,
+                            execution_time_ms: testResult.execution_time_ms,
+                            row_count: testResult.row_count,
+                            data_quality_score: 0.8
+                          }
+                        }}
+                        title={`${placeholder.placeholder_name} - 测试图表`}
+                        className="mt-4"
+                      />
+                    </div>
+                  )}
+
+                  {/* 占位符类型说明（非图表类占位符） */}
+                  {testResult.success && testResult.placeholder_type_info && !isChartPlaceholder && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">占位符类型说明</label>
+                      <div className="mt-1 p-2 bg-yellow-50 rounded text-xs text-yellow-700 border border-yellow-200">
+                        <div className="flex items-start space-x-2">
+                          <InformationCircleIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-medium">非图表类占位符</div>
+                            <div className="mt-1">
+                              类型: {testResult.placeholder_type_info.content_type} / {testResult.placeholder_type_info.placeholder_type}
+                            </div>
+                            <div className="mt-1 text-yellow-600">
+                              {testResult.placeholder_type_info.message}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* 格式化文本结果（非图表模式） */}
+                  {testResult.success && testResult.formatted_text && !testResult.chart_ready && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">格式化结果</label>
+                      <div className="mt-1 p-2 bg-blue-50 rounded text-xs">
+                        {testResult.formatted_text}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* 错误信息 */}
+                  {!testResult.success && testResult.error_message && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600">错误信息</label>
+                      <div className="mt-1 p-2 bg-red-50 rounded text-xs text-red-700">
+                        {testResult.error_message}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-6">
                   <TableCellsIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                   <p className="text-sm text-gray-500">暂无测试结果</p>
-                  <p className="text-xs text-gray-400 mt-1">运行SQL查询测试以查看结果</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {isChartPlaceholder ? '运行SQL查询测试以生成图表结果' : '运行SQL查询测试以查看结果'}
+                  </p>
                 </div>
               )}
 
@@ -321,13 +431,13 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
                 <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
                   <span className="text-xs text-gray-600">目标数据库</span>
                   <span className="text-xs font-mono">
-                    {placeholder.target_database || '未设置'}
+                    {testResult?.target_database || placeholder.target_database || '未设置'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
                   <span className="text-xs text-gray-600">目标表</span>
                   <span className="text-xs font-mono">
-                    {placeholder.target_table || '未设置'}
+                    {testResult?.target_table || placeholder.target_table || '未设置'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between p-2 bg-gray-50 rounded">

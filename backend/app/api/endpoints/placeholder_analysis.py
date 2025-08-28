@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 from app.api.deps import get_db, get_current_active_user
 from app.models.user import User
-from app.services.ai.facades.placeholder_analysis_facade import create_placeholder_analysis_facade
+# 直接使用IAOP核心平台
+from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent
 
 router = APIRouter()
 
@@ -234,7 +235,8 @@ async def analyze_single_placeholder(
         facade = create_placeholder_analysis_facade(db)
         
         # 先获取占位符信息
-        from app.services.ai.facades.placeholder_analysis_facade import PlaceholderAnalysisFacade
+        # 直接使用IAOP代理
+        from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderAnalysisFacade
         facade_instance = PlaceholderAnalysisFacade(db)
         placeholder_info = await facade_instance._get_placeholder_info(placeholder_id)
         
@@ -245,7 +247,8 @@ async def analyze_single_placeholder(
             )
         
         # 执行分析
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
         analyzer = PlaceholderSQLAnalyzer(db_session=db, user_id=str(current_user.id))
         
         result = await analyzer.analyze_placeholder(
@@ -284,7 +287,8 @@ async def get_placeholder_status(
     """
     
     try:
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
         analyzer = PlaceholderSQLAnalyzer(db_session=db, user_id=str(current_user.id))
         
         result = await analyzer.check_stored_sql(placeholder_id)
@@ -319,14 +323,16 @@ async def batch_analyze_placeholders(
     """
     
     try:
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
         analyzer = PlaceholderSQLAnalyzer(db_session=db, user_id=str(current_user.id))
         
         # 构建批量请求
         analysis_requests = []
         for placeholder_id in request.placeholder_ids:
             # 获取占位符信息
-            from app.services.ai.facades.placeholder_analysis_facade import PlaceholderAnalysisFacade
+            # 直接使用IAOP代理
+            from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderAnalysisFacade
             facade_instance = PlaceholderAnalysisFacade(db)
             placeholder_info = await facade_instance._get_placeholder_info(placeholder_id)
             

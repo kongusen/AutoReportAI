@@ -50,7 +50,8 @@ async def analyze_placeholder_with_new_architecture(
     """
     try:
         # 使用新的占位符SQL构建Agent系统
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
         
         # 验证占位符ID
         try:
@@ -163,7 +164,8 @@ async def analyze_template_placeholders_batch(
     """
     try:
         # 使用新的门面服务
-        from app.services.ai.facades.placeholder_analysis_facade import create_placeholder_analysis_facade
+        # 直接使用IAOP核心平台
+        from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent
         
         # 验证模板ID
         try:

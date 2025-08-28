@@ -281,7 +281,7 @@ class DorisConnector(BaseConnector):
             username=data_source.doris_username or "root",
             password=DataSourcePasswordManager.get_password(data_source.doris_password),
             timeout=30,  # 设置默认超时时间为30秒
-            use_mysql_protocol=True  # 启用MySQL协议
+            use_mysql_protocol=False  # 优先使用HTTP API，因为更稳定
         )
         
         return cls(config)
@@ -1040,6 +1040,9 @@ class DorisConnector(BaseConnector):
         if response.status == 200:
             result = await response.json()
             
+            # 调试：打印完整响应（可选）
+            # self.logger.info(f"🔍 Doris HTTP 响应: {result}")
+            
             # 增强的错误日志
             if result.get("code") != 0:
                 error_info = {
@@ -1064,8 +1067,10 @@ class DorisConnector(BaseConnector):
                 raise Exception(f"查询执行失败: {error_message}")
             
             # 解析Doris HTTP查询API响应
-            data = result.get("data", [])
-            columns = result.get("meta", [])
+            # Doris API返回结构: {"data": {"type": "result_set", "meta": [...], "data": [...] }, "msg": "success", "code": 0}
+            response_data = result.get("data", {})
+            data = response_data.get("data", [])
+            columns = response_data.get("meta", [])
             
             # 构建DataFrame
             if data and columns:
@@ -1097,6 +1102,10 @@ class DorisConnector(BaseConnector):
     async def _execute_http_query(self, fe_host: str, start_time: float, sql: str, parameters: Optional[Dict] = None) -> DorisQueryResult:
         """使用HTTP查询接口执行一般SQL查询"""
         try:
+            # 确保session已初始化
+            if not self.session:
+                await self.connect()
+            
             # 处理参数替换
             formatted_sql = sql
             if parameters:
@@ -1120,34 +1129,19 @@ class DorisConnector(BaseConnector):
                     "headers": {"Content-Type": "application/json"},
                     "data_type": "json",
                     "data": {"stmt": formatted_sql}
-                },
-                # 方法2: POST with JSON (fallback to old 'sql' format)
-                {
-                    "method": "post",
-                    "headers": {"Content-Type": "application/json"},
-                    "data_type": "json",
-                    "data": {"sql": formatted_sql}
-                },
-                # 方法3: POST with form data
-                {
-                    "method": "post", 
-                    "headers": {"Content-Type": "application/x-www-form-urlencoded"},
-                    "data_type": "form",
-                    "data": {"sql": formatted_sql}
-                },
-                # 方法4: GET with SQL parameter
-                {
-                    "method": "get",
-                    "headers": {},
-                    "data_type": "params",
-                    "data": {"sql": formatted_sql}
                 }
             ]
             
             for url in endpoints_to_try:
                 for method_config in request_methods:
                     try:
-                        self.logger.debug(f"尝试HTTP查询: {method_config['method'].upper()} {url}")
+                        self.logger.info(f"尝试HTTP查询: {method_config['method'].upper()} {url}")
+                        self.logger.info(f"请求数据: {method_config['data']}")
+                        
+                        # 确保session可用
+                        if not self.session or self.session.closed:
+                            self.logger.warning("Session不可用，重新连接")
+                            await self.connect()
                         
                         if method_config["data_type"] == "json":
                             async with getattr(self.session, method_config["method"])(
@@ -1156,9 +1150,15 @@ class DorisConnector(BaseConnector):
                                 auth=auth, 
                                 headers=method_config["headers"]
                             ) as response:
+                                self.logger.info(f"HTTP响应状态: {response.status}")
                                 return await self._process_http_response(response, start_time, fe_host)
                                 
                         elif method_config["data_type"] == "form":
+                            # 确保session可用
+                            if not self.session or self.session.closed:
+                                self.logger.warning("Session不可用，重新连接")
+                                await self.connect()
+                            
                             form_data = aiohttp.FormData()
                             for key, value in method_config["data"].items():
                                 form_data.add_field(key, value)
@@ -1171,6 +1171,11 @@ class DorisConnector(BaseConnector):
                                 return await self._process_http_response(response, start_time, fe_host)
                                 
                         elif method_config["data_type"] == "params":
+                            # 确保session可用
+                            if not self.session or self.session.closed:
+                                self.logger.warning("Session不可用，重新连接")
+                                await self.connect()
+                            
                             async with getattr(self.session, method_config["method"])(
                                 url, 
                                 params=method_config["data"], 
@@ -1180,14 +1185,14 @@ class DorisConnector(BaseConnector):
                                 return await self._process_http_response(response, start_time, fe_host)
                                 
                     except Exception as endpoint_error:
-                        self.logger.debug(f"端点 {url} 方法 {method_config['method']} 失败: {endpoint_error}")
+                        self.logger.error(f"端点 {url} 方法 {method_config['method']} 失败: {endpoint_error}")
                         continue
             
             # 如果所有方法都失败，抛出详细的异常信息
             self.logger.error(f"所有HTTP查询端点和方法都失败")
             self.logger.error(f"尝试的SQL: {formatted_sql[:200]}...")
             self.logger.error(f"尝试的端点: {endpoints_to_try}")
-            raise Exception(f"HTTP query failed: 所有HTTP查询端点和方法都失败。请检查Doris服务状态和网络连接。")
+            raise Exception(f"HTTP query failed:所有HTTP查询端点和方法都失败。请检查Doris服务状态和网络连接。")
                     
         except Exception as e:
             # HTTP查询失败时不要伪造数据，抛出异常让上层感知错误

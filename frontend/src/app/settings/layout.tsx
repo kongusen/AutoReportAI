@@ -1,11 +1,15 @@
+'use client'
+
+import { AppLayout } from '@/components/layout/AppLayout'
+
 export default function SettingsLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <AppLayout>
       {children}
-    </div>
+    </AppLayout>
   )
 }

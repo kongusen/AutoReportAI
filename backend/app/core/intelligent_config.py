@@ -110,7 +110,7 @@ class UserLLMConfigSchema(BaseModel):
     pii_detection_enabled: bool = Field(True, description="启用PII检测")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "config_name": "production_config",
                 "is_default": True,

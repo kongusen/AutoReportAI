@@ -1,8 +1,8 @@
 """
-Cached Agent Orchestrator
+Cached Agent Orchestrator - V2 (基于统一上下文系统)
 
-基于新架构重新实现的缓存代理编排器
-集成agent_service、cache_service和上下文感知架构
+现在使用新的统一上下文系统，提供向后兼容性的同时
+集成了智能上下文管理、渐进式优化和学习功能
 """
 
 import logging
@@ -11,13 +11,15 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-# Import moved to avoid circular dependency  
+# 新的统一上下文编排器
+from .unified_context_orchestrator import get_unified_context_orchestrator, UnifiedContextOrchestrator
+
+# 保留必要的传统导入以支持回退
 from app.services.domain.placeholder.unified_cache_service import UnifiedCacheService
 from app.services.domain.placeholder.execution_service import DataExecutionService
 from app.services.domain.placeholder.models import (
     PlaceholderRequest, AgentExecutionResult, ResultSource
 )
-# PlaceholderSQLAgent import moved to __init__ to avoid circular dependency
 from app.services.data.connectors.connector_factory import create_connector
 from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
 from app import crud, schemas
@@ -27,28 +29,48 @@ logger = logging.getLogger(__name__)
 
 class CachedAgentOrchestrator:
     """
-    缓存代理编排器
+    缓存代理编排器 - V2版本 (基于统一上下文系统)
     
-    负责协调Agent分析、缓存管理、数据提取和报告生成的完整流程
+    现在委托给统一上下文编排器，提供向后兼容性
+    同时集成了智能上下文管理、渐进式优化和学习功能
     """
     
-    def __init__(self, db: Session, user_id: str = None):
+    def __init__(
+        self, 
+        db: Session, 
+        user_id: str = None,
+        use_unified_system: bool = True,
+        integration_mode: str = "intelligent"
+    ):
         self.db = db
         self.user_id = user_id
+        self.use_unified_system = use_unified_system
+        self.integration_mode = integration_mode
         
-        # 初始化核心服务
-        self.cache_service = UnifiedCacheService(db)
+        if use_unified_system:
+            # 使用新的统一上下文编排器
+            self.unified_orchestrator = get_unified_context_orchestrator(
+                db=db,
+                user_id=user_id,
+                integration_mode=integration_mode,
+                enable_caching=True
+            )
+            logger.info(f"CachedAgentOrchestrator V2 初始化，使用统一上下文系统，模式: {integration_mode}")
+        else:
+            # 回退到传统实现
+            logger.warning("CachedAgentOrchestrator 使用传统模式 - 建议升级到统一上下文系统")
+            self._init_traditional_services()
+    
+    def _init_traditional_services(self):
+        """初始化传统服务（回退模式）"""
+        self.cache_service = UnifiedCacheService(self.db)
         # Import here to avoid circular dependency
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
-        self.agent_service = PlaceholderSQLAnalyzer(db_session=db, user_id=user_id or "system")
-        self.execution_service = DataExecutionService(db)
-        
-        # 设置服务依赖 (新Agent系统不需要手动设置)
-        # self.agent_service.set_execution_service(self.execution_service)
-        
-        # 初始化AI代理
-        from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAgent
-        self.ai_agent = PlaceholderSQLAgent(db_session=db, user_id=user_id)
+        from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
+        self.agent_service = PlaceholderSQLAnalyzer(db_session=self.db, user_id=self.user_id or "system")
+        self.execution_service = DataExecutionService(self.db)
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderSQLAgent
+        self.ai_agent = PlaceholderSQLAgent()
         
         # 初始化模板解析器
         self.template_parser = EnhancedTemplateParser(db)
@@ -65,19 +87,47 @@ class CachedAgentOrchestrator:
         execution_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        执行阶段1：模板分析和Agent处理
+        执行阶段1：模板分析和Agent处理 - V2版本
         
-        Args:
-            template_id: 模板ID
-            data_source_id: 数据源ID
-            force_reanalyze: 是否强制重新分析
-            execution_context: 执行上下文
+        现在委托给统一上下文编排器处理，提供智能上下文管理
+        """
+        if self.use_unified_system:
+            logger.info(f"使用统一上下文系统进行阶段1分析 - 模板: {template_id}")
             
-        Returns:
-            包含分析结果的字典
+            # 从执行上下文中提取目标期望和优化级别
+            target_expectations = None
+            optimization_level = self.integration_mode
+            
+            if execution_context:
+                target_expectations = execution_context.get('target_expectations')
+                optimization_level = execution_context.get('optimization_level', optimization_level)
+            
+            # 委托给统一上下文编排器
+            return await self.unified_orchestrator.execute_enhanced_template_analysis(
+                template_id=template_id,
+                data_source_id=data_source_id,
+                force_reanalyze=force_reanalyze,
+                optimization_level=optimization_level,
+                target_expectations=target_expectations
+            )
+        else:
+            # 回退到传统实现
+            return await self._execute_traditional_phase1_analysis(
+                template_id, data_source_id, force_reanalyze, execution_context
+            )
+    
+    async def _execute_traditional_phase1_analysis(
+        self,
+        template_id: str, 
+        data_source_id: str, 
+        force_reanalyze: bool = False,
+        execution_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        传统的阶段1分析实现（回退模式）
         """
         try:
-            self.logger.info(f"开始阶段1分析 - 模板: {template_id}, 数据源: {data_source_id}")
+            logger.info(f"使用传统模式进行阶段1分析 - 模板: {template_id}, 数据源: {data_source_id}")
             
             # 获取模板和数据源信息
             template = crud.template.get(self.db, id=template_id)

@@ -11,7 +11,6 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { api } from '@/utils/api'
 import { formatRelativeTime, formatNumber } from '@/utils'
@@ -130,45 +129,41 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <AppLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-48"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-white p-6 rounded-lg shadow">
-                <div className="animate-pulse space-y-3">
-                  <div className="h-4 bg-gray-200 rounded w-20"></div>
-                  <div className="h-8 bg-gray-200 rounded w-16"></div>
-                </div>
+      <div className="animate-pulse space-y-6">
+        <div className="h-8 bg-gray-200 rounded w-48"></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-white p-6 rounded-lg shadow">
+              <div className="animate-pulse space-y-3">
+                <div className="h-4 bg-gray-200 rounded w-20"></div>
+                <div className="h-8 bg-gray-200 rounded w-16"></div>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-      </AppLayout>
+      </div>
     )
   }
 
   if (error) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="text-center">
-            <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-red-500" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">加载失败</h3>
-            <p className="mt-1 text-sm text-gray-500">{error}</p>
-            <div className="mt-6">
-              <Button onClick={() => window.location.reload()}>
-                重新加载
-              </Button>
-            </div>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <ExclamationTriangleIcon className="mx-auto h-12 w-12 text-red-500" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">加载失败</h3>
+          <p className="mt-1 text-sm text-gray-500">{error}</p>
+          <div className="mt-6">
+            <Button onClick={() => window.location.reload()}>
+              重新加载
+            </Button>
           </div>
         </div>
-      </AppLayout>
+      </div>
     )
   }
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="仪表板"
         description="查看系统概览和最新动态"
@@ -314,6 +309,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-    </AppLayout>
+    </>
   )
 }

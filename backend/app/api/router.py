@@ -9,7 +9,7 @@ from app.api.endpoints import (
     reports,
     tasks,
     etl_jobs,
-    ai_providers,
+    llm_servers,  # LLM服务器管理 (替代ai_providers)
     dashboard,
     system,
     auth,
@@ -20,6 +20,8 @@ from app.api.endpoints import (
     task_scheduler,  # 重新启用
     celery_monitor,  # Celery 监控
     llm_monitor,  # LLM监控
+    chart_test,  # 图表测试
+    system_insights,  # 统一上下文系统洞察
     # 如有其它业务模块可继续添加
 )
 
@@ -39,7 +41,7 @@ api_router.include_router(placeholder_analysis.router, prefix="/v1/placeholder-a
 api_router.include_router(reports.router, prefix="/v1/reports", tags=["报告管理"])
 api_router.include_router(tasks.router, prefix="/v1/tasks", tags=["任务管理"])
 api_router.include_router(etl_jobs.router, prefix="/v1/etl-jobs", tags=["ETL作业"])
-api_router.include_router(ai_providers.router, prefix="/v1/ai-providers", tags=["AI提供商"])
+api_router.include_router(llm_servers.router, prefix="/v1/llm-servers", tags=["LLM服务器管理"])
 api_router.include_router(dashboard.router, prefix="/v1/dashboard", tags=["仪表盘"])
 api_router.include_router(system.router, prefix="/v1/system", tags=["系统管理"])
 api_router.include_router(auth.router, prefix="/v1/auth", tags=["认证"])
@@ -48,5 +50,8 @@ api_router.include_router(history.router, prefix="/v1/history", tags=["历史记
 # 智能占位符功能已整合到templates.router中
 api_router.include_router(settings.router, prefix="/v1/settings", tags=["用户设置"])
 api_router.include_router(task_scheduler.router, prefix="/v1/task-scheduler", tags=["任务调度"])
+api_router.include_router(chart_test.router, prefix="/v1/chart-test", tags=["图表测试"])
+api_router.include_router(system_insights.router, prefix="/v1/system-insights", tags=["系统洞察"])
 api_router.include_router(celery_monitor.router, prefix="/v1/celery", tags=["Celery监控"])
 api_router.include_router(llm_monitor.router, prefix="/v1/llm", tags=["LLM监控"])
+

@@ -10,8 +10,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
-from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
-from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer, PlaceholderSQLAgent
+# 直接使用IAOP核心平台
+from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+# 直接使用IAOP专业化代理
+from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
+from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderSQLAgent
 from .utils.relationship_analyzer import RelationshipAnalyzer
 
 
@@ -23,7 +26,7 @@ class SchemaAnalysisService:
         self.logger = logging.getLogger(__name__)
         self.relationship_analyzer = RelationshipAnalyzer()
         self.ai_service = EnhancedAIService(db_session)
-        self.analysis_agent = PlaceholderSQLAgent(db_session)
+        self.analysis_agent = PlaceholderSQLAgent(db_session=db_session)
     
     async def analyze_table_relationships(self, data_source_id: str) -> Dict[str, Any]:
         """

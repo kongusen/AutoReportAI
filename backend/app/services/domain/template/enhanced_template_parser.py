@@ -374,3 +374,162 @@ class EnhancedTemplateParser:
             recommendations.append("模板已准备就绪，可以开始数据提取和报告生成")
         
         return recommendations
+    
+    async def analyze_template_placeholders(self, template_id: str) -> Dict[str, Any]:
+        """
+        分析模板占位符并使用IAOP Agent进行处理
+        
+        Args:
+            template_id: 模板ID
+            
+        Returns:
+            分析结果字典
+        """
+        try:
+            logger.info(f"开始分析模板占位符: {template_id}")
+            
+            # 1. 获取模板信息
+            from app import crud
+            template = crud.template.get(self.db, id=template_id)
+            if not template:
+                return {
+                    'success': False,
+                    'error': f'模板不存在: {template_id}',
+                    'placeholders': []
+                }
+            
+            # 2. 解析和存储占位符（如果还没有的话）
+            placeholder_result = await self.parse_and_store_template_placeholders(
+                template_id, template.content, force_reparse=False
+            )
+            
+            if not placeholder_result.get('success'):
+                return placeholder_result
+            
+            # 3. 获取需要分析的占位符
+            unanalyzed_placeholders = await self.get_unanalyzed_placeholders(template_id)
+            
+            if not unanalyzed_placeholders:
+                logger.info(f"模板 {template_id} 的所有占位符都已分析完成")
+                # 返回现有占位符信息
+                existing_placeholders = await self.get_template_placeholder_configs(template_id)
+                return {
+                    'success': True,
+                    'message': '所有占位符都已分析完成',
+                    'placeholders': existing_placeholders,
+                    'total_placeholders': len(existing_placeholders),
+                    'analyzed_placeholders': len(existing_placeholders),
+                    'unanalyzed_placeholders': 0
+                }
+            
+            # 4. 使用IAOP Agent分析占位符
+            from app.services.iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent
+            from app.services.iaop.context.execution_context import EnhancedExecutionContext, ContextScope
+            
+            analyzed_placeholders = []
+            analysis_errors = []
+            
+            # 创建Agent实例（不传递db_session参数）
+            parser_agent = PlaceholderParserAgent()
+            
+            # 为每个占位符执行分析
+            for placeholder_info in unanalyzed_placeholders:
+                try:
+                    # 创建执行上下文
+                    context = EnhancedExecutionContext(
+                        session_id=f"analyze_{template_id}",
+                        user_id="system",
+                        task_id=placeholder_info['id']
+                    )
+                    
+                    # 设置必要的上下文数据
+                    context.set_context("template_content", template.content, ContextScope.REQUEST)
+                    context.set_context("data_source_context", {
+                        "template_id": template_id,
+                        "data_source_id": str(template.data_source_id) if template.data_source_id else None,
+                        "placeholder_info": placeholder_info
+                    }, ContextScope.REQUEST)
+                    
+                    # 执行Agent分析
+                    agent_result = await parser_agent.execute(context)
+                    
+                    if agent_result.get('success'):
+                        # 保存分析结果
+                        analysis_data = agent_result.get('data', {})
+                        placeholders_data = analysis_data.get('placeholders', [])
+                        
+                        if placeholders_data:
+                            # 取第一个占位符的分析结果（通常只有一个）
+                            placeholder_analysis = placeholders_data[0]
+                            
+                            # 标记占位符已分析
+                            await self.mark_placeholder_analyzed(
+                                placeholder_info['id'],
+                                {
+                                    'task_type': placeholder_analysis.get('task_type', 'unknown'),
+                                    'metric': placeholder_analysis.get('metric', ''),
+                                    'dimensions': placeholder_analysis.get('dimensions', []),
+                                    'time_range': placeholder_analysis.get('time_range'),
+                                    'filters': placeholder_analysis.get('filters', []),
+                                    'aggregation': placeholder_analysis.get('aggregation', 'sum'),
+                                    'confidence_score': placeholder_analysis.get('confidence', 0.0),
+                                    'table_mapping': placeholder_analysis.get('table_mapping', {}),
+                                    'generated_sql': '',  # SQL生成将在后续步骤完成
+                                    'sql_validated': False
+                                }
+                            )
+                            
+                            analyzed_placeholders.append({
+                                'id': placeholder_info['id'],
+                                'name': placeholder_info['name'],
+                                'analysis_result': placeholder_analysis,
+                                'success': True
+                            })
+                        
+                    else:
+                        error_msg = agent_result.get('error', '分析失败')
+                        analysis_errors.append({
+                            'placeholder_id': placeholder_info['id'],
+                            'placeholder_name': placeholder_info['name'],
+                            'error': error_msg
+                        })
+                        logger.warning(f"占位符分析失败: {placeholder_info['name']} - {error_msg}")
+                
+                except Exception as e:
+                    error_msg = f"Agent执行异常: {str(e)}"
+                    analysis_errors.append({
+                        'placeholder_id': placeholder_info['id'],
+                        'placeholder_name': placeholder_info['name'],
+                        'error': error_msg
+                    })
+                    logger.error(f"占位符分析异常: {placeholder_info['name']} - {error_msg}")
+            
+            # 5. 计算分析结果统计
+            total_placeholders = len(unanalyzed_placeholders)
+            successful_analyses = len(analyzed_placeholders)
+            failed_analyses = len(analysis_errors)
+            
+            success = successful_analyses > 0  # 只要有成功分析的就算成功
+            
+            result = {
+                'success': success,
+                'message': f'占位符分析完成: 成功 {successful_analyses}/{total_placeholders}',
+                'placeholders': analyzed_placeholders,
+                'total_placeholders': total_placeholders,
+                'analyzed_placeholders': successful_analyses,
+                'failed_placeholders': failed_analyses,
+                'errors': analysis_errors
+            }
+            
+            logger.info(f"模板占位符分析完成: {template_id}, 成功: {successful_analyses}, 失败: {failed_analyses}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"模板占位符分析失败: {template_id}, 错误: {str(e)}")
+            return {
+                'success': False,
+                'error': f'分析失败: {str(e)}',
+                'placeholders': [],
+                'total_placeholders': 0,
+                'analyzed_placeholders': 0
+            }

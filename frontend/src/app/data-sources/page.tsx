@@ -12,7 +12,6 @@ import {
   PencilIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -83,7 +82,7 @@ export default function DataSourcesPage() {
   }
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="数据源管理"
         description="管理您的数据源连接，支持SQL数据库、Doris、API接口等多种数据源类型"
@@ -242,6 +241,6 @@ export default function DataSourcesPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

@@ -234,6 +234,35 @@ export interface PlaceholderValue {
   hit_count: number
   last_hit_at?: string
   created_at: string
+  
+  // 图表相关字段
+  chart_ready?: boolean
+  chart_type?: string
+  chart_config?: any
+  echarts_config?: any
+  data?: any[]
+  
+  // 执行相关字段
+  sql_executed?: string
+  
+  // 占位符类型信息
+  is_chart_placeholder?: boolean
+  placeholder_type_info?: {
+    is_chart_placeholder: boolean
+    content_type: string
+    placeholder_type: string
+    message?: string
+    expected_mode?: string
+  }
+  
+  // 数据库和表信息
+  target_database?: string
+  target_table?: string
+  actual_result_value?: string
+  
+  // 测试摘要
+  test_summary?: string
+  full_result?: any
 }
 
 // 占位符分析统计类型

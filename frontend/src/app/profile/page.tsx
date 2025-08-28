@@ -23,20 +23,6 @@ export default function ProfilePage() {
       description: '配置应用偏好设置和系统选项',
       icon: CogIcon,
       href: '/settings'
-    },
-    {
-      title: '安全设置',
-      description: '管理密码、两步验证和账户安全',
-      icon: KeyIcon,
-      href: '#security',
-      disabled: true
-    },
-    {
-      title: '通知设置',
-      description: '配置邮件通知和消息提醒',
-      icon: BellIcon,
-      href: '#notifications',
-      disabled: true
     }
   ]
 

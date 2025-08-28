@@ -137,6 +137,48 @@ class Settings(BaseSettings):
     CELERY_ACCEPT_CONTENT: List[str] = ["json"]
     CELERY_TIMEZONE: str = "UTC"
     CELERY_ENABLE_UTC: bool = True
+    
+    # ===========================================
+    # IAOP 核心平台配置
+    # ===========================================
+    
+    # IAOP 基础配置
+    IAOP_PLATFORM_NAME: str = "IAOP Core Platform"
+    IAOP_VERSION: str = "2.0.0"
+    IAOP_MODE: str = os.getenv("IAOP_MODE", "integrated")  # standalone, integrated, development
+    IAOP_DEBUG: bool = os.getenv("IAOP_DEBUG", "false").lower() == "true"
+    
+    # IAOP 性能配置
+    IAOP_MAX_CONCURRENT_AGENTS: int = int(os.getenv("IAOP_MAX_CONCURRENT_AGENTS", "10"))
+    IAOP_AGENT_TIMEOUT: int = int(os.getenv("IAOP_AGENT_TIMEOUT", "60"))
+    IAOP_CACHE_TTL: int = int(os.getenv("IAOP_CACHE_TTL", "3600"))
+    IAOP_MAX_RETRIES: int = int(os.getenv("IAOP_MAX_RETRIES", "3"))
+    
+    # IAOP Agent 配置
+    IAOP_DEFAULT_AGENT_PRIORITY: str = os.getenv("IAOP_DEFAULT_AGENT_PRIORITY", "normal")  
+    IAOP_AGENT_REGISTRY_SIZE: int = int(os.getenv("IAOP_AGENT_REGISTRY_SIZE", "100"))
+    IAOP_ENABLE_AGENT_METRICS: bool = os.getenv("IAOP_ENABLE_AGENT_METRICS", "true").lower() == "true"
+    
+    # IAOP 上下文配置  
+    IAOP_CONTEXT_TTL: int = int(os.getenv("IAOP_CONTEXT_TTL", "1800"))  # 30分钟
+    IAOP_MAX_CONTEXT_SIZE: int = int(os.getenv("IAOP_MAX_CONTEXT_SIZE", "10485760"))  # 10MB
+    
+    # IAOP 编排配置
+    IAOP_MAX_ORCHESTRATION_DEPTH: int = int(os.getenv("IAOP_MAX_ORCHESTRATION_DEPTH", "5"))
+    IAOP_ENABLE_PARALLEL_EXECUTION: bool = os.getenv("IAOP_ENABLE_PARALLEL_EXECUTION", "true").lower() == "true"
+    
+    # IAOP 中间件配置
+    IAOP_ENABLE_MIDDLEWARE: bool = os.getenv("IAOP_ENABLE_MIDDLEWARE", "true").lower() == "true"
+    IAOP_MIDDLEWARE_TIMEOUT: int = int(os.getenv("IAOP_MIDDLEWARE_TIMEOUT", "30"))
+    
+    # IAOP API 配置
+    IAOP_API_VERSION: str = "v2"
+    IAOP_API_PREFIX: str = "/iaop/api"
+    IAOP_ENABLE_API_DOCS: bool = os.getenv("IAOP_ENABLE_API_DOCS", "true").lower() == "true"
+    
+    # ===========================================
+    # Celery 高级配置
+    # ===========================================
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", 1))
     CELERY_TASK_ACKS_LATE: bool = True
     CELERY_WORKER_MAX_TASKS_PER_CHILD: int = int(os.getenv("CELERY_WORKER_MAX_TASKS_PER_CHILD", 1000))

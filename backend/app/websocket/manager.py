@@ -47,7 +47,7 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket, user_id: str):
         """接受WebSocket连接并关联用户"""
-        await websocket.accept()
+        # 连接应已在路由中调用 websocket.accept() 完成
 
         if user_id not in self.active_connections:
             self.active_connections[user_id] = []
@@ -191,6 +191,170 @@ class ConnectionManager:
         )
 
         await self.broadcast_message(notification)
+
+    async def send_llm_server_health_notification(
+        self, 
+        server_id: int,
+        server_name: str, 
+        is_healthy: bool,
+        status_message: str,
+        user_id: Optional[str] = None
+    ):
+        """发送LLM服务器健康状态通知"""
+        notification_type = "success" if is_healthy else "warning"
+        title = f"LLM Server {server_name}"
+        message = f"Status: {'✅ Healthy' if is_healthy else '❌ Unhealthy'} - {status_message}"
+        
+        notification = NotificationMessage(
+            type=notification_type,
+            title=title,
+            message=message,
+            data={
+                "server_id": server_id,
+                "server_name": server_name,
+                "is_healthy": is_healthy,
+                "status_message": status_message,
+                "category": "llm_server_health"
+            },
+            user_id=user_id,
+        )
+
+        if user_id:
+            await self.send_personal_message(notification, user_id)
+        else:
+            await self.broadcast_message(notification)
+
+    async def send_llm_model_health_notification(
+        self,
+        server_id: int,
+        server_name: str,
+        model_id: int,
+        model_name: str,
+        is_healthy: bool,
+        response_time_ms: float,
+        error_message: Optional[str] = None,
+        user_id: Optional[str] = None
+    ):
+        """发送LLM模型健康状态通知"""
+        notification_type = "success" if is_healthy else "error"
+        title = f"Model Health Check: {model_name}"
+        
+        if is_healthy:
+            message = f"✅ Model {model_name} is healthy (Response time: {response_time_ms:.0f}ms)"
+        else:
+            message = f"❌ Model {model_name} is unhealthy - {error_message or 'Unknown error'}"
+        
+        notification = NotificationMessage(
+            type=notification_type,
+            title=title,
+            message=message,
+            data={
+                "server_id": server_id,
+                "server_name": server_name,
+                "model_id": model_id,
+                "model_name": model_name,
+                "is_healthy": is_healthy,
+                "response_time_ms": response_time_ms,
+                "error_message": error_message,
+                "category": "llm_model_health"
+            },
+            user_id=user_id,
+        )
+
+        if user_id:
+            await self.send_personal_message(notification, user_id)
+        else:
+            await self.broadcast_message(notification)
+
+    async def send_llm_server_config_notification(
+        self,
+        server_id: int,
+        server_name: str,
+        action: str,  # 'created', 'updated', 'deleted'
+        user_id: Optional[str] = None
+    ):
+        """发送LLM服务器配置变更通知"""
+        if action == "created":
+            notification_type = "success"
+            title = "LLM Server Created"
+            message = f"🎉 New LLM server '{server_name}' has been created successfully"
+        elif action == "updated":
+            notification_type = "info"
+            title = "LLM Server Updated"
+            message = f"🔧 LLM server '{server_name}' configuration has been updated"
+        elif action == "deleted":
+            notification_type = "warning"
+            title = "LLM Server Deleted"
+            message = f"🗑️ LLM server '{server_name}' has been deleted"
+        else:
+            notification_type = "info"
+            title = "LLM Server Changed"
+            message = f"📝 LLM server '{server_name}' has been {action}"
+        
+        notification = NotificationMessage(
+            type=notification_type,
+            title=title,
+            message=message,
+            data={
+                "server_id": server_id,
+                "server_name": server_name,
+                "action": action,
+                "category": "llm_server_config"
+            },
+            user_id=user_id,
+        )
+
+        if user_id:
+            await self.send_personal_message(notification, user_id)
+        else:
+            await self.broadcast_message(notification)
+
+    async def send_llm_model_config_notification(
+        self,
+        server_id: int,
+        server_name: str,
+        model_id: int,
+        model_name: str,
+        action: str,  # 'created', 'updated', 'deleted'
+        user_id: Optional[str] = None
+    ):
+        """发送LLM模型配置变更通知"""
+        if action == "created":
+            notification_type = "success"
+            title = "LLM Model Created"
+            message = f"🎉 New model '{model_name}' added to server '{server_name}'"
+        elif action == "updated":
+            notification_type = "info"
+            title = "LLM Model Updated"
+            message = f"🔧 Model '{model_name}' configuration has been updated"
+        elif action == "deleted":
+            notification_type = "warning"
+            title = "LLM Model Deleted"
+            message = f"🗑️ Model '{model_name}' has been removed from server '{server_name}'"
+        else:
+            notification_type = "info"
+            title = "LLM Model Changed"
+            message = f"📝 Model '{model_name}' has been {action}"
+        
+        notification = NotificationMessage(
+            type=notification_type,
+            title=title,
+            message=message,
+            data={
+                "server_id": server_id,
+                "server_name": server_name,
+                "model_id": model_id,
+                "model_name": model_name,
+                "action": action,
+                "category": "llm_model_config"
+            },
+            user_id=user_id,
+        )
+
+        if user_id:
+            await self.send_personal_message(notification, user_id)
+        else:
+            await self.broadcast_message(notification)
 
     def get_connected_users(self) -> List[str]:
         """获取当前连接的用户列表"""

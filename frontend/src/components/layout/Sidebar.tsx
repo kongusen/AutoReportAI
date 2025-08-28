@@ -16,6 +16,7 @@ import {
   ChevronDownIcon,
   UserIcon,
   ArrowRightOnRectangleIcon,
+  CpuChipIcon,
 } from '@heroicons/react/24/outline'
 import { cn } from '@/utils'
 import { Avatar } from '@/components/ui/Avatar'

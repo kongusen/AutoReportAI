@@ -103,6 +103,69 @@ def init_database():
         else:
             print(f"ℹ️  已存在 {superuser_count} 个管理员用户")
         
+        # 创建默认LLM服务器和模型（如果不存在）
+        print("🤖 检查默认LLM服务器...")
+        cur.execute("SELECT COUNT(*) FROM llm_servers")
+        server_count = cur.fetchone()[0]
+        
+        if server_count == 0:
+            print("🛠️  创建默认LLM服务器配置...")
+            
+            # 创建本地OpenAI兼容服务器
+            cur.execute("""
+                INSERT INTO llm_servers (name, description, base_url, auth_enabled, is_active, server_version)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                "Local OpenAI Compatible",
+                "本地OpenAI兼容API服务器",
+                "http://localhost:11434/v1",
+                False,
+                True,
+                "v1.0"
+            ))
+            local_server_id = cur.fetchone()[0]
+            
+            # 创建OpenAI官方服务器
+            cur.execute("""
+                INSERT INTO llm_servers (name, description, base_url, auth_enabled, is_active, server_version)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                "OpenAI Official",
+                "OpenAI官方API服务",
+                "https://api.openai.com/v1",
+                True,
+                False,  # 默认不激活，需要用户配置API密钥
+                "v1.0"
+            ))
+            openai_server_id = cur.fetchone()[0]
+            
+            # 为本地服务器添加默认模型
+            default_models = [
+                ("llama3.2:3b", "Llama 3.2 3B", "小型聊天模型，适合日常对话", "chat", "ollama", True, 10, False),
+                ("qwen2.5:7b", "Qwen 2.5 7B", "中等规模聊天模型，平衡性能与质量", "chat", "ollama", True, 20, False),
+                ("deepseek-coder-v2:16b", "DeepSeek Coder V2 16B", "专业代码生成模型", "chat", "ollama", True, 30, False),
+                ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet (Think)", "支持思考模式的高级模型", "think", "anthropic", True, 5, True),
+            ]
+            
+            for name, display_name, description, model_type, provider, is_active, priority, supports_thinking in default_models:
+                server_id = local_server_id if provider == "ollama" else openai_server_id
+                cur.execute("""
+                    INSERT INTO llm_models (
+                        server_id, name, display_name, description, model_type, provider_name, 
+                        is_active, priority, supports_thinking, supports_function_calls, max_tokens
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    server_id, name, display_name, description, model_type, provider,
+                    is_active, priority, supports_thinking, False, 32000
+                ))
+            
+            conn.commit()
+            print(f"✅ 创建了2个LLM服务器和{len(default_models)}个模型")
+        else:
+            print(f"ℹ️  已存在 {server_count} 个LLM服务器")
+        
         cur.close()
         conn.close()
         
@@ -110,6 +173,7 @@ def init_database():
         print("=" * 50)
         print(f"📊 创建表数量: {len(tables)}")
         print(f"👤 管理员邮箱: {settings.FIRST_SUPERUSER_EMAIL}")
+        print(f"🤖 LLM服务器数: {server_count}+(新增2个)" if server_count == 0 else f"🤖 LLM服务器数: {server_count}")
         print(f"🔗 数据库连接: {settings.DATABASE_URL.replace(settings.DATABASE_URL.split('@')[0].split(':')[-1], '***')}")
         print("=" * 50)
         print("🚀 现在可以启动应用服务了!")

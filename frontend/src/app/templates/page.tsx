@@ -11,7 +11,6 @@ import {
   TrashIcon,
   DocumentDuplicateIcon,
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -79,7 +78,7 @@ export default function TemplatesPage() {
   }
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="模板管理"
         description="创建和管理报告模板，支持Markdown语法和变量占位符"
@@ -266,6 +265,6 @@ export default function TemplatesPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

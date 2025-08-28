@@ -247,31 +247,30 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
         )
 
 
-# AI Integration Services
-def get_ai_service(db: Session = Depends(get_db)):
-    """Get AI service dependency"""
+# IAOP AI Integration Services (替代原AI服务)
+def get_iaop_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """Get IAOP LLM service dependency"""
     try:
-        from app.services.ai.integration import AIService
-        return AIService(db)
+        from app.services.iaop.integration.llm_service_adapter import get_iaop_llm_service as get_service
+        user_id = str(user.id) if user else None
+        return get_service(db, user_id)
     except Exception as e:
-        logger.error(f"Failed to create AIService: {e}")
+        logger.error(f"Failed to create IAOPLLMService: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable"
+            detail="IAOP LLM service unavailable"
         )
 
 
-def get_enhanced_ai_service(db: Session = Depends(get_db)):
-    """Get enhanced AI service dependency"""
-    try:
-        from app.services.ai.integration import EnhancedAIService
-        return EnhancedAIService(db)
-    except Exception as e:
-        logger.error(f"Failed to create EnhancedAIService: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Enhanced AI service unavailable"
-        )
+# 向后兼容的别名
+def get_ai_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """Get AI service dependency (IAOP adapter)"""
+    return get_iaop_llm_service(db, user)
+
+
+def get_enhanced_ai_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """Get enhanced AI service dependency (IAOP adapter)"""  
+    return get_iaop_llm_service(db, user)
 
 
 def get_content_generation_agent(db: Session = Depends(get_db)):

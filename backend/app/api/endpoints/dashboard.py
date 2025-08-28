@@ -16,7 +16,7 @@ from app.models.template import Template
 from app.models.task import Task
 from app.models.report_history import ReportHistory
 from app.models.etl_job import ETLJob
-from app.models.ai_provider import AIProvider
+from app.models.llm_server import LLMServer
 
 router = APIRouter()
 
@@ -239,10 +239,10 @@ async def get_system_health(
         DataSource.is_active == True
     ).all()
     
-    # 检查AI提供商状态
-    ai_providers = db.query(AIProvider).filter(
-        AIProvider.user_id == user_id,
-        AIProvider.is_active == True
+    # 检查LLM服务器状态 (替代原AI提供商)
+    llm_servers = db.query(LLMServer).filter(
+        LLMServer.is_active == True,
+        LLMServer.is_healthy == True
     ).all()
     
     # 检查失败的任务
@@ -260,9 +260,9 @@ async def get_system_health(
                 "total": len(data_sources),
                 "active": len([ds for ds in data_sources if ds.is_active])
             },
-            "ai_providers": {
-                "total": len(ai_providers),
-                "active": len([ap for ap in ai_providers if ap.is_active])
+            "llm_servers": {
+                "total": len(llm_servers),
+                "healthy": len([ls for ls in llm_servers if ls.is_healthy])
             },
             "failed_tasks": failed_tasks,
             "system_status": "healthy"

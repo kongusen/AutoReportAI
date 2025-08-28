@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.core.time_utils import now, format_iso
 from app.db.session import SessionLocal
-from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+# 直接使用IAOP核心平台
+from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
 # AgentOrchestrator not available, using placeholder
 class AgentOrchestrator:
     def __init__(self):
@@ -255,12 +256,8 @@ def data_query(self, etl_instruction: Dict[str, Any],
     db = SessionLocal()
     try:
         # 使用TaskSQLExecutionAgent替代直接的ETL执行器
-        from app.services.ai.agents.task_sql_execution_agent import (
-            TaskSQLExecutionAgent, 
-            TaskExecutionContext,
-            TaskExecutionMode,
-            ExecutionPriority
-        )
+        # 直接使用IAOP专业化代理
+        from app.services.iaop.agents.specialized.data_query_agent import DataQueryAgent as TaskSQLExecutionAgent
         
         # 创建Agent实例
         agent_config = {

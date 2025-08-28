@@ -14,7 +14,6 @@ import {
   CircleStackIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -89,34 +88,30 @@ export default function TaskDetailPage() {
 
   if (loading || taskLoading) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center min-h-96">
-          <LoadingSpinner size="lg" />
-        </div>
-      </AppLayout>
+      <div className="flex items-center justify-center min-h-96">
+        <LoadingSpinner size="lg" />
+      </div>
     )
   }
 
   if (!task) {
     return (
-      <AppLayout>
-        <div className="text-center py-12">
-          <ExclamationTriangleIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">任务不存在</h2>
-          <p className="text-gray-600 mb-6">找不到指定的任务，可能已被删除</p>
-          <Button onClick={() => router.push('/tasks')}>
-            <ArrowLeftIcon className="w-4 h-4 mr-2" />
-            返回任务列表
-          </Button>
-        </div>
-      </AppLayout>
+      <div className="text-center py-12">
+        <ExclamationTriangleIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">任务不存在</h2>
+        <p className="text-gray-600 mb-6">找不到指定的任务，可能已被删除</p>
+        <Button onClick={() => router.push('/tasks')}>
+          <ArrowLeftIcon className="w-4 h-4 mr-2" />
+          返回任务列表
+        </Button>
+      </div>
     )
   }
 
   const progress = getTaskProgress(task.id.toString())
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title={task.name}
         description={task.description || '任务详情'}
@@ -418,6 +413,6 @@ export default function TaskDetailPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

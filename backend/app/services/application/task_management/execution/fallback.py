@@ -10,7 +10,8 @@ Fallback Handler
 import logging
 from typing import Any, Dict, Optional
 
-from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+# 直接使用IAOP核心平台
+from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
 from app.services.data.processing.etl.intelligent_etl_executor import IntelligentETLExecutor
 from app.db.session import SessionLocal
 

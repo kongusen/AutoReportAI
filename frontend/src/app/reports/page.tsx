@@ -11,7 +11,6 @@ import {
   FunnelIcon,
   CalendarDaysIcon,
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -240,7 +239,7 @@ export default function ReportsPage() {
   ]
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="报告中心"
         description="查看和管理生成的报告文件"
@@ -392,6 +391,6 @@ export default function ReportsPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

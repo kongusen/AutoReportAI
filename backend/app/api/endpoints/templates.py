@@ -994,10 +994,13 @@ async def analyze_with_agent(
     template_id: str,
     data_source_id: str = Query(..., description="数据源ID"),
     force_reanalyze: bool = Query(False, description="是否强制重新分析"),
+    optimization_level: str = Query("enhanced", description="优化级别：basic/enhanced/intelligent/learning"),
+    target_expectations: Optional[str] = Query(None, description="期望结果描述（JSON格式）"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """使用Agent分析占位符（从template_optimization.py迁移）"""
+    """使用智能Agent分析占位符（基于统一上下文系统）"""
+    import json
     try:
         # 验证权限
         template = crud_template.get(db, id=template_id)
@@ -1016,25 +1019,38 @@ async def analyze_with_agent(
         if template.user_id != user_id and not template.is_public:
             raise HTTPException(status_code=403, detail="无权限访问此模板")
         
-        # 使用缓存Agent编排器
-        from app.services.application.orchestration.cached_agent_orchestrator import CachedAgentOrchestrator
-        orchestrator = CachedAgentOrchestrator(db, user_id=str(user_id))
+        # 解析目标期望
+        expectations_dict = None
+        if target_expectations:
+            try:
+                expectations_dict = json.loads(target_expectations)
+            except json.JSONDecodeError:
+                logger.warning(f"无法解析目标期望: {target_expectations}")
         
-        # 执行Agent分析
-        analysis_result = await orchestrator._execute_phase1_analysis(
-            template_id, data_source_id, force_reanalyze
+        # 使用统一API适配器
+        from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
+        adapter = get_unified_api_adapter(db_session=db, integration_mode=optimization_level)
+        
+        # 执行增强的Agent分析
+        analysis_result = await adapter.analyze_with_agent_enhanced(
+            template_id=template_id,
+            data_source_id=data_source_id,
+            user_id=str(user_id),
+            force_reanalyze=force_reanalyze,
+            optimization_level=optimization_level,
+            target_expectations=expectations_dict
         )
         
         return ApiResponse(
-            success=True,
-            data=analysis_result,
-            message="Agent分析完成"
+            success=analysis_result.get('success', False),
+            data=analysis_result.get('data'),
+            message="智能Agent分析完成" if analysis_result.get('success') else f"分析失败: {analysis_result.get('error', '未知错误')}"
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Agent分析失败: {e}")
+        logger.error(f"智能Agent分析失败: {e}")
         raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
 
 

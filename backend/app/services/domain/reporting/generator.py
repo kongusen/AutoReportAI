@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.core.logging_config import get_module_logger, get_performance_logger
-from app.services.ai.integration import EnhancedAIService
+# 直接使用IAOP核心平台
+from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
 from app.services.data.processing.retrieval import DataRetrievalService
 from .composer import ReportCompositionService
 from .document_pipeline import TemplateParser

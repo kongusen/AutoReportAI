@@ -4,19 +4,22 @@ import { useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import toast from 'react-hot-toast'
-import { AIProviderSettings as AIProviderSettingsComponent } from '@/components/settings/AIProviderSettings'
+import { LLMManagement } from '@/components/llm/LLMManagement'
 import { 
   UserIcon, 
-  CpuChipIcon, 
   BellIcon, 
   ShieldCheckIcon,
   CogIcon,
   SunIcon,
   MoonIcon,
-  ComputerDesktopIcon
+  ComputerDesktopIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline'
+import { useAuthStore } from '@/features/auth/authStore'
+import { Avatar } from '@/components/ui/Avatar'
 
 export default function SettingsPage() {
+  const { user } = useAuthStore()
   const [activeTab, setActiveTab] = useState('general')
   const [settings, setSettings] = useState({
     language: 'zh',
@@ -35,8 +38,9 @@ export default function SettingsPage() {
   const settingsTabs = [
     { id: 'general', name: '通用设置', icon: CogIcon },
     { id: 'notifications', name: '通知设置', icon: BellIcon },
-    { id: 'ai', name: 'AI提供商', icon: CpuChipIcon },
+    { id: 'llm', name: 'LLM服务器', icon: ServerIcon },
     { id: 'security', name: '安全设置', icon: ShieldCheckIcon },
+    { id: 'profile', name: '个人资料', icon: UserIcon },
   ]
 
   const handleSave = () => {
@@ -185,11 +189,10 @@ export default function SettingsPage() {
     </Card>
   )
 
-  const renderAISettings = () => (
-    <div className="space-y-6">
-      <AIProviderSettingsComponent />
-    </div>
+  const renderLLMSettings = () => (
+    <LLMManagement />
   )
+
 
   const renderSecuritySettings = () => (
     <Card>
@@ -236,16 +239,65 @@ export default function SettingsPage() {
     </Card>
   )
 
+  const renderProfileSettings = () => (
+    <div className="space-y-6">
+      {/* 用户信息卡片 */}
+      <Card>
+        <div className="p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">个人信息</h3>
+          <div className="flex items-center space-x-4">
+            <Avatar
+              size="lg"
+              src={undefined}
+              fallback={user?.username || user?.email}
+            />
+            <div className="flex-1">
+              <h4 className="text-lg font-semibold text-gray-900">
+                {user?.username || '未设置用户名'}
+              </h4>
+              <p className="text-gray-600">{user?.email}</p>
+              <div className="mt-2">
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  在线
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* 快捷操作 */}
+      <Card>
+        <div className="p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">快捷操作</h3>
+          <div className="flex flex-wrap gap-4">
+            <Button variant="outline" size="sm" disabled>
+              编辑资料
+            </Button>
+            <Button variant="outline" size="sm" disabled>
+              更改头像
+            </Button>
+            <Button variant="outline" size="sm" disabled>
+              导出数据
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  )
+
   const renderActiveTabContent = () => {
     switch (activeTab) {
       case 'general':
         return renderGeneralSettings()
       case 'notifications':
         return renderNotificationSettings()
-      case 'ai':
-        return renderAISettings()
+      case 'llm':
+        return renderLLMSettings()
       case 'security':
         return renderSecuritySettings()
+      case 'profile':
+        return renderProfileSettings()
       default:
         return renderGeneralSettings()
     }
@@ -260,43 +312,47 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="bg-white shadow rounded-lg">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
-            {settingsTabs.map((tab) => {
-              const isActive = activeTab === tab.id
-              const IconComponent = tab.icon
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm ${
-                    isActive
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  <IconComponent
-                    className={`mr-2 h-5 w-5 ${
-                      isActive 
-                        ? 'text-blue-500' 
-                        : 'text-gray-400 group-hover:text-gray-500'
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="flex flex-col md:flex-row">
+          {/* 左侧导航栏 */}
+          <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-gray-200 bg-gray-50">
+            <nav className="p-4 space-y-1">
+              {settingsTabs.map((tab) => {
+                const isActive = activeTab === tab.id
+                const IconComponent = tab.icon
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-white text-blue-700 shadow-sm border border-gray-200'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                     }`}
-                  />
-                  {tab.name}
-                </button>
-              )
-            })}
-          </nav>
-        </div>
+                  >
+                    <IconComponent
+                      className={`mr-3 h-5 w-5 ${
+                        isActive 
+                          ? 'text-blue-600' 
+                          : 'text-gray-400'
+                      }`}
+                    />
+                    {tab.name}
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
 
-        <div className="p-6">
-          {renderActiveTabContent()}
-          
-          <div className="mt-6 flex justify-end">
-            <Button onClick={handleSave}>
-              保存设置
-            </Button>
+          {/* 右侧内容区域 */}
+          <div className="flex-1 p-6">
+            {renderActiveTabContent()}
+            
+            <div className="mt-6 flex justify-end">
+              <Button onClick={handleSave}>
+                保存设置
+              </Button>
+            </div>
           </div>
         </div>
       </div>

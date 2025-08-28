@@ -31,7 +31,9 @@ class User(Base):
     etl_jobs = relationship("ETLJob", back_populates="user")
     tasks = relationship("Task", back_populates="owner")
     report_histories = relationship("ReportHistory", back_populates="user")
-    ai_providers = relationship("AIProvider", back_populates="user")
+    
+    # LLM相关关系
+    llm_preference = relationship("UserLLMPreference", back_populates="user", uselist=False)
 
     # 学习系统关系
     processing_history = relationship(

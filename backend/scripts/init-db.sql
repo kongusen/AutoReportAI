@@ -82,6 +82,11 @@ BEGIN
         CREATE TYPE reportperiod AS ENUM ('daily', 'weekly', 'monthly', 'yearly');
     END IF;
     
+    -- Model types (for LLM servers)
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'modeltype') THEN
+        CREATE TYPE modeltype AS ENUM ('chat', 'think', 'embed', 'image');
+    END IF;
+    
 END $$;
 
 -- ================================================
@@ -187,6 +192,89 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     date_format VARCHAR(20) DEFAULT 'YYYY-MM-DD',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
+);
+
+-- LLM Servers table
+CREATE TABLE IF NOT EXISTS llm_servers (
+    id SERIAL PRIMARY KEY,
+    server_id UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    base_url VARCHAR(512) NOT NULL UNIQUE,
+    api_key TEXT,
+    auth_enabled BOOLEAN DEFAULT TRUE,
+    is_active BOOLEAN DEFAULT TRUE,
+    is_healthy BOOLEAN DEFAULT FALSE,
+    last_health_check TIMESTAMP WITH TIME ZONE,
+    timeout_seconds INTEGER DEFAULT 60,
+    max_retries INTEGER DEFAULT 3,
+    server_version VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- LLM Models table
+CREATE TABLE IF NOT EXISTS llm_models (
+    id SERIAL PRIMARY KEY,
+    server_id INTEGER NOT NULL REFERENCES llm_servers(id),
+    name VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    model_type modeltype NOT NULL,
+    provider_name VARCHAR(100) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    priority INTEGER DEFAULT 50,
+    is_healthy BOOLEAN DEFAULT FALSE,
+    last_health_check TIMESTAMP WITH TIME ZONE,
+    health_check_message TEXT,
+    max_tokens INTEGER,
+    temperature_default REAL DEFAULT 0.7,
+    supports_system_messages BOOLEAN DEFAULT TRUE,
+    supports_function_calls BOOLEAN DEFAULT FALSE,
+    supports_thinking BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User LLM Preferences table
+CREATE TABLE IF NOT EXISTS user_llm_preferences (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id),
+    default_llm_server_id INTEGER REFERENCES llm_servers(id),
+    default_provider_name VARCHAR(100),
+    default_model_name VARCHAR(100),
+    personal_api_keys JSON DEFAULT '{}',
+    preferred_temperature REAL DEFAULT 0.7,
+    max_tokens_limit INTEGER DEFAULT 4000,
+    daily_token_quota INTEGER DEFAULT 50000,
+    monthly_cost_limit REAL DEFAULT 100.0,
+    enable_caching BOOLEAN DEFAULT TRUE,
+    cache_ttl_hours INTEGER DEFAULT 24,
+    enable_learning BOOLEAN DEFAULT TRUE,
+    provider_priorities JSON DEFAULT '{}',
+    model_preferences JSON DEFAULT '{}',
+    custom_settings JSON DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User LLM Usage Quotas table
+CREATE TABLE IF NOT EXISTS user_llm_usage_quotas (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id),
+    quota_period VARCHAR(20) DEFAULT 'monthly',
+    period_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    period_end TIMESTAMP WITH TIME ZONE NOT NULL,
+    tokens_used INTEGER DEFAULT 0,
+    requests_made INTEGER DEFAULT 0,
+    total_cost REAL DEFAULT 0.0,
+    token_limit INTEGER NOT NULL,
+    request_limit INTEGER DEFAULT 1000,
+    cost_limit REAL NOT NULL,
+    is_exceeded BOOLEAN DEFAULT FALSE,
+    warning_sent BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- LLM Call Logs table
@@ -756,6 +844,30 @@ CREATE INDEX IF NOT EXISTS ix_templates_name ON templates (name);
 -- User Profiles table indexes
 CREATE INDEX IF NOT EXISTS ix_user_profiles_id ON user_profiles (id);
 
+-- LLM Servers table indexes
+CREATE INDEX IF NOT EXISTS ix_llm_servers_id ON llm_servers (id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_llm_servers_server_id ON llm_servers (server_id);
+CREATE INDEX IF NOT EXISTS ix_llm_servers_name ON llm_servers (name);
+CREATE INDEX IF NOT EXISTS ix_llm_servers_is_active ON llm_servers (is_active);
+CREATE INDEX IF NOT EXISTS ix_llm_servers_is_healthy ON llm_servers (is_healthy);
+
+-- LLM Models table indexes
+CREATE INDEX IF NOT EXISTS ix_llm_models_id ON llm_models (id);
+CREATE INDEX IF NOT EXISTS ix_llm_models_server_id ON llm_models (server_id);
+CREATE INDEX IF NOT EXISTS ix_llm_models_name ON llm_models (name);
+CREATE INDEX IF NOT EXISTS ix_llm_models_model_type ON llm_models (model_type);
+CREATE INDEX IF NOT EXISTS ix_llm_models_provider_name ON llm_models (provider_name);
+CREATE INDEX IF NOT EXISTS ix_llm_models_active_healthy ON llm_models (is_active, is_healthy);
+
+-- User LLM Preferences table indexes
+CREATE INDEX IF NOT EXISTS ix_user_llm_preferences_id ON user_llm_preferences (id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_user_llm_preferences_user_id ON user_llm_preferences (user_id);
+
+-- User LLM Usage Quotas table indexes
+CREATE INDEX IF NOT EXISTS ix_user_llm_usage_quotas_id ON user_llm_usage_quotas (id);
+CREATE INDEX IF NOT EXISTS ix_user_llm_usage_quotas_user_period ON user_llm_usage_quotas (user_id, quota_period);
+CREATE INDEX IF NOT EXISTS ix_user_llm_usage_quotas_period_range ON user_llm_usage_quotas (period_start, period_end);
+
 -- LLM Call Logs table indexes
 CREATE INDEX IF NOT EXISTS ix_llm_call_logs_id ON llm_call_logs (id);
 
@@ -855,8 +967,8 @@ BEGIN
     RAISE NOTICE 'AutoReportAI Database Initialization Finished!';
     RAISE NOTICE '=================================================';
     RAISE NOTICE 'Extensions created: uuid-ossp, pg_trgm, hstore';
-    RAISE NOTICE 'Enum types created: 12 types';
-    RAISE NOTICE 'Tables created: 30 tables with all relationships';
+    RAISE NOTICE 'Enum types created: 13 types';
+    RAISE NOTICE 'Tables created: 34 tables with all relationships';
     RAISE NOTICE 'Indexes created: All performance indexes';
     RAISE NOTICE 'Database ready for application use!';
     RAISE NOTICE '=================================================';

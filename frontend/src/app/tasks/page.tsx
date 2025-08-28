@@ -14,7 +14,6 @@ import {
   CheckIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -481,7 +480,7 @@ export default function TasksPage() {
   ]
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="任务管理"
         description="创建和管理定时任务，支持复杂的Cron调度表达式"
@@ -639,6 +638,6 @@ export default function TasksPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

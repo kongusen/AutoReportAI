@@ -18,7 +18,7 @@ class UserProfileBase(BaseModel):
     )
     auto_cleanup_enabled: bool = Field(default=True, description="自动清理")
     default_report_format: str = Field(default="pdf", description="默认报告格式")
-    default_ai_provider: Optional[str] = Field(None, description="默认AI提供商")
+    # LLM配置已迁移到独立的UserLLMPreference
     custom_css: Optional[str] = Field(None, description="自定义CSS")
     dashboard_layout: Optional[str] = Field(None, description="仪表板布局配置")
     timezone: str = Field(default="Asia/Shanghai", description="时区设置")
@@ -44,7 +44,7 @@ class UserProfileUpdate(BaseModel):
     )
     auto_cleanup_enabled: Optional[bool] = Field(None, description="自动清理")
     default_report_format: Optional[str] = Field(None, description="默认报告格式")
-    default_ai_provider: Optional[str] = Field(None, description="默认AI提供商")
+    # LLM配置已迁移到独立的UserLLMPreference
     custom_css: Optional[str] = Field(None, description="自定义CSS")
     dashboard_layout: Optional[str] = Field(None, description="仪表板布局配置")
     timezone: Optional[str] = Field(None, description="时区设置")

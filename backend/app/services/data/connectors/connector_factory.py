@@ -63,7 +63,8 @@ def _create_doris_connector(data_source: DataSource) -> DorisConnector:
         username=data_source.doris_username or "root",
         password=password,
         load_balance=True,
-        timeout=30
+        timeout=30,
+        use_mysql_protocol=False  # 优先使用 HTTP API，因为更稳定
     )
     
     return DorisConnector(config)

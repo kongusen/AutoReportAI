@@ -60,10 +60,11 @@ class TemplatePlaceholder(Base):
     
     # 关系
     template = relationship("Template", back_populates="placeholders")
+    chart_cache = relationship("PlaceholderChartCache", back_populates="placeholder", cascade="all, delete-orphan")
     placeholder_values = relationship("PlaceholderValue", back_populates="placeholder", cascade="all, delete-orphan")
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class PlaceholderValue(Base):
@@ -116,7 +117,7 @@ class PlaceholderValue(Base):
     data_source = relationship("DataSource")
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TemplateExecutionHistory(Base):
@@ -159,4 +160,4 @@ class TemplateExecutionHistory(Base):
     end_time = Column(DateTime(timezone=True))
     
     class Config:
-        orm_mode = True
+        from_attributes = True

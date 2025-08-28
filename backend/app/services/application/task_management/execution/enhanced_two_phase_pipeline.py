@@ -912,12 +912,8 @@ class EnhancedTwoPhasePipeline:
     async def _execute_phase_2_with_agent(self, context, db, analysis_result=None):
         """执行阶段2 - 使用TaskSQLExecutionAgent执行SQL"""
         try:
-            from app.services.ai.agents.task_sql_execution_agent import (
-                TaskSQLExecutionAgent,
-                TaskExecutionContext,
-                TaskExecutionMode,
-                ExecutionPriority
-            )
+            # 直接使用IAOP专业化代理
+            from app.services.iaop.agents.specialized.data_query_agent import DataQueryAgent as TaskSQLExecutionAgent
             
             logger.info("🤖 开始使用TaskSQLExecutionAgent执行阶段2")
             

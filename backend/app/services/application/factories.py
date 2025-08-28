@@ -48,7 +48,8 @@ def create_two_phase_report_workflow(db: Session):
 
 def create_placeholder_sql_agent(db: Session, user_id: Optional[str] = None):
     """创建占位符SQL分析代理"""
-    from app.services.ai.agents.placeholder_sql_agent import PlaceholderSQLAnalyzer
+    # 直接使用IAOP专业化代理
+    from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
     return PlaceholderSQLAnalyzer(db_session=db, user_id=user_id)
 
 
@@ -59,7 +60,9 @@ def create_multi_database_agent(db: Session, user_id: Optional[str] = None):
 
 def create_context_aware_agent_registry():
     """创建上下文感知的Agent注册表"""
-    from app.services.ai.core import get_context_manager, get_agent_registry
+    # 直接使用IAOP核心系统
+    from app.services.iaop.context.context_manager import IAOPContextManager
+    from app.services.iaop.registry.agent_registry import IAOPAgentRegistry
     context_manager = get_context_manager()
     return get_agent_registry(context_manager)
 

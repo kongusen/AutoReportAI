@@ -20,7 +20,8 @@ def custom_ai_analysis_task(data_context: str, analysis_prompt: str) -> Dict[str
     logger.info(f"开始执行AI分析任务")
     
     async def run_analysis():
-        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+        # 直接使用IAOP核心平台
+        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
         from app.db.session import get_db_session
         
         with get_db_session() as db:
@@ -67,7 +68,8 @@ def ai_pipeline_task(pipeline_config: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"开始执行AI Pipeline任务")
     
     async def run_pipeline():
-        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+        # 直接使用IAOP核心平台
+        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
         from app.db.session import get_db_session
         
         results = {}
@@ -137,7 +139,8 @@ def batch_ai_analysis_task(batch_data: list) -> Dict[str, Any]:
     logger.info(f"开始执行批量AI分析任务，数量: {len(batch_data)}")
     
     async def run_batch_analysis():
-        from app.services.ai.integration.ai_service_enhanced import EnhancedAIService
+        # 直接使用IAOP核心平台
+        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
         from app.db.session import get_db_session
         
         results = []

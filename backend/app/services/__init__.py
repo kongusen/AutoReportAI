@@ -25,8 +25,8 @@ from . import infrastructure
 # 应用层
 from . import application
 
-# AI层
-from . import ai
+# IAOP核心平台（替代AI层）
+from . import iaop
 
 # =============================================================================
 # 向后兼容导入 (Backward Compatibility)
@@ -43,9 +43,10 @@ from .data.connectors.doris_connector import DorisConnector
 from .domain.template.template_service import TemplateService
 from .domain.reporting.generator import ReportGenerationService
 
-# AI服务向后兼容（使用新的上下文工程）
-from .ai.integration.llm_service import AIService as LLMService
-from .ai.agents.placeholder_sql_agent import PlaceholderSQLAgent, PlaceholderSQLAnalyzer
+# IAOP服务向后兼容（直接使用核心平台）
+from .llm.client import LLMServerClient as LLMService
+from .iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderSQLAgent
+from .iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
 
 # 应用服务向后兼容
 from .application.task_management.execution.two_phase_pipeline import execute_two_phase_pipeline
@@ -63,7 +64,7 @@ __all__ = [
     "domain",         # 领域层
     "infrastructure", # 基础设施层  
     "application",    # 应用层
-    "ai",            # AI层
+    "iaop",          # IAOP核心平台
     
     # =========================================================================
     # 向后兼容导出
@@ -80,7 +81,7 @@ __all__ = [
     "TemplateService",
     "ReportGenerationService",
     
-    # AI服务
+    # IAOP服务  
     "LLMService",
     "PlaceholderSQLAgent",
     "PlaceholderSQLAnalyzer",

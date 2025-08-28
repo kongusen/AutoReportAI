@@ -18,9 +18,13 @@ from ...domain.analysis.services.data_analysis_domain_service import DataAnalysi
 from ...domain.reporting.services.report_generation_domain_service import ReportGenerationDomainService
 
 # Import AI services
-from ...ai.core.context_manager import ContextManager, AgentContext
-from ...ai.core.prompt_engine import PromptEngine
-from ...ai.core.agent_registry import AgentRegistry
+# 直接使用IAOP核心系统
+from ...iaop.context.context_manager import IAOPContextManager as ContextManager
+from ...iaop.context.execution_context import EnhancedExecutionContext as AgentContext
+# 直接使用IAOP核心系统
+from ...iaop.orchestration.plan_generator import PlanGenerator as PromptEngine
+# 直接使用IAOP核心系统
+from ...iaop.registry.agent_registry import IAOPAgentRegistry as AgentRegistry
 
 # Import task services
 from ..task_management.core.scheduler import TaskScheduler as RefactoredTaskManager

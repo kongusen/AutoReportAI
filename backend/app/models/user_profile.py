@@ -24,7 +24,7 @@ class UserProfile(Base):
     default_storage_days = Column(Integer, default=90)
     auto_cleanup_enabled = Column(Boolean, default=True)
     default_report_format = Column(String(10), default="pdf")
-    default_ai_provider = Column(String(100), nullable=True)
+    # LLM配置已迁移到独立的UserLLMPreference表
     custom_css = Column(Text, nullable=True)
     dashboard_layout = Column(Text, nullable=True)
 

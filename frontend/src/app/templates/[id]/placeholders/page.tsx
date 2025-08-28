@@ -18,7 +18,6 @@ import {
   TrashIcon,
   PencilIcon,
 } from '@heroicons/react/24/outline'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
@@ -234,16 +233,14 @@ export default function TemplatePlaceholdersPage() {
 
   if (loading) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-        </div>
-      </AppLayout>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      </div>
     )
   }
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title={
           <div className="flex items-center">
@@ -623,6 +620,6 @@ export default function TemplatePlaceholdersPage() {
           </Button>
         </div>
       </Modal>
-    </AppLayout>
+    </>
   )
 }

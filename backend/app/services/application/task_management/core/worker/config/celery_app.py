@@ -85,5 +85,5 @@ def init_celery_scheduler():
         logger.error(f"初始化 Celery 调度器失败: {e}")
         return False
 
-# 在模块加载时初始化调度器
-init_celery_scheduler()
+# 延迟初始化调度器，避免循环导入
+# init_celery_scheduler()  # 改为按需初始化

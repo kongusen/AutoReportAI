@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     # WebSocket settings
     WS_HOST: str = os.getenv("WS_HOST", "localhost")
     WS_PORT: int = int(os.getenv("WS_PORT", 8000))
+    
+    # Server settings
+    PORT: int = int(os.getenv("PORT", 8000))
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # Notification settings
     ENABLE_EMAIL_NOTIFICATIONS: bool = (

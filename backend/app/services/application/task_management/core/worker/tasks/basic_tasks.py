@@ -22,7 +22,7 @@ from app import crud, schemas
 from app.core.time_utils import now, format_iso
 from app.db.session import SessionLocal
 # 直接使用IAOP核心平台
-from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+# REMOVED: IAOP IAOPAIService - Use MCP orchestrator instead as EnhancedAIService
 # AgentOrchestrator not available, using placeholder
 class AgentOrchestrator:
     def __init__(self):
@@ -257,7 +257,7 @@ def data_query(self, etl_instruction: Dict[str, Any],
     try:
         # 使用TaskSQLExecutionAgent替代直接的ETL执行器
         # 直接使用IAOP专业化代理
-        from app.services.iaop.agents.specialized.data_query_agent import DataQueryAgent as TaskSQLExecutionAgent
+        # REMOVED: IAOP specialized agents - Use MCP servers instead
         
         # 创建Agent实例
         agent_config = {

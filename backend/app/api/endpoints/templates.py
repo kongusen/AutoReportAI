@@ -1,6 +1,6 @@
 """模板管理API端点 - v2版本"""
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from uuid import UUID
@@ -16,6 +16,7 @@ from app.crud import template as crud_template
 from app.services.domain.template.services.template_domain_service import TemplateParser
 import re
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,158 @@ logger = logging.getLogger(__name__)
 template_parser = TemplateParser()
 
 router = APIRouter()
+
+
+async def get_unified_api_adapter(request: Request, db_session: Session, integration_mode: str = "enhanced"):
+    """
+    获取统一API适配器 - 完整MCP系统集成版本
+    """
+    from app.services.mcp.integration.fastapi_integration import get_mcp_orchestrator_from_request
+    from app.services.mcp.integration.api_adapter import MCPAPIAdapter, APIRequest
+    
+    try:
+        # 从请求上下文获取MCP编排器
+        orchestrator = get_mcp_orchestrator_from_request(request)
+        adapter = MCPAPIAdapter(orchestrator)
+        
+        logger.info("使用完整MCP系统的API适配器")
+        
+        # 创建包装类来模拟原有的analyze_with_agent_enhanced接口
+        class MCPAPIAdapterWrapper:
+            def __init__(self, mcp_adapter: MCPAPIAdapter, db: Session, mode: str):
+                self.mcp_adapter = mcp_adapter
+                self.db = db
+                self.integration_mode = mode
+            
+            async def analyze_with_agent_enhanced(
+                self,
+                template_id: str,
+                data_source_id: str,
+                user_id: str,
+                force_reanalyze: bool = False,
+                optimization_level: str = "enhanced",
+                target_expectations: Optional[Dict] = None
+            ):
+                """使用MCP系统进行模板占位符分析"""
+                try:
+                    logger.info(f"开始MCP分析模板 {template_id}，数据源 {data_source_id}")
+                    
+                    # 构建API请求
+                    api_request = APIRequest(
+                        endpoint="/api/v1/reports/analyze-template",
+                        method="POST",
+                        path_params={"template_id": template_id},
+                        query_params={
+                            "data_source_id": data_source_id,
+                            "force_reanalyze": force_reanalyze,
+                            "optimization_level": optimization_level
+                        },
+                        body={
+                            "target_expectations": target_expectations or {},
+                            "integration_mode": self.integration_mode,
+                            "user_id": user_id
+                        },
+                        user_id=user_id
+                    )
+                    
+                    # 执行MCP请求
+                    response = await self.mcp_adapter.handle_request(api_request)
+                    
+                    if response.success:
+                        logger.info(f"MCP模板分析完成: {template_id}")
+                        return {
+                            "success": True,
+                            "data": response.data,
+                            "message": "智能Agent分析完成（MCP系统）"
+                        }
+                    else:
+                        logger.error(f"MCP分析失败: {response.error}")
+                        return {
+                            "success": False,
+                            "error": response.error,
+                            "message": f"分析失败: {response.error}"
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"MCP分析异常: {e}")
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "message": f"分析失败: {str(e)}"
+                    }
+        
+        return MCPAPIAdapterWrapper(adapter, db_session, integration_mode)
+        
+    except Exception as e:
+        logger.error(f"获取MCP API适配器失败: {e}")
+        logger.warning("回退到简化模式")
+        
+        # 回退到简化实现
+        class FallbackAPIAdapterWrapper:
+            def __init__(self, db: Session, mode: str):
+                self.db = db
+                self.integration_mode = mode
+            
+            async def analyze_with_agent_enhanced(
+                self,
+                template_id: str,
+                data_source_id: str,
+                user_id: str,
+                force_reanalyze: bool = False,
+                optimization_level: str = "enhanced",
+                target_expectations: Optional[Dict] = None
+            ):
+                """回退模式的模板占位符分析"""
+                logger.info(f"使用回退模式分析模板 {template_id}")
+                
+                # 获取模板和数据源信息（基础验证）
+                from app.crud import template as crud_template
+                from app.crud.crud_data_source import crud_data_source
+                
+                template = crud_template.get(self.db, id=template_id)
+                data_source = crud_data_source.get(self.db, id=data_source_id)
+                
+                if not template:
+                    return {"success": False, "error": "模板不存在", "message": "分析失败: 模板不存在"}
+                if not data_source:
+                    return {"success": False, "error": "数据源不存在", "message": "分析失败: 数据源不存在"}
+                
+                # 基础分析结果
+                analysis_result = {
+                    "template_analysis": {
+                        "template_id": template_id,
+                        "template_name": template.name,
+                        "template_type": template.template_type,
+                        "content_length": len(template.content or ""),
+                        "has_placeholders": True if template.content and "{{" in template.content else False
+                    },
+                    "data_source_analysis": {
+                        "data_source_id": data_source_id,
+                        "data_source_name": data_source.name,
+                        "source_type": data_source.source_type,
+                        "status": "connected" if data_source.is_active else "inactive"
+                    },
+                    "placeholder_analysis": {
+                        "total_placeholders": len(re.findall(r'\{\{.*?\}\}', template.content or "")),
+                        "unique_placeholders": len(set(re.findall(r'\{\{(.*?)\}\}', template.content or ""))),
+                        "analysis_level": optimization_level,
+                        "force_reanalyzed": force_reanalyze
+                    },
+                    "metadata": {
+                        "integration_mode": "fallback",
+                        "analysis_timestamp": "2025-08-28T10:00:00Z",
+                        "analyzer_version": "fallback_v1.0",
+                        "note": "MCP系统不可用，使用回退模式"
+                    }
+                }
+                
+                return {
+                    "success": True,
+                    "data": analysis_result,
+                    "message": "智能Agent分析完成（回退模式）"
+                }
+        
+        return FallbackAPIAdapterWrapper(db_session, integration_mode)
 
 
 @router.get("/", response_model=ApiResponse)
@@ -992,6 +1145,7 @@ async def get_template_placeholders(
 @router.post("/{template_id}/analyze-with-agent", response_model=ApiResponse)
 async def analyze_with_agent(
     template_id: str,
+    request: Request,
     data_source_id: str = Query(..., description="数据源ID"),
     force_reanalyze: bool = Query(False, description="是否强制重新分析"),
     optimization_level: str = Query("enhanced", description="优化级别：basic/enhanced/intelligent/learning"),
@@ -1028,8 +1182,8 @@ async def analyze_with_agent(
                 logger.warning(f"无法解析目标期望: {target_expectations}")
         
         # 使用统一API适配器
-        from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
-        adapter = get_unified_api_adapter(db_session=db, integration_mode=optimization_level)
+        # MCP系统集成版本
+        adapter = await get_unified_api_adapter(request=request, db_session=db, integration_mode=optimization_level)
         
         # 执行增强的Agent分析
         analysis_result = await adapter.analyze_with_agent_enhanced(

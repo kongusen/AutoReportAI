@@ -1,66 +1,77 @@
-alembic
-anyio
-asgiref
-async-timeout
-bcrypt
-blinker
-celery[redis]>=5.2.0
-certifi
-cffi
-charset-normalizer
-click
-colorama
-cryptography
-dnspython
-email-validator
-fastapi
-fastapi-limiter
-greenlet
-h11
-httptools
-idna
-itsdangerous
-Jinja2
-MarkupSafe
-minio
-passlib
-psycopg2-binary
-pycparser
-pydantic
-pydantic-settings
-PyJWT
-python-dotenv
-python-jose
-python-multipart
-python-docx
-pytz
-redis
-requests
-six
-sniffio
-SQLAlchemy
-starlette
-tenacity
-typing-extensions
-uvicorn
-uvloop
-watchfiles
-websockets
-yarl
-openpyxl
-pandas
-numpy
-psutil
-cachetools
-openai
-apscheduler
-cron-validator
-unidecode
-structlog
-aiohttp
-matplotlib
-seaborn
-plotly
-kaleido
-scikit-learn
-PyMySQL==1.1.0
+# Web框架和API
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+starlette>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 数据库和ORM
+SQLAlchemy>=2.0.23
+alembic>=1.13.1
+psycopg2-binary>=2.9.9
+
+# Redis和缓存
+redis>=5.0.1
+cachetools>=5.3.0
+
+# 认证和安全
+PyJWT>=2.8.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+cryptography>=41.0.8
+bcrypt>=4.1.2
+
+# 文件处理
+python-multipart>=0.0.6
+python-docx>=1.1.0
+openpyxl>=3.1.2
+
+# 任务队列和调度
+celery[redis]>=5.3.4
+apscheduler>=3.10.4
+cron-validator>=1.0.8
+
+# 数据处理
+pandas>=2.1.4
+numpy>=1.24.4
+
+# AI和LLM支持
+llama-index>=0.10.0
+openai>=1.6.1
+
+# HTTP客户端和网络
+aiohttp>=3.9.1
+requests>=2.31.0
+
+# 日志和监控
+structlog>=23.2.0
+psutil>=5.9.6
+
+# 可视化
+matplotlib>=3.8.2
+seaborn>=0.13.0
+plotly>=5.17.0
+kaleido>=0.2.1
+
+# 机器学习（可选）
+scikit-learn>=1.3.2
+
+# 开发和测试
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+pytest-mock>=3.12.0
+pytest-cov>=4.0.0
+pytest-html>=4.1.1
+pytest-xdist>=3.5.0
+
+# 工具库
+python-dotenv>=1.0.0
+tenacity>=8.2.3
+email-validator>=2.1.0
+unidecode>=1.3.7
+
+# 其他数据库连接器
+PyMySQL>=1.1.0
+
+# 文件存储
+minio>=7.2.0

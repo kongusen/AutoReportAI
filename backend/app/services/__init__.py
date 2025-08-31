@@ -26,7 +26,7 @@ from . import infrastructure
 from . import application
 
 # IAOP核心平台（替代AI层）
-from . import iaop
+# REMOVED: iaop - migrated to MCP
 
 # =============================================================================
 # 向后兼容导入 (Backward Compatibility)
@@ -40,16 +40,19 @@ from .data.sources.data_source_service import DataSourceService
 from .data.connectors.doris_connector import DorisConnector
 
 # 领域服务向后兼容
-from .domain.template.template_service import TemplateService
+# TEMPORARILY DISABLED: Legacy IAOP dependencies
+# from .domain.template.template_service import TemplateService
 from .domain.reporting.generator import ReportGenerationService
 
 # IAOP服务向后兼容（直接使用核心平台）
 from .llm.client import LLMServerClient as LLMService
-from .iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderSQLAgent
-from .iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
+# REMOVED: IAOP agents - Use MCP orchestrator instead
+# from .iaop.agents.specialized.placeholder_parser_agent import PlaceholderParserAgent as PlaceholderSQLAgent
+# from .iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
 
 # 应用服务向后兼容
-from .application.task_management.execution.two_phase_pipeline import execute_two_phase_pipeline
+# Enhanced Pipeline disabled due to missing dependencies in DAG architecture
+# from .application.task_management.execution.enhanced_two_phase_pipeline import EnhancedTwoPhasePipeline
 
 # 基础设施服务向后兼容  
 # PipelineCacheManager已被统一缓存系统替代
@@ -64,7 +67,7 @@ __all__ = [
     "domain",         # 领域层
     "infrastructure", # 基础设施层  
     "application",    # 应用层
-    "iaop",          # IAOP核心平台
+    # "iaop",          # IAOP核心平台 - 已移除
     
     # =========================================================================
     # 向后兼容导出
@@ -78,16 +81,16 @@ __all__ = [
     "DorisConnector",
     
     # 领域服务
-    "TemplateService",
+    # "TemplateService",  # TEMPORARILY DISABLED
     "ReportGenerationService",
     
     # IAOP服务  
     "LLMService",
-    "PlaceholderSQLAgent",
-    "PlaceholderSQLAnalyzer",
+    # "PlaceholderSQLAgent",  # REMOVED
+    # "PlaceholderSQLAnalyzer",  # REMOVED
     
     # 应用服务
-    "execute_two_phase_pipeline",
+    # "EnhancedTwoPhasePipeline",  # Disabled in DAG architecture
     
     # 基础设施服务
     "NotificationService", 

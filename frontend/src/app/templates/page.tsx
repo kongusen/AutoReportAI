@@ -18,13 +18,19 @@ import { Card, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Empty } from '@/components/ui/Empty'
-import { useTemplateStore } from '@/features/templates/templateStore'
+import { useEnhancedTemplates } from '@/hooks/useEnhancedTemplates'
 import { formatRelativeTime } from '@/utils'
 import { Template } from '@/types'
 
 export default function TemplatesPage() {
   const router = useRouter()
-  const { templates, loading, fetchTemplates, deleteTemplate } = useTemplateStore()
+  const { 
+    templates, 
+    loading,
+    operations,
+    fetchTemplates, 
+    deleteTemplate 
+  } = useEnhancedTemplates()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedType, setSelectedType] = useState<string>('all')
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
@@ -115,6 +121,19 @@ export default function TemplatesPage() {
           </select>
         </div>
       </div>
+
+      {/* 操作状态提示 */}
+      {operations.delete.loading && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-blue-800 text-sm">正在删除模板...</p>
+        </div>
+      )}
+      
+      {operations.delete.error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-800 text-sm">{operations.delete.error}</p>
+        </div>
+      )}
 
       {/* 模板列表 */}
       {loading ? (
@@ -265,6 +284,7 @@ export default function TemplatesPage() {
           </Button>
         </div>
       </Modal>
+
     </>
   )
 }

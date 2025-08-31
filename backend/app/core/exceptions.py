@@ -123,6 +123,20 @@ class ExternalServiceError(AppException):
         self.details["service"] = service
 
 
+class ServiceException(AppException):
+    """通用服务异常"""
+    
+    def __init__(self, message: str, service_name: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message=message,
+            code="SERVICE_ERROR",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            details=details or {}
+        )
+        if service_name:
+            self.details["service_name"] = service_name
+
+
 # 智能占位符服务异常
 class PlaceholderProcessingError(AppException):
     """占位符处理异常"""

@@ -380,7 +380,7 @@ async def test_llm_connection(
         
         # 实际测试连接
         try:
-            from app.services.iaop.integration.llm_service_adapter import get_iaop_llm_service, reset_iaop_llm_service
+            # REMOVED: IAOP import - integration.llm_service_adapter import get_iaop_llm_service, reset_iaop_llm_service
             from datetime import datetime
             
             # 重置全局服务实例以使用新配置

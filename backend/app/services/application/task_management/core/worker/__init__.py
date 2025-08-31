@@ -23,11 +23,12 @@ from .tasks.basic_tasks import (
     test_celery_task
 )
 
-from .tasks.enhanced_tasks import (
-    execute_scheduled_task,
-    intelligent_report_generation_pipeline,
-    enhanced_intelligent_report_generation_pipeline
-)
+# TEMPORARILY DISABLED: Enhanced tasks module not found
+# from .tasks.enhanced_tasks import (
+#     execute_scheduled_task,
+#     intelligent_report_generation_pipeline,
+#     enhanced_intelligent_report_generation_pipeline
+# )
 
 # 导入工具函数
 from .utils.progress_utils import (
@@ -52,10 +53,10 @@ __all__ = [
     "execute_etl_job",
     "test_celery_task",
     
-    # 增强任务
-    "execute_scheduled_task",
-    "intelligent_report_generation_pipeline",
-    "enhanced_intelligent_report_generation_pipeline",
+    # 增强任务 (TEMPORARILY DISABLED)
+    # "execute_scheduled_task",
+    # "intelligent_report_generation_pipeline", 
+    # "enhanced_intelligent_report_generation_pipeline",
     
     # 工具函数
     "update_task_progress",

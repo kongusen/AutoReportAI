@@ -1,262 +1,167 @@
 """
-占位符处理系统
-
-基于清晰分层架构的统一占位符处理系统
-包含：提取层、配置层、分析层、执行层、缓存层、编排层
+智能占位符系统 v3.0 - DAG编排架构
+基于DAG编排的智能占位符处理系统
+职责：构建上下文工程，调用agents系统DAG处理，协助存储中间结果
 """
 
-# 核心功能
-from .core import (
-    # 数据模型
-    PlaceholderRequest,
-    PlaceholderResponse,
-    CacheKey,
-    CacheEntry,
-    AgentAnalysisResult,
-    AgentExecutionResult,
-    RuleGenerationResult,
-    ExecutionResult,
-    SchemaInfo,
-    
-    # 枚举
-    ProcessingStage,
-    ResultSource,
-    
-    # 接口
-    CacheServiceInterface,
-    AgentAnalysisServiceInterface,
-    TemplateRuleServiceInterface,
-    DataExecutionServiceInterface,
-    
-    # 异常
-    PlaceholderError,
-    PlaceholderExtractionError,
-    PlaceholderAnalysisError,
-    PlaceholderExecutionError,
-    PlaceholderCacheError,
-    PlaceholderConfigError,
-    PlaceholderValidationError,
-    
-    # 常量
-    DEFAULT_CACHE_TTL,
-    MAX_RETRY_ATTEMPTS,
-    DEFAULT_TIMEOUT,
-    SUPPORTED_PLACEHOLDER_TYPES,
+# 核心模型
+from .models import (
+    PlaceholderSpec, DocumentContext, BusinessContext, TimeContext,
+    ValidationResult, ProcessingResult, StatisticalType, SyntaxType
 )
 
-# 提取层
-from .extraction import (
-    PlaceholderExtractor,
-    PlaceholderParser,
+# 解析器
+from .parsers import (
+    PlaceholderParser, ParameterizedParser, CompositeParser, 
+    ConditionalParser, SyntaxValidator, ParserFactory
 )
 
-# 配置层
-from .config import (
-    PlaceholderConfigService,
-    PlaceholderConfigValidator,
+# 语义分析
+from .semantic import (
+    SemanticPlaceholderParser, IntentClassifier, 
+    SemanticAnalyzer, ImplicitParameterInferencer
 )
 
-# 分析层（使用新的Agent系统）
-# AgentAnalysisService 已迁移到 app.services.ai.agents.placeholder_sql_agent
-from .rule_service import TemplateRuleService
+# 上下文分析（上下文工程核心）
+from .context import (
+    ContextAnalysisEngine, ParagraphAnalyzer, SectionAnalyzer,
+    DocumentAnalyzer, BusinessRuleAnalyzer
+)
 
-# 执行层
-from .execution_service import DataExecutionService
+# 权重计算
+from .weight import (
+    WeightCalculator, DynamicWeightAdjuster, WeightAggregator,
+    WeightLearningEngine, WeightComponents
+)
 
-# 缓存层
-from .cache_service import CacheService
-
-# 编排层
-from .router import PlaceholderRouter, PlaceholderBatchRouter
-
-# 容器和工厂
-from .container import (
-    PlaceholderServiceContainer,
-    PlaceholderServiceFactory,
-    GlobalContainerManager,
-    global_container_manager
+# 智能占位符服务（符合DAG架构）
+from .intelligent_placeholder_service import (
+    IntelligentPlaceholderService,
+    get_intelligent_placeholder_service,
+    analyze_template_placeholders,
+    analyze_single_placeholder
 )
 
 # 版本信息
-__version__ = "1.0.0"
+__version__ = "3.0.0-dag"
 __author__ = "AutoReportAI Team"
 
-# 导出的主要接口
+# 主要导出
 __all__ = [
-    # 核心模型
-    "PlaceholderRequest",
-    "PlaceholderResponse",
-    "ResultSource",
-    "ProcessingStage",
+    # 核心类
+    'IntelligentPlaceholderService',
     
-    # 主要服务（统一接口）
-    "PlaceholderRouter",
-    "PlaceholderBatchRouter",
-    "PlaceholderServiceContainer",
-    "PlaceholderServiceFactory",
+    # 便捷函数
+    'get_intelligent_placeholder_service',
+    'analyze_template_placeholders',
+    'analyze_single_placeholder',
     
-    # 提取和配置层（新增）
-    "PlaceholderExtractor",
-    "PlaceholderParser",
-    "PlaceholderConfigService",
-    "PlaceholderConfigValidator",
+    # 模型
+    'PlaceholderSpec',
+    'DocumentContext', 
+    'BusinessContext',
+    'TimeContext',
+    'ValidationResult',
+    'ProcessingResult',
+    'StatisticalType',
+    'SyntaxType',
     
-    # 分析和执行层
-    # "AgentAnalysisService",  # 已迁移到新的Agent系统
-    "TemplateRuleService",
-    "DataExecutionService",
+    # 解析器
+    'PlaceholderParser',
+    'ParameterizedParser', 
+    'CompositeParser',
+    'ConditionalParser',
+    'SyntaxValidator',
+    'ParserFactory',
     
-    # 缓存层
-    "CacheService",
+    # 语义分析
+    'SemanticPlaceholderParser',
+    'IntentClassifier',
+    'SemanticAnalyzer', 
+    'ImplicitParameterInferencer',
     
-    # 异常类
-    "PlaceholderError",
-    "PlaceholderExtractionError",
-    "PlaceholderAnalysisError",
-    "PlaceholderExecutionError",
-    "PlaceholderCacheError",
-    "PlaceholderConfigError",
-    "PlaceholderValidationError",
+    # 上下文分析
+    'ContextAnalysisEngine',
+    'ParagraphAnalyzer',
+    'SectionAnalyzer',
+    'DocumentAnalyzer', 
+    'BusinessRuleAnalyzer',
     
-    # 常量
-    "DEFAULT_CACHE_TTL",
-    "MAX_RETRY_ATTEMPTS",
-    "DEFAULT_TIMEOUT",
-    "SUPPORTED_PLACEHOLDER_TYPES",
-    
-    # 工具类
-    "global_container_manager",
-    
-    # 工厂函数
-    "create_placeholder_service",
-    "create_placeholder_router", 
-    "create_batch_router",
-    "create_placeholder_extractor",
-    "create_placeholder_config_service",
+    # 权重计算
+    'WeightCalculator',
+    'DynamicWeightAdjuster',
+    'WeightAggregator',
+    'WeightLearningEngine',
+    'WeightComponents'
 ]
 
-
-def create_placeholder_service(db_session, user_id=None):
+async def create_context_engine_for_placeholder(
+    template_content: str,
+    template_metadata: dict = None,
+    context_data: dict = None
+) -> dict:
     """
-    快速创建占位符服务
+    创建占位符专用上下文工程（符合DAG架构）
     
     Args:
-        db_session: 数据库会话
-        user_id: 用户ID，可选
+        template_content: 模板内容
+        template_metadata: 模板元数据
+        context_data: 额外的上下文数据
     
     Returns:
-        PlaceholderServiceContainer: 服务容器实例
-    
-    Example:
-        >>> from app.services.domain.placeholder import create_placeholder_service
-        >>> service = create_placeholder_service(db, user_id="123")
-        >>> router = service.router
-        >>> result = await router.process_placeholder(request)
+        dict: 构建好的上下文工程数据
     """
-    return PlaceholderServiceFactory.create_container(db_session, user_id)
-
-
-def create_placeholder_router(db_session, user_id=None):
-    """
-    快速创建占位符路由器
+    service = await get_intelligent_placeholder_service()
     
-    Args:
-        db_session: 数据库会话
-        user_id: 用户ID，可选
+    time_context = context_data.get("time_context") if context_data else None
+    business_context = context_data.get("business_context") if context_data else None
+    document_context = context_data.get("document_context") if context_data else None
+    
+    return await service._build_context_engine_data(
+        template_content,
+        time_context or service._create_default_time_context(),
+        business_context or service._create_default_business_context(),
+        document_context or service._create_default_document_context()
+    )
+
+def get_system_info() -> dict:
+    """
+    获取系统信息（DAG架构版本）
     
     Returns:
-        PlaceholderRouter: 路由器实例
-    
-    Example:
-        >>> from app.services.domain.placeholder import create_placeholder_router
-        >>> router = create_placeholder_router(db, user_id="123")
-        >>> result = await router.process_placeholder(request)
+        dict: 系统版本和功能信息
     """
-    return PlaceholderServiceFactory.create_router_only(db_session, user_id)
-
-
-def create_batch_router(db_session, user_id=None):
-    """
-    快速创建批量占位符路由器
-    
-    Args:
-        db_session: 数据库会话
-        user_id: 用户ID，可选
-    
-    Returns:
-        PlaceholderBatchRouter: 批量路由器实例
-    
-    Example:
-        >>> from app.services.domain.placeholder import create_batch_router
-        >>> batch_router = create_batch_router(db, user_id="123")
-        >>> result = await batch_router.process_template_placeholders(
-        ...     template_id, data_source_id, user_id
-        ... )
-    """
-    return PlaceholderServiceFactory.create_batch_router_only(db_session, user_id)
-
-
-def create_placeholder_extractor(db_session, template_parser=None):
-    """
-    快速创建占位符提取器
-    
-    Args:
-        db_session: 数据库会话
-    
-    Returns:
-        PlaceholderExtractor: 提取器实例
-    
-    Example:
-        >>> from app.services.domain.placeholder import create_placeholder_extractor
-        >>> extractor = create_placeholder_extractor(db)
-        >>> result = await extractor.extract_and_store_placeholders(template_id, content)
-    """
-    return PlaceholderExtractor(db_session, template_parser=template_parser)
-
-
-def create_placeholder_config_service(db_session):
-    """
-    快速创建占位符配置服务
-    
-    Args:
-        db_session: 数据库会话
-    
-    Returns:
-        PlaceholderConfigService: 配置服务实例
-    
-    Example:
-        >>> from app.services.domain.placeholder import create_placeholder_config_service
-        >>> config_service = create_placeholder_config_service(db)
-        >>> configs = await config_service.get_placeholder_configs(template_id)
-    """
-    return PlaceholderConfigService(db_session)
-
-
-# 系统信息
-def get_system_info():
-    """获取占位符处理系统信息"""
     return {
-        "name": "PlaceholderProcessingSystem",
-        "version": __version__,
-        "author": __author__,
-        "architecture": "layered",
-        "layers": [
-            "router_layer",      # 路由层
-            "cache_layer",       # 缓存层  
-            "agent_layer",       # Agent分析层
-            "rule_layer",        # 模板规则层
-            "execution_layer"    # 数据执行层
+        'version': __version__,
+        'author': __author__,
+        'architecture': 'DAG编排架构',
+        'responsibilities': [
+            '构建上下文工程',
+            '调用agents系统DAG处理', 
+            '协助存储中间结果',
+            '占位符预处理'
         ],
-        "features": [
-            "ai_driven_analysis",      # AI驱动的分析
-            "intelligent_caching",     # 智能缓存
-            "rule_based_fallback",     # 基于规则的fallback
-            "batch_processing",        # 批量处理
-            "error_recovery",          # 错误恢复
-            "performance_monitoring"   # 性能监控
+        'features': {
+            'context_engine_building': True,
+            'dag_agents_integration': True,
+            'intermediate_result_storage': True,
+            'advanced_parsing': True,
+            'semantic_analysis': True,
+            'context_awareness': True,
+            'dynamic_weighting': True,
+            'performance_tracking': True
+        },
+        'agents_integration': {
+            'dag_orchestration': True,
+            'background_controller': True,
+            'think_default_models': True,
+            'quality_control': True
+        },
+        'supported_types': [
+            '统计', '趋势', '极值', '列表', 
+            '统计图', '对比', '预测'
         ],
-        "supported_data_sources": [
-            "doris",
-            # 其他数据源可扩展
+        'syntax_types': [
+            'basic', 'parameterized', 'composite', 'conditional'
         ]
     }

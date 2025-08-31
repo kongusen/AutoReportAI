@@ -13,7 +13,7 @@ from app.core.architecture import ApiResponse
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.services.iaop.orchestration.two_stage_chart_orchestrator import get_two_stage_chart_orchestrator
+# REMOVED: IAOP import - orchestration.two_stage_chart_orchestrator import get_two_stage_chart_orchestrator
 
 router = APIRouter()
 
@@ -125,7 +125,7 @@ async def test_placeholder_chart(
         
         # 对于test_with_data模式，使用统一API适配器进行智能处理
         if execution_mode == 'test_with_data':
-            from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
+            # REMOVED: IAOP import - integration.unified_api_adapter import get_unified_api_adapter
             adapter = get_unified_api_adapter(db_session=db, integration_mode=optimization_level)
             
             # 执行增强的test_with_data
@@ -138,11 +138,71 @@ async def test_placeholder_chart(
                 optimization_level=optimization_level
             )
             
-            return ApiResponse(
-                success=result.get('success', False),
-                data=result,
-                message="智能占位符测试完成" if result.get('success') else "测试失败，请检查配置和期望"
-            )
+            # 对于test_with_data模式，也需要应用前端兼容的数据格式化
+            if result.get('success') and result.get('data'):
+                result_data = result.get('data', {})
+                raw_data = result_data.get('raw_data', [])
+                
+                # 提取actual_result_value - 应用相同的提取逻辑
+                actual_result_value = _extract_actual_result_value(raw_data)
+                
+                # 格式化数据以兼容前端
+                formatted_data = {
+                    # 基础执行信息
+                    'success': True,
+                    'execution_time_ms': result_data.get('processing_time_ms', 0),
+                    'sql_executed': result_data.get('sql_query', ''),
+                    
+                    # 数据信息 - 前端期望的关键字段
+                    'raw_data': raw_data,
+                    'row_count': len(raw_data),
+                    'actual_result_value': actual_result_value,  # ⭐ 关键字段
+                    
+                    # 数据库和表信息
+                    'target_database': 'doris',  # 根据当前配置
+                    'target_table': result_data.get('target_table', ''),
+                    
+                    # 图表信息（test_with_data模式为null）
+                    'chart_config': None,
+                    'chart_type': None,
+                    'echarts_config': None,
+                    'chart_ready': False,
+                    
+                    # 占位符类型信息
+                    'is_chart_placeholder': is_chart_placeholder,
+                    'placeholder_type_info': {
+                        'is_chart_placeholder': is_chart_placeholder,
+                        'content_type': placeholder.content_type,
+                        'placeholder_type': placeholder.placeholder_type,
+                        'message': '当前占位符不是图表类型，仅执行SQL查询测试' if not is_chart_placeholder else '图表占位符SQL查询测试'
+                    },
+                    
+                    # 测试摘要
+                    'test_summary': result_data.get('explanation', ''),
+                    
+                    # 格式化文本（用于前端显示） - ⭐ 前端toast消息
+                    'formatted_text': _generate_formatted_text(
+                        {'data': {'sql_query': result_data.get('sql_query', '')}}, 
+                        is_chart_placeholder, 
+                        raw_data, 
+                        actual_result_value
+                    ),
+                    
+                    # 保留统一API适配器的完整结果
+                    'full_result': result
+                }
+                
+                return ApiResponse(
+                    success=True,
+                    data=formatted_data,
+                    message="智能占位符测试完成"
+                )
+            else:
+                return ApiResponse(
+                    success=result.get('success', False),
+                    data=result,
+                    message="智能占位符测试完成" if result.get('success') else "测试失败，请检查配置和期望"
+                )
         else:
             # 其他模式使用原有的两阶段编排器
             orchestrator = get_two_stage_chart_orchestrator(db)
@@ -193,20 +253,41 @@ async def test_placeholder_chart(
             # 从数据源上下文或执行元数据中提取数据库信息
             target_database = 'doris'  # 根据当前配置默认为doris
             
-            # 计算实际结果值（如果是COUNT查询）
+            # 计算实际结果值 - 改进逻辑以支持各种查询类型
             actual_result_value = None
             if raw_data and len(raw_data) > 0:
                 first_row = raw_data[0]
                 if isinstance(first_row, dict):
-                    # 尝试获取COUNT类查询的结果
-                    for key, value in first_row.items():
-                        if 'count' in key.lower() or 'total' in key.lower():
-                            actual_result_value = str(value)
+                    # 尝试按优先级获取结果值
+                    
+                    # 1. 首先寻找明确的业务意义字段 (report_year, year等)
+                    business_fields = ['report_year', 'year', 'period', 'date']
+                    for field in business_fields:
+                        for key, value in first_row.items():
+                            if field in key.lower() and value is not None:
+                                actual_result_value = str(value)
+                                break
+                        if actual_result_value:
                             break
-                    # 如果没找到count类字段，使用第一个数值字段
+                    
+                    # 2. 如果没找到，寻找COUNT类查询的结果
                     if actual_result_value is None:
                         for key, value in first_row.items():
-                            if isinstance(value, (int, float)):
+                            if ('count' in key.lower() or 'total' in key.lower()) and value is not None:
+                                actual_result_value = str(value)
+                                break
+                    
+                    # 3. 如果没找到，使用第一个非空数值字段
+                    if actual_result_value is None:
+                        for key, value in first_row.items():
+                            if isinstance(value, (int, float)) and value is not None:
+                                actual_result_value = str(value)
+                                break
+                    
+                    # 4. 最后，使用第一个非空字段
+                    if actual_result_value is None:
+                        for key, value in first_row.items():
+                            if value is not None and str(value).strip():
                                 actual_result_value = str(value)
                                 break
             
@@ -278,6 +359,40 @@ async def test_placeholder_chart(
         )
 
 
+def _extract_actual_result_value(raw_data: list) -> Optional[str]:
+    """提取实际结果值 - 统一的提取逻辑"""
+    if not raw_data or len(raw_data) == 0:
+        return None
+        
+    first_row = raw_data[0]
+    if not isinstance(first_row, dict):
+        return None
+        
+    # 1. 首先寻找明确的业务意义字段 (report_year, year等)
+    business_fields = ['report_year', 'year', 'period', 'date']
+    for field in business_fields:
+        for key, value in first_row.items():
+            if field in key.lower() and value is not None:
+                return str(value)
+    
+    # 2. 如果没找到，寻找COUNT类查询的结果
+    for key, value in first_row.items():
+        if ('count' in key.lower() or 'total' in key.lower()) and value is not None:
+            return str(value)
+    
+    # 3. 如果没找到，使用第一个非空数值字段
+    for key, value in first_row.items():
+        if isinstance(value, (int, float)) and value is not None:
+            return str(value)
+    
+    # 4. 最后，使用第一个非空字段
+    for key, value in first_row.items():
+        if value is not None and str(value).strip():
+            return str(value)
+    
+    return None
+
+
 def _generate_formatted_text(result: Dict[str, Any], is_chart_placeholder: bool, raw_data: list, actual_result_value: str) -> str:
     """生成格式化显示文本"""
     try:
@@ -286,7 +401,20 @@ def _generate_formatted_text(result: Dict[str, Any], is_chart_placeholder: bool,
             data_points = len(raw_data)
             return f"生成 {chart_type}，包含 {data_points} 个数据点"
         elif actual_result_value:
-            return f"查询结果: {actual_result_value}"
+            # 根据查询类型提供更具体的描述
+            sql_query = result.get('data', {}).get('sql_query', '').lower()
+            if 'year' in sql_query and 'report' in sql_query:
+                return f"报告年份: {actual_result_value}"
+            elif 'count' in sql_query:
+                return f"统计结果: {actual_result_value} 条记录"
+            elif 'sum' in sql_query or 'total' in sql_query:
+                return f"汇总结果: {actual_result_value}"
+            elif 'avg' in sql_query or 'average' in sql_query:
+                return f"平均值: {actual_result_value}"
+            else:
+                return f"查询结果: {actual_result_value}"
+        elif raw_data and len(raw_data) > 0:
+            return f"查询成功，返回 {len(raw_data)} 条记录"
         else:
             return "SQL测试成功"
     except Exception as e:

@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 from app import crud, models, schemas
 from app.core.logging_config import get_module_logger, get_performance_logger
 # 直接使用IAOP核心平台
-from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+# REMOVED: IAOP import - integration.ai_service_adapter import IAOPAIService as EnhancedAIService
 from app.services.data.processing.retrieval import DataRetrievalService
 from .composer import ReportCompositionService
 from .document_pipeline import TemplateParser
-from app.services.application.orchestration.service_coordinator import ServiceCoordinator
+# from app.services.application.orchestration.service_coordinator import ServiceCoordinator  # 临时禁用避免IAOP依赖
 from .word_generator_service import WordGeneratorService
 
 # Get module-specific loggers
@@ -34,10 +34,10 @@ class ReportGenerationService:
     def __init__(self, db: Session):
         self.db = db
         self.template_parser = TemplateParser()
-        self.service_coordinator = ServiceCoordinator(db)
+        # self.service_coordinator = ServiceCoordinator(db)  # 临时禁用避免IAOP依赖
         self.composition_service = ReportCompositionService()
         self.word_generator = WordGeneratorService()
-        self.ai_service = EnhancedAIService(db)
+        # self.ai_service = EnhancedAIService(db)  # 临时禁用避免IAOP依赖
         self.data_retrieval = DataRetrievalService()
 
     async def generate_report(
@@ -108,8 +108,9 @@ class ReportGenerationService:
                     }
                     
                     # Execute using application-level coordinator/orchestrator as the unified entry
-                    agent_result = await self.service_coordinator.cached_orchestrator.execute(placeholder_input, {})
-                    result = agent_result.data if agent_result.success else f"[Error: {agent_result.error_message}]"
+                    # agent_result = await self.service_coordinator.cached_orchestrator.execute(placeholder_input, {})  # 临时禁用
+                    # result = agent_result.data if agent_result.success else f"[Error: {agent_result.error_message}]"  # 临时禁用
+                    result = f"[Placeholder processing temporarily disabled after IAOP cleanup: {placeholder_name}]"
 
                     # Format the placeholder key for replacement
                     if placeholder_type == "scalar":
@@ -235,16 +236,17 @@ class ReportGenerationService:
                 # Get AI interpretation if description is provided
                 if placeholder.get("description"):
                     try:
-                        ai_params = self.ai_service.interpret_description_for_tool(
-                            task_type=placeholder["type"],
-                            description=placeholder["description"],
-                            df_columns=(
-                                sample_data.columns.tolist()
-                                if not sample_data.empty
-                                else []
-                            ),
-                        )
-                        analysis["ai_interpretation"] = ai_params
+                        # ai_params = self.ai_service.interpret_description_for_tool(  # 临时禁用避免IAOP依赖
+                        #     task_type=placeholder["type"],
+                        #     description=placeholder["description"],
+                        #     df_columns=(
+                        #         sample_data.columns.tolist()
+                        #         if not sample_data.empty
+                        #         else []
+                        #     ),
+                        # )
+                        # analysis["ai_interpretation"] = ai_params  # 临时禁用
+                        analysis["ai_interpretation"] = "AI interpretation temporarily disabled after IAOP cleanup"
                     except Exception as e:
                         analysis["ai_interpretation"] = f"Error: {str(e)}"
 
@@ -358,11 +360,14 @@ class ReportGenerationService:
 
             # Check AI service availability
             try:
-                ai_health = self.ai_service.health_check()
-                if ai_health["status"] != "healthy":
-                    validation_result["warnings"].append(
-                        f"AI service not healthy: {ai_health.get('message', 'Unknown issue')}"
-                    )
+                # ai_health = self.ai_service.health_check()  # 临时禁用避免IAOP依赖
+                # if ai_health["status"] != "healthy":
+                #     validation_result["warnings"].append(
+                #         f"AI service not healthy: {ai_health.get('message', 'Unknown issue')}"
+                #     )
+                validation_result["warnings"].append(
+                    "AI service temporarily disabled after IAOP cleanup"
+                )
             except Exception as e:
                 validation_result["warnings"].append(
                     f"AI service check failed: {str(e)}"

@@ -21,7 +21,7 @@ def custom_ai_analysis_task(data_context: str, analysis_prompt: str) -> Dict[str
     
     async def run_analysis():
         # 直接使用IAOP核心平台
-        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+        # REMOVED: IAOP IAOPAIService - Use MCP orchestrator instead as EnhancedAIService
         from app.db.session import get_db_session
         
         with get_db_session() as db:
@@ -69,7 +69,7 @@ def ai_pipeline_task(pipeline_config: Dict[str, Any]) -> Dict[str, Any]:
     
     async def run_pipeline():
         # 直接使用IAOP核心平台
-        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+        # REMOVED: IAOP IAOPAIService - Use MCP orchestrator instead as EnhancedAIService
         from app.db.session import get_db_session
         
         results = {}
@@ -140,7 +140,7 @@ def batch_ai_analysis_task(batch_data: list) -> Dict[str, Any]:
     
     async def run_batch_analysis():
         # 直接使用IAOP核心平台
-        from app.services.iaop.integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+        # REMOVED: IAOP IAOPAIService - Use MCP orchestrator instead as EnhancedAIService
         from app.db.session import get_db_session
         
         results = []

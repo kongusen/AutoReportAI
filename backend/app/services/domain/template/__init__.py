@@ -7,19 +7,30 @@ Provides comprehensive template management capabilities including:
 - Template parsing and analysis
 - Cache-aware template processing
 - Template version control
+- Agent-enhanced intelligent processing
 """
 
-from .template_service import TemplateService
-from .enhanced_template_parser import EnhancedTemplateParser
+# Core template services
 from .template_cache_service import TemplateCacheService
-from .agent_sql_analysis_service import AgentSQLAnalysisService
 
-# PlaceholderConfigService 已迁移到 app.services.placeholder
-# 使用: from app.services.domain.placeholder import create_placeholder_config_service
+# Agent-enhanced template service (NEW - integrates with placeholder agents system)
+from .agent_enhanced_template_service import (
+    AgentEnhancedTemplateService,
+    get_agent_enhanced_template_service,
+    analyze_template_with_agents,
+    execute_template_with_agents
+)
+
+# PlaceholderConfigService 已迁移到 app.services.domain.placeholder
+# 使用: from app.services.domain.placeholder import get_intelligent_placeholder_service
 
 __all__ = [
-    "TemplateService",
-    "EnhancedTemplateParser",
+    # Core services
     "TemplateCacheService",
-    "AgentSQLAnalysisService"
+    
+    # Agent-enhanced services
+    "AgentEnhancedTemplateService",
+    "get_agent_enhanced_template_service",
+    "analyze_template_with_agents", 
+    "execute_template_with_agents"
 ]

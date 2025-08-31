@@ -108,8 +108,34 @@ export function useWebSocketIntegration() {
     }
   }, [wsManager, handleTaskProgressMessage, addReport, updateReportStatus])
 
+  // 发送消息功能
+  const sendMessage = (message: any) => {
+    if (wsManager && isConnected) {
+      wsManager.send(message)
+    } else {
+      console.warn('WebSocket not connected, message not sent:', message)
+    }
+  }
+
+  // 获取最后收到的消息
+  const [lastMessage, setLastMessage] = React.useState<{ data: string } | null>(null)
+
+  useEffect(() => {
+    if (!wsManager) return
+
+    const handleMessage = (message: any) => {
+      setLastMessage({ data: JSON.stringify(message) })
+    }
+
+    wsManager.on('*', handleMessage)
+    return () => wsManager.off('*')
+  }, [wsManager])
+
   return {
     isConnected,
     connectionState,
+    sendMessage,
+    lastMessage,
+    wsManager
   }
 }

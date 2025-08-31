@@ -26,7 +26,7 @@ async def get_context_system_performance(
     获取统一上下文系统的性能指标
     """
     try:
-        from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
+        # REMOVED: IAOP import - integration.unified_api_adapter import get_unified_api_adapter
         adapter = get_unified_api_adapter(db_session=db, integration_mode=integration_mode)
         
         # 获取系统洞察
@@ -150,13 +150,13 @@ async def test_context_system_configuration(
         optimization_level = test_config.get('optimization_level', 'enhanced')
         test_data = test_config.get('test_data', {})
         
-        from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
+        # REMOVED: IAOP import - integration.unified_api_adapter import get_unified_api_adapter
         adapter = get_unified_api_adapter(db_session=db, integration_mode=integration_mode)
         
         # 创建测试上下文
         test_session_id = f"config_test_{int(datetime.now().timestamp())}"
         
-        from app.services.iaop.context.unified_context_system import create_unified_context_system
+        # REMOVED: IAOP import - context.unified_context_system import create_unified_context_system
         test_system = create_unified_context_system(
             db_session=db,
             integration_mode=integration_mode,
@@ -217,7 +217,7 @@ async def get_context_system_health(
     获取统一上下文系统健康状态
     """
     try:
-        from app.services.iaop.integration.unified_api_adapter import get_unified_api_adapter
+        # REMOVED: IAOP import - integration.unified_api_adapter import get_unified_api_adapter
         
         health_status = {
             'overall_status': 'healthy',

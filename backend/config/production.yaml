@@ -1,0 +1,142 @@
+---
+# 生产环境配置文件
+environment: production
+app_name: AutoReportAI
+version: "1.0.0"
+debug: false
+
+# 数据库配置
+database:
+  host: postgres
+  port: 5432
+  database: autoreport
+  username: postgres
+  password: ${DB_PASSWORD}
+  pool_size: 20
+  max_overflow: 30
+  pool_timeout: 30
+  pool_recycle: 3600
+  ssl_mode: require
+
+# Redis配置  
+redis:
+  host: redis
+  port: 6379
+  password: ${REDIS_PASSWORD}
+  database: 0
+  max_connections: 50
+  timeout: 5
+  ssl: false
+
+# 安全配置
+security:
+  jwt_secret_key: ${JWT_SECRET_KEY}
+  jwt_algorithm: HS256
+  jwt_expiration_time: 3600
+  cors_origins:
+    - "https://yourdomain.com"
+    - "https://www.yourdomain.com"
+  allowed_hosts:
+    - "yourdomain.com"
+    - "www.yourdomain.com"
+    - "api.yourdomain.com"
+  rate_limit_per_minute: 100
+
+# MCP编排器配置
+mcp_orchestrator:
+  max_concurrent_requests: 100
+  request_timeout: 600
+  circuit_breaker_failure_threshold: 10
+  circuit_breaker_recovery_timeout: 120
+  load_balancing_strategy: weighted_round_robin
+  enable_metrics: true
+  enable_tracing: true
+  cache_ttl: 600
+  batch_size: 20
+  
+  # 性能优化
+  enable_connection_pooling: true
+  max_pool_size: 200
+  pool_timeout: 60
+  
+  # 监控配置
+  health_check_interval: 30
+  metrics_export_interval: 60
+  log_level: INFO
+
+# MCP服务器配置
+mcp_servers:
+  - name: semantic-analysis
+    host: mcp-semantic-analysis
+    port: 8001
+    protocol: ws
+    max_connections: 50
+    timeout: 60
+    retry_count: 3
+    health_check_interval: 30
+    enabled: true
+    priority: 1
+    tags:
+      - analysis
+      - semantic
+      - nlp
+
+  - name: sql-generation
+    host: mcp-sql-generation
+    port: 8002
+    protocol: ws
+    max_connections: 30
+    timeout: 45
+    retry_count: 3
+    health_check_interval: 30
+    enabled: true
+    priority: 1
+    tags:
+      - sql
+      - generation
+      - database
+
+  - name: data-execution
+    host: mcp-data-execution
+    port: 8003
+    protocol: ws
+    max_connections: 20
+    timeout: 120
+    retry_count: 2
+    health_check_interval: 30
+    enabled: true
+    priority: 2
+    tags:
+      - data
+      - execution
+      - query
+
+  - name: quality-assessment
+    host: mcp-quality-assessment
+    port: 8004
+    protocol: ws
+    max_connections: 15
+    timeout: 90
+    retry_count: 3
+    health_check_interval: 30
+    enabled: true
+    priority: 1
+    tags:
+      - quality
+      - assessment
+      - validation
+
+# 日志配置
+log_level: INFO
+log_file: /app/logs/app.log
+enable_structured_logging: true
+
+# 健康检查配置
+enable_health_checks: true
+health_check_path: /health
+metrics_path: /metrics
+
+# 部署配置
+workers: 8
+worker_timeout: 60
+max_requests_per_worker: 2000

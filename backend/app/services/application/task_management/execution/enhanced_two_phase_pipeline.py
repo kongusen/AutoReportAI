@@ -19,18 +19,10 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
-from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
+# Enhanced template parser disabled - using alternative approach in DAG architecture
+# from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
 from ..core.progress_manager import update_task_progress_dict
-from .intelligent_task_scheduler import (
-    IntelligentTaskScheduler, 
-    TaskExecutionPlan, 
-    ExecutionStrategy
-)
-from .dynamic_load_balancer import (
-    DynamicLoadBalancer, 
-    TaskType, 
-    LoadBalancingResult
-)
+# 智能任务调度和动态负载均衡功能已内置
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +314,10 @@ class EnhancedTwoPhasePipeline:
                                         db: Session) -> TemplateReadinessAnalysis:
         """深度分析模板就绪度"""
         try:
-            template_parser = EnhancedTemplateParser(db)
+            # template_parser = EnhancedTemplateParser(db)  # Disabled
+            # In DAG architecture, use IntelligentPlaceholderService instead
+            from app.services.domain.placeholder import IntelligentPlaceholderService
+            template_parser = IntelligentPlaceholderService()
             
             # 获取基础统计信息
             stats_result = await template_parser.get_placeholder_analysis_statistics(template_id)
@@ -891,7 +886,10 @@ class EnhancedTwoPhasePipeline:
                 return {'success': False, 'error': 'Template ID missing'}
             
             # 使用现有的占位符分析逻辑
-            template_parser = EnhancedTemplateParser(db)
+            # template_parser = EnhancedTemplateParser(db)  # Disabled
+            # In DAG architecture, use IntelligentPlaceholderService instead
+            from app.services.domain.placeholder import IntelligentPlaceholderService
+            template_parser = IntelligentPlaceholderService()
             analysis_result = await template_parser.analyze_template_placeholders(template_id)
             
             return {
@@ -913,7 +911,7 @@ class EnhancedTwoPhasePipeline:
         """执行阶段2 - 使用TaskSQLExecutionAgent执行SQL"""
         try:
             # 直接使用IAOP专业化代理
-            from app.services.iaop.agents.specialized.data_query_agent import DataQueryAgent as TaskSQLExecutionAgent
+            # REMOVED: IAOP specialized agents - Use MCP servers instead
             
             logger.info("🤖 开始使用TaskSQLExecutionAgent执行阶段2")
             

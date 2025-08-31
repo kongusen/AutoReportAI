@@ -16,12 +16,13 @@ from .core.worker import celery_app, TaskStatus
 from .core.scheduler import TaskScheduler
 from .core.progress_manager import TaskProgressManager, EnhancedTaskProgressManager
 
-# 导入执行组件
-from .execution.unified_pipeline import (
-    unified_report_generation_pipeline
-)
-# AgentExecutor not available
-from .execution.fallback import FallbackHandler
+# 导入执行组件 - Legacy modules replaced by DAG agents
+# from .execution.unified_pipeline import (
+#     unified_report_generation_pipeline  # Replaced by DAG agents
+# )
+# from .execution.fallback import FallbackHandler  # Replaced by DAG agents
+
+# from .execution import EnhancedTwoPhasePipeline, create_enhanced_pipeline  # Disabled - too many missing dependencies
 
 # 导入管理组件
 from .management.task_manager import TaskManager
@@ -40,10 +41,12 @@ __all__ = [
     "TaskProgressManager",
     "EnhancedTaskProgressManager",
     
-    # 执行组件
-    "unified_report_generation_pipeline",
-    # "AgentExecutor",
-    "FallbackHandler",
+    # 执行组件 - Legacy components replaced by DAG agents
+    # "unified_report_generation_pipeline",  # Replaced by DAG agents
+    # "AgentExecutor",                       # Not available
+    # "FallbackHandler",                     # Replaced by DAG agents
+    "EnhancedTwoPhasePipeline",
+    "create_enhanced_pipeline",
     
     # 管理组件
     "TaskManager",

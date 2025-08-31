@@ -251,7 +251,7 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
 def get_iaop_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
     """Get IAOP LLM service dependency"""
     try:
-        from app.services.iaop.integration.llm_service_adapter import get_iaop_llm_service as get_service
+        # REMOVED: IAOP import - Use MCP equivalent instead
         user_id = str(user.id) if user else None
         return get_service(db, user_id)
     except Exception as e:

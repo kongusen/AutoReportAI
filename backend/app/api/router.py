@@ -5,9 +5,8 @@ from app.api.endpoints import (
     data_sources,
     templates,
     placeholders,
-    placeholder_analysis,  # 新的占位符分析端点
     reports,
-    tasks,
+    # tasks,  # 临时禁用避免IAOP依赖
     etl_jobs,
     llm_servers,  # LLM服务器管理 (替代ai_providers)
     dashboard,
@@ -18,12 +17,17 @@ from app.api.endpoints import (
     health,
     settings,
     task_scheduler,  # 重新启用
-    celery_monitor,  # Celery 监控
+    # celery_monitor,  # Celery 监控 - 临时禁用避免循环导入
     llm_monitor,  # LLM监控
     chart_test,  # 图表测试
     system_insights,  # 统一上下文系统洞察
+    # intelligent_agents,  # 新的智能代理端点 - Disabled legacy llm_agents
+    # intelligent_templates,  # 新的智能模板端点
+    # REMOVED: toolbox - functionality migrated to MCP
     # 如有其它业务模块可继续添加
 )
+# TEMPORARILY DISABLED: MCP has file encoding issues
+# from app.api.endpoints import placeholder_analysis_mcp
 
 api_router = APIRouter()
 
@@ -37,9 +41,8 @@ api_router.include_router(users.router, prefix="/v1/users", tags=["用户管理"
 api_router.include_router(data_sources.router, prefix="/v1/data-sources", tags=["数据源"])
 api_router.include_router(templates.router, prefix="/v1/templates", tags=["模板管理"])
 api_router.include_router(placeholders.router, prefix="/v1/placeholders", tags=["占位符管理"])
-api_router.include_router(placeholder_analysis.router, prefix="/v1/placeholder-analysis", tags=["占位符分析"])
 api_router.include_router(reports.router, prefix="/v1/reports", tags=["报告管理"])
-api_router.include_router(tasks.router, prefix="/v1/tasks", tags=["任务管理"])
+# api_router.include_router(tasks.router, prefix="/v1/tasks", tags=["任务管理"])  # 临时禁用避免IAOP依赖
 api_router.include_router(etl_jobs.router, prefix="/v1/etl-jobs", tags=["ETL作业"])
 api_router.include_router(llm_servers.router, prefix="/v1/llm-servers", tags=["LLM服务器管理"])
 api_router.include_router(dashboard.router, prefix="/v1/dashboard", tags=["仪表盘"])
@@ -52,6 +55,16 @@ api_router.include_router(settings.router, prefix="/v1/settings", tags=["用户�
 api_router.include_router(task_scheduler.router, prefix="/v1/task-scheduler", tags=["任务调度"])
 api_router.include_router(chart_test.router, prefix="/v1/chart-test", tags=["图表测试"])
 api_router.include_router(system_insights.router, prefix="/v1/system-insights", tags=["系统洞察"])
-api_router.include_router(celery_monitor.router, prefix="/v1/celery", tags=["Celery监控"])
+# api_router.include_router(celery_monitor.router, prefix="/v1/celery", tags=["Celery监控"])  # 临时禁用避免循环导入
 api_router.include_router(llm_monitor.router, prefix="/v1/llm", tags=["LLM监控"])
+# api_router.include_router(intelligent_agents.router, tags=["智能代理"])  # Disabled legacy llm_agents
+# api_router.include_router(intelligent_templates.router, prefix="/v1/intelligent-templates", tags=["智能模板"])
+# REMOVED: Toolbox router - functionality migrated to MCP
 
+
+# MCP版本的占位符分析API - TEMPORARILY DISABLED: encoding issues
+# api_router.include_router(
+#     placeholder_analysis_mcp.router,
+#     prefix="/placeholders-mcp", 
+#     tags=["placeholders-mcp"]
+# )

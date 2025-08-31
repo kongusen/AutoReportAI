@@ -8,18 +8,26 @@ Domain Layer
 - reporting: 报告领域（合并了业务服务）
 """
 
-# Placeholder领域
-from .placeholder.entities.placeholder_entity import (
-    PlaceholderEntity, PlaceholderType, AnalysisResult, DataType,
-    PlaceholderRule, PlaceholderContext, AnalysisStatus
+# Placeholder领域 - 使用新架构的模型
+from .placeholder.models import (
+    StatisticalType, SyntaxType, ProcessingStage, ResultSource,
+    TimeContext, BusinessContext, DocumentContext, ContextWeight, AgentContext,
+    PlaceholderAnalysisResult, ContextAnalysisResult, BatchAnalysisResult,
+    PlaceholderSpec, ParameterizedPlaceholder, CompositePlaceholder, ConditionalPlaceholder,
+    ProcessingResult, ProcessedPlaceholder, TemplateAnalysis
 )
-from .placeholder.services.placeholder_domain_service import (
-    PlaceholderDomainService, PlaceholderParser, PlaceholderSemanticAnalyzer
+from .placeholder.parsers import (
+    PlaceholderParser, CompositeParser, ConditionalParser,
+    ParameterizedParser, ParserFactory, SyntaxValidator
 )
-# Placeholder业务服务（合并后）
-from .placeholder.cache_service import CacheService
-from .placeholder.execution_service import DataExecutionService
-from .placeholder.rule_service import TemplateRuleService
+from .placeholder.semantic import (
+    SemanticAnalyzer, SemanticPlaceholderParser, IntentClassifier,
+    ImplicitParameterInferencer
+)
+from .placeholder.context import (
+    ContextAnalysisEngine, DocumentAnalyzer, BusinessRuleAnalyzer,
+    ParagraphAnalyzer, SectionAnalyzer
+)
 
 # Template领域  
 from .template.entities.template_entity import (
@@ -30,9 +38,10 @@ from .template.services.template_domain_service import (
     TemplateDomainService, TemplateParser, TemplateValidator
 )
 # Template业务服务（合并后）
-from .template.template_service import TemplateService
-from .template.enhanced_template_parser import EnhancedTemplateParser
-from .template.agent_sql_analysis_service import AgentSQLAnalysisService
+# TEMPORARILY DISABLED: Legacy IAOP dependencies
+# from .template.template_service import TemplateService
+# from .enhanced_template_parser import EnhancedTemplateParser
+# from .template.agent_sql_analysis_service import AgentSQLAnalysisService
 
 # Analysis领域
 from .analysis.services.data_analysis_domain_service import (
@@ -51,21 +60,44 @@ from .reporting.composer import ReportCompositionService
 from .reporting.word_generator_service import WordGeneratorService
 
 __all__ = [
-    # Placeholder领域
-    "PlaceholderEntity",
-    "PlaceholderType",
-    "AnalysisResult", 
-    "DataType",
-    "PlaceholderRule",
-    "PlaceholderContext",
-    "AnalysisStatus",
-    "PlaceholderDomainService",
+    # Placeholder领域 - 新架构
+    "StatisticalType",
+    "SyntaxType", 
+    "ProcessingStage",
+    "ResultSource",
+    "TimeContext",
+    "BusinessContext",
+    "DocumentContext", 
+    "ContextWeight",
+    "AgentContext",
+    "PlaceholderAnalysisResult",
+    "ContextAnalysisResult",
+    "BatchAnalysisResult",
+    "PlaceholderSpec",
+    "ParameterizedPlaceholder",
+    "CompositePlaceholder",
+    "ConditionalPlaceholder",
+    "ProcessingResult",
+    "ProcessedPlaceholder", 
+    "TemplateAnalysis",
+    # Placeholder解析器
     "PlaceholderParser",
-    "PlaceholderSemanticAnalyzer",
-    # Placeholder业务服务
-    "CacheService", 
-    "DataExecutionService",
-    "TemplateRuleService",
+    "CompositeParser",
+    "ConditionalParser",
+    "ParameterizedParser",
+    "ParserFactory",
+    "SyntaxValidator",
+    # Placeholder语义分析
+    "SemanticAnalyzer",
+    "SemanticPlaceholderParser", 
+    "IntentClassifier",
+    "ImplicitParameterInferencer",
+    # Placeholder上下文分析
+    "ContextAnalysisEngine",
+    "DocumentAnalyzer",
+    "BusinessRuleAnalyzer",
+    "ParagraphAnalyzer",
+    "SectionAnalyzer",
     
     # Template领域
     "TemplateEntity",
@@ -78,10 +110,10 @@ __all__ = [
     "TemplateDomainService",
     "TemplateParser",
     "TemplateValidator",
-    # Template业务服务
-    "TemplateService",
-    "EnhancedTemplateParser",
-    "AgentSQLAnalysisService",
+    # Template业务服务 (TEMPORARILY DISABLED)
+    # "TemplateService",
+    # "EnhancedTemplateParser", 
+    # "AgentSQLAnalysisService",
     
     # Analysis领域
     "DataAnalysisDomainService",

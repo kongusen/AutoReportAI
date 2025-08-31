@@ -17,13 +17,16 @@ from .analysis import DataAnalysisService
 class SchemaAwareAnalysisService:
     """基于表结构的智能数据分析服务"""
     
-    def __init__(self, db_session: Session):
+    def __init__(self, db_session: Session = None):
         self.db_session = db_session
         self.logger = logging.getLogger(__name__)
         # Lazy initialization to avoid circular imports
         self._schema_query_service = None
         self._schema_analysis_service = None
-        self.data_analysis_service = DataAnalysisService(db_session)
+        if db_session:
+            self.data_analysis_service = DataAnalysisService(db_session)
+        else:
+            self.data_analysis_service = None
     
     @property
     def schema_query_service(self):
@@ -35,11 +38,13 @@ class SchemaAwareAnalysisService:
     
     @property
     def schema_analysis_service(self):
-        """Lazy-loaded schema analysis service"""
-        if self._schema_analysis_service is None:
-            from app.services.data.schemas import SchemaAnalysisService
-            self._schema_analysis_service = SchemaAnalysisService(self.db_session)
-        return self._schema_analysis_service
+        """Lazy-loaded schema analysis service - TEMPORARILY DISABLED"""
+        # TEMPORARILY DISABLED: SchemaAnalysisService has IAOP dependencies
+        # if self._schema_analysis_service is None:
+        #     from app.services.data.schemas import SchemaAnalysisService
+        #     self._schema_analysis_service = SchemaAnalysisService(self.db_session)
+        # return self._schema_analysis_service
+        raise NotImplementedError("SchemaAnalysisService temporarily disabled after IAOP cleanup. Use MCP equivalent instead.")
     
     async def analyze_data_source_with_schema(self, data_source_id: str) -> Dict[str, Any]:
         """
@@ -485,3 +490,58 @@ class SchemaAwareAnalysisService:
             "description": f"查看 {table_schema.table_name} 表的基础数据",
             "columns_used": [col.column_name for col in selected_columns]
         }
+    
+    async def analyze_data_structure(self, data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        分析数据结构
+        
+        Args:
+            data: 数据列表
+            
+        Returns:
+            数据结构分析结果
+        """
+        try:
+            if not data:
+                return {
+                    "row_count": 0,
+                    "column_types": {},
+                    "error": "No data provided"
+                }
+            
+            df = pd.DataFrame(data)
+            
+            # 分析列类型
+            column_types = {}
+            for col in df.columns:
+                dtype = str(df[col].dtype)
+                if dtype.startswith('int'):
+                    column_types[col] = 'int64'
+                elif dtype.startswith('float'):
+                    column_types[col] = 'float64'
+                elif dtype == 'bool':
+                    column_types[col] = 'boolean'
+                elif dtype == 'datetime64[ns]':
+                    column_types[col] = 'datetime'
+                else:
+                    column_types[col] = 'object'
+            
+            # 基本统计信息
+            basic_stats = {
+                "row_count": len(df),
+                "column_count": len(df.columns),
+                "column_types": column_types,
+                "memory_usage": df.memory_usage(deep=True).sum(),
+                "null_counts": df.isnull().sum().to_dict(),
+                "data_summary": df.describe(include='all').to_dict() if len(df) > 0 else {}
+            }
+            
+            return basic_stats
+            
+        except Exception as e:
+            self.logger.error(f"数据结构分析失败: {e}")
+            return {
+                "row_count": 0,
+                "column_types": {},
+                "error": f"Data analysis failed: {str(e)}"
+            }

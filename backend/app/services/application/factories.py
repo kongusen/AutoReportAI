@@ -31,26 +31,39 @@ def create_enhanced_template_parser(db: Session):
     return EnhancedTemplateParser(db)
 
 
-def create_service_coordinator(db: Session, user_id: Optional[str] = None):
-    from app.services.application.orchestration.service_coordinator import ServiceCoordinator
-    return ServiceCoordinator(db, user_id=user_id)
+# ServiceCoordinator已删除，使用新的工作流系统
 
 
-def create_placeholder_workflow(db: Session, user_id: Optional[str] = None):
-    from app.services.application.workflows.placeholder_workflow import PlaceholderWorkflow
-    return PlaceholderWorkflow(db, user_id=user_id)
+def create_intelligent_placeholder_workflow(config=None):
+    """创建智能占位符工作流"""
+    from app.services.application.workflows.intelligent_placeholder_workflow import IntelligentPlaceholderWorkflow
+    return IntelligentPlaceholderWorkflow(config=config)
 
 
-def create_two_phase_report_workflow(db: Session):
-    from app.services.application.workflows.two_phase_report_workflow import TwoPhaseReportWorkflow
-    return TwoPhaseReportWorkflow(db)
+def create_enhanced_report_generation_workflow(placeholder_orchestrator=None, config=None):
+    """创建增强报告生成工作流"""
+    from app.services.application.workflows.enhanced_report_generation_workflow import EnhancedReportGenerationWorkflow
+    return EnhancedReportGenerationWorkflow(placeholder_orchestrator=placeholder_orchestrator, config=config)
+
+
+def create_context_aware_task_service(orchestrator=None, execution_strategy=None):
+    """创建上下文感知任务服务"""
+    from app.services.application.workflows.context_aware_task_service import ContextAwareTaskService
+    return ContextAwareTaskService(orchestrator=orchestrator, execution_strategy=execution_strategy)
+
+
+def create_template_debug_workflow(placeholder_orchestrator=None):
+    """创建模板调试工作流"""
+    from app.services.application.workflows.template_debug_workflow import TemplateDebugWorkflow
+    return TemplateDebugWorkflow(placeholder_orchestrator=placeholder_orchestrator)
 
 
 def create_placeholder_sql_agent(db: Session, user_id: Optional[str] = None):
-    """创建占位符SQL分析代理"""
-    # 直接使用IAOP专业化代理
-    from app.services.iaop.agents.specialized.sql_generation_agent import SQLGenerationAgent as PlaceholderSQLAnalyzer
-    return PlaceholderSQLAnalyzer(db_session=db, user_id=user_id)
+    """创建占位符SQL分析代理 - 已迁移到新的LegacyMigrationService"""
+    # 使用新的迁移适配器
+    from app.services.application.workflows.legacy_placeholder_migration import get_legacy_migration_service
+    migration_service = get_legacy_migration_service()
+    return migration_service.get_adapter(db_session=db, session_key=user_id or "default")
 
 
 def create_multi_database_agent(db: Session, user_id: Optional[str] = None):
@@ -59,11 +72,9 @@ def create_multi_database_agent(db: Session, user_id: Optional[str] = None):
 
 
 def create_context_aware_agent_registry():
-    """创建上下文感知的Agent注册表"""
-    # 直接使用IAOP核心系统
-    from app.services.iaop.context.context_manager import IAOPContextManager
-    from app.services.iaop.registry.agent_registry import IAOPAgentRegistry
-    context_manager = get_context_manager()
-    return get_agent_registry(context_manager)
+    """创建上下文感知的Agent注册表 - 已迁移到新的架构"""
+    # 使用新的LLM Agent集成系统
+    from app.services.llm_agents.integration.agents_integration import get_agents_integration
+    return get_agents_integration()
 
 

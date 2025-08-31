@@ -255,10 +255,6 @@ mcp-server/env/
 # Upload directories
 uploads/
 
-# Storage directories (generated files)
-backend/storage/
-storage/
-
 
 # Test reports
 test_reports/

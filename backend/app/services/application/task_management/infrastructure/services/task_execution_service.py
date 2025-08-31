@@ -23,7 +23,7 @@ class ReportGenerationStepHandler(StepHandler):
         """执行报告生成步骤"""
         try:
             # 动态导入避免循环依赖
-            from app.services.application.task_management.execution.unified_pipeline import unified_report_generation_pipeline
+            from app.services.application.task_management.execution.enhanced_two_phase_pipeline import create_enhanced_pipeline
             
             task_id = inputs.get("task_id")
             user_id = inputs.get("user_id")
@@ -31,8 +31,9 @@ class ReportGenerationStepHandler(StepHandler):
             if not task_id or not user_id:
                 raise ValueError("Missing required parameters: task_id or user_id")
             
-            # 执行统一报告生成流水线
-            result = unified_report_generation_pipeline(
+            # 创建并执行增强型流水线
+            pipeline = create_enhanced_pipeline()
+            result = await pipeline.execute_pipeline(
                 task_id=int(task_id),
                 user_id=user_id,
                 mode="auto",

@@ -139,8 +139,34 @@ async def forgot_password(
             message="如果该邮箱存在，我们已发送密码重置链接"
         )
     
-    # TODO: 实现邮件发送功能
-    # 这里应该生成重置令牌并发送邮件
+    # 生成重置令牌并发送邮件
+    try:
+        import secrets
+        import hashlib
+        from datetime import datetime, timedelta
+        
+        # 生成重置令牌
+        reset_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(reset_token.encode()).hexdigest()
+        
+        # 保存令牌到数据库(有效期1小时)
+        from app.models.user import User
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            user.password_reset_token = token_hash
+            user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
+            db.commit()
+            
+            # TODO: 集成邮件服务(可使用SendGrid/AWS SES)
+            # 目前记录日志
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"密码重置令牌已生成: {email}, 令牌: {reset_token}")
+            
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"密码重置令牌生成失败: {e}")
     
     return ApiResponse(
         success=True,
@@ -155,8 +181,42 @@ async def reset_password(
     db: Session = Depends(get_db)
 ):
     """重置密码"""
-    # TODO: 验证重置令牌
-    # 这里应该验证令牌的有效性并重置密码
+    # 验证重置令牌
+    try:
+        import hashlib
+        from datetime import datetime
+        
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        
+        from app.models.user import User
+        user = db.query(User).filter(
+            User.password_reset_token == token_hash,
+            User.password_reset_expires > datetime.utcnow()
+        ).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="无效或过期的重置令牌"
+            )
+        
+        # 重置密码
+        from app.core.security import get_password_hash
+        user.hashed_password = get_password_hash(new_password)
+        user.password_reset_token = None
+        user.password_reset_expires = None
+        db.commit()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"密码重置失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="密码重置失败"
+        )
     
     return ApiResponse(
         success=True,

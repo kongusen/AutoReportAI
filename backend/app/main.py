@@ -264,7 +264,7 @@ async def startup():
     # 初始化统一缓存管理器
     try:
         from app.services.infrastructure.cache.unified_cache_system import initialize_cache_manager
-        from app.core.database import get_db
+        from app.db.session import get_db
         
         # 获取数据库会话
         db_gen = get_db()

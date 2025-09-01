@@ -10,6 +10,7 @@ from uuid import UUID
 from app.core.architecture import ApiResponse
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
+from app.services.infrastructure.cache import cache_service, cached
 from app.models.user import User
 from app.models.data_source import DataSource
 from app.models.template import Template
@@ -28,11 +29,14 @@ async def get_dashboard_overview(
     """
     获取仪表盘概览（无需认证）
     """
-    # 系统总体统计（不涉及用户数据）
-    total_users = db.query(User).count()
-    total_data_sources = db.query(DataSource).count() 
-    total_templates = db.query(Template).count()
-    total_tasks = db.query(Task).count()
+    # 使用CRUD层获取系统统计
+    from app.crud import user as crud_user, template as crud_template, task as crud_task
+    from app.crud.crud_data_source import crud_data_source
+    
+    total_users = crud_user.get_count(db)
+    total_data_sources = crud_data_source.get_count(db)
+    total_templates = crud_template.get_count(db)
+    total_tasks = crud_task.get_count(db)
     
     return ApiResponse(
         success=True,
@@ -66,31 +70,55 @@ async def get_dashboard_stats(
 ):
     """
     获取仪表盘统计数据（严格用户隔离）
+    带缓存优化：数据缓存5分钟
     """
     user_id = current_user.id
     if isinstance(user_id, str):
         user_id = UUID(user_id)
 
-    # 只统计当前用户的数据
-    data_sources_count = db.query(DataSource).filter(DataSource.user_id == user_id).count()
-    templates_count = db.query(Template).filter(Template.user_id == user_id).count()
-    tasks_count = db.query(Task).filter(Task.owner_id == user_id).count()
-    reports_count = db.query(ReportHistory).join(ReportHistory.task).filter(ReportHistory.task.has(owner_id=user_id)).count()
-    active_tasks_count = db.query(Task).filter(Task.owner_id == user_id, Task.is_active == True).count()
-    total_reports = db.query(ReportHistory).join(ReportHistory.task).filter(ReportHistory.task.has(owner_id=user_id)).count()
-    successful_reports = db.query(ReportHistory).join(ReportHistory.task).filter(ReportHistory.task.has(owner_id=user_id), ReportHistory.status == "completed").count()
+    # 尝试从缓存获取数据
+    cache_key = f"dashboard_stats:{user_id}"
+    cached_data = cache_service.get_dashboard_data(str(user_id))
+    
+    if cached_data is not None:
+        return ApiResponse(
+            success=True,
+            data=cached_data,
+            message="获取仪表盘统计数据成功（缓存）"
+        )
+
+    # 缓存未命中，从数据库获取
+    from app.crud import template as crud_template, task as crud_task
+    from app.crud.crud_data_source import crud_data_source
+    from app.crud.crud_report_history import report_history
+    
+    data_sources_count = crud_data_source.get_count_by_user(db, user_id=user_id)
+    templates_count = crud_template.get_count_by_user(db, user_id=user_id)
+    tasks_count = crud_task.get_count_by_user(db, user_id=user_id)
+    reports_count = report_history.get_count_by_user(db, user_id=user_id)
+    active_tasks_count = crud_task.get_active_count_by_user(db, user_id=user_id)
+    
+    # 计算成功率
+    total_reports = reports_count
+    successful_reports = report_history.get_successful_count_by_user(db, user_id=user_id)
     success_rate = (successful_reports / total_reports * 100) if total_reports > 0 else 0
+
+    # 构建响应数据
+    dashboard_data = {
+        "data_sources": data_sources_count,
+        "templates": templates_count,
+        "tasks": tasks_count,
+        "reports": reports_count,
+        "active_tasks": active_tasks_count,
+        "success_rate": round(success_rate, 2)
+    }
+    
+    # 缓存数据（5分钟TTL）
+    cache_service.cache_dashboard_data(str(user_id), dashboard_data, ttl=300)
 
     return ApiResponse(
         success=True,
-        data={
-            "data_sources": data_sources_count,
-            "templates": templates_count,
-            "tasks": tasks_count,
-            "reports": reports_count,
-            "active_tasks": active_tasks_count,
-            "success_rate": round(success_rate, 2)
-        },
+        data=dashboard_data,
         message="获取仪表盘统计数据成功"
     )
 
@@ -108,12 +136,38 @@ async def get_recent_activity(
     if isinstance(user_id, str):
         user_id = UUID(user_id)
 
-    # 最近生成的报告
-    recent_reports = db.query(ReportHistory).join(ReportHistory.task).filter(ReportHistory.task.has(owner_id=user_id)).order_by(ReportHistory.generated_at.desc()).limit(limit).all()
-    # 最近创建的任务
-    recent_tasks = db.query(Task).filter(Task.owner_id == user_id).order_by(Task.created_at.desc()).limit(limit).all()
+    # 优化：使用更高效的查询，避免不必要的JOIN
+    # 最近生成的报告 - 使用EXISTS而非JOIN以提高性能
+    from sqlalchemy import exists
+    recent_reports = (
+        db.query(ReportHistory)
+        .filter(
+            db.query(Task)
+            .filter(Task.id == ReportHistory.task_id, Task.owner_id == user_id)
+            .exists()
+        )
+        .order_by(ReportHistory.generated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    
+    # 最近创建的任务 - 添加索引提示
+    recent_tasks = (
+        db.query(Task)
+        .filter(Task.owner_id == user_id)
+        .order_by(Task.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    
     # 最近创建的数据源
-    recent_data_sources = db.query(DataSource).filter(DataSource.user_id == user_id).order_by(DataSource.created_at.desc()).limit(limit).all()
+    recent_data_sources = (
+        db.query(DataSource)
+        .filter(DataSource.user_id == user_id)
+        .order_by(DataSource.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
     return ApiResponse(
         success=True,

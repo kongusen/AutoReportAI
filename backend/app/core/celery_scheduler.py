@@ -82,15 +82,19 @@ class CelerySchedulerManager:
                 day_of_week=day_of_week
             )
             
-            # 注册到 Celery Beat
+            # 注册到 Celery Beat - 使用新DDD架构
             task_name = f"scheduled_task_{task.id}"
             self.celery_app.conf.beat_schedule[task_name] = {
-                'task': 'app.services.application.task_management.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
+                'task': 'tasks.application.workflow.generate_report_workflow',
                 'schedule': schedule,
-                'args': (task.id,),
+                'args': (str(task.id), [str(task.data_source_id)] if task.data_source_id else [], {
+                    'template_id': str(task.template_id),
+                    'output_format': 'html',
+                    'scheduled_execution': True
+                }),
                 'options': {
-                    'queue': 'report_tasks',
-                    'priority': task.priority if hasattr(task, 'priority') else 5
+                    'queue': 'application_queue',
+                    'priority': getattr(task, 'priority', 5)
                 }
             }
             
@@ -235,9 +239,18 @@ class CelerySchedulerManager:
                 if not task.is_active:
                     return {"status": "error", "message": f"任务 {task_id} 未激活"}
             
-            # 提交任务到 Celery 队列
-            from app.services.application.task_management.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
-            result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+            # 提交任务到 Celery 队列 - 使用新DDD架构
+            from app.services.application.tasks.workflow_tasks import generate_report_workflow
+            result = generate_report_workflow.delay(
+                str(task_id), 
+                [str(task.data_source_id)] if task.data_source_id else [], 
+                {
+                    'user_id': user_id,
+                    'template_id': str(task.template_id),
+                    'output_format': 'html',
+                    'immediate_execution': True
+                }
+            )
             
             logger.info(f"任务 {task_id} 已提交立即执行，Celery task ID: {result.id}")
             

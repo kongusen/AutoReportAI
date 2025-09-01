@@ -50,7 +50,10 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
     def authenticate(
         self, db: Session, *, username: str, password: str
     ) -> Optional[User]:
+        # 支持用户名或邮箱登录
         user = self.get_by_username(db, username=username)
+        if not user:
+            user = self.get_by_email(db, email=username)
         if not user:
             return None
         if not verify_password(password, user.hashed_password):
@@ -77,6 +80,10 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.commit()
         db.refresh(user_obj)
         return user_obj
+    
+    def get_count(self, db: Session) -> int:
+        """获取所有用户总数"""
+        return db.query(User).count()
 
 
 crud_user = CRUDUser(User)

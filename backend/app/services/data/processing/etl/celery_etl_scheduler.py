@@ -15,7 +15,8 @@ from celery.schedules import crontab
 from sqlalchemy.orm import Session
 
 from app import crud
-from app.services.application.task_management.core.worker import celery_app
+# 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.db.session import get_db_session
 
 logger = logging.getLogger(__name__)

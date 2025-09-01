@@ -110,8 +110,8 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
         logger.error(f"获取MCP API适配器失败: {e}")
         logger.warning("回退到简化模式")
         
-        # 回退到简化实现
-        class FallbackAPIAdapterWrapper:
+        # 使用纯数据库驱动的增强解析器
+        class PureDatabaseAPIAdapterWrapper:
             def __init__(self, db: Session, mode: str):
                 self.db = db
                 self.integration_mode = mode
@@ -125,29 +125,78 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
                 optimization_level: str = "enhanced",
                 target_expectations: Optional[Dict] = None
             ):
-                """回退模式的模板占位符分析"""
-                logger.info(f"使用回退模式分析模板 {template_id}")
+                """使用纯数据库驱动方式进行模板占位符分析"""
+                logger.info(f"使用纯数据库驱动方式分析模板 {template_id}")
                 
-                # 获取模板和数据源信息（基础验证）
-                from app.crud import template as crud_template
-                from app.crud.crud_data_source import crud_data_source
+                try:
+                    # 获取模板和数据源信息
+                    from app.crud import template as crud_template
+                    from app.crud.crud_data_source import crud_data_source
+                    from app.services.domain.template.pure_database_enhanced_template_parser import create_pure_database_enhanced_template_parser
+                    
+                    template = crud_template.get(self.db, id=template_id)
+                    data_source = crud_data_source.get(self.db, id=data_source_id)
+                    
+                    if not template:
+                        return {"success": False, "error": "模板不存在", "message": "分析失败: 模板不存在"}
+                    if not data_source:
+                        return {"success": False, "error": "数据源不存在", "message": "分析失败: 数据源不存在"}
+                    
+                    # 创建增强模板解析器
+                    parser = create_pure_database_enhanced_template_parser(self.db, user_id)
+                    
+                    # 解析并存储占位符
+                    parse_result = await parser.parse_and_store_template_placeholders(
+                        template_id=template_id,
+                        template_content=template.content or "",
+                        force_reparse=force_reanalyze
+                    )
+                    
+                    if not parse_result.get("success"):
+                        return parse_result
+                    
+                    # 获取占位符配置
+                    placeholder_configs = await parser.get_template_placeholder_configs(template_id)
+                    
+                    # 获取统计信息
+                    statistics = await parser.get_placeholder_analysis_statistics(template_id)
                 
-                template = crud_template.get(self.db, id=template_id)
-                data_source = crud_data_source.get(self.db, id=data_source_id)
-                
-                if not template:
-                    return {"success": False, "error": "模板不存在", "message": "分析失败: 模板不存在"}
-                if not data_source:
-                    return {"success": False, "error": "数据源不存在", "message": "分析失败: 数据源不存在"}
-                
-                # 基础分析结果
-                analysis_result = {
-                    "template_analysis": {
-                        "template_id": template_id,
-                        "template_name": template.name,
-                        "template_type": template.template_type,
-                        "content_length": len(template.content or ""),
-                        "has_placeholders": True if template.content and "{{" in template.content else False
+                    # 构建分析结果
+                    analysis_result = {
+                        "template_analysis": {
+                            "template_id": template_id,
+                            "template_name": template.name,
+                            "template_type": template.template_type,
+                            "content_length": len(template.content or ""),
+                            "has_placeholders": len(placeholder_configs) > 0,
+                            "placeholder_count": len(placeholder_configs),
+                            "parser_version": "pure_database_v1.0"
+                        },
+                        "data_source_analysis": {
+                            "data_source_id": data_source_id,
+                            "data_source_name": data_source.name,
+                            "data_source_type": data_source.source_type,
+                            "connection_status": "available"
+                        },
+                        "placeholders": placeholder_configs,
+                        "statistics": statistics,
+                        "optimization_level": optimization_level,
+                        "force_reanalyze": force_reanalyze
+                    }
+                    
+                    return {
+                        "success": True,
+                        "data": analysis_result,
+                        "message": f"模板占位符分析完成，共 {len(placeholder_configs)} 个占位符"
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"纯数据库驱动分析异常: {e}")
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "message": f"分析失败: {str(e)}"
+                    }
                     },
                     "data_source_analysis": {
                         "data_source_id": data_source_id,
@@ -175,7 +224,7 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
                     "message": "智能Agent分析完成（回退模式）"
                 }
         
-        return FallbackAPIAdapterWrapper(db_session, integration_mode)
+        return PureDatabaseAPIAdapterWrapper(db_session, integration_mode)
 
 
 @router.get("/", response_model=ApiResponse)

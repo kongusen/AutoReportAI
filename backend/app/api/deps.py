@@ -276,7 +276,7 @@ def get_enhanced_ai_service(db: Session = Depends(get_db), user = Depends(get_cu
 def get_content_generation_agent(db: Session = Depends(get_db)):
     """Get content generation agent dependency"""
     try:
-        from app.services.agents.content_generation_agent import ContentGenerationAgent
+        from app.services.infrastructure.ai.agents.content_generation_agent import ContentGenerationAgent
         return ContentGenerationAgent()
     except Exception as e:
         logger.error(f"Failed to create ContentGenerationAgent: {e}")
@@ -289,7 +289,7 @@ def get_content_generation_agent(db: Session = Depends(get_db)):
 def get_visualization_agent(db: Session = Depends(get_db)):
     """Get visualization agent dependency"""
     try:
-        from app.services.agents.visualization_agent import VisualizationAgent
+        from app.services.infrastructure.ai.agents.visualization_agent import VisualizationAgent
         return VisualizationAgent()
     except Exception as e:
         logger.error(f"Failed to create VisualizationAgent: {e}")
@@ -428,12 +428,13 @@ def get_all_services_health(db: Session = Depends(get_db)) -> dict:
 
 # Task Management Services
 def get_task_manager(db: Session = Depends(get_db)):
-    """Get task manager dependency"""
+    """Get task manager dependency - using new DDD task system"""
     try:
-        from app.services.application.task_management.management.task_manager import TaskManager
-        return TaskManager()
+        # 使用新的DDD任务管理器
+        from app.services.application.task_management.ddd_task_examples import DDDTaskManager
+        return DDDTaskManager()
     except Exception as e:
-        logger.error(f"Failed to create TaskManager: {e}")
+        logger.error(f"Failed to create DDDTaskManager: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Task manager service unavailable"
@@ -441,12 +442,26 @@ def get_task_manager(db: Session = Depends(get_db)):
 
 
 def get_status_tracker(db: Session = Depends(get_db)):
-    """Get status tracker dependency"""
+    """Get status tracker dependency - using Celery task status"""
     try:
-        from app.services.application.task_management.management.status_tracker import StatusTracker
-        return StatusTracker()
+        # 使用Celery的任务状态追踪
+        from app.services.infrastructure.task_queue.celery_config import celery_app
+        
+        class CeleryStatusTracker:
+            def __init__(self):
+                self.celery_app = celery_app
+                
+            def get_task_status(self, task_id):
+                result = self.celery_app.AsyncResult(task_id)
+                return {
+                    'task_id': task_id,
+                    'status': result.status,
+                    'result': result.result if result.ready() else None
+                }
+        
+        return CeleryStatusTracker()
     except Exception as e:
-        logger.error(f"Failed to create StatusTracker: {e}")
+        logger.error(f"Failed to create CeleryStatusTracker: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Status tracker service unavailable"

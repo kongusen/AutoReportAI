@@ -1,8 +1,8 @@
 """
-应用层中立工厂
+应用层现代化工厂
 
-为上层（如 orchestrator）提供与领域服务（如模板分析服务）之间的中立构造，
-避免 `agents ↔ template` 直接互相引用。
+为上层提供与领域服务之间的现代化构造，
+移除向后兼容负担，专注于纯数据库驱动架构。
 """
 
 from __future__ import annotations
@@ -11,12 +11,16 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 
-def create_agent_sql_analysis_service(db: Session, user_id: Optional[str] = None):
-    """创建 AgentSQLAnalysisService 的中立工厂方法。
+def create_agent_sql_analysis_service(db: Session, user_id: str):
+    """创建 AgentSQLAnalysisService 的现代化工厂方法。
 
     通过此工厂避免在 orchestrator 中直接导入 template 下的实现，
     降低互相依赖风险。
+    要求user_id参数，与纯数据库驱动架构保持一致。
     """
+    if not user_id:
+        raise ValueError("user_id is required for Agent SQL Analysis Service")
+    
     # 延迟导入，避免在导入期触发循环依赖
     from app.services.domain.template.agent_sql_analysis_service import AgentSQLAnalysisService
 
@@ -29,9 +33,6 @@ def create_enhanced_template_parser(db: Session):
     from app.services.domain.template.enhanced_template_parser import EnhancedTemplateParser
 
     return EnhancedTemplateParser(db)
-
-
-# ServiceCoordinator已删除，使用新的工作流系统
 
 
 def create_intelligent_placeholder_workflow(config=None):
@@ -58,23 +59,48 @@ def create_template_debug_workflow(placeholder_orchestrator=None):
     return TemplateDebugWorkflow(placeholder_orchestrator=placeholder_orchestrator)
 
 
-def create_placeholder_sql_agent(db: Session, user_id: Optional[str] = None):
-    """创建占位符SQL分析代理 - 已迁移到新的LegacyMigrationService"""
-    # 使用新的迁移适配器
-    from app.services.application.workflows.legacy_placeholder_migration import get_legacy_migration_service
-    migration_service = get_legacy_migration_service()
-    return migration_service.get_adapter(db_session=db, session_key=user_id or "default")
+# === 现代化纯数据库驱动工厂 ===
+
+def create_pure_database_schema_analysis_service(db: Session, user_id: str):
+    """创建纯数据库驱动的Schema分析服务"""
+    if not user_id:
+        raise ValueError("user_id is required for Schema Analysis Service")
+    
+    from app.services.data.schemas.schema_analysis_service import create_schema_analysis_service
+    return create_schema_analysis_service(db, user_id)
 
 
-def create_multi_database_agent(db: Session, user_id: Optional[str] = None):
-    """创建多数据库智能代理的工厂方法（向后兼容）"""
-    return create_placeholder_sql_agent(db, user_id)
+def create_pure_database_react_agent(user_id: str):
+    """创建纯数据库驱动的React智能代理"""
+    if not user_id:
+        raise ValueError("user_id is required for Pure Database React Agent")
+    
+    from app.services.infrastructure.ai.agents import create_pure_database_react_agent
+    return create_pure_database_react_agent(user_id)
 
 
-def create_context_aware_agent_registry():
-    """创建上下文感知的Agent注册表 - 已迁移到新的架构"""
-    # 使用新的LLM Agent集成系统
-    from app.services.llm_agents.integration.agents_integration import get_agents_integration
-    return get_agents_integration()
+def create_user_etl_service(user_id: str):
+    """创建用户专属的ETL服务"""
+    if not user_id:
+        raise ValueError("user_id is required for User ETL Service")
+    
+    from app.services.data.processing.etl.etl_service import ETLService
+    return ETLService()
 
 
+# === 导出列表 ===
+
+__all__ = [
+    # 传统工厂方法（保持API兼容性）
+    "create_agent_sql_analysis_service",
+    "create_enhanced_template_parser", 
+    "create_intelligent_placeholder_workflow",
+    "create_enhanced_report_generation_workflow",
+    "create_context_aware_task_service",
+    "create_template_debug_workflow",
+    
+    # 现代化纯数据库驱动工厂
+    "create_pure_database_schema_analysis_service",
+    "create_pure_database_react_agent", 
+    "create_user_etl_service",
+]

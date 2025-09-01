@@ -119,7 +119,8 @@ class UnifiedTaskScheduler:
     async def _load_scheduled_tasks_celery(self):
         """为Celery Beat加载调度任务"""
         try:
-            from app.services.application.task_management.core.worker import celery_app
+            # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
             from celery.schedules import crontab
             
             with get_db_session() as db:
@@ -148,7 +149,7 @@ class UnifiedTaskScheduler:
                             # 注册到Celery Beat
                             task_name = f"unified_task_{task.id}"
                             celery_app.conf.beat_schedule[task_name] = {
-                                'task': 'app.services.application.task_management.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
+                                'task': 'tasks.application.workflow.generate_report_workflow',
                                 'schedule': schedule,
                                 'args': (task.id,)
                             }
@@ -215,11 +216,23 @@ class UnifiedTaskScheduler:
                     return
                 
                 # 使用Celery执行实际的任务处理
-                from app.services.application.task_management.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
+                # 使用新的DDD架构任务
+from app.services.application.tasks.workflow_tasks import generate_report_workflow
                 user_id = str(task.owner_id)
                 
                 # 异步启动Celery任务
-                result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+                # 需要先获取任务信息来构造新参数格式
+                with get_db_session() as db:
+                    task_obj = crud.task.get(db, id=task_id)
+                    if task_obj:
+                        result = generate_report_workflow.delay(
+                            str(task_obj.template_id) if task_obj.template_id else '',
+                            [str(task_obj.data_source_id)] if task_obj.data_source_id else [],
+                            {'user_id': user_id, 'task_id': str(task_id)}
+                        )
+                    else:
+                        logger.error(f"Task {task_id} not found")
+                        result = None
                 
                 # 记录任务执行
                 self.active_tasks[task_id] = {
@@ -256,7 +269,8 @@ class UnifiedTaskScheduler:
     async def _reload_celery_task(self, task_id: int, cron_expression: str):
         """重新加载单个Celery任务"""
         try:
-            from app.services.application.task_management.core.worker import celery_app
+            # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
             from celery.schedules import crontab
             
             # 解析cron表达式
@@ -274,7 +288,7 @@ class UnifiedTaskScheduler:
                 
                 task_name = f"unified_task_{task_id}"
                 celery_app.conf.beat_schedule[task_name] = {
-                    'task': 'app.services.application.task_management.core.worker.tasks.enhanced_tasks.execute_scheduled_task',
+                    'task': 'tasks.application.workflow.generate_report_workflow',
                     'schedule': schedule,
                     'args': (task_id,)
                 }
@@ -295,7 +309,8 @@ class UnifiedTaskScheduler:
                     self.apscheduler.remove_job(job_id)
             else:
                 # 对于Celery，从beat_schedule中移除
-                from app.services.application.task_management.core.worker import celery_app
+                # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
                 if job_id in celery_app.conf.beat_schedule:
                     del celery_app.conf.beat_schedule[job_id]
             
@@ -366,8 +381,10 @@ class UnifiedTaskScheduler:
     async def _execute_with_priority(self, task_id: int, user_id: str) -> Dict[str, Any]:
         """智能优先级执行 - 检查worker状态并优化执行"""
         try:
-            from app.services.application.task_management.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
-            from app.services.application.task_management.core.worker import celery_app
+            # 使用新的DDD架构任务
+from app.services.application.tasks.workflow_tasks import generate_report_workflow
+            # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
             
             # 检查当前活跃的worker数量
             active_workers = celery_app.control.inspect().active_queues()
@@ -389,11 +406,22 @@ class UnifiedTaskScheduler:
             # 智能调度决策
             if worker_count > 0 and pending_tasks < worker_count:
                 # 有空闲worker，使用高优先级立即执行
-                celery_result = intelligent_report_generation_pipeline.apply_async(
-                    args=[task_id, user_id],
-                    priority=9,  # 高优先级
-                    queue='report_tasks'  # 指定队列
-                )
+                # 获取任务信息来构造新参数格式
+                with get_db_session() as db:
+                    task_obj = crud.task.get(db, id=task_id)
+                    if task_obj:
+                        celery_result = generate_report_workflow.apply_async(
+                            args=[
+                                str(task_obj.template_id) if task_obj.template_id else '',
+                                [str(task_obj.data_source_id)] if task_obj.data_source_id else [],
+                                {'user_id': user_id, 'task_id': str(task_id), 'priority': 'high'}
+                            ],
+                            priority=9,  # 高优先级
+                            queue='application_queue'  # 使用新的DDD队列
+                        )
+                    else:
+                        logger.error(f"Task {task_id} not found")
+                        celery_result = None
                 return {
                     "celery_task_id": celery_result.id,
                     "queued": False,
@@ -402,7 +430,18 @@ class UnifiedTaskScheduler:
                 }
             else:
                 # worker繁忙，正常加入队列
-                celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+                # 获取任务信息来构造新参数格式
+                with get_db_session() as db:
+                    task_obj = crud.task.get(db, id=task_id)
+                    if task_obj:
+                        celery_result = generate_report_workflow.delay(
+                            str(task_obj.template_id) if task_obj.template_id else '',
+                            [str(task_obj.data_source_id)] if task_obj.data_source_id else [],
+                            {'user_id': user_id, 'task_id': str(task_id)}
+                        )
+                    else:
+                        logger.error(f"Task {task_id} not found")
+                        celery_result = None
                 return {
                     "celery_task_id": celery_result.id,
                     "queued": True,
@@ -413,8 +452,20 @@ class UnifiedTaskScheduler:
         except Exception as e:
             logger.error(f"优先级执行检查失败: {e}")
             # 回退到普通执行
-            from app.services.application.task_management.core.worker.tasks.enhanced_tasks import intelligent_report_generation_pipeline
-            celery_result = intelligent_report_generation_pipeline.delay(task_id, user_id)
+            # 使用新的DDD架构任务
+from app.services.application.tasks.workflow_tasks import generate_report_workflow
+            # 获取任务信息来构造新参数格式
+            with get_db_session() as db:
+                task_obj = crud.task.get(db, id=task_id)
+                if task_obj:
+                    celery_result = generate_report_workflow.delay(
+                        str(task_obj.template_id) if task_obj.template_id else '',
+                        [str(task_obj.data_source_id)] if task_obj.data_source_id else [],
+                        {'user_id': user_id, 'task_id': str(task_id)}
+                    )
+                else:
+                    logger.error(f"Task {task_id} not found")
+                    celery_result = None
             return {
                 "celery_task_id": celery_result.id,
                 "queued": True,
@@ -493,7 +544,8 @@ class UnifiedTaskScheduler:
             ]
         else:
             try:
-                from app.services.application.task_management.core.worker import celery_app
+                # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
                 info["celery_beat_schedule"] = list(celery_app.conf.beat_schedule.keys())
             except:
                 info["celery_beat_schedule"] = []
@@ -513,7 +565,8 @@ class UnifiedTaskScheduler:
                 await self._load_scheduled_tasks_apscheduler()
             else:
                 # 清除Celery调度
-                from app.services.application.task_management.core.worker import celery_app
+                # 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
                 keys_to_remove = [k for k in celery_app.conf.beat_schedule.keys() if k.startswith("unified_task_")]
                 for key in keys_to_remove:
                     del celery_app.conf.beat_schedule[key]

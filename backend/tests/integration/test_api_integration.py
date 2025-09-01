@@ -14,7 +14,7 @@ from app.main import app
 from app.models.user import User
 from app.models.template import Template
 from app.models.data_source import DataSource
-from app.core.database import get_db
+from app.db.session import get_db
 
 
 @pytest.fixture

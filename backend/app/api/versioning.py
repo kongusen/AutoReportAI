@@ -15,6 +15,7 @@ from app.schemas.base import APIResponse, HealthCheckResponse
 class APIVersion(str, Enum):
     """API版本枚举"""
     V1 = "v1"
+    # 未来可扩展: V2 = "v2"
 
 
 class VersionInfo(BaseModel):
@@ -38,18 +39,21 @@ class APIVersionManager:
                 version="v1",
                 status="active",
                 release_date="2024-01-01",
-                description="现代化API架构，提供完整的智能报告生成功能",
+                description="纯数据库驱动的现代化API架构，提供完整的智能报告生成功能",
                 new_features=[
                     "统一的API响应格式",
                     "改进的错误处理和状态码",
                     "更好的分页支持",
                     "增强的认证系统",
-                    "Agent智能编排系统",
+                    "纯数据库驱动的AI智能系统",
+                    "用户专属的LLM偏好管理",
                     "智能占位符处理",
                     "报告生成服务",
                     "数据源管理",
                     "模板管理",
-                    "任务调度和监控"
+                    "ETL作业管理",
+                    "任务调度和监控",
+                    "Schema分析服务"
                 ]
             )
         }
@@ -186,56 +190,25 @@ def create_versioned_router(version: APIVersion, prefix: str = "") -> APIRouter:
     return router
 
 
-# 版本兼容性中间件
+# 简化的版本中间件（当前只有v1版本）
 class APIVersionMiddleware:
-    """API版本中间件"""
+    """API版本中间件 - 简化版"""
     
     def __init__(self, app):
         self.app = app
     
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
-            request = Request(scope, receive)
+            # 简化版：直接使用v1，只添加响应头
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = dict(message.get("headers", []))
+                    headers[b"API-Version"] = b"v1"
+                    headers[b"API-Supported-Versions"] = b"v1"
+                    message["headers"] = list(headers.items())
+                await send(message)
             
-            # 获取并验证API版本
-            try:
-                version = get_api_version_from_request(request)
-                validated_version = validate_api_version(version)
-                
-                # 将版本信息添加到请求状态
-                if not hasattr(request.state, "api_version"):
-                    request.state.api_version = validated_version
-                
-                # 添加版本相关的响应头
-                async def send_wrapper(message):
-                    if message["type"] == "http.response.start":
-                        headers = dict(message.get("headers", []))
-                        headers[b"API-Version"] = validated_version.encode()
-                        headers[b"API-Supported-Versions"] = ",".join(
-                            [v.value for v in version_manager.supported_versions]
-                        ).encode()
-                        message["headers"] = list(headers.items())
-                    await send(message)
-                
-                await self.app(scope, receive, send_wrapper)
-                
-            except HTTPException as e:
-                # 直接返回版本验证错误
-                response = {
-                    "status_code": e.status_code,
-                    "headers": [(b"content-type", b"application/json")],
-                    "body": str(e.detail).encode() if isinstance(e.detail, str) else str(e.detail).encode()
-                }
-                
-                await send({
-                    "type": "http.response.start",
-                    "status": e.status_code,
-                    "headers": [(b"content-type", b"application/json")]
-                })
-                await send({
-                    "type": "http.response.body",
-                    "body": str(e.detail).encode() if isinstance(e.detail, str) else str(e.detail).encode()
-                })
+            await self.app(scope, receive, send_wrapper)
         else:
             await self.app(scope, receive, send)
 

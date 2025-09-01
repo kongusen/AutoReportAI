@@ -113,6 +113,14 @@ class CRUDDataSource(CRUDBase[DataSource, DataSourceCreate, DataSourceUpdate]):
         db.commit()
         db.refresh(db_obj)
         return db_obj
+    
+    def get_count(self, db: Session) -> int:
+        """获取所有数据源总数"""
+        return db.query(DataSource).count()
+    
+    def get_count_by_user(self, db: Session, user_id: UUID) -> int:
+        """获取用户数据源总数"""
+        return db.query(DataSource).filter(DataSource.user_id == user_id).count()
 
 # 顶层独立函数，支持直接导入
 

@@ -88,7 +88,7 @@ services:
       TZ: ${TIMEZONE:-Asia/Shanghai}
       # Service Configuration
       SERVICE_TYPE: api
-      WORKERS: ${API_WORKERS:-1}
+      WORKERS: ${API_WORKERS:-2}
       
       # Database Configuration
       POSTGRES_HOST: db
@@ -124,6 +124,11 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
+      
+      # LlamaIndex Configuration
+      LLAMAINDEX_CACHE_DIR: /app/cache/llamaindex
+      TRANSFORMERS_CACHE: /app/cache/transformers
+      HF_HOME: /app/cache/huggingface
       
       # File Storage Configuration
       MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
@@ -171,10 +176,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${BACKEND_MAX_CPUS:-1.0}'
-          memory: ${BACKEND_MAX_MEMORY:-1G}
+          cpus: '${BACKEND_MAX_CPUS:-2.0}'
+          memory: ${BACKEND_MAX_MEMORY:-2G}
         reservations:
-          memory: ${BACKEND_MIN_MEMORY:-512M}
+          memory: ${BACKEND_MIN_MEMORY:-1G}
     healthcheck:
       test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
@@ -254,9 +259,9 @@ services:
       
       # Celery Configuration
       CELERY_QUEUES: ${CELERY_QUEUES:-celery,report_tasks,analysis_tasks,query_tasks,generation_tasks}
-      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
-      CELERY_MAX_TASKS: ${CELERY_MAX_TASKS:-100}
-      CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-1}
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-6}
+      CELERY_MAX_TASKS: ${CELERY_MAX_TASKS:-200}
+      CELERY_PREFETCH_MULTIPLIER: ${CELERY_PREFETCH_MULTIPLIER:-2}
       
       # Database Configuration
       POSTGRES_HOST: db
@@ -289,6 +294,11 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
       
+      # LlamaIndex Configuration
+      LLAMAINDEX_CACHE_DIR: /app/cache/llamaindex
+      TRANSFORMERS_CACHE: /app/cache/transformers
+      HF_HOME: /app/cache/huggingface
+      
       # Agent Configuration
       AGENT_OPTIMIZATION_LEVEL: ${AGENT_OPTIMIZATION_LEVEL:-standard}
       AGENT_BATCH_SIZE: ${AGENT_BATCH_SIZE:-1000}
@@ -317,10 +327,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${BACKEND_MAX_CPUS:-1.0}'
-          memory: ${BACKEND_MAX_MEMORY:-1G}
+          cpus: '${BACKEND_MAX_CPUS:-2.0}'
+          memory: ${BACKEND_MAX_MEMORY:-2G}
         reservations:
-          memory: ${BACKEND_MIN_MEMORY:-512M}
+          memory: ${BACKEND_MIN_MEMORY:-1G}
     command: ["/app/entrypoint.sh", "worker"]
     healthcheck:
       test: ["CMD", "/app/healthcheck.sh"]

@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 class AgentSQLAnalysisService:
     """Agent SQL分析服务"""
     
-    def __init__(self, db: Session, user_id: str = None, multi_db_agent=None):
+    def __init__(self, db: Session, user_id: str, multi_db_agent=None):
         self.db = db
+        if not user_id:
+            raise ValueError("user_id is required for Agent SQL Analysis Service")
         self.user_id = user_id
         # 使用依赖注入，避免循环依赖
         self._multi_db_agent = multi_db_agent
@@ -33,6 +35,8 @@ class AgentSQLAnalysisService:
         if self._multi_db_agent is None:
             # 通过工厂方法创建，避免直接导入
             from app.services.application.factories import create_multi_database_agent
+            if not self.user_id:
+                raise ValueError("user_id is required to create multi-database agent")
             self._multi_db_agent = create_multi_database_agent(self.db, self.user_id)
         return self._multi_db_agent
 

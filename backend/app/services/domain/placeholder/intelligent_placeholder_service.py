@@ -24,8 +24,8 @@ from .context.context_analysis_engine import ContextAnalysisEngine
 from .weight.weight_calculator import WeightCalculator
 from .parsers.parser_factory import ParserFactory
 from .cache.cache_manager import CacheManager
-# 导入agents DAG系统
-from ...agents import execute_placeholder_with_context
+# 导入Infrastructure层AI系统（迁移后）
+from ...infrastructure.ai import execute_placeholder_with_context
 
 logger = logging.getLogger(__name__)
 

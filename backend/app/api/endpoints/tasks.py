@@ -12,7 +12,8 @@ from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.crud.crud_task import crud_task
-from app.services.application.task_management.core.worker import celery_app
+# 使用新的DDD架构Celery配置
+from app.services.infrastructure.task_queue.celery_config import celery_app
 
 # 引入统一的占位符处理架构
 from app.services.domain.placeholder import create_batch_router
@@ -33,16 +34,24 @@ async def get_tasks(
     user_id = current_user.id
     if isinstance(user_id, str):
         user_id = UUID(user_id)
-    query = db.query(Task).filter(Task.owner_id == user_id)
     
-    if is_active is not None:
-        query = query.filter(Task.is_active == is_active)
+    # 使用CRUD层获取任务列表
+    filter_params = {
+        "owner_id": user_id,
+        "is_active": is_active,
+        "search": search
+    }
     
-    if search:
-        query = query.filter(Task.name.contains(search))
+    tasks = crud_task.get_multi_by_owner(
+        db,
+        owner_id=user_id,
+        skip=skip,
+        limit=limit,
+        is_active=is_active,
+        search=search
+    )
     
-    total = query.count()
-    tasks = query.offset(skip).limit(limit).all()
+    total = crud_task.get_count_by_user(db, user_id=user_id)
     
     # 转换为TaskResponse格式，保持向后兼容
     task_dicts = []
@@ -254,9 +263,17 @@ async def execute_task(
             "period_end": None     # 稍后计算
         }
         
-        task_result = celery_app.send_task(
-            "app.services.application.task_management.core.worker.tasks.enhanced_tasks.intelligent_report_generation_pipeline", 
-            args=[task.id, str(user_id), execution_context]
+        # 使用新的DDD Application层工作流任务
+        from app.services.application.tasks.workflow_tasks import generate_report_workflow
+        task_result = generate_report_workflow.delay(
+            str(task.id), 
+            [str(task.data_source_id)] if task.data_source_id else [], 
+            {
+                "user_id": str(user_id),
+                "template_id": str(task.template_id),
+                "output_format": "html",
+                "execution_context": execution_context
+            }
         )
         
         return ApiResponse(

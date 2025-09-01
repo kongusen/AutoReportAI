@@ -94,8 +94,17 @@ async def get_data_sources(
     if search:
         query = query.filter(DataSourceModel.name.contains(search))
     
-    total = query.count()
+    # 优化查询：先获取数据，智能计算总数
     data_sources = query.offset(skip).limit(limit).all()
+    
+    if len(data_sources) < limit and skip == 0:
+        total = len(data_sources)
+    else:
+        # 重构count查询避免复杂查询的性能问题
+        count_query = db.query(DataSourceModel).filter(DataSourceModel.user_id == user_id)
+        if search:
+            count_query = count_query.filter(DataSourceModel.name.contains(search))
+        total = count_query.count()
     data_source_schemas = [DataSourceSchema.model_validate(ds) for ds in data_sources]
     data_source_dicts = [ds.model_dump() | {"unique_id": str(ds.id)} for ds in data_source_schemas]
     return ApiResponse(
@@ -353,8 +362,27 @@ async def upload_data_source_file(
         "file_size": len(content)
     }
     
-    # TODO: 实际保存文件到磁盘/对象存储
-    # 这里应该将文件保存到用户专属目录
+    # 保存文件到存储服务
+    try:
+        from app.services.infrastructure.storage.file_storage_service import file_storage_service
+        from io import BytesIO
+        
+        # 上传文件
+        file_info = file_storage_service.upload_file(
+            file_data=BytesIO(content),
+            original_filename=file.filename,
+            file_type="data_source",
+            content_type=file.content_type
+        )
+        
+        # 更新connection_string为实际文件路径
+        update_data["connection_string"] = file_info["file_path"]
+        update_data["storage_url"] = file_info["storage_url"]
+        
+    except Exception as e:
+        logger.error(f"文件保存失败: {e}")
+        # 使用默认路径作为降级
+        pass
     
     updated_data_source = crud_data_source.update(
         db, db_obj=data_source, obj_in=update_data

@@ -6,6 +6,7 @@ Domain Layer
 - template: 模板领域（合并了业务服务）
 - analysis: 分析领域
 - reporting: 报告领域（合并了业务服务）
+- data_source: 数据源领域（新增）
 """
 
 # Placeholder领域 - 使用新架构的模型
@@ -58,6 +59,16 @@ from .reporting.services.report_generation_domain_service import (
 from .reporting.generator import ReportGenerationService
 from .reporting.composer import ReportCompositionService  
 from .reporting.word_generator_service import WordGeneratorService
+
+# Data Source领域（新增）
+from .data_source.entities.data_source_entity import (
+    DataSourceEntity, DataSourceType, DataSourceStatus
+)
+from .data_source.value_objects.connection_config import ConnectionConfig
+from .data_source.value_objects.data_source_credentials import (
+    DataSourceCredentials, CredentialType
+)
+from .data_source.services.data_source_domain_service import DataSourceDomainService
 
 __all__ = [
     # Placeholder领域 - 新架构
@@ -136,4 +147,13 @@ __all__ = [
     "ReportGenerationService",
     "ReportCompositionService",
     "WordGeneratorService",
+    
+    # Data Source领域（新增）
+    "DataSourceEntity",
+    "DataSourceType",
+    "DataSourceStatus",
+    "ConnectionConfig",
+    "DataSourceCredentials",
+    "CredentialType",
+    "DataSourceDomainService",
 ]

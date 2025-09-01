@@ -34,8 +34,11 @@ class AgentEnhancedTemplateService:
     5. 模板质量评估和优化建议
     """
     
-    def __init__(self, db_session: Optional[Session] = None):
+    def __init__(self, db_session: Session, user_id: str):
+        if not user_id:
+            raise ValueError("user_id is required for Agent Enhanced Template Service")
         self.db = db_session
+        self.user_id = user_id
         self.cache_service = TemplateCacheService()
         self._placeholder_service = None
         self.initialized = False

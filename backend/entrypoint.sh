@@ -87,16 +87,61 @@ run_migrations() {
     fi
 }
 
-# Legacy function to initialize database (kept for compatibility)
+# Initialize database with tables and default users
 init_database() {
     echo "Initializing database..."
-    if python scripts/init_db.py; then
-        echo "✅ Database initialization completed successfully"
-        return 0
-    else
-        echo "⚠️  Database initialization failed, but continuing startup..."
-        return 0  # Don't fail startup even if init fails
+    
+    # Try to run the init_db.py script if it exists
+    if [ -f "/app/scripts/init_db.py" ]; then
+        echo "📝 Running database initialization script..."
+        if python /app/scripts/init_db.py; then
+            echo "✅ Database initialization completed successfully"
+            return 0
+        else
+            echo "⚠️  Database initialization script failed, trying inline initialization..."
+        fi
     fi
+    
+    # Fallback: inline database initialization
+    echo "🔧 Creating default admin user if not exists..."
+    python - <<'INIT_PY'
+import sys
+sys.path.append('/app')
+from app.db.session import get_db_session
+from app.models.user import User
+from app.core.security import get_password_hash
+from app.core.config import settings
+import uuid
+
+try:
+    with get_db_session() as db:
+        # Check if admin user exists
+        admin_user = db.query(User).filter(User.email == settings.FIRST_SUPERUSER_EMAIL).first()
+        if not admin_user:
+            # Create default admin user
+            admin_user = User(
+                id=str(uuid.uuid4()),
+                username=settings.FIRST_SUPERUSER,
+                email=settings.FIRST_SUPERUSER_EMAIL,
+                hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
+                is_active=True,
+                is_superuser=True,
+                full_name="System Administrator"
+            )
+            db.add(admin_user)
+            db.commit()
+            print(f"✅ Created default admin user: {settings.FIRST_SUPERUSER_EMAIL}")
+        else:
+            print(f"ℹ️  Admin user already exists: {settings.FIRST_SUPERUSER_EMAIL}")
+    print("✅ Database initialization completed")
+except Exception as e:
+    print(f"❌ Database initialization failed: {e}")
+    import traceback
+    traceback.print_exc()
+INIT_PY
+    
+    echo "✅ Database initialization process completed"
+    return 0
 }
 
 # Print environment variables and Settings (before starting Python app)
@@ -153,7 +198,16 @@ case "$1" in
     "api")
         # Print env and settings before any checks
         print_env_and_settings
-        # Use comprehensive startup check instead of individual checks
+        
+        # Wait for database and Redis
+        wait_for_db
+        wait_for_redis
+        
+        # Initialize database (create tables and default users)
+        echo "🗄️  Initializing database..."
+        init_database
+        
+        # Use comprehensive startup check
         if run_startup_check; then
             echo "🚀 Starting API server..."
             exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1}
@@ -168,7 +222,7 @@ case "$1" in
         # Worker also needs database access, so run startup check
         if run_startup_check; then
             echo "🚀 Starting Celery worker..."
-            exec celery -A app.services.application.task_management.core.worker.celery_app worker \
+            exec celery -A app.services.infrastructure.task_queue.celery_config worker \
                 --loglevel=info \
                 --queues=${CELERY_QUEUES:-default} \
                 --concurrency=${CELERY_CONCURRENCY:-4} \
@@ -184,7 +238,7 @@ case "$1" in
         # Beat scheduler needs database access for scheduling data
         if run_startup_check; then
             echo "🚀 Starting Celery beat scheduler..."
-            exec celery -A app.services.application.task_management.core.worker.celery_app beat --loglevel=info
+            exec celery -A app.services.infrastructure.task_queue.celery_config beat --loglevel=info
         else
             echo "❌ Startup check failed, cannot start beat scheduler"
             exit 1

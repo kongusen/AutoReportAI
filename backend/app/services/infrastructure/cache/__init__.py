@@ -12,6 +12,15 @@ from .unified_cache_system import (
     UnifiedCacheManager, UnifiedCacheEntry, CacheType, CacheLevel,
     initialize_cache_manager, get_cache_manager
 )
+from .redis_cache_service import (
+    cache_service,
+    get_cache_service,
+    cached,
+    cache_key_for_user_dashboard,
+    cache_key_for_report,
+    cache_key_for_query,
+    ApplicationCacheService
+)
 
 __all__ = [
     "UnifiedCacheManager",
@@ -19,5 +28,12 @@ __all__ = [
     "CacheType",
     "CacheLevel",
     "initialize_cache_manager",
-    "get_cache_manager"
+    "get_cache_manager",
+    "cache_service",
+    "get_cache_service",
+    "cached",
+    "cache_key_for_user_dashboard",
+    "cache_key_for_report", 
+    "cache_key_for_query",
+    "ApplicationCacheService"
 ]

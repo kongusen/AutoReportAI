@@ -3,7 +3,7 @@
 # 导入所有端点模块
 from . import (
     auth, 
-    # celery_monitor,  # 临时禁用避免循环导入
+    celery_monitor,  # 重新启用
     dashboard,
     data_sources,
     etl_jobs,
@@ -21,8 +21,9 @@ from . import (
     system,
     system_insights,  # 系统洞察端点
     task_scheduler,
-    # tasks,  # 临时禁用避免IAOP依赖
+    tasks,  # 重新启用
     templates,
+    user_llm_preferences,  # 用户LLM偏好管理
     users,
     chart_test  # 图表测试端点
 )

@@ -1,12 +1,35 @@
 """
-Application Layer - DAG Architecture Only
+Application Layer - DDD Architecture
 
-纯DAG架构应用层，只保留DAG核心组件：
+DDD架构应用层，包含：
+- services: 应用服务（协调业务流程）
+- orchestrators: 编排器（复杂工作流管理）  
+- tasks: 编排任务（分布式任务编排）
+- context: 上下文构建器
 - facades: 统一服务门面
-- context: 上下文构建器（用于DAG）
 """
 
-# 上下文构建器 - 用于DAG架构
+# 应用服务
+from .services import (
+    TaskApplicationService,
+    ReportApplicationService, 
+    WorkflowApplicationService,
+    ContextAwareApplicationService
+)
+
+# 编排器
+from .orchestrators import (
+    ReportOrchestrator,
+    DataOrchestrator
+)
+
+# 编排任务
+from .tasks import (
+    orchestrate_report_generation,
+    orchestrate_data_processing
+)
+
+# 上下文构建器
 from .context import (
     TimeContextBuilder,
     BusinessContextBuilder,
@@ -14,14 +37,33 @@ from .context import (
 )
 
 # 统一服务门面
-from .facades.unified_service_facade import get_unified_facade
+try:
+    from .facades.unified_service_facade import get_unified_facade
+    _HAS_FACADES = True
+except ImportError:
+    _HAS_FACADES = False
 
 __all__ = [
-    # 上下文构建器（DAG架构专用）
+    # 应用服务
+    "TaskApplicationService",
+    "ReportApplicationService", 
+    "WorkflowApplicationService",
+    "ContextAwareApplicationService",
+    
+    # 编排器
+    "ReportOrchestrator",
+    "DataOrchestrator",
+    
+    # 编排任务
+    "orchestrate_report_generation",
+    "orchestrate_data_processing", 
+    
+    # 上下文构建器
     "TimeContextBuilder",
     "BusinessContextBuilder", 
     "DocumentContextBuilder",
-    
-    # 统一门面
-    "get_unified_facade",
 ]
+
+# 可选门面支持
+if _HAS_FACADES:
+    __all__.append("get_unified_facade")

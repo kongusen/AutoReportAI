@@ -1,4 +1,5 @@
 from typing import List
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -44,6 +45,27 @@ class CRUDReportHistory(CRUDBase[ReportHistory, ReportHistoryCreate, None]):
             .order_by(ReportHistory.generated_at.desc())
             .limit(limit)
             .all()
+        )
+    
+    def get_count_by_user(self, db: Session, user_id: UUID) -> int:
+        """获取用户报告总数"""
+        return (
+            db.query(self.model)
+            .join(Task)
+            .filter(Task.owner_id == user_id)
+            .count()
+        )
+    
+    def get_successful_count_by_user(self, db: Session, user_id: UUID) -> int:
+        """获取用户成功报告数"""
+        return (
+            db.query(self.model)
+            .join(Task)
+            .filter(
+                Task.owner_id == user_id,
+                ReportHistory.status == "completed"
+            )
+            .count()
         )
 
 

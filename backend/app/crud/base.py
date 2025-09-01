@@ -76,3 +76,44 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
             db.delete(obj)
             db.commit()
         return obj
+    
+    def get_multi_with_total(
+        self, db: Session, *, skip: int = 0, limit: int = 100
+    ) -> tuple[List[ModelType], int]:
+        """优化的分页查询：智能获取数据和总数"""
+        items = db.query(self.model).offset(skip).limit(limit).all()
+        
+        # 智能计算总数：如果首页且返回数量少于limit，则无需查询count
+        if len(items) < limit and skip == 0:
+            total = len(items)
+        else:
+            total = db.query(self.model).count()
+            
+        return items, total
+    
+    def exists(self, db: Session, *, id: Union[int, str]) -> bool:
+        """高效检查记录是否存在"""
+        import uuid
+        pk_type = self.model.id.type.python_type
+        if pk_type is uuid.UUID and isinstance(id, str):
+            try:
+                id = uuid.UUID(id)
+            except Exception:
+                pass
+        return db.query(db.query(self.model).filter(self.model.id == id).exists()).scalar()
+    
+    def bulk_create(self, db: Session, *, objs_in: List[CreateSchemaType]) -> List[ModelType]:
+        """批量创建记录以提高性能"""
+        db_objs = []
+        for obj_in in objs_in:
+            if isinstance(obj_in, dict):
+                obj_in_data = obj_in
+            else:
+                obj_in_data = obj_in.model_dump()
+            db_objs.append(self.model(**obj_in_data))
+        
+        db.add_all(db_objs)
+        db.commit()
+        for obj in db_objs:
+            db.refresh(obj)
+        return db_objs

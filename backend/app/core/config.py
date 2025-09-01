@@ -4,7 +4,12 @@ from typing import Dict, List
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
-load_dotenv()
+# 安全加载 dotenv，避免在容器环境中的 AssertionError
+try:
+    load_dotenv()
+except (AssertionError, AttributeError):
+    # 在某些容器环境中直接使用环境变量
+    pass
 
 
 def detect_environment():

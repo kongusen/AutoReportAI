@@ -13,6 +13,7 @@ from app.crud.crud_llm_server import crud_llm_server
 from app.crud.crud_llm_model import crud_llm_model
 from app.api import deps
 from app.models.llm_server import LLMServer, LLMModel, ModelType
+from app.core.architecture import ApiResponse
 from app.schemas.llm_server import (
     LLMServerCreate,
     LLMServerUpdate,
@@ -126,7 +127,7 @@ def update_llm_server(
     return server
 
 
-@router.delete("/{server_id}")
+@router.delete("/{server_id}", response_model=ApiResponse)
 def delete_llm_server(
     *,
     db: Session = Depends(deps.get_db),
@@ -150,7 +151,11 @@ def delete_llm_server(
     
     # 删除服务器及其关联的模型（CASCADE删除）
     crud_llm_server.remove(db, id=server_id)
-    return {"message": "LLM服务器已删除"}
+    return ApiResponse(
+        success=True,
+        data={"server_id": server_id},
+        message="LLM服务器已删除"
+    )
 
 
 # === LLM模型管理 ===
@@ -260,7 +265,7 @@ def update_server_model(
     return model
 
 
-@router.delete("/{server_id}/models/{model_id}")
+@router.delete("/{server_id}/models/{model_id}", response_model=ApiResponse)
 def delete_server_model(
     *,
     db: Session = Depends(deps.get_db),
@@ -277,7 +282,11 @@ def delete_server_model(
         )
     
     crud_llm_model.remove(db, id=model_id)
-    return {"message": "模型已删除"}
+    return ApiResponse(
+        success=True,
+        data={"model_id": model_id, "server_id": server_id},
+        message="模型已删除"
+    )
 
 
 # === 健康检查和监控 ===

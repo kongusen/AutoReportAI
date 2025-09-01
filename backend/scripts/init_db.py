@@ -2,16 +2,25 @@
 """
 AutoReportAI Database Initialization Script
 一键初始化数据库，包含所有表结构、索引和数据
+适配新的 DDD 架构和依赖注入系统
 """
 
 import os
 import sys
+import logging
 import psycopg2
 from pathlib import Path
 
 # Add the backend directory to Python path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 
@@ -83,23 +92,28 @@ def init_database():
         
         if superuser_count == 0:
             print("🔑 创建默认管理员用户...")
-            from app.core.security import get_password_hash
-            
-            hashed_password = get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
-            cur.execute("""
-                INSERT INTO users (email, username, hashed_password, is_active, is_superuser, full_name)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (email) DO NOTHING
-            """, (
-                settings.FIRST_SUPERUSER_EMAIL,
-                settings.FIRST_SUPERUSER,
-                hashed_password,
-                True,
-                True,
-                "System Administrator"
-            ))
-            conn.commit()
-            print(f"✅ 创建管理员用户: {settings.FIRST_SUPERUSER_EMAIL}")
+            try:
+                from app.core.security import get_password_hash
+                
+                hashed_password = get_password_hash(settings.FIRST_SUPERUSER_PASSWORD)
+                cur.execute("""
+                    INSERT INTO users (email, username, hashed_password, is_active, is_superuser, full_name)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (email) DO NOTHING
+                """, (
+                    settings.FIRST_SUPERUSER_EMAIL,
+                    settings.FIRST_SUPERUSER,
+                    hashed_password,
+                    True,
+                    True,
+                    "System Administrator"
+                ))
+                conn.commit()
+                logger.info(f"✅ 创建管理员用户: {settings.FIRST_SUPERUSER_EMAIL}")
+                print(f"✅ 创建管理员用户: {settings.FIRST_SUPERUSER_EMAIL}")
+            except Exception as e:
+                logger.error(f"创建管理员用户失败: {e}")
+                print(f"⚠️  创建管理员用户失败: {e}")
         else:
             print(f"ℹ️  已存在 {superuser_count} 个管理员用户")
         
@@ -169,21 +183,48 @@ def init_database():
         cur.close()
         conn.close()
         
+        # 初始化新架构相关配置
+        print("🏗️  初始化 DDD 架构相关配置...")
+        try:
+            # 创建默认的分析配置
+            cur.execute("""
+                INSERT INTO analytics_data (name, data_type, configuration, is_active)
+                VALUES ('default_analysis', 'system', '{}', true)
+                ON CONFLICT (name) DO NOTHING
+            """)
+            
+            # 初始化占位符映射缓存
+            cur.execute("""
+                SELECT COUNT(*) FROM placeholder_mappings
+            """)
+            placeholder_count = cur.fetchone()[0]
+            if placeholder_count == 0:
+                logger.info("创建默认占位符映射")
+            
+            conn.commit()
+            logger.info("✅ DDD 架构配置初始化完成")
+        except Exception as e:
+            logger.warning(f"DDD 架构配置初始化失败: {e}")
+            # 不影响主要初始化流程
+        
         print("\n🎉 数据库初始化完成!")
         print("=" * 50)
         print(f"📊 创建表数量: {len(tables)}")
         print(f"👤 管理员邮箱: {settings.FIRST_SUPERUSER_EMAIL}")
         print(f"🤖 LLM服务器数: {server_count}+(新增2个)" if server_count == 0 else f"🤖 LLM服务器数: {server_count}")
         print(f"🔗 数据库连接: {settings.DATABASE_URL.replace(settings.DATABASE_URL.split('@')[0].split(':')[-1], '***')}")
+        print(f"🏗️  DDD 架构: Application → Domain → Infrastructure → Data")
         print("=" * 50)
         print("🚀 现在可以启动应用服务了!")
         
         return True
         
     except psycopg2.Error as e:
+        logger.error(f"数据库错误: {e}")
         print(f"❌ 数据库错误: {e}")
         return False
     except Exception as e:
+        logger.error(f"初始化失败: {e}", exc_info=True)
         print(f"❌ 初始化失败: {e}")
         import traceback
         traceback.print_exc()
@@ -241,16 +282,56 @@ def reset_database():
         print(f"❌ 重置失败: {e}")
         return False
 
+def validate_new_architecture():
+    """验证新架构相关组件"""
+    try:
+        logger.info("🔍 验证新 DDD 架构组件...")
+        
+        # 验证核心配置
+        from app.core.config import settings
+        from app.core.dependencies import get_current_user
+        
+        # 验证应用层工厂
+        from app.services.application.factories import create_intelligent_placeholder_workflow
+        
+        # 验证领域服务
+        from app.services.domain.template.intelligent_template_service import IntelligentTemplateService
+        from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
+        
+        # 验证基础设施层
+        from app.services.infrastructure.cache.unified_cache_system import UnifiedCacheSystem
+        
+        logger.info("✅ 新架构组件验证通过")
+        print("✅ 新 DDD 架构组件验证通过")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"架构组件导入失败: {e}")
+        print(f"⚠️  架构组件导入失败: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"架构验证失败: {e}")
+        print(f"⚠️  架构验证失败: {e}")
+        return False
+
 def main():
     """主函数"""
+    logger.info("🚀 AutoReportAI 数据库初始化开始")
+    
+    # 验证新架构
+    if not validate_new_architecture():
+        logger.warning("架构验证失败，但继续初始化...")
+    
     if len(sys.argv) > 1 and sys.argv[1] == '--reset':
         print("🔄 重置数据库模式")
         if reset_database():
             print("📝 开始初始化...")
-            init_database()
+            success = init_database()
+            sys.exit(0 if success else 1)
     else:
         print("🆕 初始化数据库模式")
-        init_database()
+        success = init_database()
+        sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
     main()

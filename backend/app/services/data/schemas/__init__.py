@@ -28,8 +28,7 @@ from .query_builder import (
 
 # 扩展架构服务（原schema_management目录）
 from .schema_discovery_service import SchemaDiscoveryService
-# TEMPORARILY DISABLED: SchemaAnalysisService - Legacy IAOP dependencies removed
-# from .schema_analysis_service import SchemaAnalysisService
+from .schema_analysis_service import SchemaAnalysisService, create_schema_analysis_service
 from .schema_query_service import SchemaQueryService
 from .schema_metadata_service import SchemaMetadataService
 
@@ -54,7 +53,8 @@ __all__ = [
     
     # 扩展架构服务
     "SchemaDiscoveryService",
-    # "SchemaAnalysisService",  # TEMPORARILY DISABLED
+    "SchemaAnalysisService",
+    "create_schema_analysis_service",
     "SchemaQueryService",
     "SchemaMetadataService",
     

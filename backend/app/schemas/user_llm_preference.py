@@ -139,3 +139,39 @@ class UserLLMPreferenceSecureResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# === 智能模型推荐 ===
+
+class ModelRecommendationRequest(BaseModel):
+    """智能模型推荐请求"""
+    task_type: str = Field(..., pattern="^(reasoning|coding|creative|analysis|translation|qa|summarization|general)$")
+    complexity: str = Field(default="medium", pattern="^(simple|medium|complex|expert)$")
+    estimated_tokens: int = Field(default=1000, ge=1, le=100000)
+    cost_sensitive: bool = False
+    speed_priority: bool = False
+    accuracy_critical: bool = False
+    creativity_required: bool = False
+    language: str = "zh"
+    domain: Optional[str] = None
+    max_cost_per_request: Optional[float] = Field(None, ge=0.0)
+    max_latency_ms: Optional[int] = Field(None, ge=100)
+    min_capability_score: Optional[float] = Field(default=0.6, ge=0.0, le=1.0)
+    preferred_providers: Optional[list[str]] = None
+    excluded_models: Optional[list[str]] = None
+    require_function_calling: bool = False
+    require_vision: bool = False
+    agent_id: Optional[str] = None
+
+
+class ModelRecommendationResponse(BaseModel):
+    """智能模型推荐响应"""
+    model: str
+    provider: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reasoning: str
+    expected_cost: float
+    expected_latency: int
+    capability_match_score: float = Field(..., ge=0.0, le=1.0)
+    fallback_models: list[list[str]]
+    recommendation_timestamp: datetime

@@ -745,7 +745,20 @@ CREATE TABLE IF NOT EXISTS learning_rules (
     last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Placeholder Mapping Cache table
+-- Placeholder Mapping Cache table (renamed to match model)
+CREATE TABLE IF NOT EXISTS placeholder_mappings (
+    id SERIAL PRIMARY KEY,
+    placeholder_signature VARCHAR(255) NOT NULL,
+    data_source_id UUID NOT NULL REFERENCES data_sources(id),
+    matched_field VARCHAR(255) NOT NULL,
+    confidence_score DECIMAL(3,2) NOT NULL,
+    transformation_config JSON,
+    usage_count INTEGER NOT NULL,
+    last_used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Placeholder Mapping Cache table (legacy name for compatibility)
 CREATE TABLE IF NOT EXISTS placeholder_mapping_cache (
     id SERIAL PRIMARY KEY,
     placeholder_signature VARCHAR(255) NOT NULL,
@@ -756,6 +769,43 @@ CREATE TABLE IF NOT EXISTS placeholder_mapping_cache (
     usage_count INTEGER NOT NULL,
     last_used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Placeholder Chart Cache table (新架构两阶段图表缓存)
+CREATE TABLE IF NOT EXISTS placeholder_chart_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    placeholder_id UUID NOT NULL REFERENCES template_placeholders(id),
+    template_id UUID NOT NULL REFERENCES templates(id),
+    data_source_id UUID NOT NULL REFERENCES data_sources(id),
+    user_id UUID NOT NULL REFERENCES users(id),
+    -- 阶段一：SQL和数据
+    generated_sql TEXT NOT NULL,
+    sql_metadata JSON,
+    raw_data JSON,
+    processed_data JSON,
+    data_quality_score REAL DEFAULT 0.0,
+    -- 阶段二：图表配置
+    chart_type VARCHAR(50) NOT NULL,
+    echarts_config JSON NOT NULL,
+    chart_metadata JSON,
+    -- 执行信息
+    execution_mode VARCHAR(20) DEFAULT 'test_with_chart',
+    execution_time_ms INTEGER DEFAULT 0,
+    sql_execution_time_ms INTEGER DEFAULT 0,
+    chart_generation_time_ms INTEGER DEFAULT 0,
+    -- 状态标志
+    is_valid BOOLEAN DEFAULT TRUE,
+    is_preview BOOLEAN DEFAULT TRUE,
+    stage_completed VARCHAR(20) DEFAULT 'chart_complete',
+    -- 缓存管理
+    cache_key VARCHAR(255) UNIQUE,
+    cache_ttl_hours INTEGER DEFAULT 24,
+    hit_count INTEGER DEFAULT 0,
+    -- 时间戳
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_accessed_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Placeholder Processing History table
@@ -940,9 +990,24 @@ CREATE INDEX IF NOT EXISTS ix_knowledge_base_placeholder_signature ON knowledge_
 CREATE INDEX IF NOT EXISTS ix_learning_rules_id ON learning_rules (id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_learning_rules_rule_id ON learning_rules (rule_id);
 
--- Placeholder Mapping Cache table indexes
+-- Placeholder Mappings table indexes (新架构主表)
+CREATE INDEX IF NOT EXISTS ix_placeholder_mappings_id ON placeholder_mappings (id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_placeholder_mappings_signature ON placeholder_mappings (placeholder_signature);
+CREATE INDEX IF NOT EXISTS ix_placeholder_mappings_data_source ON placeholder_mappings (data_source_id);
+
+-- Placeholder Mapping Cache table indexes (兼容性表)
 CREATE INDEX IF NOT EXISTS ix_placeholder_mapping_cache_id ON placeholder_mapping_cache (id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_placeholder_mapping_cache_placeholder_signature ON placeholder_mapping_cache (placeholder_signature);
+
+-- Placeholder Chart Cache table indexes (两阶段图表缓存)
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_id ON placeholder_chart_cache (id);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_placeholder_id ON placeholder_chart_cache (placeholder_id);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_template_id ON placeholder_chart_cache (template_id);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_data_source_id ON placeholder_chart_cache (data_source_id);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_user_id ON placeholder_chart_cache (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_placeholder_chart_cache_cache_key ON placeholder_chart_cache (cache_key);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_expires_at ON placeholder_chart_cache (expires_at);
+CREATE INDEX IF NOT EXISTS ix_placeholder_chart_cache_stage_valid ON placeholder_chart_cache (stage_completed, is_valid);
 
 -- Placeholder Processing History table indexes
 CREATE INDEX IF NOT EXISTS ix_placeholder_processing_history_id ON placeholder_processing_history (id);
@@ -968,7 +1033,7 @@ BEGIN
     RAISE NOTICE '=================================================';
     RAISE NOTICE 'Extensions created: uuid-ossp, pg_trgm, hstore';
     RAISE NOTICE 'Enum types created: 13 types';
-    RAISE NOTICE 'Tables created: 34 tables with all relationships';
+    RAISE NOTICE 'Tables created: 36 tables with all relationships (includes new DDD architecture tables)';
     RAISE NOTICE 'Indexes created: All performance indexes';
     RAISE NOTICE 'Database ready for application use!';
     RAISE NOTICE '=================================================';

@@ -12,15 +12,53 @@ from app.schemas.task import TaskCreate, TaskUpdate
 
 class CRUDTask(CRUDBase[Task, TaskCreate, TaskUpdate]):
     def get_multi_by_owner(
-        self, db: Session, *, owner_id: int, skip: int = 0, limit: int = 100
+        self, 
+        db: Session, 
+        *, 
+        owner_id: UUID, 
+        skip: int = 0, 
+        limit: int = 100,
+        is_active: Optional[bool] = None,
+        search: Optional[str] = None
     ) -> List[Task]:
-        return (
-            db.query(self.model)
-            .filter(self.model.owner_id == owner_id)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        query = db.query(self.model).filter(self.model.owner_id == owner_id)
+        
+        if is_active is not None:
+            query = query.filter(self.model.is_active == is_active)
+        
+        if search:
+            query = query.filter(self.model.name.contains(search))
+        
+        return query.offset(skip).limit(limit).all()
+    
+    def get_count_by_user(self, db: Session, user_id: UUID) -> int:
+        """获取用户任务总数"""
+        return db.query(self.model).filter(self.model.owner_id == user_id).count()
+    
+    def get_active_count_by_user(self, db: Session, user_id: UUID) -> int:
+        """获取用户活跃任务数"""
+        return db.query(self.model).filter(
+            self.model.owner_id == user_id,
+            self.model.is_active == True
+        ).count()
+    
+    def get_count(self, db: Session) -> int:
+        """获取所有任务总数"""
+        return db.query(self.model).count()
+    
+    def get_by_template_and_datasource(
+        self, 
+        db: Session, 
+        template_id: str, 
+        data_source_id: str, 
+        owner_id: UUID
+    ) -> Optional[Task]:
+        """根据模板和数据源查找任务"""
+        return db.query(self.model).filter(
+            self.model.owner_id == owner_id,
+            self.model.template_id == template_id,
+            self.model.data_source_id == data_source_id
+        ).order_by(desc(self.model.id)).first()
 
     def count_active(self, db: Session) -> int:
         """Get count of active tasks."""

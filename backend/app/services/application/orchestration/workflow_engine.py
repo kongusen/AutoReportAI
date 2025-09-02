@@ -324,8 +324,41 @@ class StepHandler:
     
     async def execute(self, step_def: StepDefinition, context: WorkflowContext, 
                      inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """执行步骤"""
-        raise NotImplementedError("Subclasses must implement execute method")
+        """执行步骤 - 基于React Agent的默认实现"""
+        try:
+            from app.services.infrastructure.ai.agents import create_react_agent
+            
+            user_id = context.get_context_value("user_id") or "system"
+            agent = create_react_agent(user_id)
+            await agent.initialize()
+            
+            # 构建执行提示
+            prompt = f"""
+            执行工作流步骤:
+            - 步骤名称: {step_def.name}
+            - 步骤类型: {step_def.step_type}
+            - 输入数据: {inputs}
+            - 上下文: {context.get_all_context()}
+            
+            请执行此步骤并返回结果。
+            """
+            
+            result = await agent.chat(prompt)
+            
+            return {
+                "success": True,
+                "result": result,
+                "step_name": step_def.name,
+                "handler": "ReactAgentHandler"
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "step_name": step_def.name,
+                "handler": "ReactAgentHandler"
+            }
 
 
 class WorkflowEngine:
@@ -475,8 +508,13 @@ class WorkflowEngine:
                     return await self._execute_condition_step(step_def, context, inputs)
                 elif step_def.step_type == StepType.DELAY:
                     return await self._execute_delay_step(step_def, context, inputs)
+                elif step_def.step_type == StepType.PARALLEL:
+                    return await self._execute_parallel_step(step_def, context, inputs)
+                elif step_def.step_type == StepType.LOOP:
+                    return await self._execute_loop_step(step_def, context, inputs)
                 else:
-                    raise NotImplementedError(f"Step type {step_def.step_type} not implemented")
+                    # 使用React Agent处理未知步骤类型
+                    return await self._execute_with_react_agent(step_def, context, inputs)
                 
             except Exception as e:
                 last_exception = e
@@ -522,6 +560,140 @@ class WorkflowEngine:
         await asyncio.sleep(delay_seconds)
         
         return {'delayed_seconds': delay_seconds}
+    
+    async def _execute_parallel_step(self, step_def: StepDefinition,
+                                   context: WorkflowContext,
+                                   inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """执行并行步骤"""
+        parallel_tasks = step_def.parameters.get('parallel_tasks', [])
+        
+        # 并行执行任务
+        tasks = []
+        for task in parallel_tasks:
+            task_coro = self._execute_task_from_config(task, context, inputs)
+            tasks.append(task_coro)
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 处理结果
+        successful_results = []
+        errors = []
+        
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                errors.append({"task_index": i, "error": str(result)})
+            else:
+                successful_results.append({"task_index": i, "result": result})
+        
+        return {
+            "parallel_results": successful_results,
+            "errors": errors,
+            "total_tasks": len(parallel_tasks),
+            "successful_tasks": len(successful_results)
+        }
+    
+    async def _execute_loop_step(self, step_def: StepDefinition,
+                               context: WorkflowContext,
+                               inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """执行循环步骤"""
+        loop_config = step_def.parameters.get('loop_config', {})
+        items = loop_config.get('items', [])
+        max_iterations = loop_config.get('max_iterations', len(items))
+        
+        results = []
+        
+        for i, item in enumerate(items[:max_iterations]):
+            try:
+                # 设置循环变量
+                loop_context = context.copy()
+                loop_context.set_variable('loop_item', item)
+                loop_context.set_variable('loop_index', i)
+                
+                # 执行循环体
+                loop_task = loop_config.get('task')
+                result = await self._execute_task_from_config(loop_task, loop_context, inputs)
+                
+                results.append({
+                    "iteration": i,
+                    "item": item,
+                    "result": result
+                })
+                
+            except Exception as e:
+                results.append({
+                    "iteration": i,
+                    "item": item,
+                    "error": str(e)
+                })
+        
+        return {
+            "loop_results": results,
+            "total_iterations": len(results),
+            "successful_iterations": len([r for r in results if "error" not in r])
+        }
+    
+    async def _execute_with_react_agent(self, step_def: StepDefinition,
+                                      context: WorkflowContext,
+                                      inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """使用React Agent执行未知步骤类型"""
+        try:
+            from app.services.infrastructure.ai.agents import create_react_agent
+            
+            user_id = context.get_context_value("user_id") or "system"
+            agent = create_react_agent(user_id)
+            await agent.initialize()
+            
+            prompt = f"""
+            执行自定义工作流步骤:
+            - 步骤ID: {step_def.step_id}
+            - 步骤名称: {step_def.name}
+            - 步骤类型: {step_def.step_type}
+            - 参数: {step_def.parameters}
+            - 输入: {inputs}
+            
+            请根据步骤配置执行相应的操作并返回结果。
+            """
+            
+            result = await agent.chat(prompt, context={
+                "step_definition": step_def.model_dump(),
+                "workflow_context": context.get_all_context()
+            })
+            
+            return {
+                "success": True,
+                "result": result,
+                "execution_method": "react_agent",
+                "step_type": step_def.step_type
+            }
+            
+        except Exception as e:
+            logger.error(f"React Agent step execution failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "execution_method": "react_agent",
+                "step_type": step_def.step_type
+            }
+    
+    async def _execute_task_from_config(self, task_config: Dict[str, Any],
+                                      context: WorkflowContext,
+                                      inputs: Dict[str, Any]) -> Any:
+        """从配置执行任务"""
+        task_type = task_config.get('type', 'unknown')
+        
+        if task_type == 'react_agent':
+            # 直接使用React Agent
+            from app.services.infrastructure.ai.agents import create_react_agent
+            user_id = context.get_context_value("user_id") or "system"
+            agent = create_react_agent(user_id)
+            await agent.initialize()
+            
+            prompt = task_config.get('prompt', '')
+            return await agent.chat(prompt, context=inputs)
+        
+        else:
+            # 其他任务类型的默认处理
+            return {"task_type": task_type, "config": task_config, "inputs": inputs}
     
     def _evaluate_condition_in_context(self, condition: str, context: WorkflowContext) -> bool:
         """在上下文中评估条件"""

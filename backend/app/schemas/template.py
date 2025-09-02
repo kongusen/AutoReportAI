@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, field_serializer
 
 
 class TemplateBase(BaseModel):
@@ -46,11 +46,19 @@ class Template(TemplateBase):
     user_id: UUID
     created_at: datetime
     updated_at: Optional[datetime] = None
-    unique_id: str
 
+    @computed_field
     @property
     def unique_id(self) -> str:
         return str(self.id)
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, value: datetime) -> str:
+        return value.isoformat() if value else None
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
 
     class Config:
         from_attributes = True

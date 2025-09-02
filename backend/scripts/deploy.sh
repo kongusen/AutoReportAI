@@ -138,13 +138,12 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 30s
 
-  - job_name: 'mcp-servers'
+  - job_name: 'react-agent-services'
     static_configs:
       - targets: 
-          - 'mcp-semantic-analysis:8001'
-          - 'mcp-sql-generation:8002'
-          - 'mcp-data-execution:8003'
-          - 'mcp-quality-assessment:8004'
+          - 'app:8000'
+          - 'worker:8001'
+          - 'beat:8002'
     metrics_path: '/metrics'
     scrape_interval: 30s
 
@@ -222,15 +221,22 @@ health_check() {
         return 1
     fi
     
-    # 检查MCP服务器
-    mcp_services=("8001" "8002" "8003" "8004")
-    for port in "${mcp_services[@]}"; do
-        if curl -f http://localhost:$port/health > /dev/null 2>&1; then
-            log_success "MCP服务器 :$port 健康检查通过"
-        else
-            log_warning "MCP服务器 :$port 健康检查失败"
-        fi
-    done
+    # 检查React Agent系统
+    if curl -f http://localhost:8000/api/v1/health > /dev/null 2>&1; then
+        log_success "React Agent系统健康检查通过"
+        
+        # 检查React Agent具体服务
+        agent_endpoints=("/api/v1/templates" "/api/v1/reports" "/api/v1/tasks")
+        for endpoint in "${agent_endpoints[@]}"; do
+            if curl -f http://localhost:8000$endpoint > /dev/null 2>&1; then
+                log_success "React Agent端点 $endpoint 可访问"
+            else
+                log_warning "React Agent端点 $endpoint 不可访问"
+            fi
+        done
+    else
+        log_warning "React Agent系统健康检查失败"
+    fi
     
     log_success "健康检查完成"
 }

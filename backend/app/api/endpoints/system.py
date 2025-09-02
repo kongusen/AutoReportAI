@@ -404,8 +404,16 @@ async def update_system_config(
         updated_config = config.copy()
         updated_config["updated_at"] = datetime.now().isoformat()
         updated_config["updated_by"] = str(current_user.id)
-    return ApiResponse(
-        success=True,
-        data=config,
-        message="系统配置更新成功"
-    )
+        
+        return ApiResponse(
+            success=True,
+            data=updated_config,
+            message="系统配置更新成功"
+        )
+    
+    except Exception as e:
+        logger.error(f"系统配置更新失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"系统配置更新失败: {str(e)}"
+        )

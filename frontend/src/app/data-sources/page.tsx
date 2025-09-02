@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -31,6 +32,24 @@ export default function DataSourcesPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [selectedDataSource, setSelectedDataSource] = useState<DataSource | null>(null)
   const [testingConnections, setTestingConnections] = useState<Set<string>>(new Set())
+
+  // WebSocket集成用于实时更新
+  const { isConnected, messages } = useWebSocket({
+    autoConnect: true,
+    channels: ['data_sources', 'system'],
+    onMessage: handleRealtimeUpdate
+  })
+
+  // 处理WebSocket实时消息
+  function handleRealtimeUpdate(message: any) {
+    if (message.type === 'data_source_created' || 
+        message.type === 'data_source_updated' ||
+        message.type === 'data_source_deleted' ||
+        message.type === 'data_source_test_completed') {
+      // 实时刷新数据源列表
+      fetchDataSources()
+    }
+  }
 
   useEffect(() => {
     fetchDataSources()

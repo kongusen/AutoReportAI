@@ -68,11 +68,98 @@ class IntelligentETLExecutor:
     支持多种数据源和查询类型
     """
     
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str):
+        if not user_id:
+            raise ValueError("user_id is required for Intelligent ETL Executor")
         self.db = db
+        self.user_id = user_id
         self.connectors = {}
         self.query_cache = {}
+        self._react_agent = None
         
+    async def _get_react_agent(self):
+        """获取用户专属的React Agent"""
+        if self._react_agent is None:
+            from app.services.infrastructure.ai.agents import create_react_agent
+            self._react_agent = create_react_agent(self.user_id)
+            await self._react_agent.initialize()
+        return self._react_agent
+    
+    async def execute_instruction_intelligently(
+        self,
+        etl_instruction: Dict[str, Any], 
+        data_source_id: str
+    ) -> Dict[str, Any]:
+        """
+        使用React Agent智能执行ETL指令
+        
+        Args:
+            etl_instruction: AI生成的ETL指令
+            data_source_id: 数据源ID
+            
+        Returns:
+            查询结果字典
+        """
+        logger.info(f"开始智能执行ETL指令，数据源: {data_source_id}")
+        start_time = time.time()
+        
+        try:
+            # 使用React Agent进行智能指令分析和执行
+            agent = await self._get_react_agent()
+            
+            # 构建智能ETL执行提示
+            etl_prompt = f"""
+            智能ETL指令执行任务:
+            - 数据源ID: {data_source_id}
+            - 指令内容: {etl_instruction}
+            - 用户ID: {self.user_id}
+            
+            请分析ETL指令并执行相应的数据处理操作。
+            需要考虑数据源类型、查询优化、错误处理等因素。
+            """
+            
+            agent_result = await agent.chat(etl_prompt, context={
+                "etl_instruction": etl_instruction,
+                "data_source_id": data_source_id,
+                "task_type": "intelligent_etl"
+            })
+            
+            execution_time = time.time() - start_time
+            
+            logger.info(f"智能ETL指令执行完成，耗时: {execution_time:.2f}秒")
+            
+            return {
+                "data": agent_result,
+                "metadata": {
+                    "data_source_id": data_source_id,
+                    "query_type": etl_instruction.get("query_type"),
+                    "execution_time": execution_time,
+                    "processing_method": "react_agent_intelligent",
+                    "user_id": self.user_id,
+                    "executed_at": datetime.utcnow().isoformat()
+                },
+                "etl_instruction": etl_instruction,
+                "status": "success"
+            }
+            
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.error(f"智能ETL指令执行失败: {str(e)}")
+            
+            return {
+                "data": None,
+                "metadata": {
+                    "data_source_id": data_source_id,
+                    "execution_time": execution_time,
+                    "processing_method": "react_agent_intelligent",
+                    "user_id": self.user_id,
+                    "executed_at": datetime.utcnow().isoformat()
+                },
+                "etl_instruction": etl_instruction,
+                "status": "error",
+                "error": str(e)
+            }
+    
     def execute_instruction(
         self, 
         etl_instruction: Dict[str, Any], 
@@ -440,5 +527,18 @@ class IntelligentETLExecutor:
             }
 
 
-# 全局实例
-intelligent_etl_executor = None
+# Intelligent ETL Executor factory function
+def create_intelligent_etl_executor(db: Session, user_id: str) -> IntelligentETLExecutor:
+    """创建用户专属的智能ETL执行器"""
+    return IntelligentETLExecutor(db, user_id)
+
+
+# Module exports
+__all__ = [
+    "IntelligentETLExecutor",
+    "create_intelligent_etl_executor",
+    "AggregationConfig",
+    "TimeFilterConfig", 
+    "RegionFilterConfig",
+    "ProcessedData"
+]

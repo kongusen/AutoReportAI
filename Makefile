@@ -1,213 +1,212 @@
-.PHONY: help install test test-backend test-frontend lint format clean build up down docker-build docker-up docker-down docker-dev docker-test docker-logs docker-health
+# AutoReportAI Makefile - 现代化测试和开发工具
 
-# Default target
+.PHONY: help install install-dev install-test test test-all test-unit test-integration test-api test-agent test-charts test-docker test-minio test-e2e test-performance lint format clean coverage report services-up services-down docker-build docker-up docker-down
+
+# ==========================================
+# 变量定义
+# ==========================================
+# 检测Python环境
+VENV_PYTHON := backend/venv/bin/python
+VENV_PIP := backend/venv/bin/pip
+PYTHON := $(shell if [ "$$CI" = "true" ] || [ "$$GITHUB_ACTIONS" = "true" ]; then echo "python"; elif [ -x "$(VENV_PYTHON)" ]; then echo "$(VENV_PYTHON)"; else echo "python3"; fi)
+PIP := $(shell if [ "$$CI" = "true" ] || [ "$$GITHUB_ACTIONS" = "true" ]; then echo "pip"; elif [ -x "$(VENV_PYTHON)" ]; then echo "../venv/bin/pip"; else echo "pip3"; fi)
+PYTEST := $(PYTHON) -m pytest
+DOCKER_COMPOSE := docker-compose
+TEST_RUNNER := $(PYTHON) run_tests.py
+BACKEND_DIR := backend
+FRONTEND_DIR := frontend
+TESTS_DIR := tests
+DEV_DIR := dev
+
+# ==========================================
+# 帮助信息
+# ==========================================
 help:
-	@echo "Available commands:"
+	@echo "AutoReportAI 开发工具"
 	@echo ""
-	@echo "Local Development:"
-	@echo "  install        - Install all dependencies"
-	@echo "  test           - Run all tests"
-	@echo "  test-backend   - Run backend tests"
-	@echo "  test-frontend  - Run frontend tests"
-	@echo "  lint           - Run linting on all code"
-	@echo "  format         - Format all code"
-	@echo "  clean          - Clean up build artifacts"
+	@echo "安装命令:"
+	@echo "  install        - 安装生产依赖"
+	@echo "  install-dev    - 安装开发依赖"
+	@echo "  install-test   - 安装测试依赖"
 	@echo ""
-	@echo "Docker Commands:"
-	@echo "  docker-build   - Build all Docker images"
-	@echo "  docker-up      - Start all services with Docker"
-	@echo "  docker-down    - Stop all Docker services"
-	@echo "  docker-dev     - Start development environment"
-	@echo "  docker-test    - Run tests in Docker"
-	@echo "  docker-logs    - Show Docker logs"
-	@echo "  docker-health  - Check service health"
-	@echo "  docker-clean   - Clean Docker resources"
+	@echo "测试命令:"
+	@echo "  test           - 运行快速测试套件"
+	@echo "  test-all       - 运行完整测试套件"
+	@echo "  test-unit      - 运行单元测试"
+	@echo "  test-integration - 运行集成测试"
+	@echo "  test-api       - 运行API测试"
+	@echo "  test-agent     - 运行Agent测试"
+	@echo "  test-charts    - 运行图表测试"
+	@echo "  test-docker    - 运行Docker测试"
+	@echo "  test-minio     - 运行Minio测试"
+	@echo "  test-e2e       - 运行端到端测试"
+	@echo "  test-performance - 运行性能测试"
 	@echo ""
-	@echo "Celery Commands:"
-	@echo "  celery-worker        - Start Celery worker"
-	@echo "  celery-worker-stop   - Stop Celery worker"
-	@echo "  celery-worker-restart- Restart Celery worker"
-	@echo "  celery-worker-logs   - Show Celery worker logs"
-	@echo "  celery-beat          - Start Celery beat scheduler"
-	@echo "  celery-beat-stop     - Stop Celery beat scheduler"
-	@echo "  celery-beat-restart  - Restart Celery beat scheduler"
-	@echo "  celery-beat-logs     - Show Celery beat logs"
-	@echo "  celery-flower        - Start Flower monitoring"
-	@echo "  celery-flower-stop   - Stop Flower monitoring"
-	@echo "  celery-flower-logs   - Show Flower logs"
-	@echo "  celery-all           - Start all Celery services"
-	@echo "  celery-all-stop      - Stop all Celery services"
-	@echo "  celery-all-restart   - Restart all Celery services"
-	@echo "  celery-status        - Check Celery services status"
+	@echo "代码质量:"
+	@echo "  lint           - 代码质量检查"
+	@echo "  format         - 代码格式化"
+	@echo "  coverage       - 生成覆盖率报告"
+	@echo "  report         - 打开覆盖率报告"
 	@echo ""
-	@echo "Legacy Commands:"
-	@echo "  build          - Build services (legacy)"
-	@echo "  up             - Start services (legacy)"
-	@echo "  down           - Stop services (legacy)"
+	@echo "开发环境:"
+	@echo "  services-up    - 启动核心服务(DB,Redis,Minio)"
+	@echo "  services-down  - 停止核心服务"
+	@echo "  docker-up      - 启动完整Docker环境"
+	@echo "  docker-down    - 停止Docker环境"
+	@echo "  clean          - 清理临时文件"
 
-# Install dependencies
+# ==========================================
+# 安装命令
+# ==========================================
 install:
-	@echo "Installing backend dependencies..."
-	cd backend && pip install -r requirements/development.txt
-	@echo "Installing frontend dependencies..."
-	cd frontend && npm install
+	@echo "📦 安装生产依赖..."
+	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
+	cd $(FRONTEND_DIR) && npm install
 
-# Run all tests
-test: test-backend test-frontend
+install-dev:
+	@echo "🔧 安装开发依赖..."
+	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
+	cd $(FRONTEND_DIR) && npm install --include=dev
 
-# Run backend tests
-test-backend:
-	@echo "Running backend tests..."
-	cd backend && python -m pytest --cov=app --cov-report=term-missing -v
+install-test: install-dev
+	@echo "🧪 测试依赖已包含在requirements.txt中"
 
-# Run frontend tests
-test-frontend:
-	@echo "Running frontend tests..."
-	cd frontend && npm test -- --coverage --watchAll=false
+# ==========================================
+# 测试系统
+# ==========================================
+test:
+	@echo "🚀 运行快速测试套件..."
+	@$(PYTHON) run_tests.py --unit --api --verbose
 
-# Run linting
+test-all:
+	@echo "🏁 运行完整测试套件..."
+	@$(PYTHON) run_tests.py --all --verbose
+
+test-unit:
+	@echo "🧪 运行单元测试..."
+	@$(PYTHON) run_tests.py --unit --verbose
+
+test-integration:
+	@echo "🔗 运行集成测试..."
+	@$(PYTHON) run_tests.py --integration --verbose
+
+test-api:
+	@echo "🌐 运行API测试..."
+	@$(PYTHON) run_tests.py --api --verbose
+
+test-agent:
+	@echo "🤖 运行Agent测试..."
+	@$(PYTHON) run_tests.py --agent --verbose
+
+test-charts:
+	@echo "📊 运行图表测试..."
+	$(PYTHON) run_tests.py --charts --verbose
+
+test-docker:
+	@echo "🐳 运行Docker测试..."
+	$(PYTHON) run_tests.py --docker --verbose
+
+test-minio:
+	@echo "📦 运行Minio测试..."
+	$(PYTHON) run_tests.py --minio --verbose
+
+test-e2e:
+	@echo "🏁 运行端到端测试..."
+	$(PYTHON) run_tests.py --e2e --verbose
+
+test-performance:
+	@echo "⚡ 运行性能测试..."
+	$(PYTHON) run_tests.py --performance --verbose
+
+# ==========================================
+# 覆盖率和报告
+# ==========================================
+coverage:
+	@echo "📈 生成覆盖率报告..."
+	$(PYTHON) run_tests.py --coverage
+
+report:
+	@echo "📊 打开覆盖率报告..."
+	@if command -v open >/dev/null 2>&1; then \
+		open htmlcov/index.html; \
+	elif command -v xdg-open >/dev/null 2>&1; then \
+		xdg-open htmlcov/index.html; \
+	else \
+		echo "请手动打开 htmlcov/index.html"; \
+	fi
+
+# ==========================================
+# 代码质量
+# ==========================================
 lint:
-	@echo "Linting backend code..."
-	cd backend && flake8 .
-	cd backend && black --check .
-	cd backend && isort --check-only .
-	@echo "Linting frontend code..."
-	cd frontend && npm run lint
+	@echo "🔍 运行代码质量检查..."
+	$(PYTHON) run_tests.py --lint
 
-# Format code
 format:
-	@echo "Formatting backend code..."
-	cd backend && black .
-	cd backend && isort .
-	@echo "Formatting frontend code..."
-	cd frontend && npm run format
+	@echo "🎨 代码格式化..."
+	$(PYTHON) -m black $(BACKEND_DIR)/app $(TESTS_DIR)
+	$(PYTHON) -m isort $(BACKEND_DIR)/app $(TESTS_DIR)
+	cd $(FRONTEND_DIR) && npm run format 2>/dev/null || echo "前端格式化跳过"
 
-# Clean up
-clean:
-	@echo "Cleaning up..."
-	cd backend && find . -type d -name "__pycache__" -exec rm -rf {} +
-	cd backend && find . -name "*.pyc" -delete
-	cd frontend && rm -rf .next
-	cd frontend && rm -rf node_modules/.cache
+# ==========================================
+# 核心服务管理
+# ==========================================
+services-up:
+	@echo "🔧 启动核心服务..."
+	cd $(DEV_DIR) && $(DOCKER_COMPOSE) --env-file .env up -d db redis minio
 
-# Docker Commands
+services-down:
+	@echo "🛑 停止核心服务..."
+	cd $(DEV_DIR) && $(DOCKER_COMPOSE) stop db redis minio
+
+# ==========================================
+# Docker环境
+# ==========================================
 docker-build:
-	@echo "Building Docker images..."
-	cd autoreporait-docker && docker-compose build --no-cache
+	@echo "🔨 构建Docker镜像..."
+	cd $(DEV_DIR) && $(DOCKER_COMPOSE) build
 
 docker-up:
-	@echo "Starting services with Docker..."
-	cd autoreporait-docker && docker-compose up -d
-	@echo "Services started. Access:"
-	@echo "  Frontend: http://localhost:3000"
-	@echo "  Backend:  http://localhost:8000"
-	@echo "  PgAdmin:  http://localhost:5050 (profile: admin)"
+	@echo "🚀 启动完整Docker环境..."
+	cd $(DEV_DIR) && $(DOCKER_COMPOSE) --env-file .env up -d
+	@echo "✅ Docker环境已启动"
+	@echo "🌐 前端: http://localhost:3000"
+	@echo "🔧 后端API: http://localhost:8000/docs"
+	@echo "📦 Minio控制台: http://localhost:9001"
 
 docker-down:
-	@echo "Stopping Docker services..."
-	cd autoreporait-docker && docker-compose down
+	@echo "🛑 停止Docker环境..."
+	cd $(DEV_DIR) && $(DOCKER_COMPOSE) down
 
-# Celery Commands
-celery-worker:
-	@echo "Starting Celery worker..."
-	cd autoreporait-docker && docker-compose up -d celery-worker
+# ==========================================
+# 清理命令
+# ==========================================
+clean:
+	@echo "🧹 清理临时文件..."
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+	rm -rf htmlcov/ .coverage .pytest_cache/ .mypy_cache/ coverage.xml
+	cd $(FRONTEND_DIR) && rm -rf dist/ .next/ node_modules/.cache/ 2>/dev/null || true
+	@echo "✅ 清理完成"
 
-celery-worker-stop:
-	@echo "Stopping Celery worker..."
-	cd autoreporait-docker && docker-compose stop celery-worker
+# ==========================================
+# 开发工作流
+# ==========================================
+dev-setup: install-dev services-up
+	@echo "🎉 开发环境设置完成!"
 
-celery-worker-restart:
-	@echo "Restarting Celery worker..."
-	cd autoreporait-docker && docker-compose restart celery-worker
+dev-test: services-up test-all
+	@echo "🎯 开发环境测试完成"
 
-celery-worker-logs:
-	@echo "Showing Celery worker logs..."
-	cd autoreporait-docker && docker-compose logs -f celery-worker
-
-celery-beat:
-	@echo "Starting Celery beat scheduler..."
-	cd autoreporait-docker && docker-compose up -d celery-beat
-
-celery-beat-stop:
-	@echo "Stopping Celery beat scheduler..."
-	cd autoreporait-docker && docker-compose stop celery-beat
-
-celery-beat-restart:
-	@echo "Restarting Celery beat scheduler..."
-	cd autoreporait-docker && docker-compose restart celery-beat
-
-celery-beat-logs:
-	@echo "Showing Celery beat logs..."
-	cd autoreporait-docker && docker-compose logs -f celery-beat
-
-celery-flower:
-	@echo "Starting Flower monitoring..."
-	cd autoreporait-docker && docker-compose --profile monitoring up -d flower
-
-celery-flower-stop:
-	@echo "Stopping Flower monitoring..."
-	cd autoreporait-docker && docker-compose --profile monitoring stop flower
-
-celery-flower-logs:
-	@echo "Showing Flower logs..."
-	cd autoreporait-docker && docker-compose --profile monitoring logs -f flower
-
-celery-all:
-	@echo "Starting all Celery services..."
-	cd autoreporait-docker && docker-compose up -d celery-worker celery-beat
-
-celery-all-stop:
-	@echo "Stopping all Celery services..."
-	cd autoreporait-docker && docker-compose stop celery-worker celery-beat
-
-celery-all-restart:
-	@echo "Restarting all Celery services..."
-	cd autoreporait-docker && docker-compose restart celery-worker celery-beat
-
-celery-status:
-	@echo "Checking Celery services status..."
-	@cd autoreporait-docker && docker-compose ps celery-worker celery-beat flower 2>/dev/null || echo "Some Celery services not found"
-
-docker-dev:
-	@echo "Starting development environment..."
-	cd autoreporait-docker && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-	@echo "Development environment started with hot reload enabled"
-
-docker-test:
-	@echo "Running tests in Docker..."
-	cd autoreporait-docker && docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
-	cd autoreporait-docker && docker-compose -f docker-compose.test.yml down -v
-
-docker-logs:
-	@echo "Showing Docker logs..."
-	cd autoreporait-docker && docker-compose logs -f
-
-docker-health:
-	@echo "Checking service health..."
-	@cd autoreporait-docker && docker-compose ps
-	@echo ""
-	@echo "Backend health:"
-	@curl -f http://localhost:8000/health 2>/dev/null || echo "Backend not responding"
-	@echo ""
-	@echo "Frontend health:"
-	@curl -f http://localhost:3000/ 2>/dev/null >/dev/null && echo "Frontend responding" || echo "Frontend not responding"
-
-docker-clean:
-	@echo "Cleaning Docker resources..."
-	cd autoreporait-docker && docker-compose down -v --remove-orphans
-	docker system prune -f
-	docker volume prune -f
-
-# Legacy commands (for backward compatibility)
-build: docker-build
+# ==========================================
+# 快捷命令别名
+# ==========================================
+t: test
+ta: test-all
+tu: test-unit
+ti: test-integration
+cov: coverage
 up: docker-up
 down: docker-down
-
-# Test database commands
-test-db:
-	docker-compose -f docker-compose.test.yml up -d test_db
-
-test-docker: docker-test
-
-test-down:
-	docker-compose -f docker-compose.test.yml down -v 
+build: docker-build

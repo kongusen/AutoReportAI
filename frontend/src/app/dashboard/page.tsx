@@ -1,20 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { 
   CircleStackIcon,
   DocumentTextIcon, 
   ClockIcon,
   DocumentArrowDownIcon,
   ExclamationTriangleIcon,
+  ArrowPathIcon,
+  CpuChipIcon,
+  ChartBarIcon
 } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { api } from '@/utils/api'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import { SystemService, TaskService, ReportService } from '@/services/apiService'
 import { formatRelativeTime, formatNumber } from '@/utils'
 import { DashboardStats, Task, Report } from '@/types'
+import { apiClient } from '@/lib/api-client'
 
 interface StatsCardProps {
   title: string
@@ -67,65 +72,112 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recentTasks, setRecentTasks] = useState<Task[]>([])
   const [recentReports, setRecentReports] = useState<Report[]>([])
+  const [systemHealth, setSystemHealth] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+  const [refreshing, setRefreshing] = useState(false)
+
+  // WebSocket集成用于实时更新
+  const { isConnected, subscribe, messages } = useWebSocket({
+    autoConnect: true,
+    channels: ['dashboard', 'tasks', 'reports'],
+    onMessage: handleRealtimeUpdate
+  })
+
+  // 处理WebSocket实时消息
+  function handleRealtimeUpdate(message: any) {
+    if (message.type === 'task_status_changed' || message.type === 'task_completed') {
+      // 实时更新任务状态
+      setRecentTasks(prev => 
+        prev.map(task => 
+          task.id === message.data.task_id 
+            ? { ...task, ...message.data }
+            : task
+        )
+      )
+    } else if (message.type === 'report_generated' || message.type === 'report_completed') {
+      // 实时更新报告状态
+      setRecentReports(prev => 
+        prev.map(report => 
+          report.id === message.data.report_id 
+            ? { ...report, ...message.data }
+            : report
+        )
+      )
+    } else if (message.type === 'dashboard_stats_updated') {
+      // 实时更新仪表板统计
+      setStats(prev => prev ? { ...prev, ...message.data } : null)
+    }
+  }
+
+  // 使用新的API服务获取数据
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      
+      // 使用新的API服务并行获取数据，包含React Agent系统健康状态
+      const [statsData, tasksData, reportsData, healthData] = await Promise.allSettled([
+        SystemService.getDashboardStats(),
+        TaskService.list({ page: 1, size: 5 }),
+        ReportService.list({ page: 1, size: 5 }),
+        apiClient.getSystemHealth()
+      ])
+
+      // 处理仪表板统计
+      if (statsData.status === 'fulfilled') {
+        setStats(statsData.value)
+      } else {
+        console.error('Failed to fetch dashboard stats:', statsData.reason)
+      }
+        
+      // 处理任务数据
+      if (tasksData.status === 'fulfilled') {
+        setRecentTasks(tasksData.value.items || [])
+      } else {
+        console.error('Failed to fetch tasks:', tasksData.reason)
+        setRecentTasks([])
+      }
+        
+      // 处理报告数据
+      if (reportsData.status === 'fulfilled') {
+        setRecentReports(reportsData.value.items || [])
+      } else {
+        console.error('Failed to fetch reports:', reportsData.reason)
+        setRecentReports([])
+      }
+
+      // 处理React Agent系统健康数据
+      if (healthData.status === 'fulfilled') {
+        setSystemHealth(healthData.value)
+      } else {
+        console.error('Failed to fetch system health:', healthData.reason)
+        // 设置默认值以防止页面崩溃
+        setSystemHealth({
+          overall_status: 'unknown',
+          components: {},
+          checks: []
+        })
+      }
+
+    } catch (err: any) {
+      console.error('Failed to fetch dashboard data:', err)
+      setError('加载仪表板数据失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // 手动刷新功能
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await fetchDashboardData()
+    setRefreshing(false)
+  }, [fetchDashboardData])
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        setLoading(true)
-        
-        // 并行获取仪表板数据
-        const promises = [
-          api.get('/dashboard').catch(err => {
-            console.error('Dashboard API failed:', err)
-            return { data: null }
-          }),
-          api.get('/tasks?limit=5').catch(err => {
-            console.error('Tasks API failed:', err) 
-            return { data: { items: [] } }
-          }),
-          api.get('/reports?limit=5').catch(err => {
-            console.error('Reports API failed:', err)
-            return { data: { items: [] } }
-          })
-        ]
-        const [statsResponse, tasksResponse, reportsResponse] = await Promise.all(promises)
-
-        // 处理后端返回的ApiResponse格式
-        setStats(statsResponse.data || statsResponse)
-        
-        // 处理任务数据（可能是分页响应）
-        let tasks = []
-        if (tasksResponse.data?.items) {
-          tasks = tasksResponse.data.items
-        } else if (tasksResponse.data && Array.isArray(tasksResponse.data)) {
-          tasks = tasksResponse.data
-        } else if (Array.isArray(tasksResponse)) {
-          tasks = tasksResponse
-        }
-        setRecentTasks(tasks)
-        
-        // 处理报告数据（可能是分页响应）
-        let reports = []
-        if (reportsResponse.data?.items) {
-          reports = reportsResponse.data.items
-        } else if (reportsResponse.data && Array.isArray(reportsResponse.data)) {
-          reports = reportsResponse.data
-        } else if (Array.isArray(reportsResponse)) {
-          reports = reportsResponse
-        }
-        setRecentReports(reports)
-      } catch (err: any) {
-        console.error('Failed to fetch dashboard data:', err)
-        setError('加载仪表板数据失败')
-      } finally {
-        setLoading(false)
-      }
-    }
-
     fetchDashboardData()
-  }, [])
+  }, [fetchDashboardData])
 
   if (loading) {
     return (
@@ -166,7 +218,28 @@ export default function DashboardPage() {
     <>
       <PageHeader
         title="仪表板"
-        description="查看系统概览和最新动态"
+        description={
+          <div className="flex items-center space-x-4">
+            <span>查看系统概览和最新动态</span>
+            <div className="flex items-center space-x-2 text-sm">
+              <div className={`h-2 w-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-gray-400'}`} />
+              <span className="text-gray-500">
+                {isConnected ? '实时数据已连接' : '离线模式'}
+              </span>
+            </div>
+          </div>
+        }
+        actions={
+          <Button 
+            onClick={handleRefresh} 
+            variant="outline" 
+            size="sm"
+            disabled={loading || refreshing}
+          >
+            <ArrowPathIcon className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? '刷新中...' : '刷新'}
+          </Button>
+        }
       />
 
       {/* 统计卡片 */}
@@ -199,6 +272,60 @@ export default function DashboardPage() {
           trend={{ value: 23, label: '较上月', type: 'increase' }}
         />
       </div>
+
+      {/* React Agent 系统状态 */}
+      {systemHealth && (
+        <Card className="mb-8">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center">
+                  <CpuChipIcon className="mr-2 h-5 w-5" />
+                  React Agent 系统状态
+                </CardTitle>
+                <CardDescription>智能代理系统运行状态</CardDescription>
+              </div>
+              <Badge 
+                variant={
+                  systemHealth.overall_status === 'healthy' ? 'default' :
+                  systemHealth.overall_status === 'degraded' ? 'warning' : 'destructive'
+                }
+              >
+                {systemHealth.overall_status?.toUpperCase()}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Object.entries(systemHealth.components).map(([mode, component]: [string, any]) => (
+                <div key={mode} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{mode} 模式</p>
+                    <p className="text-xs text-gray-500">
+                      {component?.status || 'unknown'}
+                    </p>
+                  </div>
+                  <Badge 
+                    size="sm"
+                    variant={component?.status === 'healthy' ? 'default' : 'secondary'}
+                  >
+                    {component?.status === 'healthy' ? '正常' : '待机'}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-between items-center">
+              <div className="text-sm text-gray-500">
+                最后更新: {systemHealth.timestamp ? new Date(systemHealth.timestamp).toLocaleString() : '未知'}
+              </div>
+              <Button variant="outline" size="sm">
+                <ChartBarIcon className="mr-2 h-4 w-4" />
+                查看详细洞察
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         {/* 最近任务 */}

@@ -34,7 +34,7 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
         }
     )
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error=exc.code,
         message=exc.message,
         detail=exc.details,
@@ -60,7 +60,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         }
     )
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error=f"HTTP_{exc.status_code}",
         message=str(exc.detail),
         path=str(request.url.path),
@@ -95,7 +95,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "input": error.get("input")
         })
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error="VALIDATION_ERROR",
         message="请求数据验证失败",
         detail={"validation_errors": formatted_errors},
@@ -120,7 +120,7 @@ async def pydantic_validation_exception_handler(request: Request, exc: Validatio
         }
     )
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error="PYDANTIC_VALIDATION_ERROR",
         message="数据验证失败",
         detail={"validation_errors": exc.errors()},
@@ -156,7 +156,7 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError) -
         }
     )
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error=db_error.code,
         message=db_error.message,
         detail=db_error.details,
@@ -183,14 +183,10 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         }
     )
     
-    error_response = ErrorResponse(
+    error_response = ErrorResponse.create(
         error="INTERNAL_SERVER_ERROR",
         message="服务器内部错误",
-        detail={
-            "exception_type": type(exc).__name__,
-            # 在生产环境中可能不想暴露详细的错误信息
-            "debug_message": str(exc) if logger.level <= logging.DEBUG else None
-        },
+        detail=f"异常类型: {type(exc).__name__}" + (f", 详情: {str(exc)}" if logger.level <= logging.DEBUG else ""),
         path=str(request.url.path),
         method=request.method
     )

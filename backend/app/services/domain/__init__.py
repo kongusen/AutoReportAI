@@ -39,7 +39,7 @@ from .template.services.template_domain_service import (
     TemplateDomainService, TemplateParser, TemplateValidator
 )
 # Template业务服务（合并后）
-# TEMPORARILY DISABLED: Legacy IAOP dependencies
+# TEMPORARILY DISABLED: Migrated to React Agent system
 # from .template.template_service import TemplateService
 # from .enhanced_template_parser import EnhancedTemplateParser
 # from .template.agent_sql_analysis_service import AgentSQLAnalysisService

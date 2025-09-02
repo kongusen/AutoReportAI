@@ -10,7 +10,7 @@ from app.core.permissions import require_permission, ResourceType, PermissionLev
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate, User
+from app.schemas.user import UserCreate, UserUpdate, User as UserSchema
 from app.crud.crud_user import crud_user
 from app.core.dependencies import get_current_user
 
@@ -42,10 +42,12 @@ async def get_users(
     total = query.count()
     users = query.offset(skip).limit(limit).all()
     
+    user_schemas = [UserSchema.model_validate(user) for user in users]
+    
     return ApiResponse(
         success=True,
         data=PaginatedResponse(
-            items=users,
+            items=user_schemas,
             total=total,
             page=skip // limit + 1,
             size=limit,
@@ -61,9 +63,10 @@ async def get_current_user(
     current_user: User = Depends(get_current_user)
 ):
     """获取当前用户信息"""
+    user_schema = UserSchema.model_validate(current_user)
     return ApiResponse(
         success=True,
-        data=current_user,
+        data=user_schema,
         message="获取用户信息成功"
     )
 
@@ -86,9 +89,10 @@ async def get_user(
             detail="用户不存在"
         )
     
+    user_schema = UserSchema.model_validate(user)
     return ApiResponse(
         success=True,
-        data=user,
+        data=user_schema,
         message="获取用户信息成功"
     )
 
@@ -101,10 +105,11 @@ async def update_current_user(
 ):
     """更新当前用户信息"""
     user = crud_user.update(db, db_obj=current_user, obj_in=user_update)
+    user_schema = UserSchema.model_validate(user)
     
     return ApiResponse(
         success=True,
-        data=user,
+        data=user_schema,
         message="用户信息更新成功"
     )
 
@@ -129,10 +134,11 @@ async def update_user(
         )
     
     user = crud_user.update(db, db_obj=user, obj_in=user_update)
+    user_schema = UserSchema.model_validate(user)
     
     return ApiResponse(
         success=True,
-        data=user,
+        data=user_schema,
         message="用户信息更新成功"
     )
 
@@ -183,10 +189,11 @@ async def activate_user(
         )
     
     user = crud_user.update(db, db_obj=user, obj_in={"is_active": True})
+    user_schema = UserSchema.model_validate(user)
     
     return ApiResponse(
         success=True,
-        data=user,
+        data=user_schema,
         message="用户激活成功"
     )
 
@@ -210,9 +217,10 @@ async def deactivate_user(
         )
     
     user = crud_user.update(db, db_obj=user, obj_in={"is_active": False})
+    user_schema = UserSchema.model_validate(user)
     
     return ApiResponse(
         success=True,
-        data=user,
+        data=user_schema,
         message="用户停用成功"
     )

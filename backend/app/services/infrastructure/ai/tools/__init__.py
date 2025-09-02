@@ -51,6 +51,14 @@ from .monitor import (
     ToolHealthCheck,
     Alert
 )
+from .integration_service import (
+    AIToolsIntegrationService,
+    TaskType,
+    ToolRecommendation,
+    create_ai_tools_integration_service
+)
+# 图表生成工具
+from .chart_generator_tool import generate_chart, ChartGeneratorTool, generate_sample_data
 
 async def get_ai_tools_registry() -> 'AIToolsRegistry':
     """获取AI工具注册表"""
@@ -76,19 +84,22 @@ async def get_tools_monitor() -> 'ToolsMonitor':
         _tools_instances['tools_monitor'] = ToolsMonitor()
     return _tools_instances['tools_monitor']
 
-# 向后兼容接口
-async def get_tools_registry():
-    """向后兼容：获取工具注册表"""
-    return await get_ai_tools_registry()
+# React Agent工具系统统一接口
 
-async def get_tools_factory():
-    """向后兼容：获取工具工厂"""
-    return await get_ai_tools_factory()
+async def get_ai_tools_integration_service(user_id: str) -> 'AIToolsIntegrationService':
+    """获取AI工具集成服务"""
+    service_key = f'tools_integration_{user_id}'
+    if service_key not in _tools_instances:
+        from .integration_service import create_ai_tools_integration_service
+        _tools_instances[service_key] = create_ai_tools_integration_service(user_id)
+    return _tools_instances[service_key]
 
 __all__ = [
     'get_ai_tools_registry',
     'get_ai_tools_factory',
     'get_tools_monitor',
-    'get_tools_registry',  # 向后兼容
-    'get_tools_factory'    # 向后兼容
+    'get_ai_tools_integration_service',
+    'generate_chart',
+    'ChartGeneratorTool',
+    'generate_sample_data'
 ]

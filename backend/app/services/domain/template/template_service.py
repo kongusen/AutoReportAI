@@ -15,24 +15,25 @@ from sqlalchemy import and_, or_, func
 
 from app.models.template import Template
 from app.models.user import User
-# 临时注释掉缺失的导入
-# from .placeholder_config_service import PlaceholderConfigService
-# from .template_parser import EnhancedTemplateParser
-# from .template_cache_service import TemplateCacheService
-from .enhanced_template_parser import EnhancedTemplateParser
+# React Agent系统导入
+from .services.template_domain_service import TemplateDomainService, TemplateParser
+from .template_cache_service import TemplateCacheService
+from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
 
 logger = logging.getLogger(__name__)
 
 
 class TemplateService:
-    """模板管理核心服务"""
+    """模板管理核心服务 - 基于React Agent系统"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str = None):
         self.db = db
-        # self.placeholder_service = PlaceholderConfigService(db)
-        self.enhanced_parser = EnhancedTemplateParser(db)
-        # self.parser = EnhancedTemplateParser()
-        # self.cache_service = TemplateCacheService(db)
+        self.user_id = user_id
+        self.domain_service = TemplateDomainService()
+        self.parser = TemplateParser()
+        self.cache_service = TemplateCacheService()
+        if user_id:
+            self.llm_selector = IntelligentLLMSelector(db, user_id)
         
     async def create_template(
         self,
@@ -315,10 +316,10 @@ class TemplateService:
         content: str
     ) -> Dict[str, Any]:
         """
-        分析模板内容并创建占位符配置
+        基于React Agent系统分析模板内容并创建占位符配置
         """
         try:
-            # 1. 解析占位符
+            # 1. 基础占位符解析
             placeholders = self.parser.extract_placeholders(content)
             
             if not placeholders:
@@ -328,31 +329,92 @@ class TemplateService:
                     "analysis_errors": ["未发现有效占位符"]
                 }
             
-            # 2. 创建占位符配置
-            created_placeholders = await self.placeholder_service.create_template_placeholders_config(
-                template_id, placeholders
-            )
+            # 2. 使用React Agent进行智能分析
+            enhanced_placeholders = []
+            if self.user_id and hasattr(self, 'llm_selector'):
+                try:
+                    from app.services.infrastructure.ai.agents import create_react_agent
+                    
+                    agent = create_react_agent(self.user_id)
+                    await agent.initialize()
+                    
+                    # 构造分析提示
+                    analysis_prompt = f"""
+                    分析以下模板中的占位符，为每个占位符提供智能分类和建议：
+                    
+                    模板内容片段：
+                    {content[:500]}...
+                    
+                    发现的占位符：
+                    {[p['name'] for p in placeholders]}
+                    
+                    请为每个占位符提供：
+                    1. 数据类型（统计、趋势、列表等）
+                    2. 复杂度评估
+                    3. 处理建议
+                    4. 可能的数据源字段
+                    """
+                    
+                    analysis_result = await agent.chat(analysis_prompt)
+                    
+                    # 增强占位符信息
+                    for i, placeholder in enumerate(placeholders):
+                        enhanced_placeholder = {
+                            **placeholder,
+                            "type": "intelligent",  # React Agent分析的类型
+                            "content_type": "mixed",
+                            "description": f"智能分析结果：{analysis_result[:100]}...",
+                            "complexity": "medium",
+                            "ai_suggestions": analysis_result,
+                            "requires_data_source": True
+                        }
+                        enhanced_placeholders.append(enhanced_placeholder)
+                        
+                except Exception as e:
+                    logger.warning(f"React Agent分析失败，使用基础解析: {str(e)}")
+                    # 回退到基础分析
+                    for placeholder in placeholders:
+                        enhanced_placeholders.append({
+                            **placeholder,
+                            "type": "simple",
+                            "content_type": "text",
+                            "description": f"占位符: {placeholder['name']}",
+                            "complexity": "low"
+                        })
+            else:
+                # 无用户上下文时的基础分析
+                for placeholder in placeholders:
+                    enhanced_placeholders.append({
+                        **placeholder,
+                        "type": "simple",
+                        "content_type": "text",
+                        "description": f"占位符: {placeholder['name']}",
+                        "complexity": "low"
+                    })
             
             # 3. 分析结果统计
             type_distribution = {}
-            for placeholder in placeholders:
+            for placeholder in enhanced_placeholders:
                 ptype = placeholder.get("type", "unknown")
                 type_distribution[ptype] = type_distribution.get(ptype, 0) + 1
             
             return {
                 "total_placeholders": len(placeholders),
-                "created_placeholders": len(created_placeholders),
+                "created_placeholders": len(enhanced_placeholders),
                 "type_distribution": type_distribution,
                 "placeholder_details": [
                     {
                         "name": p["name"],
                         "type": p["type"],
                         "content_type": p["content_type"],
-                        "description": p.get("description", "")
+                        "description": p.get("description", ""),
+                        "complexity": p.get("complexity", "low"),
+                        "ai_suggestions": p.get("ai_suggestions", "")
                     }
-                    for p in placeholders
+                    for p in enhanced_placeholders
                 ],
-                "analysis_errors": []
+                "analysis_errors": [],
+                "react_agent_enabled": self.user_id is not None
             }
             
         except Exception as e:
@@ -361,6 +423,94 @@ class TemplateService:
                 "total_placeholders": 0,
                 "created_placeholders": 0,
                 "analysis_errors": [str(e)]
+            }
+    
+    async def create_template_with_sql_generation(
+        self,
+        user_id: UUID,
+        name: str,
+        content: str,
+        description: str = None,
+        is_public: bool = False,
+        data_source_id: str = None
+    ) -> Tuple[Template, Dict[str, Any]]:
+        """
+        创建新模板并使用React Agent自动生成SQL
+        """
+        # 首先创建基础模板
+        template, placeholder_analysis = await self.create_template(
+            user_id, name, content, description, is_public, auto_generate_placeholders=True
+        )
+        
+        # 如果指定了数据源且有占位符，使用React Agent生成SQL
+        if data_source_id and placeholder_analysis.get("total_placeholders", 0) > 0:
+            try:
+                sql_generation_result = await self._generate_sql_with_react_agent(
+                    template.id, data_source_id, user_id
+                )
+                placeholder_analysis.update(sql_generation_result)
+            except Exception as e:
+                logger.warning(f"SQL生成失败: {str(e)}")
+                placeholder_analysis["sql_generation_error"] = str(e)
+        
+        return template, placeholder_analysis
+    
+    async def _generate_sql_with_react_agent(
+        self,
+        template_id: UUID,
+        data_source_id: str,
+        user_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        使用React Agent为模板占位符生成SQL
+        """
+        try:
+            if self.user_id and hasattr(self, 'llm_selector'):
+                from app.services.infrastructure.ai.agents import create_react_agent
+                
+                agent = create_react_agent(str(user_id))
+                await agent.initialize()
+                
+                sql_prompt = f"""
+                为模板 {template_id} 的占位符生成SQL查询语句。
+                数据源ID: {data_source_id}
+                
+                请分析模板中的每个占位符，并生成对应的SQL查询。
+                考虑以下因素：
+                1. 占位符的语义含义
+                2. 数据源的表结构
+                3. 查询的性能优化
+                4. 数据类型的兼容性
+                
+                返回格式：
+                - 每个占位符对应的SQL语句
+                - SQL执行建议
+                - 性能优化提示
+                """
+                
+                result = await agent.chat(sql_prompt, context={
+                    "template_id": str(template_id),
+                    "data_source_id": data_source_id,
+                    "task_type": "sql_generation"
+                })
+                
+                return {
+                    "sql_generation_enabled": True,
+                    "sql_generation_result": result,
+                    "total_sqls_generated": 1,  # React Agent会生成整体分析
+                    "sql_generation_method": "react_agent"
+                }
+            else:
+                return {
+                    "sql_generation_enabled": False,
+                    "reason": "需要用户上下文才能生成SQL"
+                }
+                
+        except Exception as e:
+            logger.error(f"React Agent SQL生成失败: {str(e)}")
+            return {
+                "sql_generation_enabled": False,
+                "sql_generation_error": str(e)
             }
     
     async def _get_template_statistics(self, template_id: UUID) -> Dict[str, Any]:

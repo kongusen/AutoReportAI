@@ -13,7 +13,7 @@ from app.core.architecture import ApiResponse
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
-# REMOVED: IAOP import - orchestration.two_stage_chart_orchestrator import get_two_stage_chart_orchestrator
+# 使用React Agent系统的图表编排器
 
 router = APIRouter()
 
@@ -125,8 +125,9 @@ async def test_placeholder_chart(
         
         # 对于test_with_data模式，使用统一API适配器进行智能处理
         if execution_mode == 'test_with_data':
-            # REMOVED: IAOP import - integration.unified_api_adapter import get_unified_api_adapter
-            adapter = get_unified_api_adapter(db_session=db, integration_mode=optimization_level)
+            # 使用React Agent系统的统一API适配器
+            # 待React Agent完全集成后实现
+            adapter = None  # 临时禁用
             
             # 执行增强的test_with_data
             result = await adapter.test_with_data_enhanced(

@@ -4,10 +4,13 @@
 """
 
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Generic, TypeVar
 from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid
+
+# 定义泛型类型变量
+T = TypeVar('T')
 
 
 class ArchitectureLayer(str, Enum):
@@ -52,20 +55,20 @@ class UserRole(str, Enum):
     GUEST = "guest"
 
 
-class ApiResponse(BaseModel):
+class ApiResponse(BaseModel, Generic[T]):
     """统一的API响应格式"""
     success: bool = Field(..., description="请求是否成功")
-    data: Optional[Any] = Field(None, description="响应数据")
+    data: Optional[T] = Field(None, description="响应数据")
     message: Optional[str] = Field(None, description="响应消息")
     error: Optional[str] = Field(None, description="错误信息")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     version: str = Field(default="v1")
 
 
-class PaginatedResponse(BaseModel):
+class PaginatedResponse(BaseModel, Generic[T]):
     """分页响应格式"""
-    items: List[Any] = Field(..., description="数据列表")
+    items: List[T] = Field(..., description="数据列表")
     total: int = Field(..., description="总记录数")
     page: int = Field(..., description="当前页码")
     size: int = Field(..., description="每页大小")
@@ -79,16 +82,32 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="错误类型")
     message: str = Field(..., description="错误消息")
     detail: Optional[str] = Field(None, description="详细错误信息")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     path: Optional[str] = Field(None, description="请求路径")
     method: Optional[str] = Field(None, description="请求方法")
+    
+    @classmethod
+    def create(cls, error: str, message: str, detail=None, path: str = None, method: str = None):
+        """创建错误响应，自动处理detail类型转换"""
+        if detail is not None and not isinstance(detail, str):
+            # 将非字符串detail转换为JSON字符串
+            import json
+            detail = json.dumps(detail, ensure_ascii=False, default=str)
+        
+        return cls(
+            error=error,
+            message=message,
+            detail=detail,
+            path=path,
+            method=method
+        )
 
 
 class HealthStatus(BaseModel):
     """系统健康状态"""
     status: str = Field(..., description="系统状态")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     version: str = Field(..., description="系统版本")
     uptime: float = Field(..., description="运行时间(秒)")
     services: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="服务状态")
@@ -104,7 +123,7 @@ class AuditLog(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="操作详情")
     ip_address: Optional[str] = Field(None, description="IP地址")
     user_agent: Optional[str] = Field(None, description="用户代理")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     success: bool = Field(..., description="操作是否成功")
     error_message: Optional[str] = Field(None, description="错误消息")
 

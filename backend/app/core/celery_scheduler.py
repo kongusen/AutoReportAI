@@ -22,8 +22,12 @@ from app.core.config import settings
 from app.db.session import get_db_session, SessionLocal
 from app.models.task import Task
 from app.services.infrastructure.notification.notification_service import NotificationService
+from app.services.infrastructure.task_queue.celery_config import celery_app
 
 logger = logging.getLogger(__name__)
+
+# 导出Celery应用实例，供Celery命令行工具使用
+celery = celery_app
 
 
 class CelerySchedulerManager:

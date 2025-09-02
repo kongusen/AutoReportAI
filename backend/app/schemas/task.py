@@ -5,7 +5,7 @@ from uuid import UUID
 from enum import Enum
 
 from cron_validator import CronValidator
-from pydantic import BaseModel, field_validator, computed_field
+from pydantic import BaseModel, field_validator, computed_field, field_serializer
 
 # 导入Task状态枚举
 from app.models.task import TaskStatus, ProcessingMode, AgentWorkflowType, ReportPeriod
@@ -127,16 +127,15 @@ class TaskResponse(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
-    template_id: Optional[str] = None
-    data_source_id: Optional[str] = None
+    template_id: Optional[UUID] = None
+    data_source_id: Optional[UUID] = None
     schedule: Optional[str] = None
     report_period: str = "monthly"
     recipients: List[str] = []
-    owner_id: Optional[str] = None
+    owner_id: Optional[UUID] = None
     is_active: bool = True
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    unique_id: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     # 新增字段
     status: str = "pending"
@@ -146,10 +145,39 @@ class TaskResponse(BaseModel):
     success_count: int = 0
     failure_count: int = 0
     success_rate: float = 0.0
-    last_execution_at: Optional[str] = None
+    last_execution_at: Optional[datetime] = None
     average_execution_time: float = 0.0
     max_context_tokens: int = 32000
     enable_compression: bool = True
+
+    @computed_field
+    @property
+    def unique_id(self) -> str:
+        return str(self.id)
+
+    @field_serializer('template_id')
+    def serialize_template_id(self, value: Optional[UUID]) -> Optional[str]:
+        return str(value) if value else None
+
+    @field_serializer('data_source_id')
+    def serialize_data_source_id(self, value: Optional[UUID]) -> Optional[str]:
+        return str(value) if value else None
+
+    @field_serializer('owner_id')
+    def serialize_owner_id(self, value: Optional[UUID]) -> Optional[str]:
+        return str(value) if value else None
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
+
+    @field_serializer('last_execution_at')
+    def serialize_last_execution_at(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
 
     class Config:
         from_attributes = True

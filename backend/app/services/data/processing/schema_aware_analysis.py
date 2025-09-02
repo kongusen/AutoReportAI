@@ -28,23 +28,38 @@ class SchemaAwareAnalysisService:
         else:
             self.data_analysis_service = None
     
+    async def _get_react_agent(self):
+        """获取用户专属的React Agent"""
+        if self._react_agent is None:
+            from app.services.infrastructure.ai.agents import create_react_agent
+            self._react_agent = create_react_agent(self.user_id)
+            await self._react_agent.initialize()
+        return self._react_agent
+    
     @property
     def schema_query_service(self):
-        """Lazy-loaded schema query service"""
+        """React Agent架构的Schema查询服务"""
         if self._schema_query_service is None:
             from app.services.data.schemas import SchemaQueryService
             self._schema_query_service = SchemaQueryService(self.db_session)
         return self._schema_query_service
     
-    @property
-    def schema_analysis_service(self):
-        """Lazy-loaded schema analysis service - TEMPORARILY DISABLED"""
-        # TEMPORARILY DISABLED: SchemaAnalysisService has IAOP dependencies
-        # if self._schema_analysis_service is None:
-        #     from app.services.data.schemas import SchemaAnalysisService
-        #     self._schema_analysis_service = SchemaAnalysisService(self.db_session)
-        # return self._schema_analysis_service
-        raise NotImplementedError("SchemaAnalysisService temporarily disabled after IAOP cleanup. Use MCP equivalent instead.")
+    async def get_schema_analysis_service(self, table_names=None):
+        """获取Schema分析服务 - 基于React Agent实现"""
+        try:
+            # 使用用户专属React Agent进行Schema分析
+            agent = await self._get_react_agent()
+            
+            # 通过React Agent执行Schema分析
+            analysis_prompt = f"分析数据库Schema: {', '.join(table_names) if table_names else 'all tables'}"
+            return await agent.chat(analysis_prompt, context={
+                "task_type": "schema_analysis",
+                "table_names": table_names,
+                "user_id": self.user_id
+            })
+        except Exception as e:
+            self.logger.error(f"Schema分析失败: {str(e)}")
+            return f"Schema分析暂时不可用: {str(e)}"
     
     async def analyze_data_source_with_schema(self, data_source_id: str) -> Dict[str, Any]:
         """
@@ -545,3 +560,9 @@ class SchemaAwareAnalysisService:
                 "column_types": {},
                 "error": f"Data analysis failed: {str(e)}"
             }
+
+
+# Schema Aware Analysis Service factory function
+def create_schema_aware_analysis_service(db_session: Session, user_id: str) -> SchemaAwareAnalysisService:
+    """创建用户专属的Schema感知分析服务"""
+    return SchemaAwareAnalysisService(db_session, user_id)

@@ -9,7 +9,8 @@ from enum import Enum
 from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
 
-from app.schemas.base import APIResponse, HealthCheckResponse
+from app.schemas.base import HealthCheckResponse
+from app.core.api_specification import APIResponse, create_success_response
 
 
 class APIVersion(str, Enum):

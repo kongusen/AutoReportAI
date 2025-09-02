@@ -13,6 +13,12 @@ from sqlalchemy import and_
 from app.models.data_source import DataSource
 from app.models.table_schema import TableSchema, ColumnSchema
 from app.services.data.connectors.doris_connector import DorisConnector
+from app.core.exceptions import (
+    NotFoundError,
+    DatabaseError,
+    ExternalServiceError,
+    DataRetrievalError
+)
 from .utils.type_normalizer import TypeNormalizer
 
 
@@ -41,17 +47,19 @@ class SchemaDiscoveryService:
             ).first()
             
             if not data_source:
-                return {"success": False, "error": "数据源不存在"}
+                raise NotFoundError("数据源", data_source_id)
             
             # 根据数据源类型选择连接器
             if data_source.source_type.value == "doris":
                 return await self._discover_doris_schemas(data_source)
             else:
-                return {"success": False, "error": f"不支持的数据源类型: {data_source.source_type.value}"}
+                raise ExternalServiceError(f"不支持的数据源类型: {data_source.source_type.value}")
                 
+        except (NotFoundError, ExternalServiceError):
+            raise  # Re-raise known exceptions
         except Exception as e:
             self.logger.error(f"发现表结构失败: {e}")
-            return {"success": False, "error": str(e)}
+            raise DatabaseError(f"表结构发现失败: {str(e)}")
     
     async def _discover_doris_schemas(self, data_source: DataSource) -> Dict[str, Any]:
         """发现Doris数据源的表结构"""

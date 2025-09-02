@@ -12,523 +12,257 @@ from app import crud
 from app.core.config import settings
 from app.db.session import get_db
 from app.services.infrastructure.notification.email_service import EmailService
-from app.websocket.manager import NotificationMessage, manager
+from app.core.api_specification import NotificationMessage
 
 logger = logging.getLogger(__name__)
 
 
-class NotificationService:
+class ReactAgentNotificationService:
+    """基于React Agent架构的现代化通知服务"""
+    
     def __init__(self):
         self.email_service = EmailService()
-        self.websocket_manager = manager
+        self._active_connections: Dict[str, Any] = {}
         self.redis_client = redis.from_url(
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True
         )
+        self._initialized = False
+    
+    async def initialize(self):
+        """初始化通知服务"""
+        if not self._initialized:
+            try:
+                from app.services.infrastructure.ai.agents import create_react_agent
+                self.agent = create_react_agent(user_id="notification_system")
+                await self.agent.initialize()
+                self._initialized = True
+                logger.info("React Agent通知服务初始化成功")
+            except Exception as e:
+                logger.error(f"通知服务初始化失败: {str(e)}")
+                raise
+    
+    async def add_connection(self, user_id: str, websocket):
+        """添加WebSocket连接"""
+        await self.initialize()
+        self._active_connections[user_id] = websocket
+        logger.info(f"用户 {user_id} WebSocket连接已建立")
+    
+    async def remove_connection(self, user_id: str):
+        """移除WebSocket连接"""
+        if user_id in self._active_connections:
+            del self._active_connections[user_id]
+            logger.info(f"用户 {user_id} WebSocket连接已断开")
+    
+    async def send_direct_message(self, user_id: str, message: Dict[str, Any]):
+        """直接发送消息给特定用户"""
+        if user_id in self._active_connections:
+            try:
+                websocket = self._active_connections[user_id]
+                await websocket.send_text(json.dumps(message))
+                return True
+            except Exception as e:
+                logger.error(f"发送消息失败: {str(e)}")
+                await self.remove_connection(user_id)
+        return False
+    
+    async def generate_intelligent_message(self, event_type: str, context: Dict[str, Any]) -> str:
+        """使用React Agent生成智能通知消息"""
+        try:
+            await self.initialize()
+            
+            prompt = f"""
+            生成 {event_type} 事件的通知消息。
+            
+            上下文信息: {json.dumps(context, ensure_ascii=False)}
+            
+            请生成一个简洁、专业、友好的通知消息。
+            """
+            
+            return await self.agent.chat(prompt, context={
+                "task_type": "notification_generation",
+                "event_type": event_type,
+                **context
+            })
+        except Exception as e:
+            logger.error(f"智能消息生成失败: {str(e)}")
+            return f"{event_type} 事件通知"
 
     async def notify_task_started(
         self, db: Session, task_id: int, user_id: str, task_name: str
     ):
         """通知任务开始执行"""
         try:
-            # WebSocket通知
+            message = await self.generate_intelligent_message("task_started", {
+                "task_id": task_id,
+                "task_name": task_name,
+                "user_id": user_id
+            })
+            
+            notification = {
+                "type": "task_notification",
+                "event": "task_started", 
+                "task_id": task_id,
+                "task_name": task_name,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": user_id
+            }
+            
             if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_task_notification(
-                    task_id=task_id,
-                    user_id=user_id,
-                    status="started",
-                    message=f"Task '{task_name}' has started execution.",
-                )
+                await self.send_direct_message(user_id, notification)
 
             logger.info(f"Task {task_id} start notification sent to user {user_id}")
         except Exception as e:
             logger.error(f"Error sending task start notification: {e}")
 
     async def notify_task_completed(
-        self,
-        db: Session,
-        task_id: int,
-        user_id: str,
-        task_name: str,
-        report_path: Optional[str] = None,
+        self, db: Session, task_id: int, user_id: str, task_name: str, result_data: Dict = None
     ):
         """通知任务完成"""
         try:
-            # WebSocket通知
+            message = await self.generate_intelligent_message("task_completed", {
+                "task_id": task_id,
+                "task_name": task_name,
+                "user_id": user_id,
+                "result_data": result_data
+            })
+            
+            notification = {
+                "type": "task_notification",
+                "event": "task_completed",
+                "task_id": task_id,
+                "task_name": task_name,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": user_id,
+                "result_data": result_data
+            }
+            
             if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_task_notification(
-                    task_id=task_id,
-                    user_id=user_id,
-                    status="completed",
-                    message=f"Task '{task_name}' completed successfully. Report is ready for download.",
-                )
+                await self.send_direct_message(user_id, notification)
 
-            # 邮件通知
-            if settings.ENABLE_EMAIL_NOTIFICATIONS:
-                user = crud.user.get(db, id=user_id)
-                if user and user.email:
-                    # 检查用户通知偏好
-                    if self._should_send_email_notification(
-                        db, user_id, "report_completion"
-                    ):
-                        self.email_service.send_report_completion_notification(
-                            to_emails=[user.email],
-                            task_name=task_name,
-                            report_path=report_path,
-                        )
-
-            logger.info(
-                f"Task {task_id} completion notification sent to user {user_id}"
-            )
+            logger.info(f"Task {task_id} completion notification sent to user {user_id}")
         except Exception as e:
             logger.error(f"Error sending task completion notification: {e}")
 
     async def notify_task_failed(
-        self,
-        db: Session,
-        task_id: int,
-        user_id: str,
-        task_name: str,
-        error_message: str,
+        self, db: Session, task_id: int, user_id: str, task_name: str, error_message: str
     ):
         """通知任务失败"""
         try:
-            # WebSocket通知
+            message = await self.generate_intelligent_message("task_failed", {
+                "task_id": task_id,
+                "task_name": task_name,
+                "user_id": user_id,
+                "error_message": error_message
+            })
+            
+            notification = {
+                "type": "task_notification",
+                "event": "task_failed",
+                "task_id": task_id,
+                "task_name": task_name,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": user_id,
+                "error_message": error_message
+            }
+            
             if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_task_notification(
-                    task_id=task_id,
-                    user_id=user_id,
-                    status="failed",
-                    message=f"Task '{task_name}' failed: {error_message}",
-                )
-
-            # 邮件通知
-            if settings.ENABLE_EMAIL_NOTIFICATIONS:
-                user = crud.user.get(db, id=user_id)
-                if user and user.email:
-                    # 检查用户通知偏好
-                    if self._should_send_email_notification(
-                        db, user_id, "error_alerts"
-                    ):
-                        self.email_service.send_error_notification(
-                            to_emails=[user.email],
-                            task_name=task_name,
-                            error_message=error_message,
-                        )
+                await self.send_direct_message(user_id, notification)
 
             logger.info(f"Task {task_id} failure notification sent to user {user_id}")
         except Exception as e:
             logger.error(f"Error sending task failure notification: {e}")
 
     async def notify_report_generated(
-        self, db: Session, report_id: int, user_id: str, file_path: Optional[str] = None
+        self, db: Session, report_id: int, user_id: str, report_name: str
     ):
         """通知报告生成完成"""
         try:
+            message = await self.generate_intelligent_message("report_generated", {
+                "report_id": report_id,
+                "report_name": report_name,
+                "user_id": user_id
+            })
+            
+            notification = {
+                "type": "report_notification",
+                "event": "report_generated",
+                "report_id": report_id,
+                "report_name": report_name,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+                "user_id": user_id
+            }
+            
             if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_report_notification(
-                    report_id=report_id,
-                    user_id=user_id,
-                    status="completed",
-                    file_path=file_path,
-                )
+                await self.send_direct_message(user_id, notification)
 
-            logger.info(f"Report {report_id} notification sent to user {user_id}")
+            logger.info(f"Report {report_id} generation notification sent to user {user_id}")
         except Exception as e:
-            logger.error(f"Error sending report notification: {e}")
+            logger.error(f"Error sending report generation notification: {e}")
 
     async def notify_system_maintenance(
-        self, title: str, message: str, notification_type: str = "info"
+        self, maintenance_message: str, affected_users: List[str] = None
     ):
-        """发送系统维护通知"""
+        """通知系统维护"""
         try:
+            message = await self.generate_intelligent_message("system_maintenance", {
+                "maintenance_message": maintenance_message,
+                "affected_users_count": len(affected_users) if affected_users else 0
+            })
+            
+            notification = {
+                "type": "system_notification",
+                "event": "system_maintenance",
+                "message": message,
+                "maintenance_message": maintenance_message,
+                "timestamp": datetime.now().isoformat()
+            }
+            
             if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_system_notification(
-                    title=title, message=message, notification_type=notification_type
-                )
+                if affected_users:
+                    for user_id in affected_users:
+                        await self.send_direct_message(user_id, notification)
+                else:
+                    # 广播给所有连接的用户
+                    for user_id in self._active_connections.keys():
+                        await self.send_direct_message(user_id, notification)
 
-            logger.info(f"System notification sent: {title}")
+            logger.info("System maintenance notification sent")
         except Exception as e:
-            logger.error(f"Error sending system notification: {e}")
+            logger.error(f"Error sending system maintenance notification: {e}")
 
-    async def send_weekly_summary(self, db: Session):
-        """发送周报摘要"""
+    async def health_check(self) -> Dict[str, Any]:
+        """健康检查"""
         try:
-            if not settings.ENABLE_EMAIL_NOTIFICATIONS:
-                return
-
-            # 获取所有启用周报的用户
-            users = crud.user.get_multi(db)
-
-            for user in users:
-                if not user.email:
-                    continue
-
-                # 检查用户是否启用了周报
-                if not self._should_send_email_notification(
-                    db, str(user.id), "weekly_summary"
-                ):
-                    continue
-
-                # 获取用户的周报数据
-                summary_data = self._get_user_weekly_summary(db, str(user.id))
-
-                # 发送周报邮件
-                self.email_service.send_weekly_summary(
-                    to_emails=[user.email], summary_data=summary_data
-                )
-
-            logger.info("Weekly summary emails sent")
-        except Exception as e:
-            logger.error(f"Error sending weekly summary: {e}")
-
-    def _should_send_email_notification(
-        self, db: Session, user_id: str, notification_type: str
-    ) -> bool:
-        """检查用户是否启用了特定类型的邮件通知"""
-        try:
-            # 这里应该从用户配置表中查询通知偏好
-            # 为了演示，我们假设所有通知都是启用的
-            return True
-        except Exception as e:
-            logger.error(f"Error checking notification preference: {e}")
-            return False
-
-    def _get_user_weekly_summary(self, db: Session, user_id: str) -> dict:
-        """获取用户的周报数据"""
-        try:
-            from datetime import datetime, timedelta
-
-            # 获取过去一周的数据
-            end_date = now()
-            start_date = end_date - timedelta(days=7)
-
-            # 查询用户的报告历史
-            history_records = crud.report_history.get_multi_by_owner(
-                db=db, owner_id=user_id, skip=0, limit=1000
-            )
-
-            # 过滤过去一周的记录
-            weekly_records = [
-                record
-                for record in history_records
-                if start_date <= record.created_at <= end_date
-            ]
-
-            total_reports = len(weekly_records)
-            successful_reports = len(
-                [r for r in weekly_records if r.status == "success"]
-            )
-            failed_reports = len([r for r in weekly_records if r.status == "failure"])
-
+            await self.initialize()
             return {
-                "total_reports": total_reports,
-                "successful_reports": successful_reports,
-                "failed_reports": failed_reports,
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
+                "status": "healthy",
+                "active_connections": len(self._active_connections),
+                "agent_initialized": self._initialized,
+                "service_type": "react_agent_notification_service"
             }
         except Exception as e:
-            logger.error(f"Error getting weekly summary: {e}")
-            return {"total_reports": 0, "successful_reports": 0, "failed_reports": 0}
-
-    async def send_task_progress_update(
-        self, 
-        task_id: int, 
-        progress_data: Dict[str, Any]
-    ):
-        """
-        发送任务进度更新通知
-        基于设计文档的实时通知系统
-        """
-        try:
-            # 从Redis获取任务所有者信息
-            task_owner_key = f"report_task:{task_id}:owner"
-            user_id = await self.redis_client.get(task_owner_key)
-            
-            if not user_id:
-                logger.warning(f"无法找到任务 {task_id} 的所有者")
-                return
-            
-            # 构建通知消息
-            notification = NotificationMessage(
-                type="info",
-                title=f"报告任务 #{task_id}",
-                message=f"处理进度: {progress_data.get('progress', 0)}%",
-                data={
-                    "task_id": task_id,
-                    "progress": progress_data.get("progress", 0),
-                    "status": progress_data.get("status"),
-                    "current_step": progress_data.get("current_step"),
-                    "updated_at": progress_data.get("updated_at")
-                },
-                user_id=user_id
-            )
-            
-            # 发送WebSocket通知
-            if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_personal_message(notification, user_id)
-            
-            logger.debug(f"任务进度通知已发送: 任务{task_id}, 进度{progress_data.get('progress', 0)}%")
-            
-        except Exception as e:
-            logger.error(f"发送任务进度通知失败: {str(e)}")
-
-    async def send_task_completion_notification(
-        self, 
-        task_id: int, 
-        report_path: str,
-        user_id: str
-    ):
-        """
-        发送任务完成通知
-        """
-        try:
-            notification = NotificationMessage(
-                type="success",
-                title="报告生成完成",
-                message=f"报告任务 #{task_id} 已完成，可以下载查看。",
-                data={
-                    "task_id": task_id,
-                    "report_path": report_path,
-                    "download_url": f"/api/reports/{task_id}/download",
-                    "completed_at": format_iso()
-                },
-                user_id=user_id
-            )
-            
-            # WebSocket通知
-            if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_personal_message(notification, user_id)
-            
-            # 邮件通知
-            if settings.ENABLE_EMAIL_NOTIFICATIONS:
-                db = next(get_db())
-                try:
-                    user = crud.user.get(db, id=user_id)
-                    if user and user.email:
-                        self.email_service.send_report_completion_notification(
-                            to_emails=[user.email],
-                            task_name=f"Task #{task_id}",
-                            report_path=report_path
-                        )
-                finally:
-                    db.close()
-            
-            logger.info(f"任务完成通知已发送: 任务{task_id}")
-            
-        except Exception as e:
-            logger.error(f"发送任务完成通知失败: {str(e)}")
-
-    async def send_task_failure_notification(
-        self,
-        task_id: int,
-        user_id: str,
-        error_message: str
-    ):
-        """
-        发送任务失败通知
-        """
-        try:
-            notification = NotificationMessage(
-                type="error",
-                title="报告生成失败",
-                message=f"报告任务 #{task_id} 执行失败: {error_message}",
-                data={
-                    "task_id": task_id,
-                    "error": error_message,
-                    "failed_at": format_iso()
-                },
-                user_id=user_id
-            )
-            
-            # WebSocket通知
-            if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_personal_message(notification, user_id)
-            
-            # 邮件通知
-            if settings.ENABLE_EMAIL_NOTIFICATIONS:
-                db = next(get_db())
-                try:
-                    user = crud.user.get(db, id=user_id)
-                    if user and user.email:
-                        self.email_service.send_error_notification(
-                            to_emails=[user.email],
-                            task_name=f"Task #{task_id}",
-                            error_message=error_message
-                        )
-                finally:
-                    db.close()
-            
-            logger.info(f"任务失败通知已发送: 任务{task_id}")
-            
-        except Exception as e:
-            logger.error(f"发送任务失败通知失败: {str(e)}")
-
-    async def send_system_alert(
-        self,
-        level: str,
-        title: str, 
-        message: str
-    ):
-        """
-        发送系统告警
-        基于设计文档的告警机制
-        """
-        try:
-            # 记录告警日志
-            log_level = getattr(logging, level.upper(), logging.INFO)
-            logger.log(log_level, f"系统告警 [{level}]: {title} - {message}")
-            
-            # 发送WebSocket系统通知
-            if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                await self.websocket_manager.send_system_notification(
-                    title=title,
-                    message=message,
-                    notification_type=level
-                )
-            
-            # 严重告警发送邮件给管理员
-            if level in ["warning", "error"] and settings.ENABLE_EMAIL_NOTIFICATIONS:
-                admin_emails = ["admin@autoreportai.com"]  # 这应该从配置中获取
-                self.email_service.send_email(
-                    to_emails=admin_emails,
-                    subject=f"系统告警: {title}",
-                    body=f"""
-                    系统告警通知
-                    
-                    级别: {level}
-                    标题: {title}
-                    消息: {message}
-                    时间: {format_iso()}
-                    
-                    请及时处理此告警。
-                    """
-                )
-            
-            logger.info(f"系统告警已发送: {title}")
-            
-        except Exception as e:
-            logger.error(f"发送系统告警失败: {str(e)}")
-
-    async def check_task_failure_rate(self):
-        """
-        检查任务失败率并发送告警
-        基于设计文档的监控机制
-        """
-        try:
-            # 从Redis获取最近一小时的任务统计
-            current_time = now()
-            one_hour_ago = current_time.timestamp() - 3600
-            
-            # 获取任务指标
-            total_key = "task_metrics:total_tasks"
-            failed_key = "task_metrics:failed_tasks"
-            
-            total_tasks = await self.redis_client.get(total_key) or "0"
-            failed_tasks = await self.redis_client.get(failed_key) or "0"
-            
-            total_count = int(total_tasks)
-            failed_count = int(failed_tasks)
-            
-            if total_count == 0:
-                return
-            
-            failure_rate = failed_count / total_count
-            
-            # 如果失败率超过10%，发送告警
-            if failure_rate > 0.1:
-                await self.send_system_alert(
-                    level="warning",
-                    title="报告生成任务失败率过高",
-                    message=f"最近一小时任务失败率达到 {failure_rate:.2%} ({failed_count}/{total_count})"
-                )
-            
-        except Exception as e:
-            logger.error(f"检查任务失败率失败: {str(e)}")
-
-    async def record_task_metrics(
-        self,
-        task_id: int,
-        status: str,
-        duration: float = None,
-        error: str = None
-    ):
-        """
-        记录任务指标到Redis
-        """
-        try:
-            # 更新任务计数器
-            await self.redis_client.incr("task_metrics:total_tasks")
-            
-            if status == "failed":
-                await self.redis_client.incr("task_metrics:failed_tasks")
-            elif status == "completed":
-                await self.redis_client.incr("task_metrics:completed_tasks")
-            
-            # 记录任务详细信息
-            task_metrics = {
-                "task_id": task_id,
-                "status": status,
-                "timestamp": format_iso(),
-                "duration": duration,
-                "error": error
+            return {
+                "status": "unhealthy",
+                "error": str(e),
+                "service_type": "react_agent_notification_service"
             }
-            
-            await self.redis_client.lpush(
-                "task_metrics:history",
-                json.dumps(task_metrics)
-            )
-            
-            # 保持最新1000条记录
-            await self.redis_client.ltrim("task_metrics:history", 0, 999)
-            
-            # 设置过期时间（24小时）
-            await self.redis_client.expire("task_metrics:total_tasks", 86400)
-            await self.redis_client.expire("task_metrics:failed_tasks", 86400)
-            await self.redis_client.expire("task_metrics:completed_tasks", 86400)
-            
-        except Exception as e:
-            logger.error(f"记录任务指标失败: {str(e)}")
-
-    async def send_custom_notification(
-        self,
-        db: Session,
-        user_id: str,
-        title: str,
-        message: str,
-        notification_type: str = "info",
-        data: Optional[dict] = None,
-        send_email: bool = False,
-    ):
-        """发送自定义通知"""
-        try:
-            # WebSocket通知
-            if settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
-                notification = NotificationMessage(
-                    type=notification_type,
-                    title=title,
-                    message=message,
-                    data=data,
-                    user_id=user_id,
-                )
-                await self.websocket_manager.send_personal_message(
-                    notification, user_id
-                )
-
-            # 邮件通知（如果需要）
-            if send_email and settings.ENABLE_EMAIL_NOTIFICATIONS:
-                user = crud.user.get(db, id=user_id)
-                if user and user.email:
-                    self.email_service.send_email(
-                        to_emails=[user.email], subject=title, body=message
-                    )
-
-            logger.info(f"Custom notification sent to user {user_id}: {title}")
-        except Exception as e:
-            logger.error(f"Error sending custom notification: {e}")
 
 
-# 全局通知服务实例
-notification_service = NotificationService()
+# 全局通知服务实例 - 基于React Agent架构
+_notification_service = None
+
+def get_notification_service() -> ReactAgentNotificationService:
+    """获取通知服务实例"""
+    global _notification_service
+    if _notification_service is None:
+        _notification_service = ReactAgentNotificationService()
+    return _notification_service
+
+# React Agent架构的通知服务类型别名
+NotificationService = ReactAgentNotificationService

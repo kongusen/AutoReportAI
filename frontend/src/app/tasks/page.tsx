@@ -53,7 +53,7 @@ export default function TasksPage() {
   const { dataSources, fetchDataSources } = useDataSourceStore()
   
   // 启用WebSocket连接来接收实时任务更新
-  const { connected: wsConnected } = useWebSocket({ enabled: true })
+  const { isConnected: wsConnected } = useWebSocket({ autoConnect: true })
   
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')

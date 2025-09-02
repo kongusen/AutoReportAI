@@ -1,244 +1,460 @@
+'use client'
+
 /**
- * 通知中心组件 - 统一的消息通知和状态提示
+ * 通知中心组件 - 集成WebSocket实时通知和状态提示
  */
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { cn } from '@/utils'
-import { useToast, Toast } from '@/hooks/useToast'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import {
+  BellIcon,
+  XMarkIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon
+} from '@heroicons/react/24/outline'
 
-export interface NotificationCenterProps {
-  position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center'
-  maxNotifications?: number
-  className?: string
+export interface Notification {
+  id: string
+  type: 'info' | 'success' | 'warning' | 'error' | 'task_update' | 'report_ready'
+  title?: string
+  message: string
+  details?: string
+  timestamp: Date
+  read: boolean
+  persistent?: boolean
+  duration?: number
+  actions?: Array<{
+    label: string
+    action: () => void
+    variant?: 'default' | 'primary' | 'danger'
+  }>
+  metadata?: {
+    taskId?: string
+    reportId?: string
+    userId?: string
+    [key: string]: any
+  }
 }
 
-export const NotificationCenter: React.FC<NotificationCenterProps> = ({
-  position = 'top-right',
-  maxNotifications = 5,
-  className
-}) => {
-  const { toasts, removeToast } = useToast()
-  const [visibleToasts, setVisibleToasts] = useState<Toast[]>([])
+export interface NotificationCenterProps {
+  className?: string
+  maxVisible?: number
+  showHeader?: boolean
+  enableSound?: boolean
+}
 
-  // 限制显示的通知数量
-  useEffect(() => {
-    setVisibleToasts(toasts.slice(0, maxNotifications))
-  }, [toasts, maxNotifications])
+export function NotificationCenter({
+  className,
+  maxVisible = 5,
+  showHeader = false,
+  enableSound = true
+}: NotificationCenterProps) {
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [isOpen, setIsOpen] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const notificationRef = useRef<HTMLDivElement>(null)
 
-  const positionClasses = {
-    'top-right': 'top-4 right-4',
-    'top-left': 'top-4 left-4', 
-    'bottom-right': 'bottom-4 right-4',
-    'bottom-left': 'bottom-4 left-4',
-    'top-center': 'top-4 left-1/2 transform -translate-x-1/2',
-    'bottom-center': 'bottom-4 left-1/2 transform -translate-x-1/2'
+  const { 
+    isConnected, 
+    subscribe, 
+    unsubscribe,
+    messages,
+    connectionInfo 
+  } = useWebSocket({
+    autoConnect: true,
+    channels: ['notifications', 'tasks', 'reports'],
+    onMessage: handleWebSocketMessage
+  })
+
+  // 处理WebSocket消息
+  function handleWebSocketMessage(message: any) {
+    if (message.type === 'notification') {
+      addNotification({
+        id: message.data.id || generateId(),
+        type: message.data.type || 'info',
+        title: message.data.title,
+        message: message.data.message,
+        details: message.data.details,
+        timestamp: new Date(message.timestamp || Date.now()),
+        read: false,
+        persistent: message.data.persistent,
+        duration: message.data.duration,
+        metadata: message.data.metadata
+      })
+    }
   }
 
-  if (visibleToasts.length === 0) return null
+  // 生成唯一ID
+  const generateId = () => `notification_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+  // 添加通知
+  const addNotification = useCallback((notification: Omit<Notification, 'id'> & { id?: string }) => {
+    const newNotification: Notification = {
+      id: notification.id || generateId(),
+      ...notification,
+      timestamp: notification.timestamp || new Date()
+    }
+
+    setNotifications(prev => {
+      const exists = prev.some(n => n.id === newNotification.id)
+      if (exists) return prev
+      
+      const updated = [newNotification, ...prev].slice(0, 100) // 最多保留100条
+      return updated
+    })
+
+    // 播放提示音
+    if (enableSound && audioRef.current) {
+      audioRef.current.play().catch(() => {
+        // 静默处理音频播放失败
+      })
+    }
+  }, [enableSound])
+
+  // 移除通知
+  const removeNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+  }, [])
+
+  // 标记为已读
+  const markAsRead = useCallback((id: string) => {
+    setNotifications(prev => 
+      prev.map(n => n.id === id ? { ...n, read: true } : n)
+    )
+  }, [])
+
+  // 标记所有为已读
+  const markAllAsRead = useCallback(() => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+  }, [])
+
+  // 清空所有通知
+  const clearAll = useCallback(() => {
+    setNotifications([])
+  }, [])
+
+  // 计算未读数量
+  useEffect(() => {
+    setUnreadCount(notifications.filter(n => !n.read).length)
+  }, [notifications])
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isOpen])
+
+  // 自动隐藏非持久化通知
+  useEffect(() => {
+    const timers: NodeJS.Timeout[] = []
+
+    notifications.forEach(notification => {
+      if (!notification.persistent && notification.duration && notification.duration > 0) {
+        const timer = setTimeout(() => {
+          removeNotification(notification.id)
+        }, notification.duration)
+        timers.push(timer)
+      }
+    })
+
+    return () => timers.forEach(timer => clearTimeout(timer))
+  }, [notifications, removeNotification])
+
+  const visibleNotifications = notifications.slice(0, maxVisible)
 
   return (
-    <div className={cn(
-      'fixed z-50 space-y-2',
-      positionClasses[position],
-      className
-    )}>
-      {visibleToasts.map((toast) => (
-        <NotificationItem
-          key={toast.id}
-          toast={toast}
-          onDismiss={() => removeToast(toast.id)}
-        />
-      ))}
-    </div>
+    <>
+      {/* 提示音 */}
+      {enableSound && (
+        <audio ref={audioRef} preload="auto">
+          <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+nousIzCjmH0fHTeCUEJHXJ8N+QQQ" type="audio/wav" />
+        </audio>
+      )}
+
+      <div ref={notificationRef} className={cn('relative', className)}>
+        {/* 通知触发按钮 */}
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            'relative inline-flex items-center justify-center p-2 rounded-md',
+            'text-gray-400 hover:text-gray-500 hover:bg-gray-100',
+            'focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500',
+            'transition-colors duration-200'
+          )}
+        >
+          <BellIcon className="h-6 w-6" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 flex items-center justify-center">
+              <span className="text-xs font-medium text-white">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            </span>
+          )}
+          
+          {/* WebSocket连接状态指示器 */}
+          <div className={cn(
+            'absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-white',
+            isConnected ? 'bg-green-400' : 'bg-red-400'
+          )} />
+        </button>
+
+        {/* 通知面板 */}
+        {isOpen && (
+          <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-lg shadow-lg ring-1 ring-black ring-opacity-5 z-50">
+            {/* 头部 */}
+            {showHeader && (
+              <div className="px-4 py-3 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">通知中心</h3>
+                  <div className="flex items-center space-x-2">
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={markAllAsRead}
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        全部已读
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsOpen(false)}
+                      className="text-gray-400 hover:text-gray-500"
+                    >
+                      <XMarkIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+                
+                {/* 连接状态 */}
+                <div className="flex items-center mt-2 text-xs text-gray-500">
+                  <div className={cn(
+                    'h-2 w-2 rounded-full mr-2',
+                    isConnected ? 'bg-green-400' : 'bg-red-400'
+                  )} />
+                  {isConnected ? '实时通知已连接' : '连接已断开'}
+                  {connectionInfo?.subscriptions?.length && (
+                    <span className="ml-2">
+                      ({connectionInfo.subscriptions.length} 个频道)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 通知列表 */}
+            <div className="max-h-96 overflow-y-auto">
+              {notifications.length === 0 ? (
+                <div className="px-4 py-8 text-center text-gray-500">
+                  <BellIcon className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">暂无通知</p>
+                </div>
+              ) : (
+                <div className="py-2">
+                  {visibleNotifications.map((notification) => (
+                    <NotificationItem
+                      key={notification.id}
+                      notification={notification}
+                      onRead={markAsRead}
+                      onDismiss={removeNotification}
+                    />
+                  ))}
+                  
+                  {notifications.length > maxVisible && (
+                    <div className="px-4 py-2 text-center border-t border-gray-100">
+                      <button
+                        onClick={clearAll}
+                        className="text-sm text-gray-600 hover:text-gray-700"
+                      >
+                        查看全部 ({notifications.length - maxVisible} 条更多)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
 // 单个通知项组件
 interface NotificationItemProps {
-  toast: Toast
-  onDismiss: () => void
+  notification: Notification
+  onRead: (id: string) => void
+  onDismiss: (id: string) => void
 }
 
-const NotificationItem: React.FC<NotificationItemProps> = ({ toast, onDismiss }) => {
-  const [isVisible, setIsVisible] = useState(false)
-  const [isExiting, setIsExiting] = useState(false)
+function NotificationItem({ notification, onRead, onDismiss }: NotificationItemProps) {
+  const [isExpanded, setIsExpanded] = useState(false)
 
-  // 入场动画
-  useEffect(() => {
-    setIsVisible(true)
-  }, [])
+  // 格式化时间
+  const formatTime = (timestamp: Date) => {
+    const now = new Date()
+    const diff = now.getTime() - timestamp.getTime()
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
 
-  // 自动消失
-  useEffect(() => {
-    if (toast.duration && toast.duration > 0) {
-      const timer = setTimeout(() => {
-        handleDismiss()
-      }, toast.duration)
-      
-      return () => clearTimeout(timer)
+    if (days > 0) return `${days}天前`
+    if (hours > 0) return `${hours}小时前`
+    if (minutes > 0) return `${minutes}分钟前`
+    return '刚刚'
+  }
+
+  const handleClick = () => {
+    if (!notification.read) {
+      onRead(notification.id)
     }
-  }, [toast.duration])
-
-  const handleDismiss = useCallback(() => {
-    if (!toast.dismissible) return
-    
-    setIsExiting(true)
-    setTimeout(() => {
-      onDismiss()
-    }, 200) // 等待退出动画完成
-  }, [onDismiss, toast.dismissible])
-
-  const typeStyles = {
-    success: {
-      bg: 'bg-green-50 border-green-200',
-      icon: 'text-green-400',
-      title: 'text-green-800',
-      message: 'text-green-700'
-    },
-    error: {
-      bg: 'bg-red-50 border-red-200',
-      icon: 'text-red-400',
-      title: 'text-red-800',
-      message: 'text-red-700'
-    },
-    warning: {
-      bg: 'bg-yellow-50 border-yellow-200',
-      icon: 'text-yellow-400',
-      title: 'text-yellow-800',
-      message: 'text-yellow-700'
-    },
-    info: {
-      bg: 'bg-blue-50 border-blue-200',
-      icon: 'text-blue-400',
-      title: 'text-blue-800',
-      message: 'text-blue-700'
+    if (notification.details) {
+      setIsExpanded(!isExpanded)
     }
   }
 
-  const styles = typeStyles[toast.type]
+  const getIcon = () => {
+    switch (notification.type) {
+      case 'success':
+        return <CheckCircleIcon className="h-5 w-5 text-green-500" />
+      case 'error':
+        return <ExclamationCircleIcon className="h-5 w-5 text-red-500" />
+      case 'warning':
+        return <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500" />
+      case 'task_update':
+        return <InformationCircleIcon className="h-5 w-5 text-blue-500" />
+      case 'report_ready':
+        return <CheckCircleIcon className="h-5 w-5 text-green-500" />
+      default:
+        return <InformationCircleIcon className="h-5 w-5 text-gray-500" />
+    }
+  }
 
-  const typeIcons = {
-    success: (
-      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-      </svg>
-    ),
-    error: (
-      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-      </svg>
-    ),
-    warning: (
-      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-      </svg>
-    ),
-    info: (
-      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-      </svg>
-    )
+  const getTypeLabel = () => {
+    switch (notification.type) {
+      case 'task_update':
+        return '任务更新'
+      case 'report_ready':
+        return '报告完成'
+      case 'success':
+        return '成功'
+      case 'error':
+        return '错误'
+      case 'warning':
+        return '警告'
+      default:
+        return '信息'
+    }
   }
 
   return (
     <div
       className={cn(
-        'max-w-md w-full border rounded-lg shadow-lg pointer-events-auto overflow-hidden transition-all duration-200',
-        styles.bg,
-        isVisible && !isExiting ? 'transform translate-x-0 opacity-100' : 'transform translate-x-full opacity-0'
+        'px-4 py-3 border-b border-gray-100 last:border-b-0',
+        'hover:bg-gray-50 cursor-pointer transition-colors',
+        !notification.read && 'bg-blue-50 border-l-4 border-l-blue-500'
       )}
+      onClick={handleClick}
     >
-      <div className="p-4">
-        <div className="flex items-start">
-          {/* 图标 */}
-          <div className={cn('flex-shrink-0', styles.icon)}>
-            {typeIcons[toast.type]}
+      <div className="flex items-start space-x-3">
+        {/* 图标 */}
+        <div className="flex-shrink-0">
+          {getIcon()}
+        </div>
+
+        {/* 内容 */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              {notification.title && (
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {notification.title}
+                </p>
+              )}
+              <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                {getTypeLabel()}
+              </span>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-gray-500">
+                {formatTime(notification.timestamp)}
+              </span>
+              {!notification.read && (
+                <div className="h-2 w-2 bg-blue-500 rounded-full" />
+              )}
+            </div>
           </div>
-          
-          <div className="ml-3 w-0 flex-1">
-            {/* 标题 */}
-            {toast.title && (
-              <p className={cn('text-sm font-medium', styles.title)}>
-                {toast.title}
-              </p>
-            )}
-            
-            {/* 消息 */}
-            <p className={cn(
-              'text-sm',
-              styles.message,
-              toast.title ? 'mt-1' : ''
-            )}>
-              {toast.message}
-            </p>
-            
-            {/* 详细信息 */}
-            {toast.details && (
-              <p className="text-xs text-gray-500 mt-2">
-                {toast.details}
-              </p>
-            )}
-            
-            {/* 操作按钮 */}
-            {toast.actions && toast.actions.length > 0 && (
-              <div className="mt-3 flex space-x-2">
-                {toast.actions.map((action, index) => (
-                  <button
-                    key={index}
-                    onClick={action.action}
-                    className={cn(
-                      'text-xs font-medium px-2 py-1 rounded border',
-                      'hover:bg-opacity-80 transition-colors',
-                      styles.title
-                    )}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          
-          {/* 关闭按钮 */}
-          {toast.dismissible && (
-            <div className="ml-4 flex-shrink-0 flex">
-              <button
-                onClick={handleDismiss}
-                className={cn(
-                  'inline-flex text-gray-400 hover:text-gray-500 focus:outline-none',
-                  'focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
-                )}
-              >
-                <span className="sr-only">关闭</span>
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
+
+          <p className="text-sm text-gray-600 mt-1">
+            {notification.message}
+          </p>
+
+          {/* 详细信息（可展开） */}
+          {notification.details && isExpanded && (
+            <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600">
+              {notification.details}
+            </div>
+          )}
+
+          {/* 元数据显示 */}
+          {notification.metadata && (
+            <div className="mt-2 flex items-center space-x-4 text-xs text-gray-500">
+              {notification.metadata.taskId && (
+                <span>任务: {notification.metadata.taskId.slice(-8)}</span>
+              )}
+              {notification.metadata.reportId && (
+                <span>报告: {notification.metadata.reportId.slice(-8)}</span>
+              )}
+            </div>
+          )}
+
+          {/* 操作按钮 */}
+          {notification.actions && notification.actions.length > 0 && (
+            <div className="mt-3 flex space-x-2">
+              {notification.actions.map((action, index) => (
+                <button
+                  key={index}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    action.action()
+                  }}
+                  className={cn(
+                    'text-xs px-3 py-1 rounded border transition-colors',
+                    action.variant === 'primary' && 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200',
+                    action.variant === 'danger' && 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200',
+                    !action.variant && 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
+                  )}
+                >
+                  {action.label}
+                </button>
+              ))}
             </div>
           )}
         </div>
+
+        {/* 关闭按钮 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDismiss(notification.id)
+          }}
+          className="flex-shrink-0 text-gray-400 hover:text-gray-500 transition-colors"
+        >
+          <XMarkIcon className="h-4 w-4" />
+        </button>
       </div>
-      
-      {/* 进度条 */}
-      {!toast.persistent && toast.duration && toast.duration > 0 && (
-        <div className="h-1 bg-gray-200">
-          <div 
-            className={cn('h-full bg-current opacity-50 transition-all linear')}
-            style={{ 
-              animation: `progress-shrink ${toast.duration}ms linear forwards`,
-              backgroundColor: styles.icon.replace('text-', 'bg-').replace('-400', '-500')
-            }}
-          />
-        </div>
-      )}
     </div>
   )
 }
-
-// CSS动画（需要添加到全局样式中）
-const styles = `
-@keyframes progress-shrink {
-  from { width: 100%; }
-  to { width: 0%; }
-}
-`

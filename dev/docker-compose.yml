@@ -1,0 +1,582 @@
+# ==========================================
+# AutoReportAI 开发环境 Docker Compose 配置
+# 基于 React Agent 架构 - 现代化微服务设计
+# ==========================================
+
+services:
+  # ==========================================
+  # 数据库服务 - PostgreSQL
+  # ==========================================
+  db:
+    image: postgres:15-alpine
+    container_name: autoreport-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-autoreport}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoreport}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=database"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # Redis缓存服务 - React Agent缓存支持
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: autoreport-redis-dev
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ../backend/scripts/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=cache"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # 后端API服务 - React Agent架构
+  # ==========================================
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: autoreport-backend-dev
+    restart: unless-stopped
+    command: ["/usr/local/bin/entrypoint.sh", "api"]
+    environment:
+      # 基础配置
+      - NODE_ENV=development
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - DOCKER_ENV=true
+      - PROJECT_NAME=AutoReportAI
+      - API_V1_STR=/api/v1
+      
+      # 服务配置
+      - HOST=0.0.0.0
+      - PORT=8000
+      - WS_HOST=0.0.0.0
+      - WS_PORT=8000
+      
+      # 数据库配置
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres123}
+      - POSTGRES_DB=${POSTGRES_DB:-autoreport}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@db:5432/${POSTGRES_DB:-autoreport}
+      
+      # Redis配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Celery配置
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      
+      # 安全配置
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      
+      # React Agent系统配置
+      - REACT_AGENT_ENABLED=true
+      - REACT_AGENT_MAX_ITERATIONS=20
+      - REACT_AGENT_TIMEOUT=300
+      - REACT_AGENT_VERBOSE=true
+      - REACT_AGENT_DEBUG_STEPS=true
+      - REACT_AGENT_CACHE_ENABLED=true
+      
+      # LLM配置
+      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4-turbo-preview}
+      - LLM_TEMPERATURE=0.1
+      - LLM_MAX_TOKENS=4096
+      
+      # LlamaIndex配置 - React Agent核心
+      - LLAMAINDEX_CACHE_DIR=./cache/llamaindex
+      - LLAMAINDEX_ENABLE_CACHE=true
+      - EMBEDDING_MODEL=text-embedding-ada-002
+      - VECTOR_STORE_TYPE=simple
+      - LLAMAINDEX_DEBUG=true
+      
+      # React Agent架构配置
+      - REACT_AGENT_ARCHITECTURE=enabled
+      - INTELLIGENT_PLACEHOLDER_SERVICE=enabled
+      - NOTIFICATION_SERVICE=react_agent
+      - FILE_STORAGE_SERVICE=modern
+      - TEMPLATE_SERVICE=react_agent
+      
+      # 缓存系统配置
+      - CACHE_SYSTEM_ENABLED=true
+      - CONTEXT_CACHE_ENABLED=true
+      - EXECUTION_CACHE_ENABLED=true
+      - RESULT_CACHE_ENABLED=true
+      - REACT_AGENT_CACHE_TTL=3600
+      
+      # 实时系统配置
+      - WEBSOCKET_ENABLED=true
+      - REALTIME_DATA_ENABLED=true
+      - REALTIME_NOTIFICATION_ENABLED=true
+      - WEBSOCKET_COMPRESSION=true
+      
+      # Minio对象存储配置
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin123}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-autoreport}
+      - MINIO_SECURE=false
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - FILE_STORAGE_BACKEND=minio
+      - FILE_UPLOAD_MAX_SIZE=50MB
+      
+      # 通知配置
+      - ENABLE_EMAIL_NOTIFICATIONS=false
+      - ENABLE_WEBSOCKET_NOTIFICATIONS=true
+      - ENABLE_REDIS_NOTIFICATIONS=true
+      
+      # 监控配置
+      - ENABLE_PERFORMANCE_MONITORING=true
+      - REACT_AGENT_MONITORING=true
+      - REACT_AGENT_METRICS=true
+      
+      # 开发配置
+      - SQLALCHEMY_ECHO=false
+      - DOCS_URL=/docs
+      - REDOC_URL=/redoc
+      - AUTO_RELOAD_ENABLED=true
+      
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ../backend:/app:rw
+      - backend_logs:/app/logs
+      - backend_uploads:/app/uploads
+      - backend_cache:/app/cache
+      - backend_storage:/app/storage
+      - backend_temp:/app/temp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=backend"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # Celery Worker服务 - React Agent任务处理
+  # ==========================================
+  celery-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: worker
+    container_name: autoreport-celery-worker-dev
+    restart: unless-stopped
+    environment:
+      # 基础配置
+      - NODE_ENV=development
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DOCKER_ENV=true
+      
+      # 数据库配置
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres123}
+      - POSTGRES_DB=${POSTGRES_DB:-autoreport}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@db:5432/${POSTGRES_DB:-autoreport}
+      
+      # Redis配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Celery配置
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+      - CELERY_WORKER_LOGLEVEL=info
+      - CELERY_WORKER_MAX_TASKS_PER_CHILD=1000
+      
+      # 安全配置
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      
+      # React Agent系统配置
+      - REACT_AGENT_ENABLED=true
+      - REACT_AGENT_MAX_ITERATIONS=20
+      - REACT_AGENT_TIMEOUT=300
+      - REACT_AGENT_VERBOSE=true
+      - REACT_AGENT_WORKER_MODE=true
+      
+      # LLM配置
+      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_TEMPERATURE=0.1
+      
+      # LlamaIndex配置
+      - LLAMAINDEX_CACHE_DIR=./cache/llamaindex
+      - LLAMAINDEX_ENABLE_CACHE=true
+      
+    volumes:
+      - ../backend:/app:rw
+      - backend_logs:/app/logs
+      - backend_cache:/app/cache
+      - backend_storage:/app/storage
+      - backend_temp:/app/temp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD", "bash", "/usr/local/bin/healthcheck_worker.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=celery-worker"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # Celery Beat调度器
+  # ==========================================
+  celery-beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      target: beat
+    container_name: autoreport-celery-beat-dev
+    restart: unless-stopped
+    environment:
+      # 基础配置
+      - NODE_ENV=development
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DOCKER_ENV=true
+      
+      # 数据库配置
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres123}
+      - POSTGRES_DB=${POSTGRES_DB:-autoreport}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@db:5432/${POSTGRES_DB:-autoreport}
+      
+      # Redis配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Celery配置
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_BEAT_LOGLEVEL=info
+      
+      # 安全配置
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      
+    volumes:
+      - ../backend:/app:rw
+      - backend_logs:/app/logs
+      - celery_beat_data:/tmp/celerybeat
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - autoreport_network
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=celery-beat"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # 前端服务 - React Agent UI
+  # ==========================================
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: autoreport-frontend-dev
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+      - FORCE_COLOR=1
+      # React Agent UI 特定配置
+      - NEXT_PUBLIC_REACT_AGENT_UI=enabled
+      - NEXT_PUBLIC_INTELLIGENT_COMPONENTS=enabled
+      - NEXT_PUBLIC_REALTIME_UPDATES=enabled
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ../frontend:/app:rw
+      - /app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=frontend"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # 开发工具 - 数据库管理 (可选)
+  # ==========================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: autoreport-pgadmin-dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@autoreportai.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - autoreport_network
+    profiles:
+      - tools
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=pgadmin"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # 开发工具 - Redis管理 (可选)
+  # ==========================================
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: autoreport-redis-insight-dev
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - redis_insight_data:/db
+    depends_on:
+      - redis
+    networks:
+      - autoreport_network
+    profiles:
+      - tools
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=redis-insight"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # Minio对象存储服务 - 默认启动
+  # ==========================================
+  minio:
+    image: minio/minio:latest
+    container_name: autoreport-minio-dev
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BROWSER: "on"
+      MINIO_SERVER_URL: http://minio:9000
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:9001
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"      # API端口
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Web控制台端口
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - autoreport_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=minio"
+      - "architecture=react_agent"
+
+  # ==========================================
+  # Minio开发模式服务 (dev-suffix模式)
+  # ==========================================
+  minio-dev:
+    image: minio/minio:latest
+    container_name: autoreport-minio-dev-suffix
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_DEV_ROOT_USER:-devuser}
+      MINIO_ROOT_PASSWORD: ${MINIO_DEV_ROOT_PASSWORD:-devpassword123}
+      MINIO_BROWSER: "on"
+      MINIO_SERVER_URL: http://minio-dev:9002
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:9003
+    ports:
+      - "${MINIO_DEV_API_PORT:-9002}:9000"      # 开发API端口
+      - "${MINIO_DEV_CONSOLE_PORT:-9003}:9001"  # 开发Web控制台端口
+    volumes:
+      - minio_dev_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - autoreport_network
+    profiles:
+      - dev-mode
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "project=autoreportai"
+      - "environment=development"
+      - "service=minio-dev"
+      - "architecture=react_agent"
+
+# ==========================================
+# 网络配置
+# ==========================================
+networks:
+  autoreport_network:
+    name: autoreport_dev_network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+# ==========================================
+# 数据卷配置
+# ==========================================
+volumes:
+  # 核心数据
+  postgres_data:
+    name: autoreport_postgres_data_dev
+    driver: local
+  redis_data:
+    name: autoreport_redis_data_dev
+    driver: local
+  
+  # React Agent后端数据
+  backend_logs:
+    name: autoreport_backend_logs_dev
+    driver: local
+  backend_uploads:
+    name: autoreport_backend_uploads_dev
+    driver: local
+  backend_cache:
+    name: autoreport_backend_cache_dev
+    driver: local
+  backend_storage:
+    name: autoreport_backend_storage_dev
+    driver: local
+  backend_temp:
+    name: autoreport_backend_temp_dev
+    driver: local
+  
+  # Celery数据
+  celery_beat_data:
+    name: autoreport_celery_beat_dev
+    driver: local
+  
+  # React Agent前端缓存
+  frontend_cache:
+    name: autoreport_frontend_cache_dev
+    driver: local
+  frontend_next_cache:
+    name: autoreport_frontend_next_cache_dev  
+    driver: local
+  
+  # Minio对象存储数据
+  minio_data:
+    name: autoreport_minio_data_dev
+    driver: local
+  minio_dev_data:
+    name: autoreport_minio_dev_data_dev
+    driver: local
+  
+  # 开发工具数据
+  pgadmin_data:
+    name: autoreport_pgadmin_data_dev
+    driver: local
+  redis_insight_data:
+    name: autoreport_redis_insight_data_dev
+    driver: local

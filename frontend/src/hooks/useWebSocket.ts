@@ -1,208 +1,496 @@
-'use client'
+/**
+ * AutoReportAI 增强WebSocket React Hook
+ * 基于新的WebSocket客户端实现
+ */
 
-import { useEffect, useRef, useState } from 'react'
-import { useTaskStore } from '@/features/tasks/taskStore'
-import { TaskProgress, WebSocketMessage, TaskProgressMessage, SystemNotificationMessage } from '@/types'
-import toast from 'react-hot-toast'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { toast } from 'react-hot-toast'
+import { AutoReportWebSocketClient, ConnectionStatus, webSocketManager } from '@/lib/websocket-client'
+import type {
+  WebSocketMessage,
+  WebSocketMessageType,
+  NotificationMessage,
+  TaskUpdateMessage,
+  ReportUpdateMessage
+} from '@/types/api'
 
-interface UseWebSocketOptions {
-  url?: string
-  enabled?: boolean
-  reconnectInterval?: number
-  maxReconnectAttempts?: number
+// ============================================================================
+// Hook配置接口
+// ============================================================================
+
+export interface UseWebSocketConfig {
+  autoConnect?: boolean
+  enableNotifications?: boolean
+  enableTaskUpdates?: boolean
+  enableReportUpdates?: boolean
+  subscribeToUserChannel?: boolean
+  subscribeToSystemAlerts?: boolean
+  onConnectionChange?: (status: ConnectionStatus, error?: Error) => void
+  onMessage?: (message: WebSocketMessage) => void
+  debug?: boolean
 }
 
-export const useWebSocket = (options: UseWebSocketOptions = {}) => {
+// ============================================================================
+// Hook返回类型
+// ============================================================================
+
+export interface UseWebSocketResult {
+  // 连接状态
+  status: ConnectionStatus
+  isConnected: boolean
+  isConnecting: boolean
+  
+  // 连接控制
+  connect: () => Promise<void>
+  disconnect: () => void
+  reconnect: () => Promise<void>
+  
+  // 消息发送
+  send: (message: WebSocketMessage) => void
+  
+  // 频道订阅
+  subscribe: (channel: string) => void
+  unsubscribe: (channel: string) => void
+  subscriptions: string[]
+  
+  // 统计信息
+  connectionInfo: any
+  
+  // 消息历史
+  messages: WebSocketMessage[]
+  clearMessages: () => void
+  
+  // 通知管理
+  notifications: NotificationMessage[]
+  clearNotifications: () => void
+  markNotificationAsRead: (id: string) => void
+  
+  // 任务更新
+  taskUpdates: Map<string, TaskUpdateMessage>
+  clearTaskUpdates: () => void
+  
+  // 报告更新
+  reportUpdates: Map<string, ReportUpdateMessage>
+  clearReportUpdates: () => void
+}
+
+// ============================================================================
+// 主Hook实现
+// ============================================================================
+
+export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResult {
   const {
-    url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws',
-    enabled = true,
-    reconnectInterval = 3000,
-    maxReconnectAttempts = 10
-  } = options
+    autoConnect = true,
+    enableNotifications = true,
+    enableTaskUpdates = true,
+    enableReportUpdates = true,
+    subscribeToUserChannel = true,
+    subscribeToSystemAlerts = true,
+    onConnectionChange,
+    onMessage,
+    debug = false
+  } = config
 
-  const [connected, setConnected] = useState(false)
-  const [connecting, setConnecting] = useState(false)
-  const ws = useRef<WebSocket | null>(null)
-  const reconnectAttempts = useRef(0)
-  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null)
+  // 状态管理
+  const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED)
+  const [messages, setMessages] = useState<WebSocketMessage[]>([])
+  const [notifications, setNotifications] = useState<NotificationMessage[]>([])
+  const [taskUpdates, setTaskUpdates] = useState<Map<string, TaskUpdateMessage>>(new Map())
+  const [reportUpdates, setReportUpdates] = useState<Map<string, ReportUpdateMessage>>(new Map())
 
-  const { updateTaskProgress } = useTaskStore()
+  // 引用
+  const clientRef = useRef<AutoReportWebSocketClient | null>(null)
+  const configRef = useRef(config)
+  const userIdRef = useRef<string | null>(null)
 
-  const connect = () => {
-    if (!enabled || connecting || (ws.current && ws.current.readyState === WebSocket.OPEN)) {
+  // 更新配置引用
+  useEffect(() => {
+    configRef.current = config
+  }, [config])
+
+  // ============================================================================
+  // WebSocket客户端初始化
+  // ============================================================================
+
+  const initializeClient = useCallback(() => {
+    if (typeof window === 'undefined') return
+
+    const token = localStorage.getItem('authToken')
+    const user = localStorage.getItem('user')
+    
+    if (user) {
+      try {
+        const userData = JSON.parse(user)
+        userIdRef.current = userData.id
+      } catch (error) {
+        console.warn('解析用户信息失败:', error)
+      }
+    }
+
+    if (!token) {
+      console.warn('未找到认证token，无法连接WebSocket')
       return
     }
 
-    setConnecting(true)
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws'
+    
+    const client = webSocketManager.init({
+      url: wsUrl,
+      token,
+      clientType: 'web',
+      clientVersion: process.env.NEXT_PUBLIC_APP_VERSION || '2.0.0',
+      debug
+    })
 
-    try {
-      // 获取认证token
-      const token = localStorage.getItem('authToken')
-      const wsUrl = token ? `${url}?token=${token}` : url
+    clientRef.current = client
 
-      ws.current = new WebSocket(wsUrl)
-
-      ws.current.onopen = () => {
-        console.log('WebSocket connected')
-        setConnected(true)
-        setConnecting(false)
-        reconnectAttempts.current = 0
-        
-        // 发送心跳包
-        if (ws.current) {
-          ws.current.send(JSON.stringify({ type: 'ping' }))
-        }
+    // 注册连接状态监听器
+    const unsubscribeConnection = client.onConnectionChange((newStatus, error) => {
+      setStatus(newStatus)
+      onConnectionChange?.(newStatus, error)
+      
+      if (debug) {
+        console.log('WebSocket状态变更:', newStatus, error?.message)
       }
+    })
 
-      ws.current.onmessage = (event) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(event.data)
-          handleMessage(message)
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error)
-        }
-      }
-
-      ws.current.onclose = (event) => {
-        console.log('WebSocket disconnected:', event.code, event.reason)
-        setConnected(false)
-        setConnecting(false)
-        ws.current = null
-
-        // 如果不是手动关闭且还有重连次数，则重连
-        if (enabled && event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
-          reconnectAttempts.current++
-          console.log(`Reconnecting in ${reconnectInterval}ms... (${reconnectAttempts.current}/${maxReconnectAttempts})`)
-          
-          reconnectTimeout.current = setTimeout(() => {
-            connect()
-          }, reconnectInterval)
-        }
-      }
-
-      ws.current.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        setConnecting(false)
-      }
-    } catch (error) {
-      console.error('Failed to create WebSocket connection:', error)
-      setConnecting(false)
+    // 注册消息处理器
+    client.on('*', handleMessage)
+    
+    if (enableNotifications) {
+      client.on(WebSocketMessageType.NOTIFICATION, handleNotification)
     }
-  }
-
-  const disconnect = () => {
-    if (reconnectTimeout.current) {
-      clearTimeout(reconnectTimeout.current)
-      reconnectTimeout.current = null
+    
+    if (enableTaskUpdates) {
+      client.on(WebSocketMessageType.TASK_UPDATE, handleTaskUpdate)
     }
-
-    if (ws.current) {
-      ws.current.close(1000, 'User initiated disconnect')
-      ws.current = null
-    }
-
-    setConnected(false)
-    setConnecting(false)
-    reconnectAttempts.current = 0
-  }
-
-  const handleMessage = (message: WebSocketMessage) => {
-    switch (message.type) {
-      case 'task_progress':
-        handleTaskProgressMessage(message as TaskProgressMessage)
-        break
-      case 'system_notification':
-        handleSystemNotificationMessage(message as SystemNotificationMessage)
-        break
-      case 'report_completed':
-        handleReportCompletedMessage(message)
-        break
-      case 'pong':
-        // 心跳响应，不需要处理
-        break
-      default:
-        console.log('Unknown WebSocket message type:', message.type)
-    }
-  }
-
-  const handleTaskProgressMessage = (message: TaskProgressMessage) => {
-    const progress: TaskProgress = {
-      task_id: message.payload.task_id,
-      progress: message.payload.progress,
-      status: message.payload.status,
-      message: message.payload.message,
-      current_step: message.payload.current_step,
-      updated_at: message.timestamp
-    }
-
-    updateTaskProgress(progress)
-
-    // 显示重要状态变更的通知
-    if (progress.status === 'completed') {
-      toast.success(`任务 #${progress.task_id} 执行完成`)
-    } else if (progress.status === 'failed') {
-      toast.error(`任务 #${progress.task_id} 执行失败`)
-    }
-  }
-
-  const handleSystemNotificationMessage = (message: SystemNotificationMessage) => {
-    const { title, message: content, level } = message.payload
-
-    switch (level) {
-      case 'success':
-        toast.success(`${title}: ${content}`)
-        break
-      case 'error':
-        toast.error(`${title}: ${content}`)
-        break
-      case 'warning':
-        toast(`${title}: ${content}`, { icon: '⚠️' })
-        break
-      default:
-        toast(`${title}: ${content}`)
-    }
-  }
-
-  const handleReportCompletedMessage = (message: WebSocketMessage) => {
-    const report = message.payload
-    toast.success(`报告 "${report.name}" 生成完成，可以下载了`)
-  }
-
-  const sendMessage = (message: any) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify(message))
-    } else {
-      console.warn('WebSocket not connected, cannot send message')
-    }
-  }
-
-  // 设置定期心跳
-  useEffect(() => {
-    if (!connected) return
-
-    const heartbeat = setInterval(() => {
-      sendMessage({ type: 'ping' })
-    }, 30000) // 每30秒发送一次心跳
-
-    return () => clearInterval(heartbeat)
-  }, [connected])
-
-  // 初始连接和清理
-  useEffect(() => {
-    if (enabled) {
-      connect()
+    
+    if (enableReportUpdates) {
+      client.on(WebSocketMessageType.REPORT_UPDATE, handleReportUpdate)
     }
 
     return () => {
-      disconnect()
+      unsubscribeConnection()
+      client.disconnect()
     }
-  }, [enabled])
+  }, [debug, enableNotifications, enableTaskUpdates, enableReportUpdates, onConnectionChange])
+
+  // ============================================================================
+  // 消息处理器
+  // ============================================================================
+
+  const handleMessage = useCallback((message: WebSocketMessage) => {
+    setMessages(prev => {
+      const newMessages = [...prev, message]
+      // 限制消息历史数量
+      if (newMessages.length > 100) {
+        newMessages.splice(0, newMessages.length - 100)
+      }
+      return newMessages
+    })
+
+    onMessage?.(message)
+  }, [onMessage])
+
+  const handleNotification = useCallback((message: NotificationMessage) => {
+    setNotifications(prev => {
+      const newNotifications = [...prev, { ...message, id: message.id || Date.now().toString() }]
+      // 限制通知数量
+      if (newNotifications.length > 50) {
+        newNotifications.splice(0, newNotifications.length - 50)
+      }
+      return newNotifications
+    })
+
+    // 显示toast通知
+    if (message.notification_type && message.title && message.message) {
+      switch (message.notification_type) {
+        case 'success':
+          toast.success(`${message.title}: ${message.message}`)
+          break
+        case 'error':
+          toast.error(`${message.title}: ${message.message}`)
+          break
+        case 'warning':
+          toast(`${message.title}: ${message.message}`, { icon: '⚠️' })
+          break
+        default:
+          toast(`${message.title}: ${message.message}`)
+          break
+      }
+    }
+  }, [])
+
+  const handleTaskUpdate = useCallback((message: TaskUpdateMessage) => {
+    setTaskUpdates(prev => {
+      const newMap = new Map(prev)
+      newMap.set(message.task_id, message)
+      return newMap
+    })
+
+    // 显示任务进度更新
+    if (message.status === 'completed') {
+      toast.success(`任务完成: ${message.task_id}`)
+    } else if (message.status === 'failed') {
+      toast.error(`任务失败: ${message.task_id}`)
+    }
+  }, [])
+
+  const handleReportUpdate = useCallback((message: ReportUpdateMessage) => {
+    setReportUpdates(prev => {
+      const newMap = new Map(prev)
+      newMap.set(message.report_id, message)
+      return newMap
+    })
+
+    // 显示报告生成进度
+    if (message.status === 'completed') {
+      toast.success('报告生成完成！', {
+        duration: 5000,
+        action: message.file_url ? {
+          label: '下载',
+          onClick: () => window.open(message.file_url, '_blank')
+        } : undefined
+      })
+    } else if (message.status === 'failed') {
+      toast.error('报告生成失败')
+    }
+  }, [])
+
+  // ============================================================================
+  // 自动连接和订阅
+  // ============================================================================
+
+  useEffect(() => {
+    if (!autoConnect) return
+
+    const cleanup = initializeClient()
+
+    return cleanup
+  }, [initializeClient, autoConnect])
+
+  useEffect(() => {
+    const client = clientRef.current
+    if (!client || !client.isConnected) return
+
+    // 自动订阅用户频道
+    if (subscribeToUserChannel && userIdRef.current) {
+      client.subscribe(`user:${userIdRef.current}`)
+    }
+
+    // 自动订阅系统警报频道
+    if (subscribeToSystemAlerts) {
+      client.subscribe('system:alerts')
+      client.subscribe('system:updates')
+    }
+
+    // 订阅通知频道
+    if (enableNotifications) {
+      client.subscribe('notifications:user')
+    }
+  }, [status, subscribeToUserChannel, subscribeToSystemAlerts, enableNotifications])
+
+  // ============================================================================
+  // 导出的方法
+  // ============================================================================
+
+  const connect = useCallback(async () => {
+    if (!clientRef.current) {
+      initializeClient()
+    }
+    
+    if (clientRef.current) {
+      await clientRef.current.connect()
+    }
+  }, [initializeClient])
+
+  const disconnect = useCallback(() => {
+    if (clientRef.current) {
+      clientRef.current.disconnect()
+    }
+  }, [])
+
+  const reconnect = useCallback(async () => {
+    if (clientRef.current) {
+      await clientRef.current.connect()
+    }
+  }, [])
+
+  const send = useCallback((message: WebSocketMessage) => {
+    if (clientRef.current) {
+      clientRef.current.send(message)
+    }
+  }, [])
+
+  const subscribe = useCallback((channel: string) => {
+    if (clientRef.current) {
+      clientRef.current.subscribe(channel)
+    }
+  }, [])
+
+  const unsubscribe = useCallback((channel: string) => {
+    if (clientRef.current) {
+      clientRef.current.unsubscribe(channel)
+    }
+  }, [])
+
+  const clearMessages = useCallback(() => {
+    setMessages([])
+  }, [])
+
+  const clearNotifications = useCallback(() => {
+    setNotifications([])
+  }, [])
+
+  const markNotificationAsRead = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(notification => notification.id !== id))
+  }, [])
+
+  const clearTaskUpdates = useCallback(() => {
+    setTaskUpdates(new Map())
+  }, [])
+
+  const clearReportUpdates = useCallback(() => {
+    setReportUpdates(new Map())
+  }, [])
+
+  // ============================================================================
+  // 计算属性
+  // ============================================================================
+
+  const isConnected = status === ConnectionStatus.CONNECTED
+  const isConnecting = status === ConnectionStatus.CONNECTING
+
+  const subscriptions = useMemo(() => {
+    return clientRef.current?.subscriptionList || []
+  }, [status])
+
+  const connectionInfo = useMemo(() => {
+    return clientRef.current?.connectionInfo || null
+  }, [status])
+
+  // ============================================================================
+  // 清理
+  // ============================================================================
+
+  useEffect(() => {
+    return () => {
+      if (clientRef.current) {
+        clientRef.current.disconnect()
+      }
+    }
+  }, [])
+
+  // ============================================================================
+  // 返回结果
+  // ============================================================================
 
   return {
-    connected,
-    connecting,
+    // 连接状态
+    status,
+    isConnected,
+    isConnecting,
+    
+    // 连接控制
     connect,
     disconnect,
-    sendMessage
+    reconnect,
+    
+    // 消息发送
+    send,
+    
+    // 频道订阅
+    subscribe,
+    unsubscribe,
+    subscriptions,
+    
+    // 统计信息
+    connectionInfo,
+    
+    // 消息历史
+    messages,
+    clearMessages,
+    
+    // 通知管理
+    notifications,
+    clearNotifications,
+    markNotificationAsRead,
+    
+    // 任务更新
+    taskUpdates,
+    clearTaskUpdates,
+    
+    // 报告更新
+    reportUpdates,
+    clearReportUpdates
   }
 }
+
+// ============================================================================
+// 专用Hooks
+// ============================================================================
+
+/**
+ * 专用于任务更新的Hook
+ */
+export function useTaskUpdates() {
+  const { taskUpdates, clearTaskUpdates } = useWebSocket({
+    autoConnect: true,
+    enableTaskUpdates: true,
+    enableNotifications: false,
+    enableReportUpdates: false
+  })
+
+  return {
+    taskUpdates,
+    clearTaskUpdates,
+    getTaskUpdate: (taskId: string) => taskUpdates.get(taskId),
+    hasTaskUpdate: (taskId: string) => taskUpdates.has(taskId)
+  }
+}
+
+/**
+ * 专用于通知的Hook
+ */
+export function useNotifications() {
+  const { 
+    notifications, 
+    clearNotifications, 
+    markNotificationAsRead,
+    isConnected 
+  } = useWebSocket({
+    autoConnect: true,
+    enableNotifications: true,
+    enableTaskUpdates: false,
+    enableReportUpdates: false
+  })
+
+  return {
+    notifications,
+    clearNotifications,
+    markNotificationAsRead,
+    isConnected,
+    unreadCount: notifications.length
+  }
+}
+
+/**
+ * 专用于报告更新的Hook
+ */
+export function useReportUpdates() {
+  const { reportUpdates, clearReportUpdates } = useWebSocket({
+    autoConnect: true,
+    enableReportUpdates: true,
+    enableNotifications: false,
+    enableTaskUpdates: false
+  })
+
+  return {
+    reportUpdates,
+    clearReportUpdates,
+    getReportUpdate: (reportId: string) => reportUpdates.get(reportId),
+    hasReportUpdate: (reportId: string) => reportUpdates.has(reportId)
+  }
+}
+
+export default useWebSocket

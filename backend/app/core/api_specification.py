@@ -4,7 +4,7 @@
 """
 
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid
@@ -169,7 +169,7 @@ class WebSocketMessage(BaseModel):
 
 class NotificationMessage(WebSocketMessage):
     """通知消息"""
-    type: WebSocketMessageType = Field(WebSocketMessageType.NOTIFICATION, const=True)
+    type: Literal[WebSocketMessageType.NOTIFICATION] = WebSocketMessageType.NOTIFICATION
     title: str = Field(..., description="通知标题")
     message: str = Field(..., description="通知内容")
     category: Optional[str] = Field(None, description="通知分类")
@@ -183,7 +183,7 @@ class NotificationMessage(WebSocketMessage):
 
 class TaskUpdateMessage(WebSocketMessage):
     """任务更新消息"""
-    type: WebSocketMessageType = Field(WebSocketMessageType.TASK_UPDATE, const=True)
+    type: Literal[WebSocketMessageType.TASK_UPDATE] = WebSocketMessageType.TASK_UPDATE
     task_id: str = Field(..., description="任务ID")
     status: str = Field(..., description="任务状态")
     progress: Optional[float] = Field(None, description="任务进度 0-100")
@@ -193,7 +193,7 @@ class TaskUpdateMessage(WebSocketMessage):
 
 class ReportUpdateMessage(WebSocketMessage):
     """报告更新消息"""
-    type: WebSocketMessageType = Field(WebSocketMessageType.REPORT_UPDATE, const=True)
+    type: Literal[WebSocketMessageType.REPORT_UPDATE] = WebSocketMessageType.REPORT_UPDATE
     report_id: str = Field(..., description="报告ID")
     status: str = Field(..., description="报告状态")
     file_url: Optional[str] = Field(None, description="报告文件URL")
@@ -218,7 +218,7 @@ class PaginationParams(BaseModel):
 class SortParams(BaseModel):
     """排序参数"""
     sort_by: Optional[str] = Field(None, description="排序字段")
-    sort_order: str = Field(default="desc", regex="^(asc|desc)$", description="排序顺序")
+    sort_order: str = Field(default="desc", pattern="^(asc|desc)$", description="排序顺序")
 
 
 class FilterParams(BaseModel):

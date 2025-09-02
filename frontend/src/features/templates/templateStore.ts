@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { Template, TemplateCreate, TemplateUpdate, TemplatePreview, PlaceholderConfig, PlaceholderAnalytics, ApiResponse } from '@/types'
-import { api } from '@/lib/api'
+import { TemplateService, PlaceholderService } from '@/services/apiService'
 import toast from 'react-hot-toast'
 
 interface TemplateState {
@@ -64,23 +64,10 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   fetchTemplates: async () => {
     try {
       set({ loading: true })
-      const response = await api.get('/templates')
-      // 处理后端返回的ApiResponse和PaginatedResponse格式
-      let templates = []
-      if (response.data?.items) {
-        // 处理分页响应
-        templates = response.data.items
-      } else if (response.data && Array.isArray(response.data)) {
-        // 处理数组响应
-        templates = response.data
-      } else if (Array.isArray(response)) {
-        // 处理直接数组响应
-        templates = response
-      }
-      set({ templates })
+      const response = await TemplateService.list()
+      set({ templates: response.items || [] })
     } catch (error: any) {
       console.error('Failed to fetch templates:', error)
-      toast.error('获取模板列表失败')
       set({ templates: [] })
     } finally {
       set({ loading: false })
@@ -91,13 +78,11 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   getTemplate: async (id: string) => {
     try {
       set({ loading: true })
-      const response = await api.get(`/templates/${id}`)
-      const template = (response.data?.data || response.data || response) as Template
+      const template = await TemplateService.get(id)
       set({ currentTemplate: template })
       return template
     } catch (error: any) {
       console.error('Failed to fetch template:', error)
-      toast.error('获取模板详情失败')
       throw error
     } finally {
       set({ loading: false })
@@ -110,23 +95,22 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       set({ loading: true });
       const { file, ...templateData } = data;
 
-      const response = await api.post('/templates', templateData);
-      let newTemplate = (response.data?.data || response.data || response) as Template;
+      const newTemplate = await TemplateService.create(templateData);
 
       if (!newTemplate?.id) {
         throw new Error('创建模板失败：未返回有效的模板ID');
       }
 
       if (file) {
-        newTemplate = await get().uploadTemplateFile(newTemplate.id, file);
+        const updatedTemplate = await TemplateService.uploadFile(file);
+        get().addTemplate(updatedTemplate);
+        return updatedTemplate;
       }
       
       get().addTemplate(newTemplate);
-      toast.success('模板创建成功');
       return newTemplate;
     } catch (error: any) {
       console.error('Failed to create template:', error);
-      toast.error(error.response?.data?.detail || '创建模板失败');
       throw error;
     } finally {
       set({ loading: false });
@@ -137,18 +121,15 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   updateTemplate: async (id: string, data: TemplateUpdate) => {
     try {
       set({ loading: true })
-      const response = await api.put(`/templates/${id}`, data)
-      const updatedTemplate = (response.data?.data || response.data || response) as Template
+      const updatedTemplate = await TemplateService.update(id, data)
       
       get().updateTemplateInList(updatedTemplate)
       if (get().currentTemplate?.id === id) {
         set({ currentTemplate: updatedTemplate })
       }
-      toast.success('模板更新成功')
       return updatedTemplate
     } catch (error: any) {
       console.error('Failed to update template:', error)
-      toast.error(error.response?.data?.detail ||'更新模板失败')
       throw error
     } finally {
       set({ loading: false })
@@ -159,35 +140,39 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   deleteTemplate: async (id: string) => {
     try {
       set({ loading: true })
-      await api.delete(`/templates/${id}`)
+      await TemplateService.delete(id)
       
       get().removeTemplate(id)
       if (get().currentTemplate?.id === id) {
         set({ currentTemplate: null })
       }
-      toast.success('模板删除成功')
     } catch (error: any) {
       console.error('Failed to delete template:', error)
-      toast.error('删除模板失败')
       throw error
     } finally {
       set({ loading: false })
     }
   },
 
-  // 预览模板
+  // 预览模板  
   previewTemplate: async (content: string, variables?: Record<string, any>) => {
     try {
-      const response = await api.post('/templates/preview', {
+      // 创建临时模板进行预览
+      const tempTemplate = await TemplateService.create({
+        name: 'temp_preview',
         content,
-        variables: variables || {}
+        template_type: 'preview'
       })
-      const previewHtml = response.data?.preview || response.preview || response
-      set({ previewContent: previewHtml })
-      return previewHtml
+      
+      const preview = await TemplateService.preview(tempTemplate.id)
+      set({ previewContent: preview.content })
+      
+      // 删除临时模板
+      await TemplateService.delete(tempTemplate.id)
+      
+      return preview.content
     } catch (error: any) {
       console.error('Failed to preview template:', error)
-      toast.error('模板预览失败')
       throw error
     }
   },
@@ -196,23 +181,15 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   uploadTemplateFile: async (id: string, file: File) => {
     try {
       get().setLoading(true);
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await api.put(`/templates/${id}/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      const updatedTemplate = (response.data?.data || response.data || response) as Template;
+      const updatedTemplate = await TemplateService.uploadFile(file);
 
       get().updateTemplateInList(updatedTemplate);
       if (get().currentTemplate?.id === id) {
         get().setCurrentTemplate(updatedTemplate);
       }
-      toast.success('模板文件上传成功');
       return updatedTemplate;
     } catch (error: any) {
       console.error('Failed to upload template file:', error);
-      toast.error(error.response?.data?.detail || '模板文件上传失败');
       throw error;
     } finally {
       get().setLoading(false);
@@ -223,14 +200,12 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   fetchPlaceholderPreview: async (id: string) => {
     try {
       set({ previewLoading: true, placeholderPreview: null });
-      const response = await api.get(`/templates/${id}/preview`);
-      const previewData = (response.data?.data || response.data) as TemplatePreview
+      const previewData = await TemplateService.preview(id)
       if (previewData) {
         set({ placeholderPreview: previewData });
       }
     } catch (error: any) {
       console.error('Failed to fetch placeholder preview:', error);
-      toast.error(error.response?.data?.detail || '获取模板占位符预览失败');
       set({ placeholderPreview: null });
     } finally {
       set({ previewLoading: false });
@@ -273,18 +248,17 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   fetchPlaceholders: async (templateId: string) => {
     try {
       set({ placeholderLoading: true })
-      const response = await api.get(`/templates/${templateId}/placeholders`)
-      const placeholderData = response.data?.data || response.data || {}
+      const placeholders = await PlaceholderService.list(templateId)
       
       set({ 
-        placeholders: placeholderData.placeholders || [],
+        placeholders: placeholders || [],
         placeholderAnalytics: {
-          total_placeholders: placeholderData.total_placeholders || 0,
-          analyzed_placeholders: placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0,
-          sql_validated_placeholders: placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.sql_validated).length || 0,
-          average_confidence_score: placeholderData.placeholders?.reduce((sum: number, p: PlaceholderConfig) => sum + p.confidence_score, 0) / (placeholderData.total_placeholders || 1) || 0,
+          total_placeholders: placeholders?.length || 0,
+          analyzed_placeholders: placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0,
+          sql_validated_placeholders: placeholders?.filter((p: PlaceholderConfig) => p.sql_validated).length || 0,
+          average_confidence_score: placeholders?.reduce((sum: number, p: PlaceholderConfig) => sum + p.confidence_score, 0) / (placeholders?.length || 1) || 0,
           cache_hit_rate: 0,
-          analysis_coverage: (placeholderData.total_placeholders > 0 ? (placeholderData.placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0) / placeholderData.total_placeholders * 100 : 0),
+          analysis_coverage: (placeholders?.length > 0 ? (placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0) / placeholders.length * 100 : 0),
           execution_stats: {
             total_executions: 0,
             successful_executions: 0,
@@ -295,7 +269,6 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       })
     } catch (error: any) {
       console.error('Failed to fetch placeholders:', error)
-      toast.error('获取占位符列表失败')
       set({ placeholders: [], placeholderAnalytics: null })
     } finally {
       set({ placeholderLoading: false })
@@ -306,20 +279,13 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   analyzePlaceholders: async (templateId: string, forceReparse = false) => {
     try {
       set({ placeholderLoading: true })
-      const response = await api.post(`/templates/${templateId}/analyze-placeholders`, {
-        force_reparse: forceReparse
-      })
+      await TemplateService.parsePlaceholders(templateId)
       
-      if (response.data?.success) {
-        toast.success('占位符分析完成')
-        // 重新获取占位符列表
-        await get().fetchPlaceholders(templateId)
-      } else {
-        toast.error(response.data?.message || '占位符分析失败')
-      }
+      toast.success('占位符分析完成')
+      // 重新获取占位符列表
+      await get().fetchPlaceholders(templateId)
     } catch (error: any) {
       console.error('Failed to analyze placeholders:', error)
-      toast.error(error.response?.data?.detail || '占位符分析失败')
     } finally {
       set({ placeholderLoading: false })
     }
@@ -329,23 +295,18 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   analyzeWithAgent: async (templateId: string, dataSourceId: string, forceReanalyze = false) => {
     try {
       set({ placeholderLoading: true })
-      const response = await api.post(`/templates/${templateId}/analyze-with-agent`, {}, {
-        params: { 
-          data_source_id: dataSourceId,
-          force_reanalyze: forceReanalyze
-        }
-      })
+      // 获取所有占位符并逐个智能分析
+      const placeholders = await PlaceholderService.list(templateId)
       
-      if (response.data?.success) {
-        toast.success('Agent分析完成')
-        // 重新获取占位符列表
-        await get().fetchPlaceholders(templateId)
-      } else {
-        toast.error(response.data?.message || 'Agent分析失败')
+      for (const placeholder of placeholders) {
+        await PlaceholderService.analyze(placeholder.id)
       }
+      
+      toast.success('Agent分析完成')
+      // 重新获取占位符列表
+      await get().fetchPlaceholders(templateId)
     } catch (error: any) {
       console.error('Failed to analyze with agent:', error)
-      toast.error(error.response?.data?.detail || 'Agent分析失败')
     } finally {
       set({ placeholderLoading: false })
     }
@@ -355,18 +316,13 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   updatePlaceholder: async (templateId: string, placeholderId: string, updates: Partial<PlaceholderConfig>) => {
     try {
       set({ placeholderLoading: true })
-      const response = await api.put(`/templates/${templateId}/placeholders/${placeholderId}`, updates)
+      await PlaceholderService.update(placeholderId, updates)
       
-      if (response.data?.success) {
-        toast.success('占位符更新成功')
-        // 重新获取占位符列表
-        await get().fetchPlaceholders(templateId)
-      } else {
-        toast.error(response.data?.message || '占位符更新失败')
-      }
+      toast.success('占位符更新成功')
+      // 重新获取占位符列表
+      await get().fetchPlaceholders(templateId)
     } catch (error: any) {
       console.error('Failed to update placeholder:', error)
-      toast.error(error.response?.data?.detail || '占位符更新失败')
     } finally {
       set({ placeholderLoading: false })
     }

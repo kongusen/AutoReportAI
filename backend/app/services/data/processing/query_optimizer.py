@@ -11,8 +11,8 @@ import pandas as pd
 from sqlalchemy import text, create_engine
 import logging
 
-from ...core.config import settings
-from ...models.data_source import DataSource, DataSourceType
+from app.core.config import settings
+from app.models.data_source import DataSource, DataSourceType
 
 
 class QueryOptimizationStrategy(Enum):
@@ -48,12 +48,90 @@ class QueryResult:
 
 
 class QueryOptimizer:
-    """查询优化器"""
+    """查询优化器 - 集成React Agent智能优化"""
     
-    def __init__(self):
+    def __init__(self, user_id: str):
+        if not user_id:
+            raise ValueError("user_id is required for Query Optimizer")
+        self.user_id = user_id
         self.logger = logging.getLogger(__name__)
         self.query_cache = {}  # 简单内存缓存，生产环境应使用Redis
+        self._react_agent = None
         
+    async def _get_react_agent(self):
+        """获取用户专属的React Agent"""
+        if self._react_agent is None:
+            from app.services.infrastructure.ai.agents import create_react_agent
+            self._react_agent = create_react_agent(self.user_id)
+            await self._react_agent.initialize()
+        return self._react_agent
+    
+    async def optimize_with_react_agent(
+        self, 
+        data_source: DataSource,
+        base_query: str,
+        filters: Dict[str, Any],
+        aggregations: List[Dict[str, Any]] = None
+    ) -> QueryResult:
+        """
+        使用React Agent进行智能查询优化
+        
+        Args:
+            data_source: 数据源信息
+            base_query: 基础查询语句
+            filters: 过滤条件
+            aggregations: 聚合操作
+            
+        Returns:
+            查询结果
+        """
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # 使用React Agent进行智能查询优化
+            agent = await self._get_react_agent()
+            
+            optimization_prompt = f"""
+            智能查询优化任务:
+            - 数据源类型: {data_source.source_type.value}
+            - 原始查询: {base_query}
+            - 过滤条件: {filters}
+            - 聚合操作: {aggregations}
+            - 用户ID: {self.user_id}
+            
+            请分析查询并提供优化建议，考虑数据源特性、索引优化、分区裁剪等策略。
+            """
+            
+            optimization_result = await agent.chat(optimization_prompt, context={
+                "data_source": data_source.id,
+                "base_query": base_query,
+                "filters": filters,
+                "aggregations": aggregations,
+                "task_type": "query_optimization"
+            })
+            
+            # 模拟查询执行结果（实际中应该执行优化后的查询）
+            result_data = pd.DataFrame([{
+                "optimization_result": optimization_result,
+                "query_optimized": True,
+                "user_id": self.user_id
+            }])
+            
+            total_time = asyncio.get_event_loop().time() - start_time
+            
+            return QueryResult(
+                data=result_data,
+                execution_time=total_time,
+                rows_scanned=1,
+                rows_returned=1,
+                cache_hit=False,
+                optimization_applied=["react_agent_optimization"]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"React Agent query optimization failed: {e}")
+            raise
+    
     async def optimize_and_execute(
         self, 
         data_source: DataSource,
@@ -332,5 +410,7 @@ class QueryOptimizer:
         self.query_cache[cache_key] = data.copy()
 
 
-# 创建全局优化器实例
-query_optimizer = QueryOptimizer()
+# Query Optimizer factory function
+def create_query_optimizer(user_id: str) -> QueryOptimizer:
+    """创建用户专属的查询优化器"""
+    return QueryOptimizer(user_id)

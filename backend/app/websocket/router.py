@@ -1,167 +1,458 @@
+"""
+WebSocket路由
+基于React Agent架构的实时通信路由
+"""
+
 import json
 import logging
-
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.security import HTTPBearer
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.security import decode_access_token
-from app.websocket.manager import NotificationMessage, manager
+from app.websocket.manager import websocket_manager
+from app.core.api_specification import (
+    WebSocketMessage, WebSocketMessageType, NotificationMessage,
+    APIResponse, create_success_response, create_error_response
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-security = HTTPBearer()
 
 
-async def get_current_user_from_token(token: str, db: Session):
-    """从WebSocket token中获取当前用户"""
+async def authenticate_websocket_user(token: str, db: Session):
+    """WebSocket用户认证"""
     try:
-        logger.info(f"正在验证WebSocket token: {token[:20]}...")
         payload = decode_access_token(token)
-        logger.info(f"Token解码结果: {payload}")
-        
-        if payload is None:
-            logger.warning("Token解码失败: payload为None")
+        if not payload:
             return None
-
+        
         user_id = payload.get("sub")
-        logger.info(f"从token中提取的用户ID: {user_id}")
-        
-        if user_id is None:
-            logger.warning("Token中没有找到sub字段")
+        if not user_id:
             return None
-
+        
         from app.crud.crud_user import crud_user
-
         user = crud_user.get(db, id=user_id)
-        if user:
-            logger.info(f"找到用户: {user.id}")
-        else:
-            logger.warning(f"未找到用户ID为 {user_id} 的用户")
         return user
+        
     except Exception as e:
-        logger.error(f"WebSocket token验证异常: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"WebSocket authentication error: {e}")
         return None
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str = None, db: Session = Depends(deps.get_db)):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None),
+    client_type: Optional[str] = Query("web"),
+    client_version: Optional[str] = Query(None),
+    db: Session = Depends(deps.get_db)
+):
     """WebSocket连接端点"""
-    user_id = None
-
+    session_id = None
+    
     try:
-        logger.info(f"WebSocket连接请求，查询参数token: {token[:20] if token else 'None'}...")
-        
-        # 首先尝试从查询参数获取token
-        query_token = token
-        
         await websocket.accept()
-        logger.info("WebSocket连接已接受")
+        logger.info(f"WebSocket connection accepted from {websocket.client}")
         
-        # 如果没有查询参数token，等待认证消息
-        if not query_token:
-            logger.info("没有查询参数token，等待认证消息...")
+        # 认证处理
+        auth_token = token
+        if not auth_token:
+            # 等待认证消息
             auth_message = await websocket.receive_text()
-            logger.info(f"收到认证消息: {auth_message}")
-            auth_data = json.loads(auth_message)
-
-            if auth_data.get("type") != "auth":
-                logger.warning(f"收到非认证消息: {auth_data.get('type')}")
-                await websocket.send_text(
-                    json.dumps({"type": "error", "message": "Authentication required"})
-                )
+            try:
+                auth_data = json.loads(auth_message)
+                if auth_data.get("type") == "auth":
+                    auth_token = auth_data.get("token")
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Authentication required"
+                    }))
+                    await websocket.close()
+                    return
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({
+                    "type": "error", 
+                    "message": "Invalid authentication message format"
+                }))
                 await websocket.close()
                 return
-
-            query_token = auth_data.get("token")
-            logger.info(f"从认证消息中提取token: {query_token[:20] if query_token else 'None'}...")
-
-        if not query_token:
-            logger.warning("没有提供token")
-            await websocket.send_text(
-                json.dumps({"type": "error", "message": "Token required"})
-            )
-            await websocket.close()
-            return
-
+        
         # 验证用户
-        logger.info("开始验证用户token...")
-        user = await get_current_user_from_token(query_token, db)
+        user = await authenticate_websocket_user(auth_token, db)
         if not user:
-            logger.warning("用户token验证失败")
-            await websocket.send_text(
-                json.dumps({"type": "error", "message": "Invalid token"})
-            )
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": "Authentication failed"
+            }))
             await websocket.close()
             return
-
-        user_id = str(user.id)
-        logger.info(f"WebSocket用户认证成功: {user_id}")
-
+        
         # 建立连接
-        await manager.connect(websocket, user_id)
-
-        # 保持连接活跃
+        client_info = {
+            "client_type": client_type,
+            "client_version": client_version,
+            "client_host": websocket.client.host if websocket.client else None,
+            "client_port": websocket.client.port if websocket.client else None,
+        }
+        
+        session_id = await websocket_manager.connect(
+            websocket=websocket,
+            user_id=str(user.id),
+            client_info=client_info
+        )
+        
+        # 认证会话
+        await websocket_manager.authenticate(session_id, {
+            "user_id": str(user.id),
+            "subscriptions": [
+                f"user:{user.id}",  # 用户私有频道
+                "system:alerts",    # 系统警报
+                "system:updates"    # 系统更新
+            ]
+        })
+        
+        logger.info(f"WebSocket authenticated: user={user.id}, session={session_id}")
+        
+        # 消息循环
         while True:
             try:
-                # 接收客户端消息（心跳包等）
-                message = await websocket.receive_text()
-                data = json.loads(message)
-
-                # 处理心跳包
-                if data.get("type") == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-
+                message_data = await websocket.receive_text()
+                await websocket_manager.handle_message(session_id, message_data)
+                
             except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected: session={session_id}")
                 break
             except Exception as e:
-                logger.error(f"Error in WebSocket loop: {e}")
-                break
-
-    except WebSocketDisconnect:
-        pass
+                logger.error(f"Error in WebSocket message loop: {e}")
+                # 发送错误消息给客户端
+                try:
+                    error_msg = WebSocketMessage(
+                        type=WebSocketMessageType.ERROR,
+                        message="Internal server error",
+                        data={"error": str(e)}
+                    )
+                    await websocket_manager.send_to_session(session_id, error_msg)
+                except:
+                    break
+    
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    
     finally:
-        if websocket in manager.connection_user_map:
-            manager.disconnect(websocket)
+        if session_id:
+            await websocket_manager.disconnect(session_id, "connection_closed")
 
 
-@router.post("/notifications/send")
-async def send_notification(
-    notification_data: dict, current_user=Depends(deps.get_current_active_user)
+# ============================================================================
+# WebSocket管理API端点
+# ============================================================================
+
+@router.get("/status")
+async def get_websocket_status(
+    current_user = Depends(deps.get_current_active_user)
 ):
-    """发送通知API（用于测试）"""
+    """获取WebSocket系统状态"""
     try:
-        notification = NotificationMessage(
-            type=notification_data.get("type", "info"),
-            title=notification_data.get("title", "Test Notification"),
-            message=notification_data.get("message", "This is a test notification"),
-            data=notification_data.get("data"),
-            user_id=str(current_user.id),
+        stats = websocket_manager.get_system_stats()
+        user_connections = websocket_manager.get_user_connections(str(current_user.id))
+        
+        return create_success_response(
+            data={
+                "system_stats": stats,
+                "user_connections": user_connections,
+                "is_user_connected": len(user_connections) > 0
+            },
+            message="WebSocket status retrieved successfully"
+        )
+    except Exception as e:
+        logger.error(f"Error getting WebSocket status: {e}")
+        return create_error_response(
+            error="WEBSOCKET_STATUS_ERROR",
+            message="Failed to get WebSocket status"
         )
 
-        if notification_data.get("broadcast", False):
-            await manager.broadcast_message(notification)
-        else:
-            await manager.send_personal_message(notification, str(current_user.id))
 
-        return {"message": "Notification sent successfully"}
+@router.post("/send-notification")
+async def send_notification_api(
+    notification_data: Dict[str, Any],
+    target_user_id: Optional[str] = None,
+    broadcast: bool = False,
+    channel: Optional[str] = None,
+    current_user = Depends(deps.get_current_active_user)
+):
+    """发送通知API"""
+    try:
+        # 创建通知消息
+        notification = NotificationMessage(
+            title=notification_data.get("title", "Notification"),
+            message=notification_data.get("message", ""),
+            notification_type=notification_data.get("type", "info"),
+            category=notification_data.get("category"),
+            action_url=notification_data.get("action_url"),
+            data=notification_data.get("data", {}),
+            user_id=target_user_id or str(current_user.id)
+        )
+        
+        sent_count = 0
+        
+        if broadcast:
+            # 广播给所有用户
+            sent_count = await websocket_manager.broadcast_to_all(notification)
+        elif channel:
+            # 发送到指定频道
+            sent_count = await websocket_manager.broadcast_to_channel(channel, notification)
+        elif target_user_id:
+            # 发送给指定用户
+            sent_count = await websocket_manager.send_to_user(target_user_id, notification)
+        else:
+            # 发送给当前用户
+            sent_count = await websocket_manager.send_to_user(str(current_user.id), notification)
+        
+        return create_success_response(
+            data={
+                "sent_count": sent_count,
+                "notification_id": notification.id
+            },
+            message=f"Notification sent to {sent_count} connections"
+        )
+        
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send notification")
+        return create_error_response(
+            error="NOTIFICATION_SEND_ERROR",
+            message="Failed to send notification"
+        )
 
 
-@router.get("/notifications/status")
-async def get_notification_status(current_user=Depends(deps.get_current_active_user)):
-    """获取通知系统状态"""
-    return {
-        "connected_users": manager.get_connected_users(),
-        "is_connected": manager.is_user_connected(str(current_user.id)),
-        "total_connections": sum(
-            len(connections) for connections in manager.active_connections.values()
-        ),
-    }
+@router.post("/subscribe")
+async def subscribe_to_channel(
+    channel: str,
+    session_id: Optional[str] = None,
+    current_user = Depends(deps.get_current_active_user)
+):
+    """订阅频道"""
+    try:
+        user_id = str(current_user.id)
+        
+        if session_id:
+            # 指定会话订阅
+            success = await websocket_manager.subscribe(session_id, channel)
+            if not success:
+                return create_error_response(
+                    error="SESSION_NOT_FOUND",
+                    message="Session not found"
+                )
+        else:
+            # 用户所有会话订阅
+            user_sessions = websocket_manager.user_sessions.get(user_id, set())
+            success_count = 0
+            for sid in user_sessions:
+                if await websocket_manager.subscribe(sid, channel):
+                    success_count += 1
+            
+            if success_count == 0:
+                return create_error_response(
+                    error="NO_ACTIVE_SESSIONS",
+                    message="No active sessions found"
+                )
+        
+        return create_success_response(
+            data={"channel": channel},
+            message="Successfully subscribed to channel"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error subscribing to channel: {e}")
+        return create_error_response(
+            error="SUBSCRIPTION_ERROR",
+            message="Failed to subscribe to channel"
+        )
+
+
+@router.post("/unsubscribe")
+async def unsubscribe_from_channel(
+    channel: str,
+    session_id: Optional[str] = None,
+    current_user = Depends(deps.get_current_active_user)
+):
+    """取消订阅频道"""
+    try:
+        user_id = str(current_user.id)
+        
+        if session_id:
+            # 指定会话取消订阅
+            success = await websocket_manager.unsubscribe(session_id, channel)
+            if not success:
+                return create_error_response(
+                    error="SESSION_NOT_FOUND", 
+                    message="Session not found"
+                )
+        else:
+            # 用户所有会话取消订阅
+            user_sessions = websocket_manager.user_sessions.get(user_id, set())
+            for sid in user_sessions:
+                await websocket_manager.unsubscribe(sid, channel)
+        
+        return create_success_response(
+            data={"channel": channel},
+            message="Successfully unsubscribed from channel"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error unsubscribing from channel: {e}")
+        return create_error_response(
+            error="UNSUBSCRIPTION_ERROR",
+            message="Failed to unsubscribe from channel"
+        )
+
+
+@router.get("/connections")
+async def get_user_connections(
+    current_user = Depends(deps.get_current_active_user)
+):
+    """获取用户连接信息"""
+    try:
+        connections = websocket_manager.get_user_connections(str(current_user.id))
+        
+        return create_success_response(
+            data={
+                "connections": connections,
+                "total_connections": len(connections)
+            },
+            message="User connections retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting user connections: {e}")
+        return create_error_response(
+            error="CONNECTIONS_ERROR",
+            message="Failed to get user connections"
+        )
+
+
+@router.delete("/connections/{session_id}")
+async def disconnect_session(
+    session_id: str,
+    current_user = Depends(deps.get_current_active_user)
+):
+    """断开指定会话"""
+    try:
+        # 验证会话属于当前用户
+        conn_info = websocket_manager.get_connection_info(session_id)
+        if not conn_info or conn_info["user_id"] != str(current_user.id):
+            return create_error_response(
+                error="SESSION_NOT_FOUND",
+                message="Session not found or access denied"
+            )
+        
+        # 强制断开连接
+        await websocket_manager._force_disconnect(session_id, "user_requested")
+        
+        return create_success_response(
+            data={"session_id": session_id},
+            message="Session disconnected successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error disconnecting session: {e}")
+        return create_error_response(
+            error="DISCONNECT_ERROR", 
+            message="Failed to disconnect session"
+        )
+
+
+# ============================================================================
+# 系统管理API（需要管理员权限）
+# ============================================================================
+
+@router.get("/admin/system-stats")
+async def get_system_stats(
+    current_user = Depends(deps.get_current_active_superuser)
+):
+    """获取系统统计信息（管理员）"""
+    try:
+        stats = websocket_manager.get_system_stats()
+        
+        # 获取详细连接信息
+        all_connections = []
+        for session_id, conn in websocket_manager.connections.items():
+            all_connections.append(conn.to_dict())
+        
+        return create_success_response(
+            data={
+                "system_stats": stats,
+                "all_connections": all_connections,
+                "channels": {
+                    channel: len(sessions)
+                    for channel, sessions in websocket_manager.channels.items()
+                }
+            },
+            message="System statistics retrieved successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting system stats: {e}")
+        return create_error_response(
+            error="SYSTEM_STATS_ERROR",
+            message="Failed to get system statistics"
+        )
+
+
+@router.post("/admin/broadcast")
+async def broadcast_admin_message(
+    message_data: Dict[str, Any],
+    current_user = Depends(deps.get_current_active_superuser)
+):
+    """管理员广播消息"""
+    try:
+        notification = NotificationMessage(
+            title=message_data.get("title", "System Notification"),
+            message=message_data.get("message", ""),
+            notification_type=message_data.get("type", "info"),
+            category="admin_broadcast",
+            data={
+                "sender": str(current_user.id),
+                "sender_name": current_user.full_name or current_user.username,
+                **message_data.get("data", {})
+            }
+        )
+        
+        sent_count = await websocket_manager.broadcast_to_all(notification)
+        
+        return create_success_response(
+            data={
+                "sent_count": sent_count,
+                "notification_id": notification.id
+            },
+            message=f"Admin message broadcasted to {sent_count} connections"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error broadcasting admin message: {e}")
+        return create_error_response(
+            error="BROADCAST_ERROR",
+            message="Failed to broadcast message"
+        )
+
+
+# ============================================================================
+# 消息处理器注册
+# ============================================================================
+
+async def handle_client_ping(session_id: str, message: WebSocketMessage):
+    """处理客户端ping"""
+    logger.debug(f"Received ping from session {session_id}")
+
+async def handle_subscription_request(session_id: str, message: WebSocketMessage):
+    """处理订阅请求"""
+    channel = message.data.get("channel")
+    if channel:
+        await websocket_manager.subscribe(session_id, channel)
+        logger.debug(f"Session {session_id} subscribed to {channel}")
+
+# 注册消息处理器
+websocket_manager.register_message_handler(WebSocketMessageType.PING, handle_client_ping)
+websocket_manager.register_global_handler(handle_subscription_request)

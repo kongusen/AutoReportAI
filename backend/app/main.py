@@ -8,11 +8,12 @@ from fastapi.openapi.utils import get_openapi
 from fastapi_limiter import FastAPILimiter
 
 from app.api.router import api_router
-from app.api.versioning import APIVersionMiddleware
+from app.api.versioning import APIVersionMiddleware, create_version_info_router
 from app.core.config import settings, get_cors_origins
 from app.core.logging_config import setup_logging, RequestLoggingMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.websocket.router import router as websocket_router
+from app.core.performance_middleware import PerformanceMiddleware, RateLimitMiddleware
 
 # Setup logging as soon as the application starts
 setup_logging()
@@ -182,6 +183,15 @@ def create_application() -> FastAPI:
     # Setup exception handlers
     setup_exception_handlers(app)
 
+    # Add performance middleware (最先添加，最后执行)
+    app.add_middleware(PerformanceMiddleware, 
+                      enable_compression=True,
+                      enable_caching=True,
+                      compression_threshold=1024)
+    
+    # Add rate limiting middleware
+    app.add_middleware(RateLimitMiddleware, max_requests_per_minute=120)
+
     # Add API versioning middleware
     app.add_middleware(APIVersionMiddleware)
 
@@ -300,8 +310,11 @@ async def shutdown():
 # All API routes are handled by the api_router
 app.include_router(api_router, prefix="/api")
 
+# Version info router
+app.include_router(create_version_info_router(), prefix="/api", tags=["版本信息"])
+
 # WebSocket routes
-app.include_router(websocket_router)
+app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
 
 
 @app.get("/")

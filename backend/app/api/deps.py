@@ -247,30 +247,38 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
         )
 
 
-# IAOP AI Integration Services (替代原AI服务)
-def get_iaop_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
-    """Get IAOP LLM service dependency"""
+# React Agent系统集成服务
+def get_react_agent_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """获取React Agent LLM服务依赖"""
     try:
-        # REMOVED: IAOP import - Use MCP equivalent instead
+        from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
         user_id = str(user.id) if user else None
-        return get_service(db, user_id)
+        return IntelligentLLMSelector(db, user_id)
     except Exception as e:
-        logger.error(f"Failed to create IAOPLLMService: {e}")
+        logger.error(f"Failed to create IntelligentLLMSelector: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="IAOP LLM service unavailable"
+            detail="React Agent LLM service unavailable"
         )
 
 
-# 向后兼容的别名
+def get_workflow_orchestration_agent(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """获取工作流编排代理依赖"""
+    try:
+        from app.services.application.agents.workflow_orchestration_agent import get_workflow_orchestration_agent as get_agent
+        return get_agent()
+    except Exception as e:
+        logger.error(f"Failed to create WorkflowOrchestrationAgent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow orchestration agent unavailable"
+        )
+
+
+# React Agent服务依赖 - 统一接口
 def get_ai_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
-    """Get AI service dependency (IAOP adapter)"""
-    return get_iaop_llm_service(db, user)
-
-
-def get_enhanced_ai_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
-    """Get enhanced AI service dependency (IAOP adapter)"""  
-    return get_iaop_llm_service(db, user)
+    """获取React Agent AI服务依赖"""
+    return get_react_agent_llm_service(db, user)
 
 
 def get_content_generation_agent(db: Session = Depends(get_db)):

@@ -6,7 +6,7 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema
@@ -246,8 +246,10 @@ class SchemaMetadataService:
             业务元数据
         """
         try:
-            # 获取表业务信息
-            tables = self.db_session.query(TableSchema).filter(
+            # 获取表业务信息（优化：使用joinedload预加载列信息，避免N+1查询）
+            tables = self.db_session.query(TableSchema).options(
+                joinedload(TableSchema.columns)
+            ).filter(
                 and_(
                     TableSchema.data_source_id == data_source_id,
                     TableSchema.is_active == True
@@ -271,12 +273,8 @@ class SchemaMetadataService:
                     "columns": []
                 }
                 
-                # 获取列信息
-                columns = self.db_session.query(ColumnSchema).filter(
-                    ColumnSchema.table_schema_id == table.id
-                ).all()
-                
-                for column in columns:
+                # 使用预加载的列信息（优化：避免N+1查询）
+                for column in table.columns:
                     column_info = {
                         "id": str(column.id),
                         "name": column.column_name,

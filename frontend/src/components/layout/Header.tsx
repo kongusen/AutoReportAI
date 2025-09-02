@@ -3,38 +3,28 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  BellIcon,
   ChevronDownIcon,
   UserIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline'
 import { Avatar } from '@/components/ui/Avatar'
-import { Badge } from '@/components/ui/Badge'
 import { useAuthStore } from '@/features/auth/authStore'
+import { NotificationCenter } from '@/components/ui/NotificationCenter'
+import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 import { cn } from '@/utils'
 
 export function Header() {
   const router = useRouter()
   const { user, logout } = useAuthStore()
   const [showUserMenu, setShowUserMenu] = useState(false)
-  const [showNotifications, setShowNotifications] = useState(false)
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: '报告生成完成', message: '月度销售报告已生成', time: '2分钟前', read: false },
-    { id: 2, title: '数据源连接异常', message: 'MySQL数据源连接失败', time: '10分钟前', read: false },
-    { id: 3, title: '任务执行成功', message: '定时任务已成功执行', time: '1小时前', read: true },
-  ])
   const userMenuRef = useRef<HTMLDivElement>(null)
-  const notificationRef = useRef<HTMLDivElement>(null)
 
   // 点击外部关闭菜单
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setShowUserMenu(false)
-      }
-      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
-        setShowNotifications(false)
       }
     }
 
@@ -47,26 +37,22 @@ export function Header() {
     router.push('/login')
   }
 
-  // 标记通知为已读并从列表中移除
-  const markAsRead = (notificationId: number) => {
-    setNotifications(prev => prev.filter(n => n.id !== notificationId))
-  }
-
-  // 标记所有通知为已读
-  const markAllAsRead = () => {
-    setNotifications([])
-  }
-
   const userMenuItems = [
     {
       name: '个人资料',
       icon: UserIcon,
-      action: () => router.push('/profile'),
+      action: () => {
+        setShowUserMenu(false)
+        router.push('/profile')
+      },
     },
     {
       name: '设置',
       icon: Cog6ToothIcon,
-      action: () => router.push('/settings'),
+      action: () => {
+        setShowUserMenu(false)
+        router.push('/settings')
+      },
     },
     {
       name: '退出登录',
@@ -76,114 +62,38 @@ export function Header() {
     },
   ]
 
-  // 只显示未读通知
-  const unreadNotifications = notifications.filter(n => !n.read)
-  const unreadCount = unreadNotifications.length
-
   return (
     <div className="sticky top-0 z-40 lg:mx-auto lg:max-w-7xl lg:px-8">
       <div className="flex h-16 items-center gap-x-4 border-b border-gray-200 bg-white px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-0 lg:shadow-none">
         <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
-          <div className="flex flex-1"></div>
+          {/* 左侧：应用标题或搜索 */}
+          <div className="flex flex-1 items-center">
+            <h1 className="text-xl font-semibold text-gray-900 lg:hidden">
+              AutoReport AI
+            </h1>
+          </div>
+
+          {/* 右侧：工具栏 */}
           <div className="flex items-center gap-x-4 lg:gap-x-6">
-            {/* 通知按钮 */}
-            <div ref={notificationRef} className="relative">
-              <button
-                type="button"
-                className="-m-2.5 p-2.5 text-gray-400 hover:text-gray-500 relative"
-                onClick={() => setShowNotifications(!showNotifications)}
-              >
-                <BellIcon className="h-6 w-6" />
-                {unreadCount > 0 && (
-                  <Badge
-                    variant="destructive"
-                    size="sm"
-                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center min-w-0"
-                  >
-                    {unreadCount}
-                  </Badge>
-                )}
-              </button>
+            {/* 实时通知中心 */}
+            <NotificationCenter />
 
-              {/* 通知下拉菜单 */}
-              {showNotifications && (
-                <div className="absolute right-0 z-10 mt-2 w-80 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
-                  <div className="px-4 py-2 border-b border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-gray-900">通知</h3>
-                      {unreadCount > 0 && (
-                        <span className="text-xs text-gray-500">{unreadCount} 条未读</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="max-h-96 overflow-y-auto">
-                    {unreadNotifications.length === 0 ? (
-                      <div className="px-4 py-6 text-center text-sm text-gray-500">
-                        暂无通知
-                      </div>
-                    ) : (
-                      unreadNotifications.map((notification) => (
-                        <div
-                          key={notification.id}
-                          className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-b-0 bg-blue-50 relative group"
-                          onClick={() => markAsRead(notification.id)}
-                        >
-                          <div className="flex items-start">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">
-                                {notification.title}
-                              </p>
-                              <p className="text-sm text-gray-500 mt-1">
-                                {notification.message}
-                              </p>
-                              <p className="text-xs text-gray-400 mt-1">
-                                {notification.time}
-                              </p>
-                            </div>
-                            <div className="ml-2 flex items-center gap-2">
-                              <div className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0 mt-1"></div>
-                              <button
-                                className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-blue-600 hover:text-blue-800 font-medium"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  markAsRead(notification.id)
-                                }}
-                              >
-                                已读
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  {unreadNotifications.length > 0 && (
-                    <div className="px-4 py-2 border-t border-gray-100 flex justify-between">
-                      <button 
-                        className="text-sm text-blue-600 hover:text-blue-700"
-                        onClick={() => router.push('/notifications')}
-                      >
-                        查看全部通知
-                      </button>
-                      <button 
-                        className="text-sm text-gray-600 hover:text-gray-700"
-                        onClick={markAllAsRead}
-                      >
-                        全部已读
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
+            {/* 分隔线 */}
             <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-gray-900/10" />
+
+            {/* 用户信息显示 */}
+            <div className="hidden lg:flex lg:items-center lg:text-sm lg:text-gray-600">
+              <span>欢迎回来, </span>
+              <span className="ml-1 font-medium text-gray-900">
+                {user?.username || user?.email?.split('@')[0] || '用户'}
+              </span>
+            </div>
 
             {/* 用户菜单 */}
             <div ref={userMenuRef} className="relative">
               <button
                 type="button"
-                className="-m-1.5 flex items-center p-1.5 hover:bg-gray-50 rounded-md"
+                className="-m-1.5 flex items-center p-1.5 hover:bg-gray-50 rounded-md transition-colors"
                 onClick={() => setShowUserMenu(!showUserMenu)}
               >
                 <Avatar
@@ -202,25 +112,46 @@ export function Header() {
               {/* 用户下拉菜单 */}
               {showUserMenu && (
                 <div className="absolute right-0 z-10 mt-2.5 w-48 origin-top-right rounded-md bg-white py-2 shadow-lg ring-1 ring-gray-900/5 focus:outline-none">
-                  {userMenuItems.map((item) => (
-                    <button
-                      key={item.name}
-                      className={cn(
-                        'flex w-full items-center px-3 py-2 text-sm text-gray-900 hover:bg-gray-50',
-                        item.className
-                      )}
-                      onClick={item.action}
-                    >
-                      <item.icon className="mr-3 h-5 w-5 text-gray-400" />
-                      {item.name}
-                    </button>
-                  ))}
+                  {/* 用户信息头部 */}
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {user?.username || user?.email}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {user?.email}
+                    </p>
+                    {user?.is_superuser && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mt-1">
+                        管理员
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 菜单项 */}
+                  <div className="py-1">
+                    {userMenuItems.map((item) => (
+                      <button
+                        key={item.name}
+                        className={cn(
+                          'flex w-full items-center px-3 py-2 text-sm text-gray-900 hover:bg-gray-50 transition-colors',
+                          item.className
+                        )}
+                        onClick={item.action}
+                      >
+                        <item.icon className="mr-3 h-5 w-5 text-gray-400" />
+                        {item.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* WebSocket连接状态指示器 */}
+      <ConnectionStatusIndicator />
     </div>
   )
 }

@@ -6,11 +6,18 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
 from app.services.infrastructure.ai.llm import select_best_model_for_user, ask_agent_for_user
+from app.core.exceptions import (
+    ValidationError, 
+    NotFoundError, 
+    DataAnalysisError,
+    LLMServiceError,
+    DatabaseError
+)
 from .utils.relationship_analyzer import RelationshipAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -39,8 +46,10 @@ class SchemaAnalysisService:
             分析结果
         """
         try:
-            # 获取所有表结构
-            table_schemas = self.db_session.query(TableSchema).filter(
+            # 获取所有表结构（优化：预加载列信息，避免N+1查询）
+            table_schemas = self.db_session.query(TableSchema).options(
+                joinedload(TableSchema.columns)
+            ).filter(
                 and_(
                     TableSchema.data_source_id == data_source_id,
                     TableSchema.is_active == True
@@ -48,18 +57,24 @@ class SchemaAnalysisService:
             ).all()
             
             if not table_schemas:
-                return {"success": False, "error": "未找到表结构信息"}
+                raise NotFoundError("表结构信息", data_source_id)
             
             # 准备表结构数据供AI分析
             schema_data = await self._prepare_schema_data_for_analysis(table_schemas)
             
             # 使用用户专属的AI服务分析表关系
-            analysis_result = await self._analyze_relationships_with_ai(schema_data)
+            try:
+                analysis_result = await self._analyze_relationships_with_ai(schema_data)
+            except Exception as e:
+                raise LLMServiceError(f"AI表关系分析失败: {str(e)}", details={"user_id": self.user_id})
             
             # 保存分析结果
-            relationships = await self._save_relationship_analysis(
-                table_schemas, data_source_id, analysis_result
-            )
+            try:
+                relationships = await self._save_relationship_analysis(
+                    table_schemas, data_source_id, analysis_result
+                )
+            except Exception as e:
+                raise DatabaseError(f"保存关系分析结果失败: {str(e)}")
             
             return {
                 "success": True,
@@ -69,9 +84,11 @@ class SchemaAnalysisService:
                 "ai_insights": analysis_result.get("insights", [])
             }
             
+        except (NotFoundError, LLMServiceError, DatabaseError):
+            raise  # Re-raise known exceptions
         except Exception as e:
             self.logger.error(f"表关系分析失败: {e}")
-            return {"success": False, "error": str(e)}
+            raise DataAnalysisError(f"表关系分析失败: {str(e)}", analysis_type="relationships")
     
     async def analyze_business_semantics(self, data_source_id: str) -> Dict[str, Any]:
         """
@@ -84,8 +101,10 @@ class SchemaAnalysisService:
             分析结果
         """
         try:
-            # 获取所有表结构
-            table_schemas = self.db_session.query(TableSchema).filter(
+            # 获取所有表结构（优化：预加载列信息，避免N+1查询）
+            table_schemas = self.db_session.query(TableSchema).options(
+                joinedload(TableSchema.columns)
+            ).filter(
                 and_(
                     TableSchema.data_source_id == data_source_id,
                     TableSchema.is_active == True
@@ -93,16 +112,22 @@ class SchemaAnalysisService:
             ).all()
             
             if not table_schemas:
-                return {"success": False, "error": "未找到表结构信息"}
+                raise NotFoundError("表结构信息", data_source_id)
             
             # 准备数据供AI分析
             schema_data = await self._prepare_schema_data_for_analysis(table_schemas)
             
             # 使用AI进行业务语义分析
-            semantic_analysis = await self._analyze_semantics_with_ai(schema_data)
+            try:
+                semantic_analysis = await self._analyze_semantics_with_ai(schema_data)
+            except Exception as e:
+                raise LLMServiceError(f"AI业务语义分析失败: {str(e)}", details={"user_id": self.user_id})
             
             # 更新表结构的业务信息
-            await self._update_business_semantics(table_schemas, semantic_analysis)
+            try:
+                await self._update_business_semantics(table_schemas, semantic_analysis)
+            except Exception as e:
+                raise DatabaseError(f"更新业务语义失败: {str(e)}")
             
             return {
                 "success": True,
@@ -110,9 +135,11 @@ class SchemaAnalysisService:
                 "analysis": semantic_analysis
             }
             
+        except (NotFoundError, LLMServiceError, DatabaseError):
+            raise  # Re-raise known exceptions
         except Exception as e:
             self.logger.error(f"业务语义分析失败: {e}")
-            return {"success": False, "error": str(e)}
+            raise DataAnalysisError(f"业务语义分析失败: {str(e)}", analysis_type="semantics")
     
     async def analyze_data_quality(self, data_source_id: str) -> Dict[str, Any]:
         """
@@ -125,8 +152,10 @@ class SchemaAnalysisService:
             分析结果
         """
         try:
-            # 获取所有表结构
-            table_schemas = self.db_session.query(TableSchema).filter(
+            # 获取所有表结构（优化：预加载列信息，避免N+1查询）
+            table_schemas = self.db_session.query(TableSchema).options(
+                joinedload(TableSchema.columns)
+            ).filter(
                 and_(
                     TableSchema.data_source_id == data_source_id,
                     TableSchema.is_active == True
@@ -134,16 +163,22 @@ class SchemaAnalysisService:
             ).all()
             
             if not table_schemas:
-                return {"success": False, "error": "未找到表结构信息"}
+                raise NotFoundError("表结构信息", data_source_id)
             
             # 准备数据供AI分析
             schema_data = await self._prepare_schema_data_for_analysis(table_schemas)
             
             # 使用AI进行数据质量分析
-            quality_analysis = await self._analyze_data_quality_with_ai(schema_data)
+            try:
+                quality_analysis = await self._analyze_data_quality_with_ai(schema_data)
+            except Exception as e:
+                raise LLMServiceError(f"AI数据质量分析失败: {str(e)}", details={"user_id": self.user_id})
             
             # 结合传统规则分析
-            traditional_quality = await self._analyze_data_quality_traditional(table_schemas)
+            try:
+                traditional_quality = await self._analyze_data_quality_traditional(table_schemas)
+            except Exception as e:
+                raise DataAnalysisError(f"传统质量分析失败: {str(e)}", analysis_type="quality_traditional")
             
             # 合并分析结果
             merged_quality = self._merge_quality_analysis(quality_analysis, traditional_quality)
@@ -154,9 +189,11 @@ class SchemaAnalysisService:
                 "analysis": merged_quality
             }
             
+        except (NotFoundError, LLMServiceError, DataAnalysisError):
+            raise  # Re-raise known exceptions
         except Exception as e:
             self.logger.error(f"数据质量分析失败: {e}")
-            return {"success": False, "error": str(e)}
+            raise DataAnalysisError(f"数据质量分析失败: {str(e)}", analysis_type="quality")
     
     async def _prepare_schema_data_for_analysis(self, table_schemas: List[TableSchema]) -> Dict[str, Any]:
         """准备表结构数据供AI分析"""
@@ -168,10 +205,8 @@ class SchemaAnalysisService:
         }
         
         for table_schema in table_schemas:
-            # 获取表的列信息
-            columns = self.db_session.query(ColumnSchema).filter(
-                ColumnSchema.table_schema_id == table_schema.id
-            ).all()
+            # 使用预加载的列信息（优化：避免N+1查询）
+            columns = table_schema.columns
             
             table_info = {
                 "table_name": table_schema.table_name,
@@ -445,7 +480,7 @@ class SchemaAnalysisService:
         table_count = len(table_schemas)
         
         for table_schema in table_schemas:
-            table_quality = self._analyze_table_quality(table_schema)
+            table_quality = self._analyze_table_quality(table_schema, table_schema.columns)
             quality_result["table_quality"].append(table_quality)
             total_score += table_quality["score"]
         
@@ -455,12 +490,17 @@ class SchemaAnalysisService:
         
         return quality_result
     
-    def _analyze_table_quality(self, table_schema: TableSchema) -> Dict[str, Any]:
-        """分析单个表的数据质量"""
+    def _analyze_table_quality(self, table_schema: TableSchema, columns: List[ColumnSchema] = None) -> Dict[str, Any]:
+        """分析单个表的数据质量（优化：支持预加载的列信息）"""
         
-        columns = self.db_session.query(ColumnSchema).filter(
-            ColumnSchema.table_schema_id == table_schema.id
-        ).all()
+        if columns is None:
+            # 后备方案：如果没有预加载列信息，则查询
+            columns = self.db_session.query(ColumnSchema).filter(
+                ColumnSchema.table_schema_id == table_schema.id
+            ).all()
+        else:
+            # 使用预加载的列信息，避免额外查询
+            columns = columns
         
         # 计算质量分数
         score = 0.0
@@ -514,6 +554,95 @@ class SchemaAnalysisService:
             "best_practices": ai_quality.get("best_practices", []),
             "analysis_method": "hybrid_ai_traditional"
         }
+    
+    # Consolidated methods from legacy schema_service.py SchemaAnalysisService
+    
+    async def analyze_schema_relationships_legacy(self, schema_data: Dict[str, Any]) -> Dict[str, Any]:
+        """分析表关系（合并自原schema_service.py的功能）"""
+        relationships = {
+            'foreign_key_relationships': [],
+            'potential_relationships': [],
+            'orphaned_tables': [],
+            'relationship_graph': {}
+        }
+        
+        # 分析可能的关系（基于命名模式）
+        relationships['potential_relationships'] = self._find_potential_relationships_from_schema_data(schema_data)
+        
+        return relationships
+    
+    def _find_potential_relationships_from_schema_data(self, schema_data: Dict[str, Any]) -> List[Dict[str, str]]:
+        """基于命名模式找出潜在关系"""
+        potential = []
+        tables = schema_data.get("tables", [])
+        
+        for table in tables:
+            table_name = table.get("table_name", "")
+            columns = table.get("columns", [])
+            
+            for column in columns:
+                column_name = column.get("column_name", "")
+                
+                # 查找可能的外键模式（如user_id指向users表的id）
+                if column_name.endswith('_id'):
+                    base_name = column_name[:-3]
+                    
+                    # 尝试找到对应的表
+                    for target_table in tables:
+                        target_table_name = target_table.get("table_name", "")
+                        if (target_table_name.lower() == base_name.lower() or 
+                            target_table_name.lower() == base_name.lower() + 's'):
+                            
+                            potential.append({
+                                'from_table': table_name,
+                                'from_column': column_name,
+                                'to_table': target_table_name,
+                                'to_column': 'id',
+                                'confidence': 0.7
+                            })
+        
+        return potential
+    
+    async def suggest_schema_optimizations(self, schema_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """建议Schema优化（合并自原schema_service.py的功能）"""
+        suggestions = []
+        tables = schema_data.get("tables", [])
+        
+        for table in tables:
+            table_name = table.get("table_name", "")
+            columns = table.get("columns", [])
+            
+            # 检查是否缺少主键
+            has_primary_key = any(col.get("is_primary_key", False) for col in columns)
+            if not has_primary_key:
+                suggestions.append({
+                    'type': 'missing_primary_key',
+                    'table': table_name,
+                    'message': f'Table {table_name} lacks a primary key',
+                    'priority': 'high'
+                })
+            
+            # 检查大表是否缺少索引
+            if len(columns) > 10:
+                indexed_columns = sum(1 for col in columns if col.get("is_indexed", False))
+                if indexed_columns == 0:
+                    suggestions.append({
+                        'type': 'consider_indexing',
+                        'table': table_name,
+                        'message': f'Large table {table_name} might benefit from indexing',
+                        'priority': 'medium'
+                    })
+            
+            # 检查命名规范
+            if table_name and not table_name.islower():
+                suggestions.append({
+                    'type': 'naming_convention',
+                    'table': table_name,
+                    'message': f'Table name {table_name} should follow lowercase convention',
+                    'priority': 'low'
+                })
+        
+        return suggestions
 
 
 # 工厂函数

@@ -1,137 +1,233 @@
-# Multi-stage build optimized for DDD architecture and AI/ML workloads
+# ==========================================
+# AutoReportAI Backend Dockerfile
+# React Agent Architecture - 现代化多阶段构建
+# ==========================================
+
+# ==========================================
+# 基础Python镜像
+# ==========================================
 FROM python:3.11-slim AS base
 
-# Base environment variables
+# 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_NO_CACHE_DIR=on \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100
 
-# =============================================================================
-# Dependencies Builder Stage - 预编译 AI/ML 依赖
-# =============================================================================
-FROM base AS deps-builder
+# 安装系统依赖和中文字体支持
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    git \
+    postgresql-client \
+    # 图表和字体支持
+    fontconfig \
+    fonts-dejavu \
+    fonts-liberation \
+    fonts-noto-cjk \
+    fonts-wqy-zenhei \
+    fonts-wqy-microhei \
+    # matplotlib 依赖
+    libfreetype6-dev \
+    libpng-dev \
+    pkg-config \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install build dependencies
-RUN apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        gcc \
-        g++ \
-        libc6-dev \
-        libpq-dev \
-        libffi-dev \
-        libssl-dev \
-        pkg-config \
-        git && \
-    rm -rf /var/lib/apt/lists/*
+# 创建应用用户
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Copy requirements and pre-compile wheels
-COPY requirements.txt /tmp/
-# First install basic dependencies to ensure compatibility
-RUN pip install --upgrade pip setuptools wheel
-# Pre-compile all dependencies including their dependencies
-RUN pip wheel --no-cache-dir --wheel-dir /tmp/wheels \
-    -r /tmp/requirements.txt
-
-# =============================================================================
-# Runtime Stage - 优化的运行时镜像
-# =============================================================================
-FROM base AS runtime
-
-# Install only runtime dependencies
-RUN apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-        libpq5 \
-        curl \
-        wget \
-        dumb-init \
-        procps && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
-
-# AI/ML workload memory optimization
-ENV MALLOC_ARENA_MAX=2 \
-    MALLOC_MMAP_THRESHOLD_=131072 \
-    MALLOC_TRIM_THRESHOLD_=131072 \
-    MALLOC_MMAP_MAX_=65536
-
-# AI framework cache directories
-ENV LLAMAINDEX_CACHE_DIR=/app/cache/llamaindex \
-    TRANSFORMERS_CACHE=/app/cache/transformers \
-    HF_HOME=/app/cache/huggingface
-
-# Create app user and group
-RUN groupadd --gid 1001 app && \
-    useradd --uid 1001 --gid app --shell /bin/bash --create-home app
-
-# Set working directory
+# 设置工作目录
 WORKDIR /app
 
-# Install pre-compiled dependencies
-COPY --from=deps-builder /tmp/wheels /tmp/wheels
-COPY requirements.txt /tmp/
-RUN pip install --find-links /tmp/wheels -r /tmp/requirements.txt && \
-    rm -rf /tmp/wheels /tmp/requirements.txt
+# 创建内联字体初始化脚本
+RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "🚀 AutoReportAI 字体初始化"\n\
+echo "更新字体缓存..."\n\
+fc-cache -fv\n\
+echo "验证中文字体安装..."\n\
+CHINESE_FONTS=$(fc-list :lang=zh | wc -l)\n\
+echo "检测到 $CHINESE_FONTS 个中文字体"\n\
+if [ "$CHINESE_FONTS" -gt 0 ]; then\n\
+    echo "✅ 中文字体安装正常"\n\
+else\n\
+    echo "❌ 未检测到中文字体"\n\
+fi\n\
+mkdir -p /home/appuser/.cache/matplotlib\n\
+chown -R appuser:appuser /home/appuser/.cache 2>/dev/null || true\n\
+echo "✅ 字体初始化完成"\n\
+' > /tmp/init_fonts.sh && \
+chmod +x /tmp/init_fonts.sh && \
+/tmp/init_fonts.sh && \
+rm /tmp/init_fonts.sh
 
-# Create DDD architecture directories and cache dirs
-RUN mkdir -p /app/{logs,reports,uploads,storage} \
-    /app/cache/{llamaindex,transformers,huggingface} \
-    /app/app/{ai,application,data,domain,infrastructure} && \
-    chown -R app:app /app
+# ==========================================
+# 依赖安装阶段
+# ==========================================
+FROM base AS dependencies
 
-# Copy application code in DDD layer order for better caching
-COPY --chown=app:app app/core/ /app/app/core/
-COPY --chown=app:app app/models/ /app/app/models/
-COPY --chown=app:app app/schemas/ /app/app/schemas/
-COPY --chown=app:app app/crud/ /app/app/crud/
-COPY --chown=app:app app/db/ /app/app/db/
-COPY --chown=app:app app/services/infrastructure/ /app/app/services/infrastructure/
-COPY --chown=app:app app/services/domain/ /app/app/services/domain/
-COPY --chown=app:app app/services/data/ /app/app/services/data/
-COPY --chown=app:app app/services/application/ /app/app/services/application/
-COPY --chown=app:app app/services/agents/ /app/app/services/agents/
-COPY --chown=app:app app/services/llm/ /app/app/services/llm/
-COPY --chown=app:app app/services/cache/ /app/app/services/cache/
-COPY --chown=app:app app/api/ /app/app/api/
-COPY --chown=app:app app/websocket/ /app/app/websocket/
-COPY --chown=app:app app/config/ /app/app/config/
-COPY --chown=app:app app/__init__.py app/main.py /app/app/
+# 安装Python依赖
+COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy configuration and scripts
-COPY --chown=app:app config/ /app/config/
-COPY --chown=app:app scripts/ /app/scripts/
+FROM dependencies AS development
 
-# Copy additional files
-COPY --chown=app:app pytest.ini pyproject.toml /app/
+# 安装开发依赖
+RUN pip install --no-cache-dir \
+    watchdog \
+    debugpy \
+    ipython \
+    jupyter \
+    pytest \
+    pytest-asyncio \
+    pytest-cov \
+    black \
+    isort \
+    flake8 \
+    mypy
 
-# Copy entrypoint and healthcheck scripts
-COPY --chown=app:app entrypoint.sh /app/entrypoint.sh
-COPY --chown=app:app healthcheck.sh /app/healthcheck.sh
-COPY --chown=app:app healthcheck_worker.sh /app/healthcheck_worker.sh
+# 复制应用代码
+COPY --chown=appuser:appuser . .
 
-# Make scripts executable first (before bytecode compilation)
-RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh /app/healthcheck_worker.sh /app/scripts/startup_check.py
+# 创建React Agent架构必要目录
+RUN mkdir -p logs cache storage temp uploads && \
+    mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
+    mkdir -p storage/templates storage/reports storage/exports && \
+    chown -R appuser:appuser logs cache storage temp uploads
 
-# Pre-compile Python bytecode for faster startup (but keep startup_check.py)
-RUN python -m compileall -b /app/app/ /app/scripts/ && \
-    find /app/app -name "*.py" -delete && \
-    find /app/scripts -name "*.py" -not -name "startup_check.py" -delete && \
-    find /app/app /app/scripts -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+# 复制启动脚本
+COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/
+COPY --chown=appuser:appuser healthcheck.sh /usr/local/bin/
+COPY --chown=appuser:appuser healthcheck_worker.sh /usr/local/bin/
 
-# Switch to app user
-USER app
+# 设置脚本权限
+RUN chmod +x /usr/local/bin/entrypoint.sh && \
+    chmod +x /usr/local/bin/healthcheck.sh && \
+    chmod +x /usr/local/bin/healthcheck_worker.sh
 
-# Expose port
+# 切换到应用用户
+USER appuser
+
+# 暴露端口
 EXPOSE 8000
 
-# Enhanced health check for new architecture
-HEALTHCHECK --interval=30s --timeout=20s --start-period=60s --retries=3 \
-    CMD /app/healthcheck.sh
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD bash /usr/local/bin/healthcheck.sh
 
-# Set default entrypoint
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["/app/entrypoint.sh", "api"] 
+# 启动命令
+CMD ["/usr/local/bin/entrypoint.sh"]
+
+# ==========================================
+# Celery Worker构建 - React Agent支持
+# ==========================================
+FROM dependencies AS worker
+
+# 复制应用代码
+COPY --chown=appuser:appuser . .
+
+# 创建必要目录
+RUN mkdir -p logs cache storage temp uploads && \
+    mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
+    chown -R appuser:appuser logs cache storage temp uploads
+
+# 复制健康检查脚本
+COPY --chown=appuser:appuser healthcheck_worker.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/healthcheck_worker.sh
+
+# 切换到应用用户
+USER appuser
+
+# 健康检查
+HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
+    CMD bash /usr/local/bin/healthcheck_worker.sh
+
+# 启动Celery Worker with React Agent support
+CMD ["celery", "-A", "app.core.celery_scheduler", "worker", \
+     "--loglevel=info", \
+     "--concurrency=4", \
+     "--max-tasks-per-child=1000", \
+     "--without-gossip", \
+     "--without-mingle", \
+     "--without-heartbeat"]
+
+# ==========================================
+# Celery Beat构建
+# ==========================================
+FROM dependencies AS beat
+
+# 复制应用代码
+COPY --chown=appuser:appuser . .
+
+# 创建必要目录
+RUN mkdir -p logs cache storage temp uploads /tmp/celerybeat && \
+    chown -R appuser:appuser logs cache storage temp uploads /tmp/celerybeat
+
+# 切换到应用用户
+USER appuser
+
+# 启动Celery Beat
+CMD ["celery", "-A", "app.core.celery_scheduler", "beat", \
+     "--loglevel=info", \
+     "--pidfile=/tmp/celerybeat/celerybeat.pid", \
+     "--schedule=/tmp/celerybeat/celerybeat-schedule"]
+
+# ==========================================
+# 生产环境构建
+# ==========================================
+FROM dependencies AS production
+
+# 复制生产所需文件
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser scripts ./scripts
+COPY --chown=appuser:appuser pyproject.toml pytest.ini ./
+COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/
+COPY --chown=appuser:appuser healthcheck.sh /usr/local/bin/
+
+# 创建目录并设置权限
+RUN mkdir -p logs cache storage temp uploads && \
+    mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
+    mkdir -p storage/templates storage/reports storage/exports && \
+    chown -R appuser:appuser logs cache storage temp uploads
+
+# 设置脚本权限
+RUN chmod +x /usr/local/bin/entrypoint.sh && \
+    chmod +x /usr/local/bin/healthcheck.sh
+
+# 移除开发文件
+RUN rm -rf tests/ *.md .git/
+
+# 安装Gunicorn for production
+RUN pip install --no-cache-dir gunicorn
+
+# 切换到应用用户
+USER appuser
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD bash /usr/local/bin/healthcheck.sh
+
+# 生产启动命令
+CMD ["gunicorn", "app.main:app", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--workers", "4", \
+     "--bind", "0.0.0.0:8000", \
+     "--timeout", "120", \
+     "--keep-alive", "2", \
+     "--max-requests", "1000", \
+     "--max-requests-jitter", "100"]

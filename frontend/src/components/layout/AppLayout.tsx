@@ -54,3 +54,5 @@ export function AppLayout({ children }: AppLayoutProps) {
     </ErrorBoundary>
   )
 }
+
+export default AppLayout

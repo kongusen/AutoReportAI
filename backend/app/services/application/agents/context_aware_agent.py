@@ -368,8 +368,10 @@ class ContextAwareAgent:
                 from ...domain.placeholder import get_intelligent_placeholder_service
                 self._domain_services[service_type] = await get_intelligent_placeholder_service()
             elif service_type == 'template_processing':
-                from ...domain.template import get_agent_enhanced_template_service
-                self._domain_services[service_type] = await get_agent_enhanced_template_service()
+                # Agent-enhanced template service migrated to React Agent system
+                # Use the main template service which now includes React Agent integration
+                from ...domain.template.template_service import TemplateService
+                self._domain_services[service_type] = TemplateService(self.db_session)
             else:
                 raise ValueError(f"Unknown domain service type: {service_type}")
         
@@ -386,3 +388,11 @@ class ContextAwareAgent:
             'service_status': 'running',
             'last_updated': datetime.now().isoformat()
         }
+
+
+# 创建工厂函数
+async def get_context_aware_agent(user_id: str = None) -> ContextAwareAgent:
+    """创建上下文感知代理实例"""
+    if not user_id:
+        user_id = "system"
+    return ContextAwareAgent(user_id)

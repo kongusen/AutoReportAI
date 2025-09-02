@@ -295,7 +295,7 @@ def validate_new_architecture():
         from app.services.application.factories import create_intelligent_placeholder_workflow
         
         # 验证领域服务
-        from app.services.domain.template.intelligent_template_service import IntelligentTemplateService
+        from app.services.domain.template.template_service import TemplateService
         from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
         
         # 验证基础设施层

@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { User, LoginForm, RegisterForm, ApiResponse } from '@/types'
-import { api } from '@/lib/api'
+import { AuthService } from '@/services/apiService'
 import toast from 'react-hot-toast'
 
 interface AuthState {
@@ -18,6 +18,7 @@ interface AuthState {
   register: (userData: RegisterForm) => Promise<void>
   logout: () => void
   refreshToken: () => Promise<void>
+  fetchCurrentUser: () => Promise<User>
   updateUser: (userData: Partial<User>) => void
   updateProfile: (userData: User) => void
   
@@ -41,39 +42,30 @@ export const useAuthStore = create<AuthState>()(
         try {
           set({ isLoading: true })
           
-          // 准备表单数据
-          const formData = new FormData()
-          formData.append('username', credentials.username)
-          formData.append('password', credentials.password)
-
-          const response = await api.post('/auth/login', formData, {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
+          // 使用新的AuthService
+          const loginResponse = await AuthService.login({
+            username: credentials.username,
+            password: credentials.password
           })
-
-          // 处理后端API响应格式
-          const responseData = response.data || response
-          const { access_token, user } = responseData
           
           // 更新状态
           set({
-            user,
-            token: access_token,
+            user: loginResponse.user,
+            token: loginResponse.access_token,
             isAuthenticated: true,
             isLoading: false,
           })
 
-          // 存储到localStorage
-          localStorage.setItem('authToken', access_token)
-          localStorage.setItem('user', JSON.stringify(user))
+          // 存储到localStorage（AuthService已处理）
+          localStorage.setItem('authToken', loginResponse.access_token)
+          localStorage.setItem('user', JSON.stringify(loginResponse.user))
 
           toast.success('登录成功')
         } catch (error: any) {
           console.error('Login failed:', error)
           set({ isLoading: false })
           
-          // 错误消息已由API拦截器处理
+          // 错误处理已在AuthService中完成
           throw error
         }
       },
@@ -88,12 +80,12 @@ export const useAuthStore = create<AuthState>()(
           }
 
           const { confirmPassword, ...registerData } = userData
-          const response = await api.post('/auth/register', registerData)
+          
+          // 使用新的AuthService
+          const user = await AuthService.register(registerData)
 
           set({ isLoading: false })
-          // 处理后端API响应格式
-          const responseData = response.data || response
-          toast.success(responseData.message || response.message || '注册成功，请登录')
+          toast.success('注册成功，请登录')
         } catch (error: any) {
           console.error('Registration failed:', error)
           set({ isLoading: false })
@@ -102,10 +94,10 @@ export const useAuthStore = create<AuthState>()(
       },
 
       // 登出
-      logout: () => {
+      logout: async () => {
         try {
-          // 调用后端登出接口
-          api.post('/auth/logout').catch(console.error)
+          // 使用新的AuthService
+          await AuthService.logout()
         } catch (error) {
           console.error('Logout API call failed:', error)
         } finally {
@@ -128,15 +120,27 @@ export const useAuthStore = create<AuthState>()(
       // 刷新令牌
       refreshToken: async () => {
         try {
-          const response = await api.post('/auth/refresh')
-          const { access_token } = response.data
+          const refreshResponse = await AuthService.refreshToken()
 
-          set({ token: access_token })
-          localStorage.setItem('authToken', access_token)
+          set({ token: refreshResponse.access_token })
+          localStorage.setItem('authToken', refreshResponse.access_token)
         } catch (error) {
           console.error('Token refresh failed:', error)
           // 刷新失败，执行登出
-          get().logout()
+          await get().logout()
+          throw error
+        }
+      },
+
+      // 获取当前用户信息
+      fetchCurrentUser: async () => {
+        try {
+          const user = await AuthService.getCurrentUser()
+          set({ user })
+          localStorage.setItem('user', JSON.stringify(user))
+          return user
+        } catch (error) {
+          console.error('Failed to fetch current user:', error)
           throw error
         }
       },

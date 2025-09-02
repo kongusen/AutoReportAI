@@ -20,8 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import pandas as pd
 from sqlalchemy.orm import Session
 
-# 直接使用IAOP和LLM客户端
-from app.services.llm.client import LLMServerClient as LLMProviderManager, LLMRequest, LLMResponse
+# 使用React Agent系统和LLM智能选择器
+# from app.services.llm.client import LLMServerClient as LLMProviderManager, LLMRequest, LLMResponse
+# 使用新的LLM服务
+from app.services.infrastructure.ai.llm import select_best_model_for_user, ask_agent_for_user
 
 logger = logging.getLogger(__name__)
 

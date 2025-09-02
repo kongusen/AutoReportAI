@@ -380,14 +380,12 @@ async def test_llm_connection(
         
         # 实际测试连接
         try:
-            # REMOVED: IAOP import - integration.llm_service_adapter import get_iaop_llm_service, reset_iaop_llm_service
+            # 使用React Agent系统的LLM服务适配器
             from datetime import datetime
             
-            # 重置全局服务实例以使用新配置
-            reset_iaop_llm_service()
-            
-            # 获取LLM服务实例
-            llm_service = get_iaop_llm_service(db)
+            # 使用React Agent LLM选择器测试连接
+            from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
+            llm_service = IntelligentLLMSelector(db, current_user.id)
             
             # 执行健康检查
             health_result = await llm_service.health_check()

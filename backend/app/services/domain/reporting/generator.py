@@ -8,12 +8,11 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.core.logging_config import get_module_logger, get_performance_logger
-# 直接使用IAOP核心平台
-# REMOVED: IAOP import - integration.ai_service_adapter import IAOPAIService as EnhancedAIService
+# 使用React Agent系统
 from app.services.data.processing.retrieval import DataRetrievalService
 from .composer import ReportCompositionService
 from .document_pipeline import TemplateParser
-# from app.services.application.orchestration.service_coordinator import ServiceCoordinator  # 临时禁用避免IAOP依赖
+# ServiceCoordinator功能已整合到React Agent工作流编排中
 from .word_generator_service import WordGeneratorService
 
 # Get module-specific loggers
@@ -34,10 +33,10 @@ class ReportGenerationService:
     def __init__(self, db: Session):
         self.db = db
         self.template_parser = TemplateParser()
-        # self.service_coordinator = ServiceCoordinator(db)  # 临时禁用避免IAOP依赖
+        # 服务协调功能通过React Agent工作流编排实现
         self.composition_service = ReportCompositionService()
         self.word_generator = WordGeneratorService()
-        # self.ai_service = EnhancedAIService(db)  # 临时禁用避免IAOP依赖
+        # AI服务通过React Agent LLM选择器实现
         self.data_retrieval = DataRetrievalService()
 
     async def generate_report(
@@ -107,10 +106,41 @@ class ReportGenerationService:
                         "data_source_id": str(data_source_id),
                     }
                     
-                    # Execute using application-level coordinator/orchestrator as the unified entry
-                    # agent_result = await self.service_coordinator.cached_orchestrator.execute(placeholder_input, {})  # 临时禁用
-                    # result = agent_result.data if agent_result.success else f"[Error: {agent_result.error_message}]"  # 临时禁用
-                    result = f"[Placeholder processing temporarily disabled after IAOP cleanup: {placeholder_name}]"
+                    # 使用React Agent工作流编排处理占位符
+                    try:
+                        from app.services.infrastructure.ai.agents import create_react_agent
+                        
+                        # 为占位符创建用户上下文（如果可用）
+                        user_id = "system"  # 默认系统用户，实际使用时应传入真实用户ID
+                        
+                        agent = create_react_agent(user_id)
+                        await agent.initialize()
+                        
+                        placeholder_prompt = f"""
+                        处理报告模板中的占位符：
+                        
+                        占位符名称: {placeholder_name}
+                        占位符类型: {placeholder_type}
+                        描述: {placeholder_description}
+                        数据源ID: {data_source_id}
+                        
+                        请根据占位符的语义和类型，生成相应的内容或查询结果。
+                        如果是数据类型占位符，请生成合适的查询；
+                        如果是文本类型占位符，请生成相应的说明文本。
+                        """
+                        
+                        agent_result = await agent.chat(placeholder_prompt, context={
+                            "placeholder_name": placeholder_name,
+                            "placeholder_type": placeholder_type,
+                            "data_source_id": data_source_id,
+                            "task_type": "placeholder_processing"
+                        })
+                        
+                        result = agent_result if isinstance(agent_result, str) else str(agent_result)
+                        
+                    except Exception as e:
+                        logger.warning(f"React Agent处理占位符失败: {str(e)}")
+                        result = f"[占位符处理错误: {placeholder_name} - {str(e)}]"
 
                     # Format the placeholder key for replacement
                     if placeholder_type == "scalar":
@@ -236,17 +266,34 @@ class ReportGenerationService:
                 # Get AI interpretation if description is provided
                 if placeholder.get("description"):
                     try:
-                        # ai_params = self.ai_service.interpret_description_for_tool(  # 临时禁用避免IAOP依赖
-                        #     task_type=placeholder["type"],
-                        #     description=placeholder["description"],
-                        #     df_columns=(
-                        #         sample_data.columns.tolist()
-                        #         if not sample_data.empty
-                        #         else []
-                        #     ),
-                        # )
-                        # analysis["ai_interpretation"] = ai_params  # 临时禁用
-                        analysis["ai_interpretation"] = "AI interpretation temporarily disabled after IAOP cleanup"
+                        # 使用React Agent进行AI分析和解释
+                        from app.services.infrastructure.ai.agents import create_react_agent
+                        
+                        agent = create_react_agent("system")
+                        await agent.initialize()
+                        
+                        interpretation_prompt = f"""
+                        分析模板占位符并提供智能解释：
+                        
+                        占位符名称: {placeholder['name']}
+                        占位符类型: {placeholder['type']}
+                        描述: {placeholder['description']}
+                        可用列: {sample_data.columns.tolist() if not sample_data.empty else []}
+                        
+                        请提供：
+                        1. 占位符的业务含义解释
+                        2. 推荐的数据处理方式
+                        3. 可能的数据源字段映射
+                        4. 数据质量和准确性建议
+                        """
+                        
+                        interpretation = await agent.chat(interpretation_prompt, context={
+                            "placeholder": placeholder,
+                            "available_data": sample_data.columns.tolist() if not sample_data.empty else [],
+                            "task_type": "placeholder_interpretation"
+                        })
+                        
+                        analysis["ai_interpretation"] = interpretation
                     except Exception as e:
                         analysis["ai_interpretation"] = f"Error: {str(e)}"
 
@@ -358,16 +405,17 @@ class ReportGenerationService:
                         )
                         validation_result["valid"] = False
 
-            # Check AI service availability
+            # Check React Agent系统 availability
             try:
-                # ai_health = self.ai_service.health_check()  # 临时禁用避免IAOP依赖
-                # if ai_health["status"] != "healthy":
-                #     validation_result["warnings"].append(
-                #         f"AI service not healthy: {ai_health.get('message', 'Unknown issue')}"
-                #     )
-                validation_result["warnings"].append(
-                    "AI service temporarily disabled after IAOP cleanup"
-                )
+                # React Agent系统健康检查 - 简化版本，避免async调用
+                from app.services.infrastructure.ai.llm import get_pure_llm_manager
+                
+                llm_manager = get_pure_llm_manager()
+                # 简单检查manager是否可用
+                if hasattr(llm_manager, 'available_models') and llm_manager.available_models:
+                    logger.info("React Agent系统健康检查通过")
+                else:
+                    validation_result["warnings"].append("React Agent系统可用性待确认")
             except Exception as e:
                 validation_result["warnings"].append(
                     f"AI service check failed: {str(e)}"

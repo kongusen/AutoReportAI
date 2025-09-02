@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -35,6 +36,24 @@ export default function TemplatesPage() {
   const [selectedType, setSelectedType] = useState<string>('all')
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
+
+  // WebSocket集成用于实时更新
+  const { isConnected, messages } = useWebSocket({
+    autoConnect: true,
+    channels: ['templates', 'placeholders'],
+    onMessage: handleRealtimeUpdate
+  })
+
+  // 处理WebSocket实时消息
+  function handleRealtimeUpdate(message: any) {
+    if (message.type === 'template_created' || 
+        message.type === 'template_updated' ||
+        message.type === 'template_deleted' ||
+        message.type === 'placeholder_analysis_completed') {
+      // 实时刷新模板列表
+      fetchTemplates()
+    }
+  }
 
   useEffect(() => {
     fetchTemplates()

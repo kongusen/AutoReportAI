@@ -66,6 +66,9 @@ class CRUDTemplate:
     def create_with_user(self, db: Session, *, obj_in: TemplateCreate, user_id) -> Template:
         return self.create(db, obj_in=obj_in, user_id=user_id)
     
+    def create_with_owner(self, db: Session, *, obj_in: TemplateCreate, owner_id) -> Template:
+        return self.create(db, obj_in=obj_in, user_id=owner_id)
+    
     def get_user_template(self, db: Session, *, template_id: str, user_id) -> Template:
         """获取用户的特定模板"""
         return db.query(Template).filter(
@@ -124,6 +127,38 @@ class CRUDTemplate:
     def get_count_by_user(self, db: Session, user_id: UUID) -> int:
         """获取用户模板总数"""
         return db.query(Template).filter(Template.user_id == user_id).count()
+
+    def get_templates_with_pagination(
+        self, 
+        db: Session, 
+        user_id: UUID, 
+        skip: int = 0, 
+        limit: int = 100, 
+        search: Optional[str] = None
+    ) -> tuple[List[Template], int]:
+        """获取用户模板列表（带分页和搜索）"""
+        query = db.query(Template).filter(
+            Template.user_id == user_id,
+            Template.is_active == True
+        )
+        
+        if search:
+            query = query.filter(
+                Template.name.contains(search) | 
+                Template.description.contains(search)
+            )
+        
+        total = query.count()
+        templates = query.offset(skip).limit(limit).all()
+        return templates, total
+
+    def get_by_id_and_user(self, db: Session, *, id: str, user_id: UUID) -> Optional[Template]:
+        """根据ID和用户ID获取模板"""
+        return db.query(Template).filter(
+            Template.id == id,
+            Template.user_id == user_id,
+            Template.is_active == True
+        ).first()
 
 
 crud_template = CRUDTemplate()

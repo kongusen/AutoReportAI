@@ -29,6 +29,7 @@ const navigation = [
   { name: '模板', href: '/templates', icon: DocumentTextIcon },
   { name: '任务', href: '/tasks', icon: ClockIcon },
   { name: '报告', href: '/reports', icon: DocumentArrowDownIcon },
+  { name: '系统洞察', href: '/system-insights', icon: CpuChipIcon },
 ]
 
 

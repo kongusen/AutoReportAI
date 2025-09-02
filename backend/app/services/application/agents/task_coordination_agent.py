@@ -260,3 +260,11 @@ class TaskCoordinationAgent:
                 raise ValueError(f"Unknown infrastructure service type: {service_type}")
         
         return self._infrastructure_services[service_type]
+
+
+# 创建工厂函数
+async def get_task_coordination_agent(user_id: str = None) -> TaskCoordinationAgent:
+    """创建任务协调代理实例"""
+    if not user_id:
+        user_id = "system"
+    return TaskCoordinationAgent(user_id)

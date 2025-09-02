@@ -27,8 +27,8 @@ from app.schemas.llm_server import (
     LLMServerBatchOperation,
     LLMModelBatchOperation
 )
-from app.services.llm.model_health_service import get_model_health_service
-from app.websocket.manager import manager as websocket_manager
+from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
+from app.services.infrastructure.notification.notification_service import get_notification_service
 
 router = APIRouter()
 

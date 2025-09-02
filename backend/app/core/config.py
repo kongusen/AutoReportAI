@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     SENDER_EMAIL: str = os.getenv("SENDER_EMAIL", "noreply@autoreportai.com")
     SENDER_NAME: str = os.getenv("SENDER_NAME", "AutoReportAI")
 
-    # Legacy email settings for backward compatibility
+    # SMTP configuration - React Agent system
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.example.com")
     SMTP_USER: str = os.getenv("SMTP_USER", "user@example.com")
     EMAILS_FROM_EMAIL: str = os.getenv("EMAILS_FROM_EMAIL", "noreply@example.com")
@@ -151,42 +151,18 @@ class Settings(BaseSettings):
     CELERY_ENABLE_UTC: bool = True
     
     # ===========================================
-    # IAOP 核心平台配置
+    # React Agent 系统配置
     # ===========================================
     
-    # IAOP 基础配置
-    IAOP_PLATFORM_NAME: str = "IAOP Core Platform"
-    IAOP_VERSION: str = "2.0.0"
-    IAOP_MODE: str = os.getenv("IAOP_MODE", "integrated")  # standalone, integrated, development
-    IAOP_DEBUG: bool = os.getenv("IAOP_DEBUG", "false").lower() == "true"
+    # React Agent 基础配置
+    REACT_AGENT_ENABLED: bool = os.getenv("REACT_AGENT_ENABLED", "true").lower() == "true"
+    REACT_AGENT_MAX_ITERATIONS: int = int(os.getenv("REACT_AGENT_MAX_ITERATIONS", "15"))
+    REACT_AGENT_TIMEOUT: int = int(os.getenv("REACT_AGENT_TIMEOUT", "300"))
+    REACT_AGENT_VERBOSE: bool = os.getenv("REACT_AGENT_VERBOSE", "false").lower() == "true"
     
-    # IAOP 性能配置
-    IAOP_MAX_CONCURRENT_AGENTS: int = int(os.getenv("IAOP_MAX_CONCURRENT_AGENTS", "10"))
-    IAOP_AGENT_TIMEOUT: int = int(os.getenv("IAOP_AGENT_TIMEOUT", "60"))
-    IAOP_CACHE_TTL: int = int(os.getenv("IAOP_CACHE_TTL", "3600"))
-    IAOP_MAX_RETRIES: int = int(os.getenv("IAOP_MAX_RETRIES", "3"))
-    
-    # IAOP Agent 配置
-    IAOP_DEFAULT_AGENT_PRIORITY: str = os.getenv("IAOP_DEFAULT_AGENT_PRIORITY", "normal")  
-    IAOP_AGENT_REGISTRY_SIZE: int = int(os.getenv("IAOP_AGENT_REGISTRY_SIZE", "100"))
-    IAOP_ENABLE_AGENT_METRICS: bool = os.getenv("IAOP_ENABLE_AGENT_METRICS", "true").lower() == "true"
-    
-    # IAOP 上下文配置  
-    IAOP_CONTEXT_TTL: int = int(os.getenv("IAOP_CONTEXT_TTL", "1800"))  # 30分钟
-    IAOP_MAX_CONTEXT_SIZE: int = int(os.getenv("IAOP_MAX_CONTEXT_SIZE", "10485760"))  # 10MB
-    
-    # IAOP 编排配置
-    IAOP_MAX_ORCHESTRATION_DEPTH: int = int(os.getenv("IAOP_MAX_ORCHESTRATION_DEPTH", "5"))
-    IAOP_ENABLE_PARALLEL_EXECUTION: bool = os.getenv("IAOP_ENABLE_PARALLEL_EXECUTION", "true").lower() == "true"
-    
-    # IAOP 中间件配置
-    IAOP_ENABLE_MIDDLEWARE: bool = os.getenv("IAOP_ENABLE_MIDDLEWARE", "true").lower() == "true"
-    IAOP_MIDDLEWARE_TIMEOUT: int = int(os.getenv("IAOP_MIDDLEWARE_TIMEOUT", "30"))
-    
-    # IAOP API 配置
-    IAOP_API_VERSION: str = "v2"
-    IAOP_API_PREFIX: str = "/iaop/api"
-    IAOP_ENABLE_API_DOCS: bool = os.getenv("IAOP_ENABLE_API_DOCS", "true").lower() == "true"
+    # React Agent LlamaIndex配置
+    REACT_AGENT_CACHE_DIR: str = os.getenv("REACT_AGENT_CACHE_DIR", "cache/llamaindex")
+    REACT_AGENT_STORAGE_DIR: str = os.getenv("REACT_AGENT_STORAGE_DIR", "storage")
     
     # ===========================================
     # Celery 高级配置
@@ -252,7 +228,7 @@ class Settings(BaseSettings):
     API_RATE_LIMIT: str = os.getenv("API_RATE_LIMIT", "100/minute")
     
     # CORS配置
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000")
     CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
     CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
     CORS_ALLOW_METHODS: List[str] = os.getenv("CORS_ALLOW_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH").split(",")
@@ -269,7 +245,7 @@ class Settings(BaseSettings):
         
         # 默认允许的来源
         if not origins:
-            origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+            origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://0.0.0.0:3000"]
         
         return origins
     

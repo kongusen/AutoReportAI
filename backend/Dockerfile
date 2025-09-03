@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_DEFAULT_TIMEOUT=100
 
-# 安装系统依赖和中文字体支持
+# 安装系统依赖 - 分阶段安装以减少内存使用
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -29,18 +29,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     git \
     postgresql-client \
-    # 图表和字体支持
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装字体支持 - 单独安装以避免内存不足
+RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-dejavu \
     fonts-liberation \
-    fonts-noto-cjk \
-    fonts-wqy-zenhei \
-    fonts-wqy-microhei \
-    # matplotlib 依赖
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装matplotlib依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6-dev \
     libpng-dev \
     pkg-config \
-    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装轻量中文字体
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-wqy-microhei \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建应用用户

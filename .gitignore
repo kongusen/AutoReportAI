@@ -407,23 +407,3 @@ test_reports/
 test_templates/
 test_uploads/
 test_data/
-
-# ========================================
-# AutoReportAI Docker 目录精确屏蔽
-# ========================================
-# 完全屏蔽 autoreporait-docker/data/ 目录（包含PostgreSQL、Redis等数据文件）
-autoreporait-docker/data/
-autoreporait-docker/data/**/*
-
-# 屏蔽 autoreporait-docker 目录下的临时和系统文件
-autoreporait-docker/.DS_Store
-autoreporait-docker/.vscode/
-autoreporait-docker/*.log
-autoreporait-docker/*.tmp
-autoreporait-docker/*.temp
-
-# 保留 autoreporait-docker 目录下的重要配置文件
-!autoreporait-docker/docker-compose.yml
-!autoreporait-docker/build.sh
-!autoreporait-docker/start.sh
-!autoreporait-docker/.env.example

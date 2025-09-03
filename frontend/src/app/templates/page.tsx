@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useWebSocket } from '@/hooks/useWebSocket'
+import { useNotifications } from '@/hooks/useWebSocket'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -37,34 +37,37 @@ export default function TemplatesPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
 
-  // WebSocket集成用于实时更新
-  const { isConnected, messages, subscribe } = useWebSocket({
-    autoConnect: true,
-    onMessage: handleRealtimeUpdate
-  })
+  // WebSocket通知集成
+  const { notifications, isConnected, clearNotifications } = useNotifications()
 
-  // 处理WebSocket实时消息
-  function handleRealtimeUpdate(message: any) {
-    if (message.type === 'template_created' || 
-        message.type === 'template_updated' ||
-        message.type === 'template_deleted' ||
-        message.type === 'placeholder_analysis_completed') {
-      // 实时刷新模板列表
+  // 监听模板相关的实时通知
+  useEffect(() => {
+    const templateNotifications = notifications.filter(n => 
+      n.message?.includes('模板') || 
+      n.message?.includes('占位符') ||
+      n.title?.includes('模板分析')
+    )
+    
+    // 如果有模板相关通知，刷新列表
+    if (templateNotifications.length > 0) {
       fetchTemplates()
     }
-  }
+  }, [notifications, fetchTemplates])
 
   useEffect(() => {
     fetchTemplates()
   }, [fetchTemplates])
 
-  // 订阅WebSocket频道
+  // 定时清理已读通知
   useEffect(() => {
-    if (isConnected) {
-      subscribe('templates')
-      subscribe('placeholders')
-    }
-  }, [isConnected, subscribe])
+    const timer = setInterval(() => {
+      if (notifications.length > 10) {
+        clearNotifications()
+      }
+    }, 60000) // 每分钟清理一次
+
+    return () => clearInterval(timer)
+  }, [notifications.length, clearNotifications])
 
   // 过滤模板
   const filteredTemplates = (templates || []).filter(template => {
@@ -115,10 +118,22 @@ export default function TemplatesPage() {
         title="模板管理"
         description="创建和管理报告模板，支持Markdown语法和变量占位符"
         actions={
-          <Button onClick={() => router.push('/templates/create')}>
-            <PlusIcon className="w-4 h-4 mr-2" />
-            创建模板
-          </Button>
+          <div className="flex items-center gap-3">
+            {/* WebSocket连接和通知状态 */}
+            <div className="flex items-center text-sm text-gray-600">
+              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
+              <span>实时通知</span>
+              {notifications.length > 0 && (
+                <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                  {notifications.length} 条消息
+                </span>
+              )}
+            </div>
+            <Button onClick={() => router.push('/templates/create')}>
+              <PlusIcon className="w-4 h-4 mr-2" />
+              创建模板
+            </Button>
+          </div>
         }
       />
 

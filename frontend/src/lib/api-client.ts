@@ -679,10 +679,25 @@ export class AutoReportAPIClient {
   // ============================================================================
 
   async getSystemPerformance(integrationMode: string = 'intelligent'): Promise<any> {
-    return this.request<any>('GET', '/system-insights/context-system/performance', { 
-      params: { integration_mode: integrationMode },
+    return this.request<any>('GET', '/react-agent/system-performance', { 
+      params: { performance_type: integrationMode },
       cache: true,
       cacheTTL: 60000 
+    })
+  }
+
+  async getReactAgentStats(): Promise<any> {
+    return this.request<any>('GET', '/react-agent/agent-stats', { 
+      cache: true,
+      cacheTTL: 30000 
+    })
+  }
+
+  async getRecentActivities(limit: number = 10): Promise<any> {
+    return this.request<any>('GET', '/react-agent/recent-activities', { 
+      params: { limit },
+      cache: true,
+      cacheTTL: 30000 
     })
   }
 

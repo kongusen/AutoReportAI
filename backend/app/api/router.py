@@ -22,6 +22,10 @@ from app.api.endpoints import (
     chart_test,  # 图表测试
     system_insights,  # 统一上下文系统洞察
     user_llm_preferences,  # 用户LLM偏好管理
+    simple_model_selection,  # 简化模型选择
+    model_execution,  # 模型执行
+    react_agent_stats,  # React Agent统计
+    notifications,  # 通知系统
     # 基于React Agent系统的功能集成
 )
 
@@ -54,6 +58,10 @@ api_router.include_router(system_insights.router, prefix="/v1/system-insights", 
 api_router.include_router(celery_monitor.router, prefix="/v1/celery", tags=["Celery监控"])  # 重新启用
 api_router.include_router(llm_monitor.router, prefix="/v1/llm", tags=["LLM监控"])
 api_router.include_router(user_llm_preferences.router, prefix="/v1/user-llm-preferences", tags=["用户LLM偏好"])
+api_router.include_router(simple_model_selection.router, prefix="/v1/simple-model-selection", tags=["简化模型选择"])
+api_router.include_router(model_execution.router, prefix="/v1/model-execution", tags=["模型执行"])
+api_router.include_router(react_agent_stats.router, prefix="/v1/react-agent", tags=["React Agent统计"])
+api_router.include_router(notifications.router, prefix="/v1/notifications", tags=["通知系统"])
 
 # React Agent系统集成的智能功能
 # - 模板分析通过 /v1/templates/{id}/analyze 端点

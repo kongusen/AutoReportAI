@@ -166,12 +166,12 @@ class LLMModelHealthResponse(BaseModel):
     """模型健康检查响应"""
     model_id: int
     model_name: str
+    server_id: int
     is_healthy: bool
-    response_time_ms: float
-    test_message: str
-    response_content: Optional[str] = None
+    response_time: float
     error_message: Optional[str] = None
-    last_check: datetime
+    test_response: Optional[str] = None
+    checked_at: str
 
 
 class LLMServerHealthResponse(BaseModel):
@@ -179,8 +179,11 @@ class LLMServerHealthResponse(BaseModel):
     server_id: int
     server_name: str
     is_healthy: bool
-    healthy_models: int
+    response_time: float
     total_models: int
-    response_time_ms: float
-    last_check: datetime
-    models: List[LLMModelHealthResponse] = Field(default_factory=list)
+    healthy_models: int
+    health_rate: float
+    average_model_response_time: float
+    model_results: List[LLMModelHealthResponse] = Field(default_factory=list)
+    checked_at: str
+    error_message: Optional[str] = None

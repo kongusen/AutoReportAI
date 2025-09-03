@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useWebSocket } from '@/hooks/useWebSocket'
+import { useNotifications } from '@/hooks/useWebSocket'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -33,34 +33,37 @@ export default function DataSourcesPage() {
   const [selectedDataSource, setSelectedDataSource] = useState<DataSource | null>(null)
   const [testingConnections, setTestingConnections] = useState<Set<string>>(new Set())
 
-  // WebSocket集成用于实时更新
-  const { isConnected, messages, subscribe } = useWebSocket({
-    autoConnect: true,
-    onMessage: handleRealtimeUpdate
-  })
+  // WebSocket通知集成
+  const { notifications, isConnected, clearNotifications } = useNotifications()
 
-  // 处理WebSocket实时消息
-  function handleRealtimeUpdate(message: any) {
-    if (message.type === 'data_source_created' || 
-        message.type === 'data_source_updated' ||
-        message.type === 'data_source_deleted' ||
-        message.type === 'data_source_test_completed') {
-      // 实时刷新数据源列表
+  // 监听数据源相关的实时通知
+  useEffect(() => {
+    const dataSourceNotifications = notifications.filter(n => 
+      n.message?.includes('数据源') || 
+      n.message?.includes('连接测试') ||
+      n.title?.includes('数据源')
+    )
+    
+    // 如果有数据源相关通知，刷新列表
+    if (dataSourceNotifications.length > 0) {
       fetchDataSources()
     }
-  }
+  }, [notifications, fetchDataSources])
 
   useEffect(() => {
     fetchDataSources()
   }, [fetchDataSources])
 
-  // 订阅WebSocket频道
+  // 定时清理已读通知
   useEffect(() => {
-    if (isConnected) {
-      subscribe('data_sources')
-      subscribe('system')
-    }
-  }, [isConnected, subscribe])
+    const timer = setInterval(() => {
+      if (notifications.length > 10) {
+        clearNotifications()
+      }
+    }, 60000) // 每分钟清理一次
+
+    return () => clearInterval(timer)
+  }, [notifications.length, clearNotifications])
 
   // 过滤数据源
   const filteredDataSources = dataSources.filter(ds => {
@@ -113,10 +116,22 @@ export default function DataSourcesPage() {
         title="数据源管理"
         description="管理您的数据源连接，支持SQL数据库、Doris、API接口等多种数据源类型"
         actions={
-          <Button onClick={() => router.push('/data-sources/create')}>
-            <PlusIcon className="w-4 h-4 mr-2" />
-            添加数据源
-          </Button>
+          <div className="flex items-center gap-3">
+            {/* WebSocket连接和通知状态 */}
+            <div className="flex items-center text-sm text-gray-600">
+              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-gray-400'}`} />
+              <span>连接监控</span>
+              {notifications.length > 0 && (
+                <span className="ml-2 px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full">
+                  {notifications.length} 条警报
+                </span>
+              )}
+            </div>
+            <Button onClick={() => router.push('/data-sources/create')}>
+              <PlusIcon className="w-4 h-4 mr-2" />
+              添加数据源
+            </Button>
+          </div>
         }
       />
 

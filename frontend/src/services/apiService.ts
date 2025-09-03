@@ -565,6 +565,13 @@ class LLMService {
   static async getHealthCheck(): Promise<any> {
     return apiClient.request('GET', '/llm-monitor/health')
   }
+
+  /**
+   * 获取服务器的模型列表
+   */
+  static async getServerModels(serverId: string): Promise<any[]> {
+    return apiClient.request('GET', `/llm-servers/${serverId}/models`, { cache: true })
+  }
 }
 
 // ============================================================================
@@ -833,6 +840,139 @@ class WebSocketService {
 }
 
 // ============================================================================
+// 通知服务
+// ============================================================================
+
+export interface NotificationListResponse {
+  notifications: Notification[]
+  total: number
+  unread_count: number
+  page: number
+  size: number
+  has_more: boolean
+}
+
+export interface NotificationStatsResponse {
+  total_notifications: number
+  unread_count: number
+  today_count: number
+  this_week_count: number
+  by_type: Record<string, number>
+  by_status: Record<string, number>
+}
+
+export interface NotificationPreference {
+  user_id: string
+  enable_websocket: boolean
+  enable_email: boolean
+  enable_browser: boolean
+  enable_sound: boolean
+  enable_task_notifications: boolean
+  enable_report_notifications: boolean
+  enable_system_notifications: boolean
+  enable_error_notifications: boolean
+  quiet_hours_start?: string
+  quiet_hours_end?: string
+  max_notifications_per_day: number
+  updated_at?: string
+}
+
+class NotificationService {
+  /**
+   * 获取通知列表
+   */
+  static async getNotifications(params?: {
+    skip?: number
+    limit?: number
+    status?: string
+    type?: string
+    include_read?: boolean
+  }): Promise<NotificationListResponse> {
+    const searchParams = new URLSearchParams()
+    if (params?.skip !== undefined) searchParams.set('skip', params.skip.toString())
+    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString())
+    if (params?.status) searchParams.set('status', params.status)
+    if (params?.type) searchParams.set('type', params.type)
+    if (params?.include_read !== undefined) searchParams.set('include_read', params.include_read.toString())
+    
+    const url = `/v1/notifications/${searchParams.toString() ? '?' + searchParams.toString() : ''}`
+    return apiClient.get<NotificationListResponse>(url)
+  }
+
+  /**
+   * 获取通知统计
+   */
+  static async getStats(): Promise<NotificationStatsResponse> {
+    return apiClient.get<NotificationStatsResponse>('/v1/notifications/stats')
+  }
+
+  /**
+   * 获取未读通知数量
+   */
+  static async getUnreadCount(): Promise<{ unread_count: number }> {
+    return apiClient.get<{ unread_count: number }>('/v1/notifications/unread-count')
+  }
+
+  /**
+   * 获取单个通知详情
+   */
+  static async getNotification(id: string): Promise<Notification> {
+    return apiClient.get<Notification>(`/v1/notifications/${id}`)
+  }
+
+  /**
+   * 标记通知为已读
+   */
+  static async markAsRead(id: string): Promise<Notification> {
+    return apiClient.patch<Notification>(`/v1/notifications/${id}/read`, {})
+  }
+
+  /**
+   * 忽略通知
+   */
+  static async dismissNotification(id: string): Promise<Notification> {
+    return apiClient.patch<Notification>(`/v1/notifications/${id}/dismiss`, {})
+  }
+
+  /**
+   * 标记所有通知为已读
+   */
+  static async markAllAsRead(): Promise<{ updated_count: number }> {
+    return apiClient.patch<{ updated_count: number }>('/v1/notifications/mark-all-read', {})
+  }
+
+  /**
+   * 删除通知
+   */
+  static async deleteNotification(id: string): Promise<{ message: string }> {
+    return apiClient.delete<{ message: string }>(`/v1/notifications/${id}`)
+  }
+
+  /**
+   * 获取通知偏好设置
+   */
+  static async getPreferences(): Promise<NotificationPreference> {
+    return apiClient.get<NotificationPreference>('/v1/notifications/preferences/')
+  }
+
+  /**
+   * 更新通知偏好设置
+   */
+  static async updatePreferences(preferences: Partial<NotificationPreference>): Promise<NotificationPreference> {
+    return apiClient.patch<NotificationPreference>('/v1/notifications/preferences/', preferences)
+  }
+
+  /**
+   * 发送测试通知
+   */
+  static async sendTestNotification(message?: string): Promise<{ message: string; notification_id: number }> {
+    const params = new URLSearchParams()
+    if (message) params.set('message', message)
+    return apiClient.post<{ message: string; notification_id: number }>(`/v1/notifications/test?${params.toString()}`, {})
+  }
+}
+
+// ============================================================================
 // 导出所有服务
 // ============================================================================
 
@@ -849,5 +989,6 @@ export {
   ETLService,
   ChartTestService,
   SettingsService,
-  WebSocketService
+  WebSocketService,
+  NotificationService
 }

@@ -116,7 +116,7 @@ class AIExecutionEngine:
             # 创建AI任务上下文
             from .task_context import create_ai_task_context_from_placeholder_analysis
             
-            # 模拟从context_engine提取上下文分析（实际应该从业务层获得）
+            # 从context_engine提取上下文分析
             context_analysis = context_engine.get('context_analysis', {})
             
             task_context = create_ai_task_context_from_placeholder_analysis(
@@ -380,9 +380,10 @@ class AIExecutionEngine:
             model_name = "default"
         
         if not model:
-            # 如果模型未注册，返回模拟结果
-            logger.warning(f"模型 {model_name} 未注册，使用模拟结果")
-            return await self._generate_mock_result(step, input_data)
+            # 如果模型未注册，抛出错误
+            error_msg = f"模型 {model_name} 未注册，无法执行步骤"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         
         # 构造模型输入
         model_input = await self._build_model_input(step, input_data, control_context)
@@ -395,16 +396,6 @@ class AIExecutionEngine:
         
         return model_result
     
-    async def _generate_mock_result(self, step: ExecutionStep, input_data: Dict[str, Any]) -> Any:
-        """生成模拟结果（当模型未注册时使用）"""
-        if step.step_type == ExecutionStepType.SQL_GENERATION:
-            return "SELECT COUNT(*) as result FROM table WHERE condition = 'value'"
-        elif step.step_type == ExecutionStepType.DATA_QUERY:
-            return {"result": 100, "rows": 1}
-        elif step.step_type == ExecutionStepType.FORMATTING:
-            return "100"
-        else:
-            return f"模拟结果：步骤 {step.step_id} 已执行"
     
     async def _build_model_input(
         self,
@@ -495,7 +486,7 @@ class AIExecutionEngine:
                 return str(model(model_input))
         except Exception as e:
             logger.error(f"模型调用失败: {e}")
-            return await self._generate_mock_result(step, {"error": str(e)})
+            raise
     
     async def _execute_with_tools(
         self,
@@ -695,9 +686,21 @@ class AIExecutionEngine:
                 sql_query = result_data
                 quality_score = 0.8
         
-        # 模拟存储SQL（实际应该调用存储服务）
-        storage_success = bool(sql_query.strip())
-        storage_id = f"sql_{task_context.task_id}_{int(time.time())}" if storage_success else None
+        # 调用实际存储服务
+        try:
+            from app.services.infrastructure.storage.sql_storage_service import sql_storage_service
+            storage_result = await sql_storage_service.store_sql(
+                task_id=task_context.task_id,
+                sql_query=sql_query,
+                quality_score=quality_score,
+                user_id=task_context.user_id
+            )
+            storage_success = storage_result.get('success', False)
+            storage_id = storage_result.get('storage_id')
+        except Exception as e:
+            logger.error(f"SQL存储失败: {e}")
+            storage_success = False
+            storage_id = None
         
         logger.info(f"SQL生成模式输出: SQL长度={len(sql_query)}, 质量分数={quality_score}")
         
@@ -771,14 +774,16 @@ class AIExecutionEngine:
     ) -> Dict[str, Any]:
         """生成SQL验证输出（时效性检查模式）"""
         
-        # 模拟验证结果
-        validation_result = {
-            "is_current": True,
-            "needs_update": False,
-            "confidence": 0.8,
-            "reason": "Infrastructure层模拟验证通过",
-            "suggested_updates": []
-        }
+        # 调用实际验证服务
+        try:
+            from app.services.infrastructure.validation.sql_validation_service import sql_validation_service
+            validation_result = await sql_validation_service.validate_sql(
+                task_id=task_context.task_id,
+                user_id=task_context.user_id
+            )
+        except Exception as e:
+            logger.error(f"SQL验证失败: {e}")
+            raise ValueError(f"SQL验证服务不可用: {str(e)}")
         
         logger.info(f"SQL验证模式输出: 任务={task_context.task_id}, 验证通过={validation_result['is_current']}")
         
@@ -800,13 +805,20 @@ class AIExecutionEngine:
     ) -> Dict[str, Any]:
         """生成ETL图表输出（报告系统模式）"""
         
-        # 模拟ETL图表配置
-        chart_config = {
-            "title": {"text": "ETL数据图表"},
-            "xAxis": {"type": "category", "data": ["A", "B", "C"]},
-            "yAxis": {"type": "value"},
-            "series": [{"data": [10, 20, 30], "type": "bar"}]
-        }
+        # 调用实际ETL图表服务
+        try:
+            from app.services.domain.reporting.chart_integration_service import chart_integration_service
+            chart_result = await chart_integration_service.generate_etl_chart(
+                task_id=task_context.task_id,
+                user_id=task_context.user_id,
+                dag_result=dag_result
+            )
+            chart_config = chart_result.get('chart_config')
+            if not chart_config:
+                raise ValueError("ETL图表生成失败")
+        except Exception as e:
+            logger.error(f"ETL图表生成失败: {e}")
+            raise ValueError(f"ETL图表服务不可用: {str(e)}")
         
         logger.info(f"ETL图表模式输出: 任务={task_context.task_id}, 图表配置已生成")
         

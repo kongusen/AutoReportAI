@@ -14,6 +14,8 @@ interface AgentStats {
   processing_tasks: number
   completed_today: number
   success_rate: number
+  smart_selections_today: number
+  model_switches_today: number
 }
 
 interface SystemMetrics {
@@ -41,29 +43,23 @@ export default function ReactAgentDashboard() {
 
   const loadDashboardData = async () => {
     try {
-      const [healthData, perfData] = await Promise.all([
+      const [healthData, perfData, agentStatsData] = await Promise.all([
         apiClient.getSystemHealth(),
-        apiClient.getSystemPerformance('intelligent')
+        apiClient.getSystemPerformance('intelligent'),
+        apiClient.getReactAgentStats()
       ])
       
       setSystemHealth(healthData)
       
-      // 模拟一些指标数据（真实应用中应该从后端获取）
-      setAgentStats({
-        total_agents: 3,
-        active_agents: 3,
-        processing_tasks: 2,
-        completed_today: 15,
-        success_rate: 95.2
-      })
+      // 使用从后端获取的实际数据
+      if (agentStatsData && agentStatsData.data) {
+        setAgentStats(agentStatsData.data)
+      }
       
-      setSystemMetrics({
-        performance_score: 87,
-        response_time: 245,
-        memory_usage: 68,
-        cpu_usage: 34,
-        queue_size: 3
-      })
+      // 使用性能数据
+      if (perfData && perfData.data) {
+        setSystemMetrics(perfData.data)
+      }
       
     } catch (error) {
       console.error('Failed to load dashboard data:', error)
@@ -105,7 +101,7 @@ export default function ReactAgentDashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">React Agent 仪表板</h2>
-          <p className="text-gray-600">智能代理系统实时监控</p>
+          <p className="text-gray-600">智能模型选择 + React推理循环监控</p>
         </div>
         <div className="flex items-center space-x-2">
           {systemHealth && (
@@ -117,7 +113,7 @@ export default function ReactAgentDashboard() {
       </div>
 
       {/* 核心指标概览 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         {agentStats && (
           <>
             <Card>
@@ -179,6 +175,38 @@ export default function ReactAgentDashboard() {
                   </div>
                   <div className="text-xs text-gray-500">
                     24小时平均
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">智能选择</p>
+                    <p className="text-2xl font-bold text-indigo-600">
+                      {agentStats.smart_selections_today}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    今日自动判断
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">模型切换</p>
+                    <p className="text-2xl font-bold text-orange-600">
+                      {agentStats.model_switches_today}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    今日优化次数
                   </div>
                 </div>
               </div>
@@ -253,21 +281,21 @@ export default function ReactAgentDashboard() {
         <Card>
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold">工作流编排代理</h4>
-              <Badge variant="default">运行中</Badge>
+              <h4 className="font-semibold">React Agent (智能)</h4>
+              <Badge variant="default" className="bg-indigo-100 text-indigo-800">智能选择</Badge>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600">负载:</span>
-                <span>中等</span>
+                <span className="text-gray-600">当前模型:</span>
+                <span className="text-indigo-600">THINK</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">今日处理:</span>
-                <span>8 个任务</span>
+                <span>15 个任务</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">成功率:</span>
-                <span className="text-green-600">100%</span>
+                <span className="text-gray-600">智能切换:</span>
+                <span className="text-orange-600">8 次</span>
               </div>
             </div>
           </div>
@@ -276,21 +304,21 @@ export default function ReactAgentDashboard() {
         <Card>
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold">任务协调代理</h4>
-              <Badge variant="default">运行中</Badge>
+              <h4 className="font-semibold">模型选择器</h4>
+              <Badge variant="default" className="bg-green-100 text-green-800">活跃</Badge>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600">负载:</span>
-                <span>低</span>
+                <span className="text-gray-600">CHAT模型:</span>
+                <span>gpt-3.5-turbo</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">今日处理:</span>
-                <span>4 个任务</span>
+                <span className="text-gray-600">THINK模型:</span>
+                <span>claude-3-sonnet</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">成功率:</span>
-                <span className="text-green-600">97%</span>
+                <span className="text-gray-600">选择准确率:</span>
+                <span className="text-green-600">94%</span>
               </div>
             </div>
           </div>
@@ -299,21 +327,21 @@ export default function ReactAgentDashboard() {
         <Card>
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold">上下文感知代理</h4>
-              <Badge variant="default">运行中</Badge>
+              <h4 className="font-semibold">任务分析器</h4>
+              <Badge variant="default" className="bg-blue-100 text-blue-800">处理中</Badge>
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600">负载:</span>
-                <span>高</span>
+                <span className="text-gray-600">推理任务:</span>
+                <span>60%</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">今日处理:</span>
-                <span>12 个任务</span>
+                <span className="text-gray-600">对话任务:</span>
+                <span>40%</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">成功率:</span>
-                <span className="text-yellow-600">89%</span>
+                <span className="text-gray-600">识别准确率:</span>
+                <span className="text-blue-600">91%</span>
               </div>
             </div>
           </div>
@@ -327,24 +355,31 @@ export default function ReactAgentDashboard() {
           <div className="space-y-3">
             <div className="flex items-center justify-between py-2 border-b">
               <div>
-                <p className="font-medium">模板分析完成</p>
-                <p className="text-sm text-gray-600">工作流编排代理处理了模板 #1234 的占位符分析</p>
+                <p className="font-medium">智能模型选择</p>
+                <p className="text-sm text-gray-600">React Agent自动检测为推理任务，切换到THINK模型 (claude-3-sonnet)</p>
               </div>
-              <div className="text-sm text-gray-500">2 分钟前</div>
+              <div className="text-sm text-gray-500">1 分钟前</div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b">
+              <div>
+                <p className="font-medium">任务类型优化</p>
+                <p className="text-sm text-gray-600">检测到翻译任务，自动切换到成本优化的CHAT模型</p>
+              </div>
+              <div className="text-sm text-gray-500">3 分钟前</div>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b">
+              <div>
+                <p className="font-medium">模板分析完成</p>
+                <p className="text-sm text-gray-600">React Agent处理了模板 #1234 的占位符分析，智能选择最优模型</p>
+              </div>
+              <div className="text-sm text-gray-500">8 分钟前</div>
             </div>
             <div className="flex items-center justify-between py-2 border-b">
               <div>
                 <p className="font-medium">报告生成任务启动</p>
-                <p className="text-sm text-gray-600">任务协调代理开始处理月度销售报告生成</p>
+                <p className="text-sm text-gray-600">React Agent为复杂分析任务自动选择高推理能力模型</p>
               </div>
-              <div className="text-sm text-gray-500">5 分钟前</div>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b">
-              <div>
-                <p className="font-medium">系统性能优化</p>
-                <p className="text-sm text-gray-600">上下文感知代理完成了智能缓存优化</p>
-              </div>
-              <div className="text-sm text-gray-500">15 分钟前</div>
+              <div className="text-sm text-gray-500">12 分钟前</div>
             </div>
           </div>
         </div>

@@ -45,27 +45,8 @@ def send_notification(self, notification_type: str, recipients: List[str], conte
             }
             
         except ImportError:
-            logger.warning("NotificationService not available, using mock notification")
-            
-            # 模拟通知发送
-            delivery_results = []
-            for recipient in recipients:
-                delivery_results.append({
-                    'recipient': recipient,
-                    'status': 'delivered',
-                    'delivery_method': _determine_delivery_method(notification_type),
-                    'sent_at': datetime.now().isoformat()
-                })
-            
-            return {
-                'success': True,
-                'notification_type': notification_type,
-                'recipients_count': len(recipients),
-                'delivery_results': delivery_results,
-                'sent_at': datetime.now().isoformat(),
-                'task_id': self.request.id,
-                'note': 'Using mock notification service'
-            }
+            logger.error("NotificationService not available")
+            raise ImportError("通知服务不可用，无法发送通知")
             
     except Exception as e:
         logger.error(f"通知发送失败: {e}")
@@ -103,22 +84,8 @@ def cleanup_expired_cache(self) -> Dict[str, Any]:
             }
             
         except ImportError:
-            logger.warning("Unified cache system not available, using mock cleanup")
-            
-            # 模拟缓存清理
-            mock_cleanup_result = {
-                'expired_keys_removed': 15,
-                'memory_freed_mb': 2.5,
-                'cleanup_duration_ms': 150
-            }
-            
-            return {
-                'success': True,
-                'cleanup_result': mock_cleanup_result,
-                'cleaned_at': datetime.now().isoformat(),
-                'task_id': self.request.id,
-                'note': 'Using mock cache cleanup'
-            }
+            logger.error("Unified cache system not available")
+            raise ImportError("缓存系统不可用，无法执行清理")
             
     except Exception as e:
         logger.error(f"缓存清理失败: {e}")

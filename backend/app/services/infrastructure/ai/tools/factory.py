@@ -30,46 +30,6 @@ class ToolCreationError(Exception):
     pass
 
 
-class MockTool:
-    """模拟工具类（当实际工具不可用时使用）"""
-    def __init__(self, name: str, description: str, func: Callable = None):
-        self.name = name
-        self.description = description
-        self.func = func or self._default_mock_func
-        
-        # 模拟LlamaIndex FunctionTool的接口
-        class MockMetadata:
-            def __init__(self, name: str, description: str):
-                self.name = name
-                self.description = description
-        
-        self.metadata = MockMetadata(name, description)
-    
-    def _default_mock_func(self, *args, **kwargs):
-        """默认模拟函数"""
-        return f"模拟工具 {self.name} 执行结果: 参数 {args} {kwargs}"
-    
-    async def acall(self, *args, **kwargs):
-        """异步调用"""
-        if self.func:
-            try:
-                import asyncio
-                if asyncio.iscoroutinefunction(self.func):
-                    return await self.func(*args, **kwargs)
-                else:
-                    return self.func(*args, **kwargs)
-            except ImportError:
-                return self.func(*args, **kwargs)
-        return self._default_mock_func(*args, **kwargs)
-    
-    def call(self, *args, **kwargs):
-        """同步调用"""
-        if self.func:
-            return self.func(*args, **kwargs)
-        return self._default_mock_func(*args, **kwargs)
-    
-    def __call__(self, *args, **kwargs):
-        return self.call(*args, **kwargs)
 
 
 def create_standard_tool(
@@ -174,7 +134,8 @@ class AIToolsFactory:
             from llama_index.core.tools import FunctionTool
             return True
         except ImportError:
-            logger.warning("LlamaIndex不可用，将使用模拟工具")
+            logger.error("LlamaIndex不可用，无法创建工具")
+            raise ImportError("LlamaIndex依赖不可用，无法创建工具")
             return False
     
     def _register_builtin_builders(self):
@@ -229,7 +190,7 @@ class AIToolsFactory:
                     **kwargs
                 )
             else:
-                tool = MockTool(name=name, description=description, func=func)
+                raise ToolCreationError(f"无法创建工具 {name}: LlamaIndex不可用")
             
             # 创建元数据
             metadata = ToolMetadata(
@@ -336,14 +297,8 @@ class AIToolsFactory:
         )
         def parse_placeholder(placeholder_text: str, context: Dict = None) -> Dict[str, Any]:
             """解析占位符"""
-            # 模拟解析逻辑
-            return {
-                "original_text": placeholder_text,
-                "parsed_type": "count",
-                "parameters": {"entity": "users", "filters": []},
-                "confidence": 0.8,
-                "context_used": bool(context)
-            }
+            from app.services.domain.placeholder.placeholder_parser import parse_placeholder_text
+            return parse_placeholder_text(placeholder_text, context)
         
         return self.create_tool_from_function(
             func=parse_placeholder,
@@ -363,12 +318,8 @@ class AIToolsFactory:
         )
         def analyze_context(context_data: Dict[str, Any], requirements: Dict = None) -> Dict[str, Any]:
             """分析上下文"""
-            return {
-                "enhanced_context": context_data,
-                "insights": ["insight1", "insight2"],
-                "confidence_improvement": 0.2,
-                "analysis_complete": True
-            }
+            from app.services.infrastructure.ai.context.context_analyzer_service import context_analyzer_service
+            return context_analyzer_service.analyze_context(context_data, requirements)
         
         return self.create_tool_from_function(
             func=analyze_context,
@@ -386,18 +337,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.HIGH,
             tags=["sql", "generation", "database"]
         )
-        def generate_sql(requirements: Dict[str, Any], schema_info: Dict = None) -> str:
+        async def generate_sql(requirements: Dict[str, Any], schema_info: Dict = None) -> Dict[str, Any]:
             """生成SQL"""
-            # 模拟SQL生成
-            entity = requirements.get("entity", "table")
-            operation = requirements.get("operation", "COUNT")
-            
-            sql = f"SELECT {operation}(*) as result FROM {entity}"
-            
-            if requirements.get("filters"):
-                sql += " WHERE " + " AND ".join(requirements["filters"])
-            
-            return sql
+            from app.services.infrastructure.ai.sql.sql_generator_service import sql_generator_service
+            return await sql_generator_service.generate_query(requirements, schema_info)
         
         return self.create_tool_from_function(
             func=generate_sql,
@@ -417,14 +360,8 @@ class AIToolsFactory:
         )
         def execute_data_query(sql_query: str, connection_params: Dict = None) -> Dict[str, Any]:
             """执行数据查询"""
-            # 模拟数据执行
-            return {
-                "result": 1000,
-                "rows": 1,
-                "execution_time": 0.05,
-                "query_executed": sql_query,
-                "status": "success"
-            }
+            from app.services.data.query.query_executor_service import query_executor_service
+            return query_executor_service.execute_query(sql_query, connection_params)
         
         return self.create_tool_from_function(
             func=execute_data_query,
@@ -444,19 +381,8 @@ class AIToolsFactory:
         )
         def process_business_logic(data: Any, rules: List[str] = None) -> Any:
             """处理业务逻辑"""
-            # 模拟业务逻辑处理
-            processed_data = data
-            
-            if rules:
-                for rule in rules:
-                    # 应用业务规则
-                    pass
-            
-            return {
-                "processed_data": processed_data,
-                "rules_applied": len(rules) if rules else 0,
-                "status": "processed"
-            }
+            from app.services.domain.business.business_logic_processor import business_logic_processor
+            return business_logic_processor.process(data, rules)
         
         return self.create_tool_from_function(
             func=process_business_logic,
@@ -513,21 +439,8 @@ class AIToolsFactory:
         )
         def validate_result(result: Any, criteria: Dict[str, Any] = None) -> Dict[str, Any]:
             """验证结果"""
-            validation_result = {
-                "is_valid": True,
-                "confidence": 0.9,
-                "quality_score": 0.8,
-                "issues": [],
-                "validated_result": result
-            }
-            
-            # 模拟验证逻辑
-            if criteria:
-                for criterion, expected in criteria.items():
-                    # 执行具体验证
-                    pass
-            
-            return validation_result
+            from app.services.domain.validation.result_validator_service import result_validator_service
+            return result_validator_service.validate(result, criteria)
         
         return self.create_tool_from_function(
             func=validate_result,
@@ -610,20 +523,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.VERY_HIGH,
             tags=["reasoning", "analysis", "enhancement"]
         )
-        def enhanced_reasoning(problem: str, context: Dict = None) -> Dict[str, Any]:
+        async def enhanced_reasoning(problem: str, context: Dict = None) -> Dict[str, Any]:
             """增强推理"""
-            return {
-                "analysis": f"对问题 '{problem}' 的深度分析",
-                "reasoning_steps": [
-                    "1. 问题理解和分解",
-                    "2. 上下文信息整合",
-                    "3. 多角度分析",
-                    "4. 结论推导"
-                ],
-                "confidence": 0.9,
-                "recommendations": ["建议1", "建议2"],
-                "enhanced_result": True
-            }
+            from app.services.infrastructure.ai.reasoning.enhanced_reasoning_service import enhanced_reasoning_service
+            return await enhanced_reasoning_service.perform_reasoning(problem, context)
         
         return self.create_tool_from_function(
             func=enhanced_reasoning,
@@ -661,19 +564,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.HIGH,
             tags=["data_source", "analysis", "performance"]
         )
-        def analyze_data_source(data_source_config: Dict[str, Any]) -> Dict[str, Any]:
+        async def analyze_data_source(data_source_config: Dict[str, Any]) -> Dict[str, Any]:
             """分析数据源"""
-            return {
-                "connection_status": "healthy",
-                "performance_score": 0.85,
-                "table_count": data_source_config.get("estimated_tables", 10),
-                "data_quality": "good",
-                "recommendations": [
-                    "考虑添加索引优化查询性能",
-                    "建议定期进行数据质量检查"
-                ],
-                "analysis_timestamp": datetime.utcnow().isoformat()
-            }
+            from app.services.infrastructure.ai.analyzer.data_source_analyzer_service import data_source_analyzer_service
+            return await data_source_analyzer_service.analyze_data_source(data_source_config)
         
         return self.create_tool_from_function(
             func=analyze_data_source,
@@ -693,28 +587,8 @@ class AIToolsFactory:
         )
         def process_template(template_content: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
             """处理模板"""
-            processed_content = template_content
-            placeholders_found = []
-            
-            # 模拟占位符检测
-            import re
-            placeholder_pattern = r'\{\{([^}]+)\}\}'
-            matches = re.findall(placeholder_pattern, template_content)
-            
-            for match in matches:
-                placeholders_found.append({
-                    "text": match,
-                    "type": "dynamic",
-                    "requires_data": True
-                })
-            
-            return {
-                "processed_content": processed_content,
-                "placeholders_found": placeholders_found,
-                "placeholder_count": len(placeholders_found),
-                "processing_score": 0.9,
-                "optimization_applied": True
-            }
+            from app.services.domain.template.template_processor_service import template_processor_service
+            return template_processor_service.process_template(template_content, context)
         
         return self.create_tool_from_function(
             func=process_template,
@@ -732,37 +606,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.HIGH,
             tags=["report", "quality", "validation"]
         )
-        def check_report_quality(report_content: str, quality_criteria: Dict[str, Any] = None) -> Dict[str, Any]:
+        async def check_report_quality(report_content: str, quality_criteria: Dict[str, Any] = None) -> Dict[str, Any]:
             """检查报告质量"""
-            quality_score = 0.8
-            issues = []
-            suggestions = []
-            
-            # 基本质量检查
-            if len(report_content) < 100:
-                issues.append("报告内容过短")
-                quality_score -= 0.2
-            
-            if not report_content.strip():
-                issues.append("报告内容为空")
-                quality_score = 0.0
-            
-            # 结构检查
-            if "{{" in report_content and "}}" in report_content:
-                issues.append("发现未处理的占位符")
-                quality_score -= 0.1
-            
-            if quality_score < 0.7:
-                suggestions.append("建议增加更多内容和数据分析")
-            
-            return {
-                "quality_score": max(0.0, quality_score),
-                "issues": issues,
-                "suggestions": suggestions,
-                "content_length": len(report_content),
-                "is_valid": quality_score >= 0.6,
-                "checked_at": datetime.utcnow().isoformat()
-            }
+            from app.services.infrastructure.ai.quality.report_quality_checker_service import report_quality_checker_service
+            return await report_quality_checker_service.check_report_quality(report_content, quality_criteria)
         
         return self.create_tool_from_function(
             func=check_report_quality,
@@ -780,24 +627,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.HIGH,
             tags=["schema", "database", "inspection"]
         )
-        def inspect_schema(schema_info: Dict[str, Any]) -> Dict[str, Any]:
+        async def inspect_schema(schema_info: Dict[str, Any]) -> Dict[str, Any]:
             """检查Schema"""
-            table_count = len(schema_info.get("tables", []))
-            relationships = schema_info.get("relationships", [])
-            
-            complexity_score = min(1.0, (table_count * 0.1) + (len(relationships) * 0.05))
-            
-            return {
-                "table_count": table_count,
-                "relationship_count": len(relationships),
-                "complexity_score": complexity_score,
-                "schema_health": "good" if complexity_score < 0.8 else "complex",
-                "optimization_opportunities": [
-                    "可以考虑添加更多索引",
-                    "建议优化表关系设计"
-                ] if complexity_score > 0.5 else [],
-                "inspection_complete": True
-            }
+            from app.services.infrastructure.ai.schema.schema_inspector_service import schema_inspector_service
+            return await schema_inspector_service.inspect_schema(schema_info)
         
         return self.create_tool_from_function(
             func=inspect_schema,
@@ -815,36 +648,10 @@ class AIToolsFactory:
             complexity=ToolComplexity.VERY_HIGH,
             tags=["performance", "optimization", "tuning"]
         )
-        def optimize_performance(performance_data: Dict[str, Any]) -> Dict[str, Any]:
+        async def optimize_performance(performance_data: Dict[str, Any]) -> Dict[str, Any]:
             """优化性能"""
-            current_score = performance_data.get("current_score", 0.7)
-            bottlenecks = performance_data.get("bottlenecks", [])
-            
-            optimization_suggestions = []
-            expected_improvement = 0.0
-            
-            if "database_query" in bottlenecks:
-                optimization_suggestions.append("优化数据库查询和索引")
-                expected_improvement += 0.15
-            
-            if "memory_usage" in bottlenecks:
-                optimization_suggestions.append("优化内存使用和缓存策略")
-                expected_improvement += 0.1
-            
-            if "api_response" in bottlenecks:
-                optimization_suggestions.append("优化API响应时间和并发处理")
-                expected_improvement += 0.12
-            
-            optimized_score = min(1.0, current_score + expected_improvement)
-            
-            return {
-                "current_performance": current_score,
-                "optimized_performance": optimized_score,
-                "improvement_potential": expected_improvement,
-                "optimization_suggestions": optimization_suggestions,
-                "bottlenecks_analyzed": len(bottlenecks),
-                "optimization_applied": True
-            }
+            from app.services.infrastructure.ai.performance.performance_optimizer_service import performance_optimizer_service
+            return await performance_optimizer_service.optimize_performance(performance_data)
         
         return self.create_tool_from_function(
             func=optimize_performance,

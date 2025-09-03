@@ -12,24 +12,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.core.architecture import ApiResponse
-# LLM rate limiter not available, using placeholder
-def get_llm_rate_limiter():
-    return type('obj', (object,), {
-        'get_current_usage': lambda: {'requests': 0, 'tokens': 0},
-        'check_limit': lambda: True,
-        'increment': lambda: None
-    })()
-
-def reset_llm_rate_limiter():
-    return {"message": "Rate limiter reset"}
-# AI service pool not available, using placeholder
-def get_ai_service_pool():
-    return type('obj', (object,), {
-        'get_service': lambda: type('obj', (object,), {
-            'get_usage_stats': lambda: {'requests': 0, 'tokens': 0}
-        })(),
-        'get_all_services': lambda: []
-    })()
+from app.services.infrastructure.ai.llm.rate_limiter import (
+    get_llm_rate_limiter, reset_llm_rate_limiter
+)
+from app.services.infrastructure.ai.service_pool import (
+    get_ai_service_pool, reset_ai_service_pool
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

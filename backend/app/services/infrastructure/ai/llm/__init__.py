@@ -12,13 +12,14 @@ from .pure_database_manager import (
     select_model_for_user,
     ask_agent
 )
-from .database_selector import (
-    get_database_selector,
-    TaskType,
-    TaskComplexity,
-    TaskCharacteristics,
-    SelectionCriteria
-)
+# 旧的复杂选择器已移除，使用简化选择器替代
+# from .database_selector import (
+#     get_database_selector,
+#     TaskType,
+#     TaskComplexity,
+#     TaskCharacteristics,
+#     SelectionCriteria
+# )
 
 # === 主要接口 ===
 
@@ -142,10 +143,10 @@ __all__ = [
     "health_check",
     "get_service_info",
     
-    # 数据库选择器
-    "get_database_selector",
-    "TaskType",
-    "TaskComplexity", 
-    "TaskCharacteristics",
-    "SelectionCriteria"
+    # 数据库选择器 - 已移除，使用简化选择器
+    # "get_database_selector",
+    # "TaskType", 
+    # "TaskComplexity",
+    # "TaskCharacteristics",
+    # "SelectionCriteria"
 ]

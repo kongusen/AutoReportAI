@@ -265,11 +265,16 @@ app = create_application()
 
 @app.on_event("startup")
 async def startup():
-
-    redis_connection = redis.from_url(
-        settings.REDIS_URL, encoding="utf-8", decode_responses=True
-    )
-    await FastAPILimiter.init(redis_connection)
+    
+    try:
+        redis_connection = redis.from_url(
+            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+        )
+        await FastAPILimiter.init(redis_connection)
+        print("📡 Redis连接和速率限制器初始化成功")
+    except Exception as e:
+        print(f"⚠️  Redis连接失败，跳过速率限制器初始化: {e}")
+        # 不阻止应用启动
     
     # 初始化统一缓存管理器
     try:
@@ -281,11 +286,17 @@ async def startup():
         db = next(db_gen)
         
         # 初始化缓存管理器
+        redis_client = None
+        try:
+            redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+        except:
+            pass
+            
         cache_manager = initialize_cache_manager(
             enable_memory=True,
-            enable_redis=True,
+            enable_redis=redis_client is not None,
             enable_database=True,
-            redis_client=redis_connection,
+            redis_client=redis_client,
             db_session=db
         )
         
@@ -295,6 +306,17 @@ async def startup():
         print(f"⚠️  缓存系统初始化失败: {e}")
         # 缓存系统初始化失败不应该阻止应用启动
 
+    # 启动LLM监控服务
+    try:
+        from app.services.infrastructure.ai.llm.monitor_integration import start_llm_monitoring
+        from app.db.session import get_db
+        
+        await start_llm_monitoring(get_db)
+        print("🤖 LLM监控服务启动成功")
+        
+    except Exception as e:
+        print(f"⚠️  LLM监控服务启动失败: {e}")
+
     # 启动时打印关键配置
     print_startup_config()
     # 如需查看详细配置，可取消下行注释
@@ -303,8 +325,22 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-
-    pass
+    """应用关闭处理"""
+    # 停止LLM监控服务
+    try:
+        from app.services.infrastructure.ai.llm.monitor_integration import stop_llm_monitoring
+        await stop_llm_monitoring()
+        print("🤖 LLM监控服务已停止")
+    except Exception as e:
+        print(f"⚠️  停止LLM监控服务失败: {e}")
+    
+    # 关闭WebSocket管理器
+    try:
+        from app.websocket.manager import websocket_manager
+        await websocket_manager.shutdown()
+        print("🌐 WebSocket管理器已关闭")
+    except Exception as e:
+        print(f"⚠️  关闭WebSocket管理器失败: {e}")
 
 
 # All API routes are handled by the api_router
@@ -313,7 +349,7 @@ app.include_router(api_router, prefix="/api")
 # Version info router
 app.include_router(create_version_info_router(), prefix="/api", tags=["版本信息"])
 
-# WebSocket routes
+# WebSocket routes - 添加前缀以避免与API路由冲突
 app.include_router(websocket_router, prefix="/ws", tags=["WebSocket"])
 
 

@@ -49,6 +49,8 @@ class ReactAgent:
         self.agent: Optional[Any] = None
         self.initialized = False
         self.llm_manager = None
+        self.selected_model = None
+        self.current_task_type = "reasoning"  # 默认任务类型
         
         # 智能缓存配置
         self.enable_cache = True
@@ -131,16 +133,17 @@ class ReactAgent:
                     logger.warning(f"创建工具失败: {e}")
                     self.tools = []
             
-            # 4. 创建React代理（优先使用LlamaIndex，降级到模拟）
+            # 4. 创建React代理（使用实际的LlamaIndex）
             try:
                 from llama_index.core.agent import ReActAgent
                 from llama_index.core.memory import ChatMemoryBuffer
                 
-                # 这里应该使用实际的LlamaIndex LLM实例
-                # 目前使用模拟，实际实现中需要从selected_model创建LLM实例
+                # 从selected_model创建LLM实例
+                llm = await self._create_llm_from_model()
+                
                 self.agent = ReActAgent.from_tools(
                     tools=self.tools,
-                    llm=None,  # 实际实现中从selected_model创建
+                    llm=llm,
                     memory=ChatMemoryBuffer.from_defaults(token_limit=self.memory_token_limit),
                     verbose=self.verbose,
                     max_iterations=self.max_iterations,
@@ -148,132 +151,37 @@ class ReactAgent:
                 )
                 
             except (ImportError, Exception) as e:
-                logger.warning(f"LlamaIndex React Agent创建失败，使用模拟代理: {e}")
-                self.agent = self._create_mock_agent()
+                logger.error(f"LlamaIndex React Agent创建失败: {e}")
+                raise ValueError(f"无法创建React代理: {str(e)}")
             
             self.initialized = True
             logger.info(f"用户 {self.user_id} 的React代理初始化完成 - 工具: {len(self.tools)}, 模型: {self.selected_model['provider']}:{self.selected_model['model']}")
             
         except Exception as e:
             logger.error(f"React代理初始化失败: {e}")
-            # 创建备用模拟代理
-            self.agent = self._create_mock_agent()
-            self.initialized = True
             raise
     
-    def _create_mock_agent(self):
-        """创建模拟React代理"""
-        class MockReactAgent:
-            def __init__(self, parent):
-                self.parent = parent
-            
-            async def achat(self, message: str) -> Any:
-                """模拟异步聊天，使用数据库驱动的LLM选择，支持工具调用"""
-                try:
-                    # 检查是否需要生成图表
-                    charts_info = []
-                    if any(keyword in message.lower() for keyword in ['图表', '柱状图', '折线图', '饼图', '可视化', 'chart']):
-                        charts_info = self._generate_sample_charts(message)
-                    
-                    from app.services.infrastructure.ai.llm import ask_agent_for_user
-                    
-                    response = await ask_agent_for_user(
-                        user_id=self.parent.user_id,
-                        question=message,
-                        agent_type="react_agent",
-                        context="React代理推理模式，支持图表生成工具",
-                        task_type="reasoning",
-                        complexity="medium"
-                    )
-                    
-                    # 如果生成了图表，添加到响应中
-                    if charts_info:
-                        chart_text = "\n\n📊 **生成的图表文件:**\n"
-                        for chart in charts_info:
-                            chart_text += f"- {chart['title']}: `{chart['filename']}`\n"
-                        response = response + chart_text
-                    
-                    return MockAgentResponse(response, charts_info)
-                    
-                except Exception as e:
-                    logger.error(f"模拟Agent调用失败: {e}")
-                    return MockAgentResponse(f"模拟React代理响应：{message}", [])
-            
-            def chat(self, message: str) -> Any:
-                """模拟同步聊天"""
-                return MockAgentResponse(f"模拟React代理响应：{message}")
-            
-            def reset(self):
-                """重置对话历史"""
-                pass
-            
-            def _generate_sample_charts(self, message: str):
-                """根据消息生成示例图表"""
-                charts_generated = []
-                try:
-                    from ..tools.chart_generator_tool import generate_chart
-                    import json
-                    
-                    # 根据消息内容决定生成什么类型的图表
-                    if '销售' in message or '业绩' in message or '收入' in message:
-                        # 生成销售柱状图
-                        config = {
-                            "type": "bar",
-                            "title": "月度销售业绩分析",
-                            "x_data": ["1月", "2月", "3月", "4月", "5月"],
-                            "y_data": [120000, 150000, 180000, 160000, 200000],
-                            "x_label": "月份", 
-                            "y_label": "销售额 (元)"
-                        }
-                        result = json.loads(generate_chart(json.dumps(config)))
-                        if result.get('success'):
-                            charts_generated.append(result)
-                    
-                    if '趋势' in message or '增长' in message or '折线' in message:
-                        # 生成趋势折线图
-                        config = {
-                            "type": "line",
-                            "title": "业务增长趋势",
-                            "x_data": ["Q1", "Q2", "Q3", "Q4"],
-                            "series": [
-                                {"name": "收入", "data": [100, 120, 140, 180]},
-                                {"name": "利润", "data": [20, 25, 30, 40]}
-                            ],
-                            "x_label": "季度",
-                            "y_label": "金额 (万元)"
-                        }
-                        result = json.loads(generate_chart(json.dumps(config)))
-                        if result.get('success'):
-                            charts_generated.append(result)
-                    
-                    if '占比' in message or '分布' in message or '饼图' in message:
-                        # 生成占比饼图
-                        config = {
-                            "type": "pie",
-                            "title": "市场份额分布",
-                            "labels": ["产品A", "产品B", "产品C", "产品D", "其他"],
-                            "sizes": [35, 25, 20, 15, 5]
-                        }
-                        result = json.loads(generate_chart(json.dumps(config)))
-                        if result.get('success'):
-                            charts_generated.append(result)
-                            
-                except Exception as e:
-                    logger.error(f"生成示例图表失败: {e}")
-                
-                return charts_generated
-                
-        class MockAgentResponse:
-            def __init__(self, response: str, charts: List[Dict] = None):
-                self.response = response
-                self.source_nodes = []
-                self.sources = []
-                self.charts = charts or []
-                
-            def __str__(self):
-                return self.response
+    async def _create_llm_from_model(self):
+        """从选择的模型创建LLM实例"""
+        if not self.selected_model:
+            raise ValueError("No model selected")
         
-        return MockReactAgent(self)
+        try:
+            # 根据provider创建相应的LLM
+            if self.selected_model['provider'] == 'anthropic':
+                from llama_index.llms.anthropic import Anthropic
+                return Anthropic(model=self.selected_model['model'])
+            elif self.selected_model['provider'] == 'openai':
+                from llama_index.llms.openai import OpenAI
+                return OpenAI(model=self.selected_model['model'])
+            else:
+                # 使用通用模型创建方法
+                from app.services.infrastructure.ai.llm.model_executor import create_llm_from_model
+                return await create_llm_from_model(self.selected_model)
+                
+        except Exception as e:
+            logger.error(f"创建LLM实例失败: {e}")
+            raise
     
     def _get_react_system_prompt(self) -> str:
         """获取React系统提示词"""
@@ -366,7 +274,8 @@ class ReactAgent:
     async def chat(
         self, 
         message: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        task_type: str = "auto"
     ) -> Dict[str, Any]:
         """
         进行对话 - 纯数据库驱动，支持智能缓存
@@ -374,12 +283,25 @@ class ReactAgent:
         Args:
             message: 用户消息
             context: 额外上下文信息
+            task_type: 任务类型 ("auto" 为自动判断, "reasoning" 为推理任务, "general" 为常规对话)
             
         Returns:
             对话结果，包含模型选择和使用统计
         """
         if not self.initialized:
             await self.initialize()
+        
+        # 1. 动态任务类型判断
+        if task_type == "auto":
+            detected_task_type = self._analyze_task_type(message)
+            logger.info(f"自动检测任务类型: {detected_task_type} (用户: {self.user_id})")
+        else:
+            detected_task_type = task_type
+        
+        # 2. 根据任务类型重新选择模型（如果需要）
+        model_switched = False
+        if detected_task_type != self.current_task_type:
+            model_switched = await self._reselect_model_for_task(detected_task_type)
         
         # 检查缓存
         cache_key = None
@@ -449,11 +371,16 @@ class ReactAgent:
                 "metadata": {
                     "user_id": self.user_id,
                     "agent_type": "react",
+                    "task_type_detected": detected_task_type,
+                    "task_type_requested": task_type,
+                    "model_switched": model_switched,
+                    "current_task_type": self.current_task_type,
                     "model_used": f"{self.selected_model['provider']}:{self.selected_model['model']}" if hasattr(self, 'selected_model') else 'unknown',
                     "model_confidence": self.selected_model.get('confidence') if hasattr(self, 'selected_model') else None,
                     "tools_available": len(self.tools),
                     "max_iterations": self.max_iterations,
-                    "database_driven": True
+                    "database_driven": True,
+                    "smart_model_selection": True
                 }
             }
             
@@ -550,6 +477,123 @@ class ReactAgent:
         
         return steps
     
+    def _analyze_task_type(self, message: str) -> str:
+        """分析任务类型，判断应该使用什么类型的模型"""
+        message_lower = message.lower()
+        
+        # 需要深度思考的任务关键词
+        thinking_keywords = [
+            "分析", "推理", "计算", "解决", "设计", "策略", "规划", "制定",
+            "复杂", "深入", "详细分析", "多步", "步骤", "流程", "方案",
+            "对比", "比较", "评估", "判断", "决策", "优化",
+            "analyze", "reasoning", "solve", "complex", "strategy", "plan",
+            "compare", "evaluate", "optimize", "decision"
+        ]
+        
+        # 简单对话任务关键词
+        chat_keywords = [
+            "翻译", "总结", "介绍", "解释", "描述", "问答", "回答",
+            "什么是", "如何", "告诉我", "简单说", "快速", "直接",
+            "translate", "summarize", "explain", "describe", "what is", 
+            "how to", "tell me", "simple", "quick"
+        ]
+        
+        # 统计关键词出现次数
+        thinking_score = sum(1 for keyword in thinking_keywords if keyword in message_lower)
+        chat_score = sum(1 for keyword in chat_keywords if keyword in message_lower)
+        
+        # 基于消息长度的启发式判断
+        message_length_factor = len(message) / 100  # 长消息可能需要更深度的处理
+        
+        # 综合判断
+        if thinking_score > chat_score or message_length_factor > 2:
+            return "reasoning"  # 需要THINK模型
+        else:
+            return "general"   # 使用CHAT模型
+    
+    async def _reselect_model_for_task(self, task_type: str) -> bool:
+        """根据任务类型重新选择模型 - 集成简化选择器"""
+        try:
+            # 使用简化选择器进行模型选择
+            from ..llm.simple_model_selector import get_simple_model_selector, TaskRequirement
+            
+            # 根据任务类型构建需求
+            if task_type == "reasoning":
+                task_requirement = TaskRequirement(
+                    requires_thinking=True,
+                    cost_sensitive=False,
+                    speed_priority=False
+                )
+            else:  # general/chat tasks
+                task_requirement = TaskRequirement(
+                    requires_thinking=False,
+                    cost_sensitive=True,  # 简单任务偏向成本控制
+                    speed_priority=True   # 简单任务偏向速度
+                )
+            
+            # 使用简化选择器选择模型
+            selector = get_simple_model_selector()
+            selection = selector.select_model_for_user(
+                user_id=self.user_id,
+                task_requirement=task_requirement
+            )
+            
+            if selection:
+                # 构建新的模型信息（兼容原有格式）
+                new_model = {
+                    "model": selection.model_name,
+                    "provider": selection.server_name,
+                    "model_id": selection.model_id,
+                    "server_id": selection.server_id,
+                    "provider_type": selection.provider_type,
+                    "confidence": 0.9,  # 简化选择器的置信度
+                    "reasoning": selection.reasoning,
+                    "fallback_model_id": selection.fallback_model_id
+                }
+                
+                # 检查是否需要切换模型
+                if (not self.selected_model or 
+                    new_model['model'] != self.selected_model.get('model') or
+                    new_model['provider'] != self.selected_model.get('provider')):
+                    
+                    self.selected_model = new_model
+                    self.current_task_type = task_type
+                    
+                    logger.info(f"React Agent为用户 {self.user_id} 切换模型: "
+                              f"{new_model['provider']}:{new_model['model']} "
+                              f"(任务类型: {task_type}, 推理: {selection.reasoning})")
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            logger.error(f"使用简化选择器重新选择模型失败: {e}")
+            
+            # 降级到原有的LLM管理器选择（如果可用）
+            if self.llm_manager:
+                try:
+                    new_model = await self.llm_manager.select_best_model_for_user(
+                        user_id=self.user_id,
+                        task_type=task_type,
+                        complexity="medium" if task_type == "reasoning" else "simple",
+                        constraints={
+                            "max_cost": 0.03 if task_type == "reasoning" else 0.01,
+                            "preferred_providers": ["anthropic", "openai"]
+                        },
+                        agent_id="react_agent"
+                    )
+                    
+                    if new_model:
+                        self.selected_model = new_model
+                        self.current_task_type = task_type
+                        logger.info(f"React Agent降级使用LLM管理器选择模型: {new_model['provider']}:{new_model['model']}")
+                        return True
+                        
+                except Exception as fallback_e:
+                    logger.error(f"降级模型选择也失败: {fallback_e}")
+            
+            return False
+
     def _extract_tool_calls(self, response: Any) -> List[Dict[str, Any]]:
         """从响应中提取工具调用信息"""
         tool_calls = []

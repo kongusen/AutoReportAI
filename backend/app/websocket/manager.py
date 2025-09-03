@@ -18,7 +18,10 @@ from app.core.api_specification import (
     WebSocketMessage, WebSocketMessageType, NotificationMessage,
     TaskUpdateMessage, ReportUpdateMessage
 )
-from app.services.infrastructure.cache import cache_service
+from app.services.infrastructure.cache.unified_cache_system import (
+    get_cache_manager, cache_get, cache_set, cache_delete, 
+    CacheType, CacheLevel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -425,16 +428,28 @@ class WebSocketManager:
     async def _cache_offline_message(self, session_id: str, message: WebSocketMessage):
         """缓存离线消息"""
         cache_key = f"offline_messages:session:{session_id}"
-        messages = cache_service.get(cache_key) or []
+        messages = await cache_get(cache_key) or []
         messages.append(message.model_dump())
-        cache_service.set(cache_key, messages, ttl=86400)  # 24小时
+        await cache_set(
+            cache_key, 
+            messages, 
+            cache_type=CacheType.SYSTEM_CONFIG,
+            ttl_seconds=86400,  # 24小时
+            cache_level=CacheLevel.REDIS
+        )
     
     async def _cache_offline_message_for_user(self, user_id: str, message: WebSocketMessage):
         """为用户缓存离线消息"""
         cache_key = f"offline_messages:user:{user_id}"
-        messages = cache_service.get(cache_key) or []
+        messages = await cache_get(cache_key) or []
         messages.append(message.model_dump())
-        cache_service.set(cache_key, messages, ttl=86400)  # 24小时
+        await cache_set(
+            cache_key, 
+            messages, 
+            cache_type=CacheType.SYSTEM_CONFIG,
+            ttl_seconds=86400,  # 24小时
+            cache_level=CacheLevel.REDIS
+        )
     
     async def _deliver_offline_messages(self, session_id: str):
         """发送离线消息"""
@@ -445,11 +460,11 @@ class WebSocketManager:
         
         # 发送会话特定的离线消息
         session_cache_key = f"offline_messages:session:{session_id}"
-        session_messages = cache_service.get(session_cache_key) or []
+        session_messages = await cache_get(session_cache_key) or []
         
         # 发送用户的离线消息
         user_cache_key = f"offline_messages:user:{conn.user_id}"
-        user_messages = cache_service.get(user_cache_key) or []
+        user_messages = await cache_get(user_cache_key) or []
         
         # 合并并排序消息
         all_messages = session_messages + user_messages
@@ -464,10 +479,10 @@ class WebSocketManager:
                 logger.error(f"Error delivering offline message: {e}")
         
         # 清理缓存
-        cache_service.delete(session_cache_key)
+        await cache_delete(session_cache_key)
         # 用户消息只在第一个会话连接时清理
         if len(self.user_sessions[conn.user_id]) == 1:
-            cache_service.delete(user_cache_key)
+            await cache_delete(user_cache_key)
     
     def register_message_handler(self, message_type: WebSocketMessageType, handler):
         """注册消息处理器"""

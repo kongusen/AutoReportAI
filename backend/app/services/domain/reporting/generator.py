@@ -170,16 +170,48 @@ class ReportGenerationService:
                 template_content=template_content, results=placeholder_results
             )
 
-            # 6. Generate Word document
+            # 6. Generate charts using ChartIntegrationService
+            chart_results = []
+            try:
+                from .chart_integration_service import ChartIntegrationService
+                
+                chart_service = ChartIntegrationService(self.db, str(task.owner_id))
+                chart_generation_result = await chart_service.generate_charts_for_task(
+                    task=task,
+                    data_results={"processed_data": {}, "placeholder_results": placeholder_results},
+                    placeholder_data=placeholder_results
+                )
+                
+                if chart_generation_result.get('success'):
+                    chart_results = chart_generation_result.get('charts', [])
+                    logger.info(f"生成了 {len(chart_results)} 个图表")
+                    
+            except Exception as e:
+                logger.warning(f"图表生成失败，继续生成报告: {e}")
+
+            # 7. Generate Word document with charts
             os.makedirs(output_dir, exist_ok=True)
             output_filename = (
                 f"report_{task.name}_{generation_result['generation_id']}.docx"
             )
-            output_path = os.path.join(output_dir, output_filename)
-
-            self.word_generator.generate_report_from_content(
-                composed_content=composed_content, output_path=output_path
-            )
+            
+            try:
+                # 使用完善的Word生成服务，包含图表插入功能
+                report_path = self.word_generator.generate_report_from_template(
+                    template_content=composed_content,
+                    placeholder_values=placeholder_results,
+                    title=f"{task.name}_报告",
+                    chart_results=chart_results
+                )
+                output_path = report_path
+                
+            except Exception as e:
+                logger.error(f"使用模板生成报告失败，降级处理: {e}")
+                # 降级到原有方法
+                output_path = os.path.join(output_dir, output_filename)
+                self.word_generator.generate_report_from_content(
+                    composed_content=composed_content, output_path=output_path
+                )
 
             # 7. Update generation result
             generation_result["status"] = ReportGenerationStatus.COMPLETED

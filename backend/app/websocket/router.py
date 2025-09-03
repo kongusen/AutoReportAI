@@ -41,7 +41,7 @@ async def authenticate_websocket_user(token: str, db: Session):
         return None
 
 
-@router.websocket("/ws")
+@router.websocket("/")
 async def websocket_endpoint(
     websocket: WebSocket,
     token: Optional[str] = Query(None),
@@ -58,37 +58,49 @@ async def websocket_endpoint(
         
         # 认证处理
         auth_token = token
+        logger.info(f"WebSocket认证: token={'有' if token else '无'}, client_type={client_type}")
+        
         if not auth_token:
             # 等待认证消息
-            auth_message = await websocket.receive_text()
             try:
+                auth_message = await websocket.receive_text()
                 auth_data = json.loads(auth_message)
                 if auth_data.get("type") == "auth":
                     auth_token = auth_data.get("token")
+                    logger.info("从认证消息中获取token")
                 else:
+                    logger.error("未收到认证消息")
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "message": "Authentication required"
                     }))
-                    await websocket.close()
+                    await websocket.close(code=4001)
                     return
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.error(f"认证消息格式错误: {e}")
                 await websocket.send_text(json.dumps({
                     "type": "error", 
                     "message": "Invalid authentication message format"
                 }))
-                await websocket.close()
+                await websocket.close(code=4002)
+                return
+            except Exception as e:
+                logger.error(f"等待认证消息时出错: {e}")
+                await websocket.close(code=4003)
                 return
         
         # 验证用户
         user = await authenticate_websocket_user(auth_token, db)
         if not user:
+            logger.error(f"用户认证失败: token={auth_token[:20] if auth_token else 'None'}...")
             await websocket.send_text(json.dumps({
                 "type": "error",
                 "message": "Authentication failed"
             }))
-            await websocket.close()
+            await websocket.close(code=4001)
             return
+        
+        logger.info(f"WebSocket用户认证成功: user_id={user.id}, username={user.username}")
         
         # 建立连接
         client_info = {
@@ -110,7 +122,9 @@ async def websocket_endpoint(
             "subscriptions": [
                 f"user:{user.id}",  # 用户私有频道
                 "system:alerts",    # 系统警报
-                "system:updates"    # 系统更新
+                "system:updates",   # 系统更新
+                "llm_monitor",      # LLM监控频道
+                "notifications:user" # 用户通知频道
             ]
         })
         

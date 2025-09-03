@@ -20,6 +20,7 @@ from .template_placeholder import TemplatePlaceholder, PlaceholderValue, Templat
 from .placeholder_chart_cache import PlaceholderChartCache
 from .user import User
 from .user_profile import UserProfile
+from .notification import Notification, NotificationPreference, NotificationStatus, NotificationType, NotificationPriority
 
 # Task模型现在包含Agent编排支持，无需独立的Agent模型
 
@@ -62,4 +63,10 @@ __all__ = [
     "LearningRule",
     "KnowledgeBase",
     "LLMCallLog",
+    # 通知模型
+    "Notification",
+    "NotificationPreference",
+    "NotificationStatus",
+    "NotificationType",
+    "NotificationPriority",
 ]

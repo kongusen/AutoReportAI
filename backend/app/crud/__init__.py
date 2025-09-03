@@ -13,6 +13,7 @@ from app.models.template_placeholder import TemplatePlaceholder
 from .crud_user import crud_user
 from .crud_user_llm_preference import crud_user_llm_preference, crud_user_llm_usage_quota
 from .crud_user_profile import user_profile
+from .notification import notification, notification_preference
 
 # Task执行记录CRUD操作（内部使用，支持Agent编排）
 
@@ -42,4 +43,7 @@ __all__ = [
     "crud_user",
     "user",
     "user_profile",
+    # 通知CRUD
+    "notification",
+    "notification_preference",
 ]

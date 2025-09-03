@@ -94,19 +94,8 @@ class ContextAwareApplicationService:
             self.business_builder = BusinessContextBuilder()
             self.document_builder = DocumentContextBuilder()
         except ImportError:
-            self.logger.warning("Context builders not available, using mock implementations")
-            # 创建占位符实现
-            class MockContextBuilder:
-                def build_from_request(self, *args, **kwargs):
-                    return {'mock': True}
-                def build_from_user_context(self, *args, **kwargs):
-                    return {'mock': True}
-                def build_from_content_analysis(self, *args, **kwargs):
-                    return {'mock': True}
-            
-            self.time_builder = MockContextBuilder()
-            self.business_builder = MockContextBuilder()
-            self.document_builder = MockContextBuilder()
+            self.logger.error("Context builders not available")
+            raise ImportError("上下文构建器不可用，服务无法初始化")
     
     async def submit_contextual_task(self, request: ContextualTaskRequest) -> Dict[str, Any]:
         """

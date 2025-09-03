@@ -4,10 +4,15 @@ import logging
 import re
 from datetime import datetime
 from io import BytesIO
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
+from pathlib import Path
 
 import docx
-from docx.shared import Inches
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement, ns
+from docx.oxml.ns import qn
+from PIL import Image
 
 from app.services.infrastructure.storage.file_storage_service import file_storage_service
 
@@ -15,15 +20,23 @@ logger = logging.getLogger(__name__)
 
 
 class WordGeneratorService:
-    # Regex to find <img ...> tags with base64 data
+    # Regex patterns for different content types
     IMG_REGEX = re.compile(r'<img src="data:image/png;base64,([^"]+)">')
+    CHART_PLACEHOLDER_REGEX = re.compile(r'\{\{chart:(\w+)(?::([^}]+))?\}\}')  # {{chart:bar}} or {{chart:bar:title}}
+    
+    # Chart configuration
+    DEFAULT_CHART_WIDTH = Inches(6.0)
+    DEFAULT_CHART_HEIGHT = Inches(4.0)
+    CHART_MAX_WIDTH = Inches(6.5)
+    CHART_MAX_HEIGHT = Inches(5.0)
 
     def generate_report_from_template(
         self,
         template_content: str,
         placeholder_values: Dict[str, Any],
         title: str = "自动生成报告",
-        format: str = "docx"
+        format: str = "docx",
+        chart_results: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """
         基于模板生成报告文件
@@ -33,6 +46,7 @@ class WordGeneratorService:
             placeholder_values: 占位符值字典
             title: 报告标题
             format: 文件格式 (docx)
+            chart_results: 图表生成结果列表
             
         Returns:
             存储后的文件路径
@@ -42,12 +56,12 @@ class WordGeneratorService:
             if self._is_binary_template(template_content):
                 # 处理二进制模板 (hex编码)
                 return self._generate_from_binary_template(
-                    template_content, placeholder_values, title
+                    template_content, placeholder_values, title, chart_results
                 )
             else:
                 # 处理文本模板
                 return self._generate_from_text_template(
-                    template_content, placeholder_values, title
+                    template_content, placeholder_values, title, chart_results
                 )
                 
         except Exception as e:
@@ -70,7 +84,8 @@ class WordGeneratorService:
         self,
         template_content: str,
         placeholder_values: Dict[str, Any],
-        title: str
+        title: str,
+        chart_results: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """从二进制模板生成报告"""
         try:
@@ -81,8 +96,12 @@ class WordGeneratorService:
             template_buffer = BytesIO(binary_data)
             doc = docx.Document(template_buffer)
             
-            # 替换占位符
+            # 替换占位符（包括图表占位符）
             self._replace_placeholders_in_doc(doc, placeholder_values)
+            
+            # 插入图表
+            if chart_results:
+                self._insert_charts_in_doc(doc, chart_results)
             
             # 保存到内存
             doc_buffer = BytesIO()
@@ -111,14 +130,19 @@ class WordGeneratorService:
         self,
         template_content: str,
         placeholder_values: Dict[str, Any],
-        title: str
+        title: str,
+        chart_results: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """从文本模板生成报告"""
         # 替换占位符
         processed_content = self._replace_placeholders_in_text(template_content, placeholder_values)
         
-        # 使用普通生成方法
-        return self.generate_report(processed_content, title)
+        # 如果有图表，需要生成Word文档并插入图表
+        if chart_results:
+            return self._generate_report_with_charts(processed_content, title, chart_results)
+        else:
+            # 使用普通生成方法
+            return self.generate_report(processed_content, title)
 
     def _replace_placeholders_in_doc(self, doc, placeholder_values: Dict[str, Any]):
         """在Word文档中替换占位符"""
@@ -330,6 +354,349 @@ class WordGeneratorService:
             for pattern in patterns:
                 processed_content = processed_content.replace(pattern, value)
         return processed_content
+
+    def _generate_report_with_charts(
+        self,
+        content: str,
+        title: str,
+        chart_results: List[Dict[str, Any]]
+    ) -> str:
+        """
+        生成包含图表的报告
+        
+        Args:
+            content: 文本内容
+            title: 报告标题
+            chart_results: 图表生成结果列表
+            
+        Returns:
+            存储后的文件路径
+        """
+        try:
+            # 创建Word文档
+            doc = docx.Document()
+            
+            # 设置标题
+            title_paragraph = doc.add_heading(title, level=1)
+            title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # 处理内容，识别图表占位符
+            self._process_content_with_charts(doc, content, chart_results)
+            
+            # 保存文档
+            return self._save_doc_to_storage(doc, title)
+            
+        except Exception as e:
+            logger.error(f"生成包含图表的报告失败: {e}")
+            # 降级到普通报告生成
+            return self.generate_report(content, title)
+
+    def _process_content_with_charts(
+        self,
+        doc: docx.Document,
+        content: str,
+        chart_results: List[Dict[str, Any]]
+    ):
+        """
+        处理内容并插入图表
+        
+        Args:
+            doc: Word文档对象
+            content: 文本内容
+            chart_results: 图表结果列表
+        """
+        # 按行分割内容
+        lines = content.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                doc.add_paragraph()  # 空行
+                continue
+            
+            # 检查是否包含图表占位符
+            chart_matches = self.CHART_PLACEHOLDER_REGEX.findall(line)
+            
+            if chart_matches:
+                # 处理图表占位符行
+                self._process_chart_line(doc, line, chart_matches, chart_results)
+            else:
+                # 普通文本行
+                paragraph = doc.add_paragraph(line)
+                
+    def _process_chart_line(
+        self,
+        doc: docx.Document,
+        line: str,
+        chart_matches: List[tuple],
+        chart_results: List[Dict[str, Any]]
+    ):
+        """
+        处理包含图表占位符的行
+        
+        Args:
+            doc: Word文档对象
+            line: 包含图表占位符的行
+            chart_matches: 图表占位符匹配结果
+            chart_results: 图表结果列表
+        """
+        remaining_text = line
+        
+        for chart_type, chart_title in chart_matches:
+            chart_placeholder = f"{{{{chart:{chart_type}"
+            if chart_title:
+                chart_placeholder += f":{chart_title}"
+            chart_placeholder += "}}"
+            
+            # 查找匹配的图表结果
+            matching_chart = self._find_matching_chart(chart_type, chart_title, chart_results)
+            
+            if matching_chart:
+                # 添加图表前的文本
+                before_chart = remaining_text.split(chart_placeholder)[0]
+                if before_chart.strip():
+                    doc.add_paragraph(before_chart.strip())
+                
+                # 插入图表
+                self._insert_single_chart(doc, matching_chart)
+                
+                # 更新剩余文本
+                parts = remaining_text.split(chart_placeholder, 1)
+                remaining_text = parts[1] if len(parts) > 1 else ""
+            else:
+                # 图表未找到，替换为提示文本
+                replacement_text = f"[图表未找到: {chart_type}]"
+                remaining_text = remaining_text.replace(chart_placeholder, replacement_text)
+        
+        # 添加剩余文本
+        if remaining_text.strip():
+            doc.add_paragraph(remaining_text.strip())
+
+    def _find_matching_chart(
+        self,
+        chart_type: str,
+        chart_title: Optional[str],
+        chart_results: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        查找匹配的图表结果
+        
+        Args:
+            chart_type: 图表类型 (bar, line, pie)
+            chart_title: 图表标题 (可选)
+            chart_results: 图表结果列表
+            
+        Returns:
+            匹配的图表结果或None
+        """
+        for chart in chart_results:
+            # 匹配图表类型
+            chart_result_type = chart.get('chart_type', '').replace('_chart', '')
+            if chart_result_type == chart_type:
+                # 如果指定了标题，进一步匹配标题
+                if chart_title:
+                    if chart_title.lower() in chart.get('title', '').lower():
+                        return chart
+                else:
+                    # 没有指定标题，返回第一个匹配类型的图表
+                    return chart
+        
+        # 如果没有精确匹配，返回第一个图表作为备选
+        return chart_results[0] if chart_results else None
+
+    def _insert_charts_in_doc(self, doc: docx.Document, chart_results: List[Dict[str, Any]]):
+        """
+        在文档中插入图表（替换占位符）
+        
+        Args:
+            doc: Word文档对象
+            chart_results: 图表结果列表
+        """
+        logger.info(f"开始在文档中插入 {len(chart_results)} 个图表")
+        
+        chart_inserted = 0
+        
+        # 遍历所有段落，查找图表占位符
+        for paragraph in doc.paragraphs:
+            original_text = paragraph.text
+            if not original_text or '{{chart:' not in original_text:
+                continue
+                
+            logger.debug(f"检查段落: {original_text}")
+            
+            # 查找图表占位符
+            chart_matches = self.CHART_PLACEHOLDER_REGEX.findall(original_text)
+            
+            if chart_matches:
+                # 清除段落内容
+                paragraph.clear()
+                
+                # 处理每个图表占位符
+                for chart_type, chart_title in chart_matches:
+                    matching_chart = self._find_matching_chart(chart_type, chart_title, chart_results)
+                    
+                    if matching_chart:
+                        # 插入图表到段落
+                        self._insert_chart_in_paragraph(paragraph, matching_chart)
+                        chart_inserted += 1
+                        logger.info(f"成功插入图表: {matching_chart.get('title', chart_type)}")
+                    else:
+                        # 图表未找到，添加提示文本
+                        run = paragraph.add_run(f"[图表未找到: {chart_type}]")
+                        run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)  # 红色
+                        logger.warning(f"图表未找到: {chart_type}")
+        
+        logger.info(f"文档中成功插入 {chart_inserted} 个图表")
+
+    def _insert_single_chart(self, doc: docx.Document, chart_info: Dict[str, Any]):
+        """
+        在文档中插入单个图表
+        
+        Args:
+            doc: Word文档对象
+            chart_info: 图表信息
+        """
+        try:
+            chart_filepath = chart_info.get('filepath')
+            chart_title = chart_info.get('title', '图表')
+            
+            if not chart_filepath or not Path(chart_filepath).exists():
+                logger.warning(f"图表文件不存在: {chart_filepath}")
+                error_paragraph = doc.add_paragraph(f"[图表文件不存在: {chart_title}]")
+                return
+            
+            # 获取图片尺寸
+            width, height = self._calculate_chart_size(chart_filepath)
+            
+            # 添加图表标题（如果有）
+            if chart_title and chart_title != '图表':
+                title_paragraph = doc.add_paragraph()
+                title_run = title_paragraph.add_run(chart_title)
+                title_run.font.size = Pt(12)
+                title_run.font.bold = True
+                title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # 插入图片
+            chart_paragraph = doc.add_paragraph()
+            chart_run = chart_paragraph.add_run()
+            chart_run.add_picture(chart_filepath, width=width, height=height)
+            chart_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # 添加间距
+            doc.add_paragraph()
+            
+            logger.info(f"成功插入图表: {chart_title} ({chart_filepath})")
+            
+        except Exception as e:
+            logger.error(f"插入图表失败: {e}")
+            error_paragraph = doc.add_paragraph(f"[图表插入失败: {chart_info.get('title', '未知图表')}]")
+
+    def _insert_chart_in_paragraph(self, paragraph, chart_info: Dict[str, Any]):
+        """
+        在段落中插入图表
+        
+        Args:
+            paragraph: 段落对象
+            chart_info: 图表信息
+        """
+        try:
+            chart_filepath = chart_info.get('filepath')
+            chart_title = chart_info.get('title', '图表')
+            
+            if not chart_filepath or not Path(chart_filepath).exists():
+                logger.warning(f"图表文件不存在: {chart_filepath}")
+                run = paragraph.add_run(f"[图表文件不存在: {chart_title}]")
+                run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)
+                return
+            
+            # 获取图片尺寸
+            width, height = self._calculate_chart_size(chart_filepath)
+            
+            # 添加换行和图表
+            paragraph.add_run().add_break()
+            
+            # 插入图片
+            run = paragraph.add_run()
+            run.add_picture(chart_filepath, width=width, height=height)
+            
+            # 添加图表标题
+            if chart_title and chart_title != '图表':
+                paragraph.add_run().add_break()
+                title_run = paragraph.add_run(chart_title)
+                title_run.font.size = Pt(10)
+                title_run.italic = True
+            
+        except Exception as e:
+            logger.error(f"在段落中插入图表失败: {e}")
+            run = paragraph.add_run(f"[图表插入失败: {chart_info.get('title', '未知图表')}]")
+            run.font.color.rgb = docx.shared.RGBColor(255, 0, 0)
+
+    def _calculate_chart_size(self, chart_filepath: str) -> tuple:
+        """
+        计算图表在文档中的适当尺寸
+        
+        Args:
+            chart_filepath: 图表文件路径
+            
+        Returns:
+            (width, height) 元组
+        """
+        try:
+            # 使用PIL获取图片尺寸
+            with Image.open(chart_filepath) as img:
+                img_width, img_height = img.size
+                aspect_ratio = img_height / img_width
+                
+                # 计算适当的文档尺寸
+                doc_width = min(self.DEFAULT_CHART_WIDTH, self.CHART_MAX_WIDTH)
+                doc_height = doc_width * aspect_ratio
+                
+                # 限制最大高度
+                if doc_height > self.CHART_MAX_HEIGHT:
+                    doc_height = self.CHART_MAX_HEIGHT
+                    doc_width = doc_height / aspect_ratio
+                
+                return doc_width, doc_height
+                
+        except Exception as e:
+            logger.warning(f"计算图表尺寸失败，使用默认尺寸: {e}")
+            return self.DEFAULT_CHART_WIDTH, self.DEFAULT_CHART_HEIGHT
+
+    def _save_doc_to_storage(self, doc: docx.Document, title: str) -> str:
+        """
+        保存Word文档到存储系统
+        
+        Args:
+            doc: Word文档对象
+            title: 文档标题
+            
+        Returns:
+            文件路径
+        """
+        try:
+            # 保存到内存
+            doc_buffer = BytesIO()
+            doc.save(doc_buffer)
+            doc_buffer.seek(0)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{title}_{timestamp}.docx"
+            
+            # 上传到存储系统
+            file_info = file_storage_service.upload_file(
+                file_data=doc_buffer,
+                original_filename=filename,
+                file_type="report",
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            
+            logger.info(f"Word文档保存成功: {file_info['file_path']}")
+            return file_info['file_path']
+            
+        except Exception as e:
+            logger.error(f"保存Word文档失败: {e}")
+            raise
 
     def _get_file_format_info(self, format_type: str) -> Dict[str, str]:
         """获取文件格式信息"""

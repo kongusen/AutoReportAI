@@ -118,6 +118,14 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
     const token = localStorage.getItem('authToken')
     const user = localStorage.getItem('user')
     
+    if (debug) {
+      console.log('WebSocket初始化:', {
+        hasToken: !!token,
+        tokenPreview: token ? `${token.substring(0, 10)}...` : 'None',
+        hasUser: !!user
+      })
+    }
+    
     if (user) {
       try {
         const userData = JSON.parse(user)
@@ -132,7 +140,7 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
       return
     }
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws'
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/'
     
     const client = webSocketManager.init({
       url: wsUrl,
@@ -173,7 +181,7 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
       unsubscribeConnection()
       client.disconnect()
     }
-  }, [debug, enableNotifications, enableTaskUpdates, enableReportUpdates, onConnectionChange])
+  }, [debug, enableNotifications, enableTaskUpdates, enableReportUpdates, onConnectionChange, handleMessage, handleNotification, handleTaskUpdate, handleReportUpdate])
 
   // ============================================================================
   // 消息处理器

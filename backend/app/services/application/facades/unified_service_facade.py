@@ -475,14 +475,8 @@ class UnifiedServiceFacade:
                         await connector.disconnect()
                         
                 except Exception as e:
-                    self.logger.warning(f"SQL查询失败，返回模拟数据: {e}")
-                    # 降级到模拟数据
-                    return [
-                        {"category": "A", "value": 100, "year": 2023},
-                        {"category": "B", "value": 150, "year": 2023},
-                        {"category": "C", "value": 200, "year": 2023},
-                        {"category": "D", "value": 120, "year": 2023}
-                    ]
+                    self.logger.error(f"SQL查询失败: {e}")
+                    raise ValueError(f"数据查询失败: {str(e)}")
             
             # 如果是文件路径
             elif data_source.endswith(('.csv', '.json', '.xlsx')):
@@ -508,21 +502,12 @@ class UnifiedServiceFacade:
                     return df.to_dict('records')
                     
                 except Exception as e:
-                    self.logger.warning(f"文件读取失败，返回模拟数据: {e}")
-                    # 降级到模拟数据
-                    return [
-                        {"name": "产品A", "sales": 1000, "profit": 200},
-                        {"name": "产品B", "sales": 1500, "profit": 300},
-                        {"name": "产品C", "sales": 800, "profit": 150}
-                    ]
+                    self.logger.error(f"文件读取失败: {e}")
+                    raise ValueError(f"文件数据读取失败: {str(e)}")
             
-            # 其他情况返回默认数据
+            # 其他情况抛出错误
             else:
-                return [
-                    {"item": "Item1", "count": 10},
-                    {"item": "Item2", "count": 15},
-                    {"item": "Item3", "count": 8}
-                ]
+                raise ValueError(f"不支持的数据源类型: {data_source}")
                 
         except Exception as e:
             self.logger.error(f"数据准备失败: {str(e)}")

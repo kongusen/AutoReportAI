@@ -25,7 +25,7 @@ import { Empty } from '@/components/ui/Empty'
 import { Progress } from '@/components/ui/Progress'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
-import { useWebSocket } from '@/hooks/useWebSocket'
+import { useTaskUpdates } from '@/hooks/useWebSocket'
 import { 
   getTaskStatusInfo, 
   formatRelativeTime, 
@@ -53,7 +53,12 @@ export default function TasksPage() {
   const { dataSources, fetchDataSources } = useDataSourceStore()
   
   // 启用WebSocket连接来接收实时任务更新
-  const { isConnected: wsConnected } = useWebSocket({ autoConnect: true })
+  const { 
+    taskUpdates, 
+    hasTaskUpdate, 
+    getTaskUpdate,
+    clearTaskUpdates 
+  } = useTaskUpdates()
   
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
@@ -144,7 +149,11 @@ export default function TasksPage() {
   }
 
   const TaskProgressIndicator = ({ taskId }: { taskId: string }) => {
-    const progress = getTaskProgress(taskId)
+    // 优先使用WebSocket实时更新的进度，然后才是本地状态
+    const wsProgress = getTaskUpdate(taskId)
+    const localProgress = getTaskProgress(taskId)
+    const progress = wsProgress || localProgress
+    
     if (!progress) return null
 
     const handleRetryTask = async () => {
@@ -355,10 +364,13 @@ export default function TasksPage() {
       title: '执行状态',
       dataIndex: 'status',
       render: (status: TaskStatus, record: Task) => {
-        const progress = getTaskProgress(record.id.toString())
+        const taskId = record.id.toString()
+        const wsProgress = getTaskUpdate(taskId)
+        const localProgress = getTaskProgress(taskId)
+        const progress = wsProgress || localProgress
         
         if (progress) {
-          return <TaskProgressIndicator taskId={record.id.toString()} />
+          return <TaskProgressIndicator taskId={taskId} />
         }
         
         // 显示任务状态和激活状态
@@ -442,10 +454,10 @@ export default function TasksPage() {
                 // 错误处理已在store中处理
               }
             }}
-            disabled={!record.is_active || !!getTaskProgress(record.id.toString())}
+            disabled={!record.is_active || !!(getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString()))}
             title={
               !record.is_active ? '任务未启用' :
-              getTaskProgress(record.id.toString()) ? '任务执行中' : '执行任务'
+              (getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString())) ? '任务执行中' : '执行任务'
             }
           >
             <PlayIcon className="w-3 h-3" />
@@ -486,10 +498,10 @@ export default function TasksPage() {
         description="创建和管理定时任务，支持复杂的Cron调度表达式"
         actions={
           <div className="flex items-center gap-3">
-            {/* WebSocket连接状态 */}
+            {/* WebSocket任务更新状态 */}
             <div className="flex items-center text-sm text-gray-600">
-              <div className={`w-2 h-2 rounded-full mr-2 ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-              {wsConnected ? '已连接' : '未连接'}
+              <div className={`w-2 h-2 rounded-full mr-2 ${taskUpdates.size > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+              实时更新 ({taskUpdates.size} 个任务)
             </div>
             <Button onClick={() => router.push('/tasks/create')}>
               <PlusIcon className="w-4 h-4 mr-2" />

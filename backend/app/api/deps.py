@@ -251,9 +251,9 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
 def get_react_agent_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
     """获取React Agent LLM服务依赖"""
     try:
-        from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
+        from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
         user_id = str(user.id) if user else None
-        return IntelligentLLMSelector(db, user_id)
+        return SimpleModelSelector()
     except Exception as e:
         logger.error(f"Failed to create IntelligentLLMSelector: {e}")
         raise HTTPException(

@@ -18,7 +18,7 @@ from app.models.user import User
 # React Agent系统导入
 from .services.template_domain_service import TemplateDomainService, TemplateParser
 from .template_cache_service import TemplateCacheService
-from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
+from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class TemplateService:
         self.parser = TemplateParser()
         self.cache_service = TemplateCacheService()
         if user_id:
-            self.llm_selector = IntelligentLLMSelector(db, user_id)
+            self.llm_selector = SimpleModelSelector(db, user_id)
         
     async def create_template(
         self,

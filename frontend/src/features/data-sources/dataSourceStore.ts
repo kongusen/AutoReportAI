@@ -3,9 +3,11 @@
 import { create } from 'zustand'
 import { 
   DataSource, 
-  DataSourceCreate, 
-  DataSourceUpdate, 
-  ConnectionTestResult,
+  CreateDataSourceRequest as DataSourceCreate, 
+  UpdateDataSourceRequest as DataSourceUpdate, 
+  DataSourceTestResult as ConnectionTestResult
+} from '@/types/api'
+import { 
   DataSourceTablesResponse,
   DataSourceFieldsResponse,
   TableSchema,

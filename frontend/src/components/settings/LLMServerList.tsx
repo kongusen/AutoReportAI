@@ -6,7 +6,8 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import toast from 'react-hot-toast'
-import { SettingsService as LLMService, LLMServer } from '@/services/settingsService'
+import { SettingsService } from '@/services/apiService'
+import { LLMServer } from '@/types/api'
 import { formatDateTime } from '@/utils'
 import { PlusIcon, ArrowPathIcon, TrashIcon } from '@heroicons/react/24/outline'
 
@@ -23,7 +24,7 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
   const loadServers = async () => {
     try {
       setIsLoading(true)
-      const data = await LLMService.getServers()
+      const data = await SettingsService.getLLMServers()
       setServers(data)
     } catch (error) {
       console.error('加载LLM服务器失败:', error)
@@ -41,7 +42,7 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
 
   const handleHealthCheckAll = async () => {
     try {
-      await LLMService.healthCheckAllServers()
+      await SettingsService.healthCheckAllServers()
       toast.success('已启动所有服务器健康检查')
       // 稍后刷新列表
       setTimeout(() => loadServers(), 3000)
@@ -51,13 +52,13 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
     }
   }
 
-  const handleDeleteServer = async (serverId: number, serverName: string) => {
+  const handleDeleteServer = async (serverId: string, serverName: string) => {
     if (!confirm(`确定要删除服务器"${serverName}"吗？此操作不可撤销。`)) {
       return
     }
 
     try {
-      await LLMService.deleteServer(serverId)
+      await SettingsService.deleteServer(serverId)
       toast.success('服务器删除成功')
       await loadServers()
     } catch (error) {
@@ -123,8 +124,8 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
                     <p className="text-sm text-gray-600 mt-1">{server.description || '无描述'}</p>
                   </div>
                   <div className="flex space-x-1 ml-4">
-                    <Badge variant={server.is_healthy ? 'success' : 'destructive'}>
-                      {server.is_healthy ? '健康' : '异常'}
+                    <Badge variant={server.health_status === 'healthy' ? 'success' : 'destructive'}>
+                      {server.health_status === 'healthy' ? '健康' : '异常'}
                     </Badge>
                     <Badge variant={server.is_active ? 'default' : 'secondary'}>
                       {server.is_active ? '活跃' : '禁用'}
@@ -169,7 +170,7 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => LLMService.checkServerHealth(server.id)}
+                      onClick={() => SettingsService.checkServerHealth(server.id)}
                     >
                       健康检查
                     </Button>

@@ -109,81 +109,6 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
   }, [config])
 
   // ============================================================================
-  // WebSocket客户端初始化
-  // ============================================================================
-
-  const initializeClient = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const token = localStorage.getItem('authToken')
-    const user = localStorage.getItem('user')
-    
-    if (debug) {
-      console.log('WebSocket初始化:', {
-        hasToken: !!token,
-        tokenPreview: token ? `${token.substring(0, 10)}...` : 'None',
-        hasUser: !!user
-      })
-    }
-    
-    if (user) {
-      try {
-        const userData = JSON.parse(user)
-        userIdRef.current = userData.id
-      } catch (error) {
-        console.warn('解析用户信息失败:', error)
-      }
-    }
-
-    if (!token) {
-      console.warn('未找到认证token，无法连接WebSocket')
-      return
-    }
-
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/'
-    
-    const client = webSocketManager.init({
-      url: wsUrl,
-      token,
-      clientType: 'web',
-      clientVersion: process.env.NEXT_PUBLIC_APP_VERSION || '2.0.0',
-      debug
-    })
-
-    clientRef.current = client
-
-    // 注册连接状态监听器
-    const unsubscribeConnection = client.onConnectionChange((newStatus, error) => {
-      setStatus(newStatus)
-      onConnectionChange?.(newStatus, error)
-      
-      if (debug) {
-        console.log('WebSocket状态变更:', newStatus, error?.message)
-      }
-    })
-
-    // 注册消息处理器
-    client.on('*', handleMessage)
-    
-    if (enableNotifications) {
-      client.on(WebSocketMessageType.NOTIFICATION, handleNotification)
-    }
-    
-    if (enableTaskUpdates) {
-      client.on(WebSocketMessageType.TASK_UPDATE, handleTaskUpdate)
-    }
-    
-    if (enableReportUpdates) {
-      client.on(WebSocketMessageType.REPORT_UPDATE, handleReportUpdate)
-    }
-
-    return () => {
-      unsubscribeConnection()
-      client.disconnect()
-    }
-  }, [debug, enableNotifications, enableTaskUpdates, enableReportUpdates, onConnectionChange, handleMessage, handleNotification, handleTaskUpdate, handleReportUpdate])
-
-  // ============================================================================
   // 消息处理器
   // ============================================================================
 
@@ -264,6 +189,82 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
       toast.error('报告生成失败')
     }
   }, [])
+
+  // ============================================================================
+  // WebSocket客户端初始化
+  // ============================================================================
+
+  const initializeClient = useCallback(() => {
+    if (typeof window === 'undefined') return
+
+    const token = localStorage.getItem('authToken')
+    const user = localStorage.getItem('user')
+    
+    if (debug) {
+      console.log('WebSocket初始化:', {
+        hasToken: !!token,
+        tokenPreview: token ? `${token.substring(0, 10)}...` : 'None',
+        hasUser: !!user
+      })
+    }
+    
+    if (user) {
+      try {
+        const userData = JSON.parse(user)
+        userIdRef.current = userData.id
+      } catch (error) {
+        console.warn('解析用户信息失败:', error)
+      }
+    }
+
+    if (!token) {
+      console.warn('未找到认证token，无法连接WebSocket')
+      return
+    }
+
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/'
+    
+    const client = webSocketManager.init({
+      url: wsUrl,
+      token,
+      clientType: 'web',
+      clientVersion: process.env.NEXT_PUBLIC_APP_VERSION || '2.0.0',
+      debug
+    })
+
+    clientRef.current = client
+
+    // 注册连接状态监听器
+    const unsubscribeConnection = client.onConnectionChange((newStatus, error) => {
+      setStatus(newStatus)
+      onConnectionChange?.(newStatus, error)
+      
+      if (debug) {
+        console.log('WebSocket状态变更:', newStatus, error?.message)
+      }
+    })
+
+    // 注册消息处理器
+    client.on('*', handleMessage)
+    
+    if (enableNotifications) {
+      client.on(WebSocketMessageType.NOTIFICATION, handleNotification)
+    }
+    
+    if (enableTaskUpdates) {
+      client.on(WebSocketMessageType.TASK_UPDATE, handleTaskUpdate)
+    }
+    
+    if (enableReportUpdates) {
+      client.on(WebSocketMessageType.REPORT_UPDATE, handleReportUpdate)
+    }
+
+    return () => {
+      unsubscribeConnection()
+      client.disconnect()
+    }
+  }, [debug, enableNotifications, enableTaskUpdates, enableReportUpdates, onConnectionChange, handleMessage, handleNotification, handleTaskUpdate, handleReportUpdate])
+
 
   // ============================================================================
   // 自动连接和订阅

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# 配置时区 (如果存在配置脚本)
+if [ -f "/app/scripts/configure-timezone.sh" ]; then
+    /app/scripts/configure-timezone.sh
+fi
+
 # Function to wait for database
 wait_for_db() {
     echo "Waiting for database..."
@@ -87,14 +92,58 @@ run_migrations() {
     fi
 }
 
-# Initialize database with tables and default users
+# Initialize database with tables and default users (only if needed)
 init_database() {
+    echo "Checking if database initialization is needed..."
+    
+    # Check if database is already initialized by checking for users table
+    echo "🔍 Running simple user count check..."
+    # Use psql to directly check if users exist (simpler and faster)
+    if python -c "
+import psycopg2
+import sys
+import os
+from urllib.parse import urlparse
+
+db_url = os.getenv('DATABASE_URL')
+parsed = urlparse(db_url)
+
+try:
+    conn = psycopg2.connect(
+        host=parsed.hostname,
+        port=parsed.port,
+        user=parsed.username,
+        password=parsed.password,
+        database=parsed.path[1:],
+        connect_timeout=5
+    )
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) FROM users')
+    user_count = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    
+    if user_count > 0:
+        print(f'ℹ️  Database already initialized with {user_count} users. Skipping initialization.')
+        sys.exit(0)
+    else:
+        print('📝 Database is empty, initialization needed.')
+        sys.exit(1)
+except Exception as e:
+    print(f'🔧 Database check failed: {e}')
+    print('📝 Database initialization needed.')
+    sys.exit(1)
+"; then
+        echo "✅ Database already initialized, skipping initialization"
+        return 0
+    fi
+    
     echo "Initializing database..."
     
     # Try to run the init_db.py script if it exists
     if [ -f "/app/scripts/init_db.py" ]; then
-        echo "📝 Running database initialization script..."
-        if python /app/scripts/init_db.py; then
+        echo "📝 Running database initialization script (fast mode)..."
+        if SKIP_ARCHITECTURE_VALIDATION=true python /app/scripts/init_db.py; then
             echo "✅ Database initialization completed successfully"
             return 0
         else

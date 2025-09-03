@@ -48,7 +48,7 @@ from .infrastructure.notification.notification_service import ReactAgentNotifica
 from .infrastructure.storage.file_storage_service import FileStorageService
 
 # React Agent LLM服务
-from .infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector as LLMService
+from .infrastructure.ai.llm.simple_model_selector import SimpleModelSelector as LLMService
 
 __all__ = [
     # =========================================================================

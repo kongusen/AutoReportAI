@@ -480,8 +480,8 @@ async def test_llm_connection(
             from datetime import datetime
             
             # 使用React Agent LLM选择器测试连接
-            from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector
-            llm_service = IntelligentLLMSelector(db, current_user.id)
+            from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
+            llm_service = SimpleModelSelector()
             
             # 执行健康检查
             health_result = await llm_service.health_check()

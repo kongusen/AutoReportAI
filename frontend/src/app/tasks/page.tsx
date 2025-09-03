@@ -166,7 +166,7 @@ export default function TasksPage() {
 
     const getProgressMessage = () => {
       // 优先显示Agent工作流步骤
-      if (progress.workflow_step) {
+      if ('workflow_step' in progress && progress.workflow_step) {
         return progress.workflow_step
       }
       
@@ -190,7 +190,7 @@ export default function TasksPage() {
     const getErrorDetails = () => {
       if (progress.status === 'failed') {
         // 优先显示error_details
-        if (progress.error_details) {
+        if ('error_details' in progress && progress.error_details) {
           return progress.error_details
         }
         
@@ -202,7 +202,7 @@ export default function TasksPage() {
       }
       
       // 警告状态的详情 - 显示占位符处理结果
-      if (progress.status === 'completed' && progress.has_errors && progress.placeholder_results) {
+      if (progress.status === 'completed' && 'has_errors' in progress && progress.has_errors && 'placeholder_results' in progress && progress.placeholder_results) {
         const failedPlaceholders = progress.placeholder_results.filter(p => !p.success)
         if (failedPlaceholders.length > 0) {
           return `${failedPlaceholders.length} 个占位符处理失败:\n${failedPlaceholders.map(p => `- ${p.placeholder_name}: ${p.error || p.content}`).join('\n')}`
@@ -213,14 +213,14 @@ export default function TasksPage() {
     }
 
     const determineStatus = () => {
-      if (progress.status === 'completed' && progress.has_errors) {
+      if (progress.status === 'completed' && 'has_errors' in progress && progress.has_errors) {
         return 'warning'
       }
       return progress.status as any
     }
 
     const getAgentExecutionInfo = () => {
-      if (progress.agent_execution_times && Object.keys(progress.agent_execution_times).length > 0) {
+      if ('agent_execution_times' in progress && progress.agent_execution_times && Object.keys(progress.agent_execution_times).length > 0) {
         return Object.entries(progress.agent_execution_times)
           .map(([agent, time]) => `${agent}: ${formatExecutionTime(time)}`)
           .join('\n')
@@ -254,7 +254,7 @@ export default function TasksPage() {
         )}
         
         {/* 占位符处理结果 */}
-        {progress.placeholder_results && progress.placeholder_results.length > 0 && (
+        {'placeholder_results' in progress && progress.placeholder_results && progress.placeholder_results.length > 0 && (
           <div className="mt-1 text-xs text-gray-500">
             <details className="cursor-pointer">
               <summary className="hover:text-gray-700">

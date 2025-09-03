@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Switch } from '@/components/ui/Switch'
 import toast from 'react-hot-toast'
-import { LLMService } from '@/services/apiService'
+import { SettingsService } from '@/services/apiService'
 import { formatDateTime } from '@/utils'
 import { PlusIcon, ArrowPathIcon, TrashIcon, CogIcon } from '@heroicons/react/24/outline'
 
@@ -26,7 +26,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
   const loadModels = async () => {
     try {
       setIsLoading(true)
-      const data = await LLMService.getServerModels(serverId)
+      const data = await SettingsService.getServerModels(serverId)
       setModels(data)
     } catch (error) {
       console.error('加载模型失败:', error)
@@ -44,7 +44,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
 
   const handleToggleActive = async (modelId: number, currentActive: boolean) => {
     try {
-      await LLMService.updateModel(serverId, modelId, { is_active: !currentActive })
+      await SettingsService.updateServerModel(serverId, modelId.toString(), { is_active: !currentActive })
       toast.success(`模型已${!currentActive ? '启用' : '禁用'}`)
       await loadModels()
     } catch (error) {
@@ -59,7 +59,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
     }
 
     try {
-      await LLMService.deleteModel(serverId, modelId)
+      await SettingsService.deleteServerModel(serverId, modelId.toString())
       toast.success('模型删除成功')
       await loadModels()
     } catch (error) {
@@ -70,7 +70,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
 
   const handleHealthCheck = async (modelId: number, modelName: string) => {
     try {
-      const res = await LLMService.checkModelHealth(serverId, modelId)
+      const res = await SettingsService.checkModelHealth(serverId, modelId.toString())
       const isHealthy = !!res?.is_healthy
       // 乐观更新当前列表中的标签与时间
       setModels(prev => prev.map(m => m.id === modelId ? {
@@ -99,7 +99,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
     )
   }
 
-  const modelsByProvider = models.reduce<Record<string, LLMModel[]>>((acc, m) => {
+  const modelsByProvider = models.reduce<Record<string, any[]>>((acc, m) => {
     const key = m.provider_name || '未指定提供商'
     acc[key] = acc[key] || []
     acc[key].push(m)

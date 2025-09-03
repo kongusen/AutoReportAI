@@ -572,6 +572,7 @@ class LLMService {
   static async getServerModels(serverId: string): Promise<any[]> {
     return apiClient.request('GET', `/llm-servers/${serverId}/models`, { cache: true })
   }
+
 }
 
 // ============================================================================
@@ -726,7 +727,7 @@ class SettingsService {
    * 获取可用LLM服务器
    */
   static async getLLMServers(): Promise<LLMServer[]> {
-    return apiClient.request('GET', '/settings/llm-servers', { cache: true })
+    return apiClient.request('GET', '/llm-servers', { cache: true })
   }
 
   /**
@@ -740,49 +741,98 @@ class SettingsService {
    * 创建LLM服务器
    */
   static async createServer(server: any): Promise<LLMServer> {
-    return apiClient.request('POST', '/settings/llm-servers', { data: server })
+    return apiClient.request('POST', '/llm-servers', { data: server })
   }
 
   /**
    * 更新LLM服务器
    */
   static async updateServer(id: string, server: any): Promise<LLMServer> {
-    return apiClient.request('PUT', `/settings/llm-servers/${id}`, { data: server })
+    return apiClient.request('PUT', `/llm-servers/${id}`, { data: server })
   }
 
   /**
    * 删除LLM服务器
    */
   static async deleteServer(id: string): Promise<void> {
-    return apiClient.request('DELETE', `/settings/llm-servers/${id}`)
+    return apiClient.request('DELETE', `/llm-servers/${id}`)
   }
 
   /**
    * 获取LLM服务器模型列表
    */
   static async getServerModels(serverId: string): Promise<any[]> {
-    return apiClient.request('GET', `/settings/llm-servers/${serverId}/models`, { cache: true })
+    return apiClient.request('GET', `/llm-servers/${serverId}/models`, { cache: true })
   }
 
   /**
    * 创建LLM服务器模型
    */
   static async createServerModel(serverId: string, model: any): Promise<any> {
-    return apiClient.request('POST', `/settings/llm-servers/${serverId}/models`, { data: model })
+    return apiClient.request('POST', `/llm-servers/${serverId}/models`, { data: model })
   }
 
   /**
    * 更新LLM服务器模型
    */
   static async updateServerModel(serverId: string, modelId: string, model: any): Promise<any> {
-    return apiClient.request('PUT', `/settings/llm-servers/${serverId}/models/${modelId}`, { data: model })
+    return apiClient.request('PUT', `/llm-servers/${serverId}/models/${modelId}`, { data: model })
   }
 
   /**
    * 删除LLM服务器模型
    */
   static async deleteServerModel(serverId: string, modelId: string): Promise<void> {
-    return apiClient.request('DELETE', `/settings/llm-servers/${serverId}/models/${modelId}`)
+    return apiClient.request('DELETE', `/llm-servers/${serverId}/models/${modelId}`)
+  }
+
+  /**
+   * 检查模型健康状态
+   */
+  static async checkModelHealth(serverId: string, modelId: string): Promise<any> {
+    return apiClient.request('POST', `/llm-servers/${serverId}/models/${modelId}/health`)
+  }
+
+  /**
+   * 批量健康检查所有服务器
+   */
+  static async healthCheckAllServers(): Promise<any> {
+    return apiClient.request('POST', '/llm-servers/health-check-all')
+  }
+
+  /**
+   * 检查LLM服务器健康状态
+   */
+  static async checkServerHealth(serverId: string): Promise<any> {
+    return apiClient.request('POST', `/llm-servers/${serverId}/health`)
+  }
+
+  /**
+   * 修改密码
+   */
+  static async changePassword(data: { current_password: string; new_password: string }): Promise<any> {
+    return apiClient.request('POST', '/settings/change-password', { data })
+  }
+
+  /**
+   * 登出所有设备
+   */
+  static async logoutAllDevices(): Promise<any> {
+    return apiClient.request('POST', '/settings/logout-all-devices')
+  }
+
+  /**
+   * 导出账户数据
+   */
+  static async exportAccountData(): Promise<any> {
+    return apiClient.request('POST', '/settings/export-account-data')
+  }
+
+  /**
+   * 删除账户
+   */
+  static async deleteAccount(data: { password: string }): Promise<any> {
+    return apiClient.request('POST', '/settings/delete-account', { data })
   }
 }
 

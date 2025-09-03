@@ -52,7 +52,6 @@ export function ComprehensiveAPITest() {
     unsubscribe 
   } = useWebSocket({
     autoConnect: true,
-    channels: ['test', 'system', 'notifications'],
     onMessage: handleWebSocketMessage,
     debug: true
   })
@@ -199,7 +198,7 @@ export function ComprehensiveAPITest() {
   const testWebSocketMessage = () => {
     if (isConnected) {
       sendMessage({
-        type: 'test_message',
+        type: 'ping' as any,
         data: {
           test: true,
           timestamp: new Date().toISOString(),

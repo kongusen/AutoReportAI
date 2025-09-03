@@ -62,11 +62,11 @@ export function LLMManagement() {
                 <h3 className="text-lg font-medium text-gray-900">{server.name}</h3>
                 <div className="flex space-x-2">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    server.is_healthy 
+                    server.health_status === 'healthy' 
                       ? 'bg-green-100 text-green-800' 
                       : 'bg-red-100 text-red-800'
                   }`}>
-                    {server.is_healthy ? '健康' : '异常'}
+                    {server.health_status === 'healthy' ? '健康' : '异常'}
                   </span>
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                     server.is_active 
@@ -80,7 +80,7 @@ export function LLMManagement() {
               <p className="text-sm text-gray-600 mb-2">{server.description || '无描述'}</p>
               <div className="text-sm text-gray-500">
                 <div>URL: {server.base_url}</div>
-                <div>提供商: {server.provider_type}</div>
+                <div>提供商: {server.provider}</div>
                 {server.last_health_check && (
                   <div>最后检查: {formatDateTime(server.last_health_check)}</div>
                 )}

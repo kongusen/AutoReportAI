@@ -20,7 +20,7 @@ from app.schemas.notification import (
     WebSocketNotificationMessage
 )
 from app.services.infrastructure.notification.notification_service import get_notification_service
-from app.websocket.manager import get_websocket_manager
+from app.websocket.manager import websocket_manager
 
 router = APIRouter()
 
@@ -271,10 +271,10 @@ def update_notification_preferences(
 
 @router.post("/test")
 async def send_test_notification(
-    message: str = Query("这是一条测试通知", description="测试消息内容"),
     background_tasks: BackgroundTasks,
     db: Session = Depends(deps.get_db),
-    current_user: User = Depends(deps.get_current_active_user)
+    current_user: User = Depends(deps.get_current_active_user),
+    message: str = Query("这是一条测试通知", description="测试消息内容")
 ):
     """
     发送测试通知
@@ -302,7 +302,7 @@ async def send_realtime_notification(user_id: str, notification):
     """
     try:
         # 通过WebSocket发送
-        websocket_manager = get_websocket_manager()
+        # websocket_manager is already imported
         notification_message = WebSocketNotificationMessage(
             data=NotificationResponse.from_orm(notification)
         )

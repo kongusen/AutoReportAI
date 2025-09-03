@@ -8,7 +8,8 @@ import { Switch } from '@/components/ui/Switch'
 import { Select } from '@/components/ui/Select'
 import { Card } from '@/components/ui/Card'
 import toast from 'react-hot-toast'
-import { LLMService } from '@/services/apiService'
+import { SettingsService } from '@/services/apiService'
+import { LLMModelCreate, ModelType, LLMModel } from '@/types/api'
 
 interface ModelFormProps {
   serverId: string
@@ -26,7 +27,7 @@ export function ModelForm({ serverId, model, onSubmit, onCancel, mode = 'create'
     name: model?.name || '',
     display_name: model?.display_name || '',
     description: model?.description || '',
-    model_type: model?.model_type || 'chat',
+    model_type: model?.model_type || 'default',
     provider_name: model?.provider_name || '',
     priority: model?.priority || 1,
     max_tokens: model?.max_tokens || 4096,
@@ -37,10 +38,8 @@ export function ModelForm({ serverId, model, onSubmit, onCancel, mode = 'create'
   })
 
   const modelTypes: { value: ModelType; label: string }[] = [
-    { value: 'chat', label: '聊天模型' },
-    { value: 'think', label: '思考模型' },
-    { value: 'embed', label: '嵌入模型' },
-    { value: 'image', label: '图像模型' }
+    { value: 'default', label: '默认模型' },
+    { value: 'think', label: '思考模型' }
   ]
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,20 +59,20 @@ export function ModelForm({ serverId, model, onSubmit, onCancel, mode = 'create'
       }
       
       if (mode === 'edit' && model) {
-        result = await LLMService.updateModel(serverId, model.id, {
+        result = await SettingsService.updateServerModel(serverId, model.id, {
           display_name: payload.display_name,
           description: payload.description,
-          is_active: undefined,
           priority: payload.priority,
           max_tokens: payload.max_tokens,
           temperature_default: payload.temperature_default,
           supports_system_messages: payload.supports_system_messages,
           supports_function_calls: payload.supports_function_calls,
-          supports_thinking: payload.supports_thinking
+          supports_thinking: payload.supports_thinking,
+          is_active: payload.is_active
         })
         toast.success('模型更新成功')
       } else {
-        result = await LLMService.createModel(payload)
+        result = await SettingsService.createServerModel(serverId, payload)
         toast.success('模型创建成功')
       }
       

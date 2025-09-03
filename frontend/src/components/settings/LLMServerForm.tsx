@@ -8,7 +8,20 @@ import { Switch } from '@/components/ui/Switch'
 import { Select } from '@/components/ui/Select'
 import { Card } from '@/components/ui/Card'
 import toast from 'react-hot-toast'
-import { SettingsService as LLMService, LLMServerCreate, LLMServer, ProviderType } from '@/services/settingsService'
+import { SettingsService } from '@/services/apiService'
+import { LLMServer, LLMProvider } from '@/types/api'
+
+interface LLMServerCreate {
+  name: string
+  base_url: string
+  api_key?: string
+  provider: LLMProvider
+  description?: string
+  is_active: boolean
+  auth_enabled?: boolean
+  timeout_seconds?: number
+  max_retries?: number
+}
 
 interface LLMServerFormProps {
   server?: LLMServer
@@ -23,11 +36,9 @@ export function LLMServerForm({ server, onSubmit, onCancel, mode = 'create' }: L
     name: server?.name || '',
     description: server?.description || '',
     base_url: server?.base_url || '',
-    provider_type: server?.provider_type || 'openai',
+    provider: server?.provider || 'openai',
     api_key: '',
-    auth_enabled: server?.auth_enabled ?? true,
-    timeout_seconds: server?.timeout_seconds || 60,
-    max_retries: server?.max_retries || 3
+    is_active: server?.is_active ?? true
   })
 
   const providerOptions = [
@@ -47,10 +58,10 @@ export function LLMServerForm({ server, onSubmit, onCancel, mode = 'create' }: L
       let result: LLMServer
       
       if (mode === 'edit' && server) {
-        result = await LLMService.updateServer(server.id, formData)
+        result = await SettingsService.updateServer(server.id, formData)
         toast.success('服务器更新成功')
       } else {
-        result = await LLMService.createServer(formData)
+        result = await SettingsService.createServer(formData)
         toast.success('服务器创建成功')
       }
       
@@ -119,8 +130,8 @@ export function LLMServerForm({ server, onSubmit, onCancel, mode = 'create' }: L
               </label>
               <Select
                 options={providerOptions}
-                value={formData.provider_type}
-                onChange={(value) => handleInputChange('provider_type', value as ProviderType)}
+                value={formData.provider}
+                onChange={(value) => handleInputChange('provider', value as LLMProvider)}
                 className="mt-1"
               />
             </div>

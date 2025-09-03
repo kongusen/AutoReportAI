@@ -97,7 +97,7 @@ class SimpleModelSelector:
         if not servers:
             return []
         
-        # 获取这些服务器上的活跃且健康的模型（排除IMAGE模型）
+        # 获取这些服务器上的活跃且健康的模型
         available_models = []
         for server in servers:
             models = crud_llm_model.get_models_by_filter(
@@ -107,9 +107,9 @@ class SimpleModelSelector:
                 is_healthy=True
             )
             
-            # 过滤掉IMAGE模型，只保留CHAT和THINK模型
+            # 只保留DEFAULT和THINK模型
             for model in models:
-                if model.model_type in [ModelType.CHAT, ModelType.THINK]:
+                if model.model_type in [ModelType.DEFAULT, ModelType.THINK]:
                     available_models.append((model, server))
         
         return available_models
@@ -136,22 +136,22 @@ class SimpleModelSelector:
         
         # 2. 如果对成本敏感，选择优先级较低的模型（通常成本更低）
         if task_requirement.cost_sensitive:
-            chat_models = [
+            default_models = [
                 (model, server) for model, server in available_models
-                if model.model_type == ModelType.CHAT
+                if model.model_type == ModelType.DEFAULT
             ]
-            if chat_models:
+            if default_models:
                 # 选择优先级数字最大的（成本最低的）
-                return max(chat_models, key=lambda x: x[0].priority)
+                return max(default_models, key=lambda x: x[0].priority)
         
-        # 3. 如果优先速度，选择优先级最高的CHAT模型
+        # 3. 如果优先速度，选择优先级最高的DEFAULT模型
         if task_requirement.speed_priority:
-            chat_models = [
+            default_models = [
                 (model, server) for model, server in available_models
-                if model.model_type == ModelType.CHAT
+                if model.model_type == ModelType.DEFAULT
             ]
-            if chat_models:
-                return min(chat_models, key=lambda x: x[0].priority)
+            if default_models:
+                return min(default_models, key=lambda x: x[0].priority)
         
         # 4. 默认策略：选择优先级最高的模型
         return min(available_models, key=lambda x: x[0].priority)
@@ -171,8 +171,8 @@ class SimpleModelSelector:
         
         if model.model_type == ModelType.THINK and task_requirement.requires_thinking:
             reasoning_parts.append("选择思考模型以支持深度推理")
-        elif model.model_type == ModelType.CHAT:
-            reasoning_parts.append("选择对话模型处理常规任务")
+        elif model.model_type == ModelType.DEFAULT:
+            reasoning_parts.append("选择默认模型处理常规任务")
         
         if task_requirement.cost_sensitive:
             reasoning_parts.append("考虑成本效益")
@@ -214,7 +214,7 @@ class SimpleModelSelector:
             
             stats = {
                 "total_models": len(available_models),
-                "chat_models": len([(m, s) for m, s in available_models if m.model_type == ModelType.CHAT]),
+                "default_models": len([(m, s) for m, s in available_models if m.model_type == ModelType.DEFAULT]),
                 "think_models": len([(m, s) for m, s in available_models if m.model_type == ModelType.THINK]),
                 "servers_count": len(set(s.id for m, s in available_models)),
                 "models_by_server": {}
@@ -225,14 +225,14 @@ class SimpleModelSelector:
                 server_name = server.name
                 if server_name not in stats["models_by_server"]:
                     stats["models_by_server"][server_name] = {
-                        "chat": 0,
+                        "default": 0,
                         "think": 0,
                         "total": 0
                     }
                 
                 stats["models_by_server"][server_name]["total"] += 1
-                if model.model_type == ModelType.CHAT:
-                    stats["models_by_server"][server_name]["chat"] += 1
+                if model.model_type == ModelType.DEFAULT:
+                    stats["models_by_server"][server_name]["default"] += 1
                 elif model.model_type == ModelType.THINK:
                     stats["models_by_server"][server_name]["think"] += 1
             

@@ -129,12 +129,12 @@ async def get_available_model_types(
         )
         
         available_types = []
-        if stats["chat_models"] > 0:
+        if stats["default_models"] > 0:
             available_types.append({
-                "type": "chat",
-                "name": "对话模型",
+                "type": "default",
+                "name": "默认模型",
                 "description": "适合常规对话和问答任务",
-                "count": stats["chat_models"]
+                "count": stats["default_models"]
             })
         
         if stats["think_models"] > 0:

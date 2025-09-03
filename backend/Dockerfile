@@ -16,6 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=on \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_DEFAULT_TIMEOUT=100
@@ -29,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     git \
     postgresql-client \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装字体支持 - 单独安装以避免内存不足

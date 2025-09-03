@@ -642,9 +642,9 @@ AutoReportAI Team
 
     def _get_current_time(self) -> str:
         """获取当前时间字符串"""
-        from datetime import datetime
-
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        from app.core.timezone import format_time
+        
+        return format_time()
 
 
 # 全局邮件服务实例

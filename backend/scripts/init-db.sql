@@ -84,7 +84,7 @@ BEGIN
     
     -- Model types (for LLM servers)
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'modeltype') THEN
-        CREATE TYPE modeltype AS ENUM ('chat', 'think', 'embed', 'image');
+        CREATE TYPE modeltype AS ENUM ('default', 'think');
     END IF;
     
     -- Provider types (for LLM servers)

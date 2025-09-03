@@ -84,8 +84,11 @@ export function SecuritySettings() {
     const confirmation = prompt('删除账户是不可逆的操作。请输入 "DELETE" 来确认删除账户：')
     if (confirmation !== 'DELETE') return
     
+    const password = prompt('请输入当前密码以确认删除账户：')
+    if (!password) return
+    
     try {
-      await SettingsService.deleteAccount()
+      await SettingsService.deleteAccount({ password })
       toast.success('账户删除请求已提交')
     } catch (error) {
       toast.error('删除失败')

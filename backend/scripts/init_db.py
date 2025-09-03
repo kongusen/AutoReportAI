@@ -188,32 +188,52 @@ def init_database():
         else:
             print(f"ℹ️  已存在 {server_count} 个LLM服务器")
         
-        cur.close()
-        conn.close()
-        
         # 初始化新架构相关配置
         print("🏗️  初始化 DDD 架构相关配置...")
         try:
-            # 创建默认的分析配置
+            # 检查是否存在必要的表
             cur.execute("""
-                INSERT INTO analytics_data (name, data_type, configuration, is_active)
-                VALUES ('default_analysis', 'system', '{}', true)
-                ON CONFLICT (name) DO NOTHING
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'analytics_data'
+                )
             """)
+            has_analytics_table = cur.fetchone()[0]
             
-            # 初始化占位符映射缓存
+            if has_analytics_table:
+                # 检查analytics_data表是否有数据
+                cur.execute("SELECT COUNT(*) FROM analytics_data")
+                analytics_count = cur.fetchone()[0]
+                logger.info(f"Analytics数据表存在，包含 {analytics_count} 条记录")
+            else:
+                logger.info("Analytics数据表不存在，跳过分析配置初始化")
+            
+            # 检查placeholder_mappings表
             cur.execute("""
-                SELECT COUNT(*) FROM placeholder_mappings
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'placeholder_mappings'
+                )
             """)
-            placeholder_count = cur.fetchone()[0]
-            if placeholder_count == 0:
-                logger.info("创建默认占位符映射")
+            has_placeholder_table = cur.fetchone()[0]
             
-            conn.commit()
-            logger.info("✅ DDD 架构配置初始化完成")
+            if has_placeholder_table:
+                cur.execute("SELECT COUNT(*) FROM placeholder_mappings")
+                placeholder_count = cur.fetchone()[0]
+                logger.info(f"占位符映射表存在，包含 {placeholder_count} 条记录")
+            else:
+                logger.info("占位符映射表不存在，跳过占位符配置初始化")
+            
+            logger.info("✅ DDD 架构配置检查完成")
         except Exception as e:
-            logger.warning(f"DDD 架构配置初始化失败: {e}")
+            logger.warning(f"DDD 架构配置检查失败: {e}")
             # 不影响主要初始化流程
+        finally:
+            # 确保在最后才关闭连接
+            cur.close()
+            conn.close()
         
         print("\n🎉 数据库初始化完成!")
         print("=" * 50)
@@ -326,9 +346,14 @@ def main():
     """主函数"""
     logger.info("🚀 AutoReportAI 数据库初始化开始")
     
+    # 跳过架构验证以加快启动速度（仅在entrypoint调用时）
     # 验证新架构
-    if not validate_new_architecture():
-        logger.warning("架构验证失败，但继续初始化...")
+    skip_validation = os.getenv('SKIP_ARCHITECTURE_VALIDATION', 'false').lower() == 'true'
+    if not skip_validation:
+        if not validate_new_architecture():
+            logger.warning("架构验证失败，但继续初始化...")
+    else:
+        logger.info("⚡ 跳过架构验证以加快初始化速度")
     
     if len(sys.argv) > 1 and sys.argv[1] == '--reset':
         print("🔄 重置数据库模式")

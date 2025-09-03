@@ -27,10 +27,8 @@ class ProviderType(str, enum.Enum):
 
 class ModelType(str, enum.Enum):
     """模型类型枚举"""
-    CHAT = "chat"
-    THINK = "think"  # 思考模型，支持CoT推理
-    EMBED = "embed"  # 嵌入模型
-    IMAGE = "image"  # 图像处理模型
+    DEFAULT = "default"  # 默认模型
+    THINK = "think"      # 思考模型，支持CoT推理
 
 
 class LLMServer(Base):
@@ -96,7 +94,7 @@ class LLMModel(Base):
     description = Column(Text, nullable=True)
     
     # 模型类型和能力
-    # 使用枚举的值（chat/think/embed/image）持久化到数据库，避免写入枚举名（CHAT/THINK/...）
+    # 使用枚举的值（default/think）持久化到数据库，避免写入枚举名（DEFAULT/THINK/...）
     model_type = Column(
         Enum(
             ModelType,

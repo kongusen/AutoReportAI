@@ -53,7 +53,7 @@ export default function ReactAgentInsights() {
   const [loading, setLoading] = useState(false)
   const [testLoading, setTestLoading] = useState(false)
   const [selectedMode, setSelectedMode] = useState('intelligent')
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   useEffect(() => {
     loadSystemData()
@@ -94,11 +94,7 @@ export default function ReactAgentInsights() {
       
     } catch (error) {
       console.error('Failed to load system data:', error)
-      toast({ 
-        title: '加载失败', 
-        description: '无法获取系统洞察数据', 
-        variant: 'destructive' 
-      })
+      showToast('无法获取系统洞察数据', 'error')
     } finally {
       setLoading(false)
     }
@@ -123,18 +119,13 @@ export default function ReactAgentInsights() {
       
       const result = await apiClient.testSystemConfiguration(testConfig)
       
-      toast({
-        title: '配置测试完成',
-        description: `测试成功: ${result.test_results?.success ? '通过' : '失败'}`,
-        variant: result.test_results?.success ? 'default' : 'destructive'
-      })
+      showToast(
+        `配置测试完成: ${result.test_results?.success ? '通过' : '失败'}`, 
+        result.test_results?.success ? 'success' : 'error'
+      )
     } catch (error) {
       console.error('Configuration test failed:', error)
-      toast({ 
-        title: '测试失败', 
-        description: '配置测试失败', 
-        variant: 'destructive' 
-      })
+      showToast('配置测试失败', 'error')
     } finally {
       setTestLoading(false)
     }

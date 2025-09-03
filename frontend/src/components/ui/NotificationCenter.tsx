@@ -58,20 +58,8 @@ export function NotificationCenter({
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
 
-  const { 
-    isConnected, 
-    subscribe, 
-    unsubscribe,
-    messages,
-    connectionInfo 
-  } = useWebSocket({
-    autoConnect: true,
-    channels: ['notifications', 'tasks', 'reports'],
-    onMessage: handleWebSocketMessage
-  })
-
   // 处理WebSocket消息
-  function handleWebSocketMessage(message: any) {
+  const handleWebSocketMessage = useCallback((message: any) => {
     if (message.type === 'notification') {
       addNotification({
         id: message.data.id || generateId(),
@@ -86,7 +74,14 @@ export function NotificationCenter({
         metadata: message.data.metadata
       })
     }
-  }
+  }, [])
+
+  // WebSocket连接
+  const { isConnected, connectionInfo } = useWebSocket({
+    onMessage: handleWebSocketMessage,
+    enableNotifications: true,
+    autoConnect: true
+  })
 
   // 生成唯一ID
   const generateId = () => `notification_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`

@@ -149,38 +149,67 @@ class LLMMonitorWebSocketService:
     async def _broadcast_system_status(self):
         """广播系统状态更新"""
         try:
-            # 获取速率限制器状态
-            rate_limiter = get_llm_rate_limiter()
-            limiter_stats = rate_limiter.get_statistics()
+            # 获取速率限制器状态（安全方式）
+            try:
+                rate_limiter = get_llm_rate_limiter()
+                limiter_stats = rate_limiter.get_statistics()
+                
+                # 安全获取嵌套字典值
+                current_status = limiter_stats.get("current_status", {})
+                metrics = limiter_stats.get("metrics", {})
+                
+                rate_limiter_data = {
+                    "active_requests": current_status.get("active_requests", 0),
+                    "success_rate": metrics.get("success_rate", 0.0),
+                    "requests_per_minute": metrics.get("requests_per_minute", 0.0)
+                }
+            except Exception as e:
+                logger.warning(f"获取速率限制器统计失败: {e}")
+                rate_limiter_data = {
+                    "active_requests": 0,
+                    "success_rate": 0.0,
+                    "requests_per_minute": 0.0
+                }
             
-            # 获取服务池状态
-            service_pool = get_ai_service_pool()
-            pool_stats = service_pool.get_pool_stats()
+            # 获取服务池状态（安全方式）
+            try:
+                service_pool = get_ai_service_pool()
+                pool_stats = service_pool.get_pool_stats()
+                
+                service_pool_data = {
+                    "healthy_instances": pool_stats.get("healthy_instances", 0),
+                    "total_instances": pool_stats.get("total_instances", 0),
+                    "pool_usage": pool_stats.get("pool_usage", 0.0)
+                }
+            except Exception as e:
+                logger.warning(f"获取服务池统计失败: {e}")
+                service_pool_data = {
+                    "healthy_instances": 0,
+                    "total_instances": 0,
+                    "pool_usage": 0.0
+                }
             
             # 构建状态消息
             status_message = WebSocketMessage(
-                type=WebSocketMessageType.SYSTEM_UPDATE,
+                type=WebSocketMessageType.SYSTEM_STATUS,
                 data={
                     "component": "llm_monitor",
                     "timestamp": datetime.utcnow().isoformat(),
-                    "rate_limiter": {
-                        "active_requests": limiter_stats["current_status"]["active_requests"],
-                        "success_rate": limiter_stats["metrics"]["success_rate"],
-                        "requests_per_minute": limiter_stats["metrics"]["requests_per_minute"]
-                    },
-                    "service_pool": {
-                        "healthy_instances": pool_stats["healthy_instances"],
-                        "total_instances": pool_stats["total_instances"],
-                        "pool_usage": pool_stats["pool_usage"]
-                    }
+                    "rate_limiter": rate_limiter_data,
+                    "service_pool": service_pool_data
                 }
             )
             
             # 发送给订阅了系统更新的用户
-            await websocket_manager.broadcast_to_channel("system:updates", status_message)
+            sent_count = await websocket_manager.broadcast_to_channel("system:updates", status_message)
+            
+            if sent_count == 0:
+                logger.debug("系统状态广播: 没有订阅者")
+            else:
+                logger.debug(f"系统状态广播成功，发送给 {sent_count} 个订阅者")
             
         except Exception as e:
-            logger.error(f"广播系统状态失败: {e}")
+            logger.error(f"广播系统状态失败: {e}", exc_info=True)
     
     async def send_rate_limit_warning(self, user_id: str, details: Dict[str, Any]):
         """发送速率限制警告"""

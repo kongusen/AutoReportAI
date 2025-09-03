@@ -23,10 +23,8 @@ class ProviderType(str, Enum):
 
 class ModelType(str, Enum):
     """模型类型枚举"""
-    CHAT = "chat"
-    THINK = "think"
-    EMBED = "embed"
-    IMAGE = "image"
+    DEFAULT = "default"  # 默认模型
+    THINK = "think"      # 思考模型，支持CoT推理
 
 
 # === LLM服务器模式 ===

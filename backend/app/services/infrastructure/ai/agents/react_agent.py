@@ -509,7 +509,7 @@ class ReactAgent:
         if thinking_score > chat_score or message_length_factor > 2:
             return "reasoning"  # 需要THINK模型
         else:
-            return "general"   # 使用CHAT模型
+            return "general"   # 使用DEFAULT模型
     
     async def _reselect_model_for_task(self, task_type: str) -> bool:
         """根据任务类型重新选择模型 - 集成简化选择器"""

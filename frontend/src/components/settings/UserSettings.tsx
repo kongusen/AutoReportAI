@@ -4,7 +4,42 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import toast from 'react-hot-toast'
-import { SettingsService, UserProfile, UserProfileUpdate } from '@/services/settingsService'
+import { SettingsService } from '@/services/apiService'
+
+interface UserProfile {
+  id?: string
+  username: string
+  email: string
+  full_name?: string
+  bio?: string
+  avatar_url?: string
+  timezone?: string
+  language?: string
+  theme?: string
+  email_notifications?: boolean
+  report_notifications?: boolean
+  system_notifications?: boolean
+  default_storage_days?: number
+  auto_cleanup_enabled?: boolean
+  default_report_format?: string
+  date_format?: string
+}
+
+interface UserProfileUpdate {
+  full_name?: string
+  bio?: string
+  avatar_url?: string
+  timezone?: string
+  language?: string
+  theme?: string
+  email_notifications?: boolean
+  report_notifications?: boolean
+  system_notifications?: boolean
+  default_storage_days?: number
+  auto_cleanup_enabled?: boolean
+  default_report_format?: string
+  date_format?: string
+}
 
 export function UserSettings() {
   const [profile, setProfile] = useState<Partial<UserProfile>>({})
@@ -18,7 +53,7 @@ export function UserSettings() {
   const loadProfile = async () => {
     try {
       setIsLoading(true)
-      const data = await SettingsService.getUserProfile()
+      const data = await SettingsService.getProfile()
       setProfile(data)
     } catch (error) {
       toast.error('加载用户设置失败')
@@ -57,7 +92,7 @@ export function UserSettings() {
         timezone: profile.timezone,
         date_format: profile.date_format,
       }
-      await SettingsService.updateUserProfile(updateData)
+      await SettingsService.updateProfile(updateData)
       toast.success('设置已保存')
     } catch (error) {
       toast.error('保存设置失败')

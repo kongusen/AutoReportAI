@@ -44,7 +44,7 @@ async def get_react_agent_stats(
             "data": agent_stats,
             "user_model_config": {
                 "total_models": user_stats["total_models"],
-                "chat_models": user_stats["chat_models"],
+                "default_models": user_stats["default_models"],
                 "think_models": user_stats["think_models"],
                 "servers_count": user_stats["servers_count"]
             },

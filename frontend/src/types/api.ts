@@ -586,7 +586,7 @@ export type LLMProvider = 'openai' | 'anthropic' | 'google' | 'azure' | 'local'
 /**
  * 模型类型
  */
-export type ModelType = 'chat' | 'embedding' | 'completion'
+export type ModelType = 'default' | 'think'
 
 /**
  * LLM 服务器信息
@@ -600,10 +600,13 @@ export interface LLMServer {
   is_active: boolean
   description?: string
   max_requests_per_minute?: number
+  health_status: 'healthy' | 'degraded' | 'unhealthy'
+  last_health_check?: string
+  models_count?: number
+  success_rate?: number
+  avg_response_time?: number
   created_at: string
   updated_at?: string
-  health_status?: 'healthy' | 'unhealthy' | 'unknown'
-  last_health_check?: string
 }
 
 /**
@@ -619,6 +622,24 @@ export interface LLMModel {
   is_active: boolean
   capabilities: string[]
   created_at: string
+}
+
+export interface LLMModelCreate {
+  server_id: string
+  name: string
+  display_name?: string
+  description?: string
+  model_type: ModelType
+  provider_name?: string
+  priority?: number
+  max_tokens?: number
+  temperature_default?: number
+  cost_per_token?: number
+  is_active?: boolean
+  capabilities?: string[]
+  supports_system_messages?: boolean
+  supports_function_calls?: boolean
+  supports_thinking?: boolean
 }
 
 /**

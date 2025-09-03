@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     # 环境信息
     ENVIRONMENT_TYPE: str = detect_environment()
 
+    # 时区设置
+    TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Shanghai")
 
     # Email settings
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")

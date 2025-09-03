@@ -41,7 +41,7 @@ export default function ReactAgentTemplateAnalyzer({
   const [targetExpectations, setTargetExpectations] = useState('')
   const [loading, setLoading] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   useEffect(() => {
     loadDataSources()
@@ -58,21 +58,13 @@ export default function ReactAgentTemplateAnalyzer({
       }
     } catch (error) {
       console.error('Failed to load data sources:', error)
-      toast({
-        title: '加载失败',
-        description: '无法加载数据源列表',
-        variant: 'destructive'
-      })
+      showToast('无法加载数据源列表', 'error')
     }
   }
 
   const analyzeTemplate = async () => {
     if (!selectedDataSource) {
-      toast({
-        title: '请选择数据源',
-        description: '需要选择一个数据源来进行模板分析',
-        variant: 'destructive'
-      })
+      showToast('需要选择一个数据源来进行模板分析', 'error')
       return
     }
 
@@ -107,11 +99,7 @@ export default function ReactAgentTemplateAnalyzer({
         message: '分析完成'
       })
 
-      toast({
-        title: 'React Agent 分析完成',
-        description: '模板占位符分析已完成',
-        variant: 'default'
-      })
+      showToast('模板占位符分析已完成', 'success')
 
       onAnalysisComplete?.(result)
 
@@ -127,11 +115,7 @@ export default function ReactAgentTemplateAnalyzer({
       
       setAnalysisResult(errorResult)
       
-      toast({
-        title: 'React Agent 分析失败',
-        description: errorResult.error,
-        variant: 'destructive'
-      })
+      showToast(`React Agent 分析失败: ${errorResult.error}`, 'error')
     } finally {
       setLoading(false)
     }
@@ -171,16 +155,17 @@ export default function ReactAgentTemplateAnalyzer({
               <label className="block text-sm font-medium mb-2">数据源</label>
               <Select
                 value={selectedDataSource}
-                onValueChange={setSelectedDataSource}
+                onChange={(value) => setSelectedDataSource(String(value))}
                 disabled={loading}
-              >
-                <option value="">请选择数据源</option>
-                {dataSources.map((ds) => (
-                  <option key={ds.id} value={ds.id}>
-                    {ds.name} ({ds.source_type})
-                  </option>
-                ))}
-              </Select>
+                placeholder="请选择数据源"
+                options={[
+                  { value: '', label: '请选择数据源' },
+                  ...dataSources.map((ds) => ({
+                    value: ds.id,
+                    label: `${ds.name} (${ds.source_type})`
+                  }))
+                ]}
+              />
             </div>
 
             {/* 优化级别 */}
@@ -188,15 +173,13 @@ export default function ReactAgentTemplateAnalyzer({
               <label className="block text-sm font-medium mb-2">优化级别</label>
               <Select
                 value={optimizationLevel}
-                onValueChange={setOptimizationLevel}
+                onChange={(value) => setOptimizationLevel(String(value))}
                 disabled={loading}
-              >
-                {optimizationLevels.map((level) => (
-                  <option key={level.value} value={level.value}>
-                    {level.label}
-                  </option>
-                ))}
-              </Select>
+                options={optimizationLevels.map((level) => ({
+                  value: level.value,
+                  label: level.label
+                }))}
+              />
               <p className="text-xs text-gray-500 mt-1">
                 {optimizationLevels.find(l => l.value === optimizationLevel)?.description}
               </p>
@@ -222,7 +205,7 @@ export default function ReactAgentTemplateAnalyzer({
               <Checkbox
                 id="force-reanalyze"
                 checked={forceReanalyze}
-                onCheckedChange={(checked) => setForceReanalyze(!!checked)}
+                onChange={(e) => setForceReanalyze(e.target.checked)}
                 disabled={loading}
               />
               <label htmlFor="force-reanalyze" className="text-sm">

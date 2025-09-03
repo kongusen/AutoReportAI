@@ -106,15 +106,22 @@ services:
       # Celery配置
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-UTC}
+      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-Asia/Shanghai}
       
       # 时区配置
+      - TZ=${TZ:-Asia/Shanghai}
+      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
       - APP_TIMEZONE=${APP_TIMEZONE:-Asia/Shanghai}
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      
+      # 初始用户配置
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
+      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
       
       # React Agent系统配置
       - REACT_AGENT_ENABLED=true
@@ -193,6 +200,9 @@ services:
       - ./data/backend/cache:/app/cache
       - ./data/backend/storage:/app/storage
       - ./data/backend/temp:/app/temp
+      # 时区配置挂载
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
     depends_on:
       db:
         condition: service_healthy
@@ -250,10 +260,20 @@ services:
       - CELERY_WORKER_CONCURRENCY=4
       - CELERY_WORKER_LOGLEVEL=info
       - CELERY_WORKER_MAX_TASKS_PER_CHILD=1000
+      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-Asia/Shanghai}
+      
+      # 时区配置
+      - TZ=${TZ:-Asia/Shanghai}
+      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      
+      # 初始用户配置
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
+      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
       
       # React Agent系统配置
       - REACT_AGENT_ENABLED=true
@@ -277,6 +297,9 @@ services:
       - ./data/backend/cache:/app/cache
       - ./data/backend/storage:/app/storage
       - ./data/backend/temp:/app/temp
+      # 时区配置挂载
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
     depends_on:
       db:
         condition: service_healthy
@@ -332,15 +355,28 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - CELERY_BEAT_LOGLEVEL=info
+      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-Asia/Shanghai}
+      
+      # 时区配置
+      - TZ=${TZ:-Asia/Shanghai}
+      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
       
+      # 初始用户配置
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
+      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
+      
     volumes:
       - ../backend:/app:rw
       - ./data/backend/logs:/app/logs
       - ./data/celery/beat:/tmp/celerybeat
+      # 时区配置挂载
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
     depends_on:
       db:
         condition: service_healthy
@@ -377,6 +413,8 @@ services:
       - NEXT_PUBLIC_INTELLIGENT_COMPONENTS=enabled
       - NEXT_PUBLIC_REALTIME_UPDATES=enabled
       - NEXT_PUBLIC_APP_TIMEZONE=${APP_TIMEZONE:-Asia/Shanghai}
+      # 前端容器时区配置
+      - TZ=${TZ:-Asia/Shanghai}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     volumes:

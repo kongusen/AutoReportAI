@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import toast from 'react-hot-toast'
 import { SettingsService as LLMService, LLMServer } from '@/services/settingsService'
+import { formatDateTime } from '@/utils'
 import { PlusIcon, ArrowPathIcon, TrashIcon } from '@heroicons/react/24/outline'
 
 interface LLMServerListProps {
@@ -144,7 +145,7 @@ export function LLMServerList({ onSelectServer, onAddServer }: LLMServerListProp
                     <div>
                       <span className="text-gray-500">最后检查:</span>
                       <div className="font-medium">
-                        {new Date(server.last_health_check).toLocaleString()}
+                        {formatDateTime(server.last_health_check)}
                       </div>
                     </div>
                   )}

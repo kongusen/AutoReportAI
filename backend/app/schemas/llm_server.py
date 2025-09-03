@@ -45,6 +45,7 @@ class LLMServerBase(BaseModel):
 class LLMServerCreate(LLMServerBase):
     """创建LLM服务器"""
     api_key: Optional[str] = Field(None, description="API密钥")
+    user_id: Optional[UUID] = Field(None, description="所属用户ID（系统自动设置）")
 
 
 class LLMServerUpdate(BaseModel):

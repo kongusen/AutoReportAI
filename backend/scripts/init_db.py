@@ -87,10 +87,10 @@ def init_database():
         
         # 创建默认管理员用户（如果不存在）
         print("👤 检查默认管理员用户...")
-        cur.execute("SELECT COUNT(*) FROM users WHERE is_superuser = true")
-        superuser_count = cur.fetchone()[0]
+        cur.execute("SELECT id FROM users WHERE is_superuser = true LIMIT 1")
+        admin_user = cur.fetchone()
         
-        if superuser_count == 0:
+        if admin_user is None:
             print("🔑 创建默认管理员用户...")
             try:
                 from app.core.security import get_password_hash
@@ -115,25 +115,31 @@ def init_database():
                 logger.error(f"创建管理员用户失败: {e}")
                 print(f"⚠️  创建管理员用户失败: {e}")
         else:
-            print(f"ℹ️  已存在 {superuser_count} 个管理员用户")
+            # 获取现有管理员用户ID
+            cur.execute("SELECT id FROM users WHERE is_superuser = true LIMIT 1")
+            admin_user = cur.fetchone()
+            admin_user_id = admin_user[0] if admin_user else None
+            print(f"ℹ️  已存在管理员用户，ID: {admin_user_id}")
         
         # 创建默认LLM服务器和模型（如果不存在）
         print("🤖 检查默认LLM服务器...")
         cur.execute("SELECT COUNT(*) FROM llm_servers")
         server_count = cur.fetchone()[0]
         
-        if server_count == 0:
+        if server_count == 0 and admin_user_id:
             print("🛠️  创建默认LLM服务器配置...")
             
             # 创建本地OpenAI兼容服务器
             cur.execute("""
-                INSERT INTO llm_servers (name, description, base_url, auth_enabled, is_active, server_version)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO llm_servers (user_id, name, description, base_url, provider_type, auth_enabled, is_active, server_version)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
+                admin_user_id,
                 "Local OpenAI Compatible",
                 "本地OpenAI兼容API服务器",
                 "http://localhost:11434/v1",
+                "openai",
                 False,
                 True,
                 "v1.0"
@@ -142,13 +148,15 @@ def init_database():
             
             # 创建OpenAI官方服务器
             cur.execute("""
-                INSERT INTO llm_servers (name, description, base_url, auth_enabled, is_active, server_version)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO llm_servers (user_id, name, description, base_url, provider_type, auth_enabled, is_active, server_version)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
+                admin_user_id,
                 "OpenAI Official",
                 "OpenAI官方API服务",
                 "https://api.openai.com/v1",
+                "openai",
                 True,
                 False,  # 默认不激活，需要用户配置API密钥
                 "v1.0"

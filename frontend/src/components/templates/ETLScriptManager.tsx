@@ -25,6 +25,7 @@ import { Modal } from '@/components/ui/Modal'
 import { ChartPreview } from '@/components/ui/ChartPreview'
 import { PlaceholderConfig, PlaceholderValue, DataSource } from '@/types'
 import { api } from '@/lib/api'
+import { formatDateTime } from '@/utils'
 import toast from 'react-hot-toast'
 
 interface ETLScriptManagerProps {
@@ -482,7 +483,7 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
                     </span>
                   </div>
                   <div className="text-gray-500">
-                    {new Date(execution.created_at).toLocaleString()}
+                    {formatDateTime(execution.created_at)}
                   </div>
                 </div>
               ))}

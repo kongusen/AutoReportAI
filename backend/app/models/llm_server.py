@@ -40,10 +40,13 @@ class LLMServer(Base):
     id = Column(Integer, primary_key=True, index=True)
     server_id = Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True, index=True)
     
+    # 用户绑定
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False, index=True)
+    
     # 基本信息
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
-    base_url = Column(String(512), nullable=False, unique=True)
+    base_url = Column(String(512), nullable=False)
     
     # 提供商类型
     provider_type = Column(

@@ -4,7 +4,7 @@ import React from 'react'
 import { Sidebar } from './Sidebar'
 import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { useWebSocketIntegration } from '@/hooks/useWebSocketIntegration'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
@@ -16,7 +16,10 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { isAuthenticated, isLoading } = useAuthStore()
   
   // 集成WebSocket实时通信
-  useWebSocketIntegration()
+  const { isConnected } = useWebSocket({
+    autoConnect: true,
+    enableNotifications: true
+  })
 
   if (isLoading) {
     return (

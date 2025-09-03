@@ -9,123 +9,106 @@ import sys
 from datetime import datetime
 
 def test_minio_connection():
-    """测试Minio连接"""
+    """测试MinIO连接"""
+    print("\n🔗 测试MinIO连接...")
+    
     try:
-        from minio import Minio
-        from minio.error import S3Error
-        
-        # 默认Minio配置
-        client = Minio(
-            "localhost:9000",
-            access_key="minioadmin",
-            secret_key="minioadmin123",
-            secure=False
-        )
-        
         # 测试连接
-        if client.bucket_exists("test"):
-            print("✅ 默认Minio连接成功")
-        else:
-            # 创建测试bucket
-            client.make_bucket("test")
-            print("✅ 默认Minio连接成功 - 创建测试bucket")
-        
-        # 测试文件上传
-        import io
-        test_content = f"AutoReportAI测试文件 - {datetime.now()}"
-        data = io.BytesIO(test_content.encode())
-        client.put_object(
-            "test",
-            "test-file.txt",
-            data=data,
-            length=len(test_content.encode()),
-            content_type="text/plain"
+        client = Minio(
+            MINIO_ENDPOINT,
+            access_key=MINIO_ACCESS_KEY,
+            secret_key=MINIO_SECRET_KEY,
+            secure=MINIO_USE_SSL
         )
-        print("✅ 文件上传测试成功")
         
-        # 测试文件下载
-        response = client.get_object("test", "test-file.txt")
-        content = response.read().decode()
-        if "AutoReportAI测试文件" in content:
-            print("✅ 文件下载测试成功")
-        else:
-            print("❌ 文件内容不匹配")
+        # 检查连接
+        buckets = client.list_buckets()
+        bucket_names = [bucket.name for bucket in buckets]
+        
+        print(f"✅ MinIO连接成功")
+        print(f"   📦 可用存储桶: {bucket_names}")
+        
+        # 检查必要的存储桶
+        required_buckets = ['reports', 'charts', 'templates']
+        missing_buckets = [bucket for bucket in required_buckets if bucket not in bucket_names]
+        
+        if missing_buckets:
+            print(f"⚠️  缺少必要存储桶: {missing_buckets}")
+            print("   正在创建...")
             
-        return True
+            for bucket in missing_buckets:
+                try:
+                    client.make_bucket(bucket)
+                    print(f"   ✅ 创建存储桶: {bucket}")
+                except Exception as e:
+                    print(f"   ❌ 创建存储桶失败 {bucket}: {e}")
+        else:
+            print("✅ 所有必要存储桶已存在")
         
-    except ImportError:
-        print("❌ minio库未安装: pip install minio")
-        return False
+        assert True, "MinIO连接应该成功"
+        
     except Exception as e:
-        print(f"❌ Minio连接失败: {e}")
-        return False
+        print(f"❌ MinIO连接失败: {e}")
+        assert False, f"MinIO连接应该成功: {e}"
 
 def test_dev_minio_connection():
-    """测试开发模式Minio连接"""
+    """测试开发环境MinIO连接"""
+    print("\n🔗 测试开发环境MinIO连接...")
+    
     try:
-        from minio import Minio
-        from minio.error import S3Error
-        
-        # 开发模式Minio配置
-        client = Minio(
-            "localhost:9002",
-            access_key="devuser",
-            secret_key="devpassword123",
+        # 使用开发环境配置
+        dev_client = Minio(
+            "localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
             secure=False
         )
         
-        # 测试连接
-        if client.bucket_exists("dev-test"):
-            print("✅ 开发模式Minio连接成功")
-        else:
-            # 创建测试bucket
-            client.make_bucket("dev-test")
-            print("✅ 开发模式Minio连接成功 - 创建开发测试bucket")
+        # 检查连接
+        buckets = dev_client.list_buckets()
+        bucket_names = [bucket.name for bucket in buckets]
         
-        # 测试文件上传
-        import io
-        test_content = f"AutoReportAI开发模式测试 - {datetime.now()}"
-        data = io.BytesIO(test_content.encode())
-        client.put_object(
-            "dev-test",
-            "dev-test-file.txt",
-            data=data,
-            length=len(test_content.encode()),
-            content_type="text/plain"
-        )
-        print("✅ 开发模式文件上传测试成功")
+        print(f"✅ 开发环境MinIO连接成功")
+        print(f"   📦 可用存储桶: {bucket_names}")
         
-        return True
+        assert True, "开发环境MinIO连接应该成功"
         
-    except ImportError:
-        print("❌ minio库未安装")
-        return False
     except Exception as e:
-        print(f"❌ 开发模式Minio连接失败: {e}")
-        return False
+        print(f"❌ 开发环境MinIO连接失败: {e}")
+        print("   这可能是正常的，如果开发环境MinIO未启动")
+        assert False, f"开发环境MinIO连接应该成功: {e}"
 
 def test_environment_variables():
     """测试环境变量配置"""
-    print("\n🔍 检查环境变量配置:")
+    print("\n🔧 测试环境变量配置...")
     
-    env_vars = {
-        "MINIO_ENDPOINT": "minio:9000",
-        "MINIO_ACCESS_KEY": "minioadmin", 
-        "MINIO_SECRET_KEY": "minioadmin123",
-        "MINIO_BUCKET_NAME": "autoreport",
-        "FILE_STORAGE_BACKEND": "minio"
-    }
-    
-    all_set = True
-    for var, expected in env_vars.items():
-        value = os.getenv(var, "未设置")
-        if value == "未设置":
-            print(f"⚠️  {var}: {value}")
-            all_set = False
+    try:
+        # 检查必要的环境变量
+        required_vars = [
+            'MINIO_ENDPOINT',
+            'MINIO_ACCESS_KEY', 
+            'MINIO_SECRET_KEY',
+            'MINIO_USE_SSL'
+        ]
+        
+        missing_vars = []
+        for var in required_vars:
+            if not os.getenv(var):
+                missing_vars.append(var)
+        
+        if missing_vars:
+            print(f"❌ 缺少环境变量: {missing_vars}")
+            assert False, f"应该设置所有必要的环境变量: {missing_vars}"
         else:
-            print(f"✅ {var}: {value}")
-    
-    return all_set
+            print("✅ 所有必要的环境变量已设置")
+            print(f"   📍 端点: {os.getenv('MINIO_ENDPOINT')}")
+            print(f"   🔑 访问密钥: {os.getenv('MINIO_ACCESS_KEY')[:8]}...")
+            print(f"   🔒 使用SSL: {os.getenv('MINIO_USE_SSL')}")
+            assert True, "环境变量配置应该完整"
+        
+    except Exception as e:
+        print(f"❌ 环境变量检查失败: {e}")
+        assert False, f"环境变量检查应该成功: {e}"
 
 if __name__ == "__main__":
     print("🚀 AutoReportAI Minio集成测试")

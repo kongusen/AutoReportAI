@@ -29,7 +29,7 @@ export default function ReactAgentDashboard() {
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null)
   const [systemHealth, setSystemHealth] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   useEffect(() => {
     loadDashboardData()
@@ -67,11 +67,7 @@ export default function ReactAgentDashboard() {
       
     } catch (error) {
       console.error('Failed to load dashboard data:', error)
-      toast({
-        title: '加载失败',
-        description: '无法获取React Agent仪表板数据',
-        variant: 'destructive'
-      })
+      showToast('无法获取React Agent仪表板数据', 'error')
     } finally {
       setLoading(false)
     }

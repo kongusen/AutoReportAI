@@ -83,14 +83,14 @@ def check_system_fonts():
                 print(f"   🎨 思源字体: {len(source_fonts)} 个")
                 print(f"      {source_fonts[0].split(':')[0] if source_fonts else ''}")
             
-            return len(chinese_fonts) > 0
+            assert len(chinese_fonts) > 0, "应该检测到中文字体"
         else:
             print("❌ 无法列出中文字体")
-            return False
+            assert False, "无法列出中文字体"
             
     except Exception as e:
         print(f"❌ 字体检查失败: {e}")
-        return False
+        assert False, f"字体检查失败: {e}"
 
 def test_matplotlib_fonts():
     """测试matplotlib字体支持"""
@@ -122,15 +122,15 @@ def test_matplotlib_fonts():
             print(f"✅ matplotlib中文字体: {len(chinese_fonts)} 个")
             for font in chinese_fonts[:5]:  # 显示前5个
                 print(f"   🔤 {font}")
-            return True
+            assert True, "应该检测到matplotlib中文字体"
         else:
             print("⚠️  matplotlib未检测到标准中文字体")
             print("   但可能仍支持中文显示（通过系统字体后备）")
-            return False
+            assert False, "应该检测到matplotlib中文字体"
             
     except Exception as e:
         print(f"❌ matplotlib测试失败: {e}")
-        return False
+        assert False, f"matplotlib测试失败: {e}"
 
 def test_chart_generation():
     """测试图表生成功能"""
@@ -167,20 +167,20 @@ def test_chart_generation():
                 
                 if file_size > 10000:  # 大于10KB说明生成正常
                     print("✅ 文件大小正常，可能包含正确的图表内容")
-                    return True
+                    assert True, "图表生成应该成功"
                 else:
                     print("⚠️  文件过小，可能生成异常")
-                    return False
+                    assert False, "图表文件应该足够大"
             else:
                 print("❌ 图表文件未找到")
-                return False
+                assert False, "图表文件应该存在"
         else:
             print(f"❌ 图表生成失败: {result.get('error', '未知错误')}")
-            return False
+            assert False, f"图表生成应该成功: {result.get('error', '未知错误')}"
             
     except Exception as e:
         print(f"❌ 图表生成测试异常: {e}")
-        return False
+        assert False, f"图表生成测试异常: {e}"
 
 def test_agent_tool_integration():
     """测试Agent工具集成"""
@@ -204,14 +204,14 @@ def test_agent_tool_integration():
             print("✅ Agent工具调用成功")
             print(f"   📄 文件: {result['filename']}")
             print(f"   📊 类型: {result['chart_type']}")
-            return True
+            assert True, "Agent工具调用应该成功"
         else:
             print(f"❌ Agent工具调用失败: {result.get('error', '未知错误')}")
-            return False
+            assert False, f"Agent工具调用应该成功: {result.get('error', '未知错误')}"
             
     except Exception as e:
         print(f"❌ Agent工具测试异常: {e}")
-        return False
+        assert False, f"Agent工具测试异常: {e}"
 
 def create_docker_font_fix_guide():
     """创建Docker字体修复指南"""

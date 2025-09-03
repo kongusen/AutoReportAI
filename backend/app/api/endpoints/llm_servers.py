@@ -45,7 +45,8 @@ def get_llm_servers(
     current_user = Depends(deps.get_current_active_user)
 ):
     """获取LLM服务器列表"""
-    query_filter = {}
+    # 限制只能查看当前用户的LLM服务器
+    query_filter = {'user_id': current_user.id}
     if is_active is not None:
         query_filter['is_active'] = is_active
     if is_healthy is not None:
@@ -72,15 +73,22 @@ def create_llm_server(
     current_user = Depends(deps.get_current_active_user)
 ):
     """创建新的LLM服务器"""
-    # 检查URL是否已存在
-    existing_server = crud_llm_server.get_by_base_url(db, base_url=server_in.base_url)
+    # 检查当前用户是否已存在相同URL的服务器
+    existing_server = db.query(LLMServer).filter(
+        LLMServer.user_id == current_user.id,
+        LLMServer.base_url == server_in.base_url
+    ).first()
     if existing_server:
         raise HTTPException(
             status_code=400,
             detail="该URL的LLM服务器已存在"
         )
     
-    server = crud_llm_server.create(db, obj_in=server_in)
+    # 绑定到当前用户
+    server_data = server_in.dict()
+    server_data['user_id'] = current_user.id
+    server_create = type(server_in)(**server_data)
+    server = crud_llm_server.create(db, obj_in=server_create)
     return server
 
 
@@ -92,11 +100,14 @@ def get_llm_server(
     current_user = Depends(deps.get_current_active_user)
 ):
     """获取特定LLM服务器"""
-    server = crud_llm_server.get(db, id=server_id)
+    server = db.query(LLMServer).filter(
+        LLMServer.id == server_id,
+        LLMServer.user_id == current_user.id
+    ).first()
     if not server:
         raise HTTPException(
             status_code=404,
-            detail="LLM服务器不存在"
+            detail="LLM服务器不存在或无权访问"
         )
     
     # 添加统计信息

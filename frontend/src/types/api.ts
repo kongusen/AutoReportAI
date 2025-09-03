@@ -990,7 +990,6 @@ export interface TaskService {
 export type {
   // 向后兼容的别名
   APIResponse as ApiResponse,
-  DataSource as DataSourceType,
   Template as TemplateType,
   Report as ReportType,
   Task as TaskType,

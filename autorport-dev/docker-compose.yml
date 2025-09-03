@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-go/master/schema/compose-spec.json
 # ==========================================
 # AutoReportAI 开发环境 Docker Compose 配置
 # 基于 React Agent 架构 - 现代化微服务设计
@@ -19,7 +20,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ../backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - autoreport_network
@@ -43,9 +44,9 @@ services:
     container_name: autoreport-redis-dev
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
       - ../backend/scripts/redis.conf:/usr/local/etc/redis/redis.conf:ro
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
@@ -105,6 +106,10 @@ services:
       # Celery配置
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-UTC}
+      
+      # 时区配置
+      - APP_TIMEZONE=${APP_TIMEZONE:-Asia/Shanghai}
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
@@ -183,11 +188,11 @@ services:
       - "${PORT:-8000}:8000"
     volumes:
       - ../backend:/app:rw
-      - backend_logs:/app/logs
-      - backend_uploads:/app/uploads
-      - backend_cache:/app/cache
-      - backend_storage:/app/storage
-      - backend_temp:/app/temp
+      - ./data/backend/logs:/app/logs
+      - ./data/backend/uploads:/app/uploads
+      - ./data/backend/cache:/app/cache
+      - ./data/backend/storage:/app/storage
+      - ./data/backend/temp:/app/temp
     depends_on:
       db:
         condition: service_healthy
@@ -268,10 +273,10 @@ services:
       
     volumes:
       - ../backend:/app:rw
-      - backend_logs:/app/logs
-      - backend_cache:/app/cache
-      - backend_storage:/app/storage
-      - backend_temp:/app/temp
+      - ./data/backend/logs:/app/logs
+      - ./data/backend/cache:/app/cache
+      - ./data/backend/storage:/app/storage
+      - ./data/backend/temp:/app/temp
     depends_on:
       db:
         condition: service_healthy
@@ -334,8 +339,8 @@ services:
       
     volumes:
       - ../backend:/app:rw
-      - backend_logs:/app/logs
-      - celery_beat_data:/tmp/celerybeat
+      - ./data/backend/logs:/app/logs
+      - ./data/celery/beat:/tmp/celerybeat
     depends_on:
       db:
         condition: service_healthy
@@ -371,6 +376,7 @@ services:
       - NEXT_PUBLIC_REACT_AGENT_UI=enabled
       - NEXT_PUBLIC_INTELLIGENT_COMPONENTS=enabled
       - NEXT_PUBLIC_REALTIME_UPDATES=enabled
+      - NEXT_PUBLIC_APP_TIMEZONE=${APP_TIMEZONE:-Asia/Shanghai}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     volumes:
@@ -394,56 +400,6 @@ services:
       - "architecture=react_agent"
 
   # ==========================================
-  # 开发工具 - 数据库管理 (可选)
-  # ==========================================
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: autoreport-pgadmin-dev
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@autoreportai.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-    ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      - db
-    networks:
-      - autoreport_network
-    profiles:
-      - tools
-    labels:
-      - "project=autoreportai"
-      - "environment=development"
-      - "service=pgadmin"
-      - "architecture=react_agent"
-
-  # ==========================================
-  # 开发工具 - Redis管理 (可选)
-  # ==========================================
-  redis-insight:
-    image: redislabs/redisinsight:latest
-    container_name: autoreport-redis-insight-dev
-    restart: unless-stopped
-    ports:
-      - "8001:8001"
-    volumes:
-      - redis_insight_data:/db
-    depends_on:
-      - redis
-    networks:
-      - autoreport_network
-    profiles:
-      - tools
-    labels:
-      - "project=autoreportai"
-      - "environment=development"
-      - "service=redis-insight"
-      - "architecture=react_agent"
-
-  # ==========================================
   # Minio对象存储服务 - 默认启动
   # ==========================================
   minio:
@@ -460,7 +416,7 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"      # API端口
       - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Web控制台端口
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
     command: server /data --console-address ":9001"
     networks:
       - autoreport_network
@@ -476,40 +432,6 @@ services:
       - "service=minio"
       - "architecture=react_agent"
 
-  # ==========================================
-  # Minio开发模式服务 (dev-suffix模式)
-  # ==========================================
-  minio-dev:
-    image: minio/minio:latest
-    container_name: autoreport-minio-dev-suffix
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_DEV_ROOT_USER:-devuser}
-      MINIO_ROOT_PASSWORD: ${MINIO_DEV_ROOT_PASSWORD:-devpassword123}
-      MINIO_BROWSER: "on"
-      MINIO_SERVER_URL: http://minio-dev:9002
-      MINIO_BROWSER_REDIRECT_URL: http://localhost:9003
-    ports:
-      - "${MINIO_DEV_API_PORT:-9002}:9000"      # 开发API端口
-      - "${MINIO_DEV_CONSOLE_PORT:-9003}:9001"  # 开发Web控制台端口
-    volumes:
-      - minio_dev_data:/data
-    command: server /data --console-address ":9001"
-    networks:
-      - autoreport_network
-    profiles:
-      - dev-mode
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    labels:
-      - "project=autoreportai"
-      - "environment=development"
-      - "service=minio-dev"
-      - "architecture=react_agent"
 
 # ==========================================
 # 网络配置
@@ -524,59 +446,6 @@ networks:
           gateway: 172.20.0.1
 
 # ==========================================
-# 数据卷配置
+# 注意: 现在使用直接的bind mount，不需要定义volumes
+# Docker会自动创建 ./data/ 目录结构
 # ==========================================
-volumes:
-  # 核心数据
-  postgres_data:
-    name: autoreport_postgres_data_dev
-    driver: local
-  redis_data:
-    name: autoreport_redis_data_dev
-    driver: local
-  
-  # React Agent后端数据
-  backend_logs:
-    name: autoreport_backend_logs_dev
-    driver: local
-  backend_uploads:
-    name: autoreport_backend_uploads_dev
-    driver: local
-  backend_cache:
-    name: autoreport_backend_cache_dev
-    driver: local
-  backend_storage:
-    name: autoreport_backend_storage_dev
-    driver: local
-  backend_temp:
-    name: autoreport_backend_temp_dev
-    driver: local
-  
-  # Celery数据
-  celery_beat_data:
-    name: autoreport_celery_beat_dev
-    driver: local
-  
-  # React Agent前端缓存
-  frontend_cache:
-    name: autoreport_frontend_cache_dev
-    driver: local
-  frontend_next_cache:
-    name: autoreport_frontend_next_cache_dev  
-    driver: local
-  
-  # Minio对象存储数据
-  minio_data:
-    name: autoreport_minio_data_dev
-    driver: local
-  minio_dev_data:
-    name: autoreport_minio_dev_data_dev
-    driver: local
-  
-  # 开发工具数据
-  pgadmin_data:
-    name: autoreport_pgadmin_data_dev
-    driver: local
-  redis_insight_data:
-    name: autoreport_redis_insight_data_dev
-    driver: local

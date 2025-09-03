@@ -147,8 +147,11 @@ class Settings(BaseSettings):
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_ACCEPT_CONTENT: List[str] = ["json"]
-    CELERY_TIMEZONE: str = "UTC"
+    CELERY_TIMEZONE: str = os.getenv("CELERY_TIMEZONE", "UTC")
     CELERY_ENABLE_UTC: bool = True
+    
+    # 应用时区配置
+    APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Shanghai")
     
     # ===========================================
     # React Agent 系统配置

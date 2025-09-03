@@ -34,9 +34,8 @@ export default function DataSourcesPage() {
   const [testingConnections, setTestingConnections] = useState<Set<string>>(new Set())
 
   // WebSocket集成用于实时更新
-  const { isConnected, messages } = useWebSocket({
+  const { isConnected, messages, subscribe } = useWebSocket({
     autoConnect: true,
-    channels: ['data_sources', 'system'],
     onMessage: handleRealtimeUpdate
   })
 
@@ -54,6 +53,14 @@ export default function DataSourcesPage() {
   useEffect(() => {
     fetchDataSources()
   }, [fetchDataSources])
+
+  // 订阅WebSocket频道
+  useEffect(() => {
+    if (isConnected) {
+      subscribe('data_sources')
+      subscribe('system')
+    }
+  }, [isConnected, subscribe])
 
   // 过滤数据源
   const filteredDataSources = dataSources.filter(ds => {

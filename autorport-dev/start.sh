@@ -1,171 +1,275 @@
 #!/bin/bash
 
 # AutoReportAI 开发环境启动脚本
-# 用于快速启动开发环境
+# 支持多种启动模式
 
 set -e
-
-echo "🚀 AutoReportAI 开发环境启动脚本"
-echo "=================================="
 
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# 检查Docker和Docker Compose
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}❌ 错误: Docker未安装，请先安装Docker${NC}"
-    exit 1
-fi
+# 图标定义
+ROCKET="🚀"
+DATABASE="🗄️"
+GEAR="🔧"
+PAINT="🎨"
+PACKAGE="📦"
+CHECKMARK="✅"
+CROSS="❌"
 
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-    echo -e "${RED}❌ 错误: Docker Compose未安装，请先安装Docker Compose${NC}"
-    exit 1
-fi
-
-# 获取脚本目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-echo -e "${BLUE}📁 项目根目录: $PROJECT_ROOT${NC}"
-echo -e "${BLUE}📁 开发环境目录: $SCRIPT_DIR${NC}"
-
-# 切换到开发环境目录
-cd "$SCRIPT_DIR"
-
-# 检查.env文件
-if [ ! -f ".env" ]; then
-    echo -e "${YELLOW}⚠️  未找到 .env 文件，从 .env.example 复制...${NC}"
-    if [ -f ".env.example" ]; then
-        cp .env.example .env
-        echo -e "${GREEN}✅ 已创建 .env 文件，请根据需要修改配置${NC}"
-    else
-        echo -e "${RED}❌ 错误: .env.example 文件不存在${NC}"
-        exit 1
-    fi
-fi
-
-# 功能选择菜单
+echo -e "${BLUE}${PACKAGE} AutoReportAI 开发环境启动器${NC}"
+echo -e "${CYAN}基于 React Agent 架构 - 现代化微服务设计${NC}"
 echo ""
-echo -e "${BLUE}🛠️  请选择操作:${NC}"
-echo "1) 启动完整开发环境 (前端 + 后端 + 数据库)"
-echo "2) 仅启动基础服务 (数据库 + Redis)"
-echo "3) 启动后端服务"
-echo "4) 启动前端服务"
-echo "5) 启动管理工具 (pgAdmin + RedisInsight)"
-echo "6) 查看服务状态"
-echo "7) 查看服务日志"
-echo "8) 停止所有服务"
-echo "9) 清理数据 (谨慎使用!)"
-echo "0) 退出"
 
-read -p "请输入选择 (0-9): " choice
-
-case $choice in
-    1)
-        echo -e "${GREEN}🚀 启动完整开发环境...${NC}"
-        docker-compose up -d
-        ;;
-    2)
-        echo -e "${GREEN}🗄️  启动基础服务...${NC}"
-        docker-compose up -d db redis
-        ;;
-    3)
-        echo -e "${GREEN}🔧 启动后端服务...${NC}"
-        docker-compose up -d db redis backend celery-worker celery-beat
-        ;;
-    4)
-        echo -e "${GREEN}🎨 启动前端服务...${NC}"
-        docker-compose up -d db redis backend frontend
-        ;;
-    5)
-        echo -e "${GREEN}🛠️  启动管理工具...${NC}"
-        docker-compose --profile tools up -d pgadmin redis-insight
-        ;;
-    6)
-        echo -e "${BLUE}📊 服务状态:${NC}"
-        docker-compose ps
-        ;;
-    7)
-        echo -e "${BLUE}📋 请选择要查看日志的服务:${NC}"
-        echo "1) 后端服务"
-        echo "2) 前端服务"
-        echo "3) 数据库服务"
-        echo "4) Redis服务"
-        echo "5) Celery Worker"
-        echo "6) 所有服务"
-        read -p "请选择 (1-6): " log_choice
-        
-        case $log_choice in
-            1) docker-compose logs -f backend ;;
-            2) docker-compose logs -f frontend ;;
-            3) docker-compose logs -f db ;;
-            4) docker-compose logs -f redis ;;
-            5) docker-compose logs -f celery-worker ;;
-            6) docker-compose logs -f ;;
-            *) echo -e "${RED}❌ 无效选择${NC}" ;;
-        esac
-        ;;
-    8)
-        echo -e "${YELLOW}🛑 停止所有服务...${NC}"
-        docker-compose down
-        echo -e "${GREEN}✅ 所有服务已停止${NC}"
-        ;;
-    9)
-        echo -e "${RED}⚠️  警告: 这将删除所有数据，包括数据库数据！${NC}"
-        read -p "确认删除所有数据? (输入 'YES' 确认): " confirm
-        if [ "$confirm" = "YES" ]; then
-            echo -e "${RED}🗑️  清理所有数据...${NC}"
-            docker-compose down -v
-            docker-compose down --remove-orphans
-            docker system prune -f
-            echo -e "${GREEN}✅ 数据清理完成${NC}"
-        else
-            echo -e "${GREEN}✅ 操作已取消${NC}"
-        fi
-        ;;
-    0)
-        echo -e "${GREEN}👋 再见！${NC}"
-        exit 0
-        ;;
-    *)
-        echo -e "${RED}❌ 无效选择${NC}"
+# 检查Docker和docker-compose
+check_requirements() {
+    echo -e "${YELLOW}检查系统要求...${NC}"
+    
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}${CROSS} Docker 未安装${NC}"
         exit 1
-        ;;
-esac
+    fi
+    
+    if ! command -v docker-compose &> /dev/null; then
+        echo -e "${RED}${CROSS} Docker Compose 未安装${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}${CHECKMARK} 系统要求检查通过${NC}"
+    echo ""
+}
 
-# 显示服务信息
-if [ "$choice" = "1" ] || [ "$choice" = "3" ] || [ "$choice" = "4" ]; then
+# 检查并创建必要的目录（如果需要）
+ensure_directories() {
+    echo -e "${YELLOW}检查数据目录...${NC}"
+    echo -e "${GREEN}${CHECKMARK} Docker将自动创建所需的数据目录${NC}"
     echo ""
-    echo -e "${GREEN}✅ 服务启动完成！${NC}"
+}
+
+# 显示菜单
+show_menu() {
+    echo -e "${PACKAGE} 核心服务:"
+    echo -e "  ${GREEN}1)${NC} ${ROCKET} 启动完整开发环境 (推荐)"
+    echo -e "  ${GREEN}2)${NC} ${DATABASE} 仅启动基础服务 (数据库 + Redis + Minio)"
+    echo -e "  ${GREEN}3)${NC} ${GEAR} 启动后端服务 (API + Worker + Beat)"
+    echo -e "  ${GREEN}4)${NC} ${PAINT} 启动前端服务 (Next.js + React Agent UI)"
+    echo -e "  ${GREEN}5)${NC} ${GEAR} 启动开发工具 (PgAdmin + Redis Insight)"
+    echo -e "  ${GREEN}6)${NC} ${PACKAGE} 查看服务状态"
+    echo -e "  ${GREEN}7)${NC} ${PACKAGE} 停止所有服务"
+    echo -e "  ${GREEN}8)${NC} ${PACKAGE} 查看服务日志"
+    echo -e "  ${GREEN}9)${NC} ${PACKAGE} 重启服务"
+    echo -e "  ${RED}0)${NC} 退出"
     echo ""
-    echo -e "${BLUE}🌐 服务访问地址:${NC}"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "• 前端应用:     http://localhost:3000"
-    echo "• 后端API:      http://localhost:8000"
-    echo "• API文档:      http://localhost:8000/docs"
-    echo "• ReDoc文档:    http://localhost:8000/redoc"
+}
+
+# 启动完整环境
+start_full() {
+    echo -e "${GREEN}${ROCKET} 启动完整开发环境...${NC}"
+    docker-compose up -d
+    show_services_status
+}
+
+# 启动基础服务
+start_basic() {
+    echo -e "${GREEN}${DATABASE} 启动基础服务...${NC}"
+    docker-compose up -d db redis minio
+    show_services_status
+}
+
+# 启动后端服务
+start_backend() {
+    echo -e "${GREEN}${GEAR} 启动后端服务...${NC}"
+    docker-compose up -d db redis minio backend celery-worker celery-beat
+    show_services_status
+}
+
+# 启动前端服务
+start_frontend() {
+    echo -e "${GREEN}${PAINT} 启动前端服务...${NC}"
+    docker-compose up -d frontend
+    show_services_status
+}
+
+# 启动开发工具
+start_tools() {
+    echo -e "${GREEN}${GEAR} 启动开发工具...${NC}"
+    docker-compose --profile tools up -d
+    show_services_status
+}
+
+# 查看服务状态
+show_services_status() {
+    echo -e "${YELLOW}服务状态:${NC}"
+    docker-compose ps
+    echo ""
+    echo -e "${CYAN}访问地址:${NC}"
+    echo -e "  • 前端: ${GREEN}http://localhost:3000${NC}"
+    echo -e "  • 后端API: ${GREEN}http://localhost:8000${NC}"
+    echo -e "  • API文档: ${GREEN}http://localhost:8000/docs${NC}"
+    echo -e "  • Minio控制台: ${GREEN}http://localhost:9001${NC}"
+    echo -e "  • PgAdmin: ${GREEN}http://localhost:5050${NC} (需启用tools)"
+    echo -e "  • Redis Insight: ${GREEN}http://localhost:8001${NC} (需启用tools)"
+    echo ""
+}
+
+# 停止所有服务
+stop_all() {
+    echo -e "${RED}停止所有服务...${NC}"
+    docker-compose down
+    docker-compose --profile tools down
+    echo -e "${GREEN}${CHECKMARK} 所有服务已停止${NC}"
+}
+
+# 查看日志
+show_logs() {
+    echo -e "${CYAN}选择要查看日志的服务:${NC}"
+    echo "1) 所有服务"
+    echo "2) 后端 API"
+    echo "3) 前端"
+    echo "4) 数据库"
+    echo "5) Redis"
+    echo "6) Celery Worker"
+    echo "7) Celery Beat"
+    echo ""
+    read -p "请选择 (1-7): " log_choice
     
-    if docker-compose ps | grep -q "pgadmin.*Up"; then
-        echo "• pgAdmin:      http://localhost:5050"
-        echo "  - 邮箱: admin@autoreportai.com"
-        echo "  - 密码: admin123"
+    case $log_choice in
+        1) docker-compose logs -f ;;
+        2) docker-compose logs -f backend ;;
+        3) docker-compose logs -f frontend ;;
+        4) docker-compose logs -f db ;;
+        5) docker-compose logs -f redis ;;
+        6) docker-compose logs -f celery-worker ;;
+        7) docker-compose logs -f celery-beat ;;
+        *) echo "无效选择" ;;
+    esac
+}
+
+# 重启服务
+restart_services() {
+    echo -e "${CYAN}选择要重启的服务:${NC}"
+    echo "1) 所有服务"
+    echo "2) 后端服务"
+    echo "3) 前端服务"
+    echo "4) 基础服务"
+    echo ""
+    read -p "请选择 (1-4): " restart_choice
+    
+    case $restart_choice in
+        1) docker-compose restart ;;
+        2) docker-compose restart backend celery-worker celery-beat ;;
+        3) docker-compose restart frontend ;;
+        4) docker-compose restart db redis minio ;;
+        *) echo "无效选择" ;;
+    esac
+    show_services_status
+}
+
+# 主程序
+main() {
+    check_requirements
+    
+    # 如果没有参数，显示交互式菜单
+    if [ $# -eq 0 ]; then
+        while true; do
+            show_menu
+            read -p "请选择 (0-9): " choice
+            echo ""
+            
+            case $choice in
+                1)
+                    ensure_directories
+                    start_full
+                    ;;
+                2)
+                    ensure_directories
+                    start_basic
+                    ;;
+                3)
+                    ensure_directories
+                    start_backend
+                    ;;
+                4)
+                    start_frontend
+                    ;;
+                5)
+                    start_tools
+                    ;;
+                6)
+                    show_services_status
+                    ;;
+                7)
+                    stop_all
+                    ;;
+                8)
+                    show_logs
+                    ;;
+                9)
+                    restart_services
+                    ;;
+                0)
+                    echo -e "${GREEN}再见！${NC}"
+                    exit 0
+                    ;;
+                *)
+                    echo -e "${RED}无效选择，请重试${NC}"
+                    ;;
+            esac
+            
+            echo ""
+            read -p "按回车键继续..."
+            clear
+        done
+    else
+        # 支持命令行参数
+        case $1 in
+            "full"|"all")
+                ensure_directories
+                start_full
+                ;;
+            "basic"|"base")
+                ensure_directories
+                start_basic
+                ;;
+            "backend"|"api")
+                ensure_directories
+                start_backend
+                ;;
+            "frontend"|"ui")
+                start_frontend
+                ;;
+            "tools")
+                start_tools
+                ;;
+            "status")
+                show_services_status
+                ;;
+            "stop")
+                stop_all
+                ;;
+            "logs")
+                docker-compose logs -f
+                ;;
+            "restart")
+                docker-compose restart
+                show_services_status
+                ;;
+            *)
+                echo "用法: $0 [full|basic|backend|frontend|tools|status|stop|logs|restart]"
+                echo "或运行不带参数进入交互模式"
+                ;;
+        esac
     fi
-    
-    if docker-compose ps | grep -q "redis-insight.*Up"; then
-        echo "• RedisInsight:  http://localhost:8001"
-    fi
-    
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo -e "${YELLOW}📝 使用提示:${NC}"
-    echo "• 查看服务状态: ./start.sh 然后选择 6"
-    echo "• 查看服务日志: ./start.sh 然后选择 7" 
-    echo "• 停止所有服务: ./start.sh 然后选择 8"
-    echo "• 管理工具启动: ./start.sh 然后选择 5"
-    echo ""
-    echo -e "${GREEN}🎉 开发环境准备就绪，开始愉快的开发吧！${NC}"
-fi
+}
+
+# 捕获Ctrl+C
+trap 'echo -e "\n${YELLOW}操作已取消${NC}"; exit 0' INT
+
+# 启动主程序
+main "$@"

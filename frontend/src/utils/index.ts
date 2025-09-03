@@ -8,8 +8,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// 获取应用时区配置
+const getAppTimezone = () => {
+  return process.env.NEXT_PUBLIC_APP_TIMEZONE || 'Asia/Shanghai'
+}
+
 /**
- * 格式化日期
+ * 格式化日期 - 使用配置的应用时区
  */
 export function formatDate(date: string | Date | null | undefined, options?: Intl.DateTimeFormatOptions): string {
   if (!date) {
@@ -24,6 +29,7 @@ export function formatDate(date: string | Date | null | undefined, options?: Int
   }
 
   const defaultOptions: Intl.DateTimeFormatOptions = {
+    timeZone: getAppTimezone(),
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -31,6 +37,38 @@ export function formatDate(date: string | Date | null | undefined, options?: Int
     minute: '2-digit',
   }
   return d.toLocaleDateString('zh-CN', { ...defaultOptions, ...options })
+}
+
+/**
+ * 格式化日期时间 - 包含秒 - 使用配置的应用时区
+ */
+export function formatDateTime(date: string | Date | null | undefined, options?: Intl.DateTimeFormatOptions): string {
+  if (!date) {
+    return '未知'
+  }
+
+  try {
+    const d = typeof date === 'string' ? new Date(date) : date
+    
+    // 检查日期是否有效
+    if (isNaN(d.getTime())) {
+      return '时间格式错误'
+    }
+
+    const defaultOptions: Intl.DateTimeFormatOptions = {
+      timeZone: getAppTimezone(),
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }
+    
+    return d.toLocaleString('zh-CN', { ...defaultOptions, ...options })
+  } catch (error) {
+    return '时间格式错误'
+  }
 }
 
 /**

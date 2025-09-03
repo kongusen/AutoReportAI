@@ -7,18 +7,19 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Switch } from '@/components/ui/Switch'
 import toast from 'react-hot-toast'
-import { SettingsService as LLMService, LLMModel } from '@/services/settingsService'
+import { LLMService } from '@/services/apiService'
+import { formatDateTime } from '@/utils'
 import { PlusIcon, ArrowPathIcon, TrashIcon, CogIcon } from '@heroicons/react/24/outline'
 
 interface ModelListProps {
-  serverId: number
+  serverId: string
   serverName: string
   onAddModel?: () => void
-  onEditModel?: (model: LLMModel) => void
+  onEditModel?: (model: any) => void
 }
 
 export function ModelList({ serverId, serverName, onAddModel, onEditModel }: ModelListProps) {
-  const [models, setModels] = useState<LLMModel[]>([])
+  const [models, setModels] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -184,7 +185,7 @@ export function ModelList({ serverId, serverName, onAddModel, onEditModel }: Mod
                         {model.last_health_check && (
                           <div>
                             <span className="text-gray-500">最后检查:</span>
-                            <div className="font-medium">{new Date(model.last_health_check).toLocaleString()}</div>
+                            <div className="font-medium">{formatDateTime(model.last_health_check)}</div>
                           </div>
                         )}
                         <div>

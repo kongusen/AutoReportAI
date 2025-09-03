@@ -8,12 +8,12 @@ import { Switch } from '@/components/ui/Switch'
 import { Select } from '@/components/ui/Select'
 import { Card } from '@/components/ui/Card'
 import toast from 'react-hot-toast'
-import { SettingsService as LLMService, LLMModelCreate, LLMModel, ModelType } from '@/services/settingsService'
+import { LLMService } from '@/services/apiService'
 
 interface ModelFormProps {
-  serverId: number
-  model?: LLMModel
-  onSubmit?: (model: LLMModel) => void
+  serverId: string
+  model?: any
+  onSubmit?: (model: any) => void
   onCancel?: () => void
   mode?: 'create' | 'edit'
   providerName?: string

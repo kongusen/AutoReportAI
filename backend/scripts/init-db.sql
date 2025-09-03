@@ -87,6 +87,11 @@ BEGIN
         CREATE TYPE modeltype AS ENUM ('chat', 'think', 'embed', 'image');
     END IF;
     
+    -- Provider types (for LLM servers)
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'providertype') THEN
+        CREATE TYPE providertype AS ENUM ('openai', 'anthropic', 'google', 'cohere', 'huggingface', 'custom');
+    END IF;
+    
 END $$;
 
 -- ================================================
@@ -198,9 +203,11 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS llm_servers (
     id SERIAL PRIMARY KEY,
     server_id UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id),
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    base_url VARCHAR(512) NOT NULL UNIQUE,
+    base_url VARCHAR(512) NOT NULL,
+    provider_type providertype NOT NULL DEFAULT 'openai',
     api_key TEXT,
     auth_enabled BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
@@ -210,7 +217,8 @@ CREATE TABLE IF NOT EXISTS llm_servers (
     max_retries INTEGER DEFAULT 3,
     server_version VARCHAR(50),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT llm_servers_user_base_url_key UNIQUE (user_id, base_url)
 );
 
 -- LLM Models table

@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { SettingsService, LLMServer, LLMModel } from '@/services/settingsService'
+import { LLMService, SettingsService } from '@/services/apiService'
+import { LLMServer, LLMModel } from '@/types/api'
+import { formatDateTime } from '@/utils'
 import { ModelList } from '@/components/llm/ModelList'
 import { ModelForm } from '@/components/llm/ModelForm'
 import { LLMServerList } from '@/components/settings/LLMServerList'
@@ -18,11 +20,18 @@ export function LLMManagement() {
   const [showServerForm, setShowServerForm] = useState(false)
   const [editingModel, setEditingModel] = useState<LLMModel | undefined>(undefined)
   const [editingServer, setEditingServer] = useState<LLMServer | undefined>(undefined)
-  const [selectedServerId, setSelectedServerId] = useState<number | null>(null)
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(null)
 
   const loadServers = async () => {
-    const data = await SettingsService.getServers()
-    setServers(data)
+    try {
+      const data = await SettingsService.getLLMServers()
+      console.log('Loaded LLM servers:', data)
+      setServers(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Failed to load LLM servers:', error)
+      toast.error('加载LLM服务器失败')
+      setServers([])
+    }
   }
 
   useEffect(() => {
@@ -71,9 +80,9 @@ export function LLMManagement() {
               <p className="text-sm text-gray-600 mb-2">{server.description || '无描述'}</p>
               <div className="text-sm text-gray-500">
                 <div>URL: {server.base_url}</div>
-                <div>模型数量: {server.models_count || 0} 个</div>
+                <div>提供商: {server.provider_type}</div>
                 {server.last_health_check && (
-                  <div>最后检查: {new Date(server.last_health_check).toLocaleString()}</div>
+                  <div>最后检查: {formatDateTime(server.last_health_check)}</div>
                 )}
               </div>
             </div>
@@ -94,7 +103,7 @@ export function LLMManagement() {
                 size="sm"
                 onClick={async () => {
                   try {
-                    await SettingsService.checkServerHealth(server.id)
+                    await LLMService.getHealthCheck()
                     loadServers()
                   } catch (error) {
                     console.error('健康检查失败:', error)
@@ -109,7 +118,7 @@ export function LLMManagement() {
                 onClick={async () => {
                   if (confirm(`确定要删除服务器 "${server.name}" 吗？这将删除该服务器及其所有模型配置。`)) {
                     try {
-                      await SettingsService.deleteServer(server.id)
+                      await SettingsService.deleteServer(server.id.toString())
                       toast.success('LLM服务器已删除')
                       loadServers()
                     } catch (error) {
@@ -131,7 +140,7 @@ export function LLMManagement() {
               <Button 
                 size="sm"
                 onClick={() => {
-                  setSelectedServerId(server.id)
+                  setSelectedServerId(server.id.toString())
                   setEditingModel(undefined)
                   setShowModelForm(true)
                 }}
@@ -143,15 +152,15 @@ export function LLMManagement() {
             
             <div className="bg-gray-50 rounded-lg p-3">
               <ModelList
-                serverId={server.id}
+                serverId={server.id.toString()}
                 serverName={server.name}
                 onAddModel={() => {
-                  setSelectedServerId(server.id)
+                  setSelectedServerId(server.id.toString())
                   setEditingModel(undefined)
                   setShowModelForm(true)
                 }}
-                onEditModel={(model) => {
-                  setSelectedServerId(server.id)
+                onEditModel={(model: LLMModel) => {
+                  setSelectedServerId(server.id.toString())
                   setEditingModel(model)
                   setShowModelForm(true)
                 }}

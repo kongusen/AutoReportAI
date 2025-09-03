@@ -6,12 +6,12 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { toast } from 'react-hot-toast'
 import { AutoReportWebSocketClient, ConnectionStatus, webSocketManager } from '@/lib/websocket-client'
-import type {
-  WebSocketMessage,
+import {
   WebSocketMessageType,
-  NotificationMessage,
-  TaskUpdateMessage,
-  ReportUpdateMessage
+  type WebSocketMessage,
+  type NotificationMessage,
+  type TaskUpdateMessage,
+  type ReportUpdateMessage
 } from '@/types/api'
 
 // ============================================================================

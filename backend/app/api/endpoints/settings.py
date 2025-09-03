@@ -60,18 +60,21 @@ async def get_available_llm_servers(
     db: Session = Depends(get_db)
 ):
     """获取可用的LLM服务器列表（用于设置页面选择）"""
-    # 获取所有活跃且健康的LLM服务器（系统级别，不绑定用户）
+    # 获取当前用户的活跃LLM服务器
     llm_servers = db.query(LLMServer).filter(
-        LLMServer.is_active == True,
-        LLMServer.is_healthy == True
+        LLMServer.user_id == current_user.id,
+        LLMServer.is_active == True
     ).all()
     
     # 转换为响应模型  
     response_items = []
     for server in llm_servers:
         # 获取服务器统计信息
-        from app import crud
-        stats = crud.llm_server.get_server_stats(db, server_id=server.id)
+        from app.crud.crud_llm_server import crud_llm_server
+        try:
+            stats = crud_llm_server.get_server_stats(db, server_id=server.id)
+        except:
+            stats = {'providers_count': 0, 'success_rate': 0.0}
         
         # 创建响应对象
         server_response = {
@@ -80,9 +83,9 @@ async def get_available_llm_servers(
             "name": server.name,
             "description": server.description,
             "base_url": server.base_url,
+            "provider_type": server.provider_type,
             "is_active": server.is_active,
             "is_healthy": server.is_healthy,
-            "capabilities": server.capabilities,
             "providers_count": stats.get('providers_count', 0),
             "success_rate": stats.get('success_rate', 0.0)
         }
@@ -93,6 +96,99 @@ async def get_available_llm_servers(
         data=response_items,
         message="获取LLM服务器列表成功"
     )
+
+
+@router.post("/llm-servers", response_model=ApiResponse)
+async def create_llm_server_via_settings(
+    server_data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """通过设置页面创建LLM服务器"""
+    from app.crud.crud_llm_server import crud_llm_server
+    from app.schemas.llm_server import LLMServerCreate
+    
+    try:
+        # 创建服务器数据，自动绑定到当前用户
+        server_data['user_id'] = current_user.id
+        server_create = LLMServerCreate(**server_data)
+        
+        # 检查当前用户是否已经有相同URL的服务器
+        existing_server = db.query(LLMServer).filter(
+            LLMServer.user_id == current_user.id,
+            LLMServer.base_url == server_create.base_url
+        ).first()
+        if existing_server:
+            return ApiResponse(
+                success=False,
+                data=None,
+                message="该URL的LLM服务器已存在"
+            )
+        
+        server = crud_llm_server.create(db, obj_in=server_create)
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "id": server.id,
+                "server_id": str(server.server_id),
+                "name": server.name,
+                "base_url": server.base_url,
+                "provider_type": server.provider_type
+            },
+            message="LLM服务器创建成功"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            data=None,
+            message=f"创建LLM服务器失败: {str(e)}"
+        )
+
+
+@router.delete("/llm-servers/{server_id}", response_model=ApiResponse)
+async def delete_llm_server_via_settings(
+    server_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """通过设置页面删除LLM服务器"""
+    try:
+        # 检查服务器是否存在且属于当前用户
+        server = db.query(LLMServer).filter(
+            LLMServer.id == server_id,
+            LLMServer.user_id == current_user.id
+        ).first()
+        
+        if not server:
+            return ApiResponse(
+                success=False,
+                data=None,
+                message="LLM服务器不存在或无权访问"
+            )
+        
+        # 删除关联的模型
+        from app.models.llm_server import LLMModel
+        db.query(LLMModel).filter(LLMModel.server_id == server_id).delete()
+        
+        # 删除服务器
+        db.delete(server)
+        db.commit()
+        
+        return ApiResponse(
+            success=True,
+            data={"server_id": server_id},
+            message="LLM服务器已删除"
+        )
+        
+    except Exception as e:
+        db.rollback()
+        return ApiResponse(
+            success=False,
+            data=None,
+            message=f"删除LLM服务器失败: {str(e)}"
+        )
 
 
 @router.get("/system-info", response_model=ApiResponse)

@@ -44,7 +44,7 @@ def test_real_business_flow():
     
     token = get_auth_token()
     if not token:
-        return False
+        assert False, "无法获取认证token"
     
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -55,7 +55,7 @@ def test_real_business_flow():
     
     if not data_sources or not templates:
         print("❌ 无法获取真实数据源或模板")
-        return False
+        assert False, "无法获取真实数据源或模板"
     
     # 选择Doris数据源
     doris_ds = None
@@ -66,7 +66,7 @@ def test_real_business_flow():
     
     if not doris_ds:
         print("❌ 未找到Doris数据源")
-        return False
+        assert False, "未找到Doris数据源"
     
     print(f"✅ 选择数据源: {doris_ds['name']} (ID: {doris_ds['id']})")
     
@@ -96,7 +96,7 @@ def test_real_business_flow():
     overall_success = etl_success and report_success and charts_verified
     print(f"\n🎯 整体测试: {'✅ 全部成功' if overall_success else '❌ 部分失败'}")
     
-    return overall_success
+    assert overall_success, "整体测试应该成功"
 
 def get_real_data_sources(headers):
     """获取真实数据源"""

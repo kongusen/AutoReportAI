@@ -8,10 +8,11 @@ import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
 import { apiClient } from '@/lib/api-client'
 import { useToast } from '@/hooks/useToast'
+import { formatDateTime } from '@/utils'
 
 interface SystemPerformance {
   overall_status: string
-  analysis_result: string
+  analysis_result: string | any
   timestamp: string
   analyzed_by: string
 }
@@ -61,15 +62,36 @@ export default function ReactAgentInsights() {
   const loadSystemData = async () => {
     setLoading(true)
     try {
-      const [perfData, settingsData, healthData] = await Promise.all([
+      const [perfData, settingsData, healthData] = await Promise.allSettled([
         apiClient.getSystemPerformance(selectedMode),
         apiClient.getOptimizationSettings(),
         apiClient.getSystemHealth()
       ])
       
-      setPerformance(perfData)
-      setSettings(settingsData)
-      setHealth(healthData)
+      // 处理性能数据
+      if (perfData.status === 'fulfilled') {
+        setPerformance(perfData.value)
+      } else {
+        console.error('Failed to fetch performance data:', perfData.reason)
+        setPerformance(null)
+      }
+      
+      // 处理设置数据
+      if (settingsData.status === 'fulfilled') {
+        setSettings(settingsData.value)
+      } else {
+        console.error('Failed to fetch settings data:', settingsData.reason)
+        setSettings(null)
+      }
+      
+      // 处理健康数据
+      if (healthData.status === 'fulfilled') {
+        setHealth(healthData.value)
+      } else {
+        console.error('Failed to fetch health data:', healthData.reason)
+        setHealth(null)
+      }
+      
     } catch (error) {
       console.error('Failed to load system data:', error)
       toast({ 
@@ -131,6 +153,7 @@ export default function ReactAgentInsights() {
     }
   }
 
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -172,29 +195,44 @@ export default function ReactAgentInsights() {
             )}
           </div>
           
-          {health && (
+          {health ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {Object.entries(health.components).map(([mode, component]) => (
+                {health.components && Object.entries(health.components).map(([mode, component]) => (
                   <div key={mode} className="border rounded p-3">
                     <div className="text-sm font-medium">{mode} 模式</div>
                     <div className="text-xs text-gray-500 mt-1">
-                      {typeof component === 'object' ? component.status : 'Unknown'}
+                      {typeof component === 'object' && component?.status 
+                        ? component.status 
+                        : typeof component === 'string'
+                        ? component
+                        : 'Unknown'}
                     </div>
                   </div>
                 ))}
+                {(!health.components || Object.keys(health.components).length === 0) && (
+                  <div className="col-span-full text-center py-4 text-gray-500">
+                    暂无系统组件信息
+                  </div>
+                )}
               </div>
               
               <div className="mt-4">
                 <h4 className="text-sm font-medium mb-2">健康检查结果:</h4>
                 <div className="space-y-1">
-                  {health.checks?.map((check, index) => (
+                  {health.checks && health.checks.length > 0 ? health.checks.map((check, index) => (
                     <div key={index} className="text-xs text-gray-600">
-                      ✓ {check}
+                      ✓ {typeof check === 'string' ? check : JSON.stringify(check)}
                     </div>
-                  ))}
+                  )) : (
+                    <div className="text-xs text-gray-500">暂无健康检查结果</div>
+                  )}
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              暂无系统健康数据
             </div>
           )}
         </div>
@@ -205,18 +243,74 @@ export default function ReactAgentInsights() {
         <div className="p-6">
           <h3 className="text-lg font-semibold mb-4">性能分析</h3>
           
-          {performance && (
+          {performance ? (
             <div className="space-y-4">
               <div className="bg-gray-50 rounded p-4">
-                <pre className="text-sm whitespace-pre-wrap">
-                  {performance.analysis_result}
-                </pre>
+                <div className="text-sm whitespace-pre-wrap">
+                  {typeof performance.analysis_result === 'string' 
+                    ? performance.analysis_result
+                    : typeof performance.analysis_result === 'object' 
+                    ? (
+                        <div className="space-y-2">
+                          {performance.analysis_result.response && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">分析响应:</div>
+                              <div className="text-gray-600">{performance.analysis_result.response}</div>
+                            </div>
+                          )}
+                          {performance.analysis_result.status && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">状态:</div>
+                              <Badge variant={performance.analysis_result.status === 'success' ? 'default' : 'secondary'}>
+                                {performance.analysis_result.status}
+                              </Badge>
+                            </div>
+                          )}
+                          {performance.analysis_result.conversation_time && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">处理时间:</div>
+                              <div className="text-gray-600">{performance.analysis_result.conversation_time}ms</div>
+                            </div>
+                          )}
+                          {performance.analysis_result.reasoning_steps && Array.isArray(performance.analysis_result.reasoning_steps) && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">推理步骤:</div>
+                              <ul className="list-disc list-inside text-gray-600 space-y-1">
+                                {performance.analysis_result.reasoning_steps.map((step: any, index: number) => (
+                                  <li key={index}>{typeof step === 'string' ? step : JSON.stringify(step)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {performance.analysis_result.tool_calls && Array.isArray(performance.analysis_result.tool_calls) && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">工具调用:</div>
+                              <div className="text-gray-600">{performance.analysis_result.tool_calls.length} 次调用</div>
+                            </div>
+                          )}
+                          {performance.analysis_result.metadata && (
+                            <div>
+                              <div className="font-medium text-gray-700 mb-1">元数据:</div>
+                              <pre className="text-xs text-gray-600 bg-white rounded p-2 overflow-x-auto">
+                                {JSON.stringify(performance.analysis_result.metadata, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    : JSON.stringify(performance.analysis_result, null, 2)
+                  }
+                </div>
               </div>
               
               <div className="flex justify-between text-xs text-gray-500">
-                <span>分析者: {performance.analyzed_by}</span>
-                <span>时间: {new Date(performance.timestamp).toLocaleString()}</span>
+                <span>分析者: {performance.analyzed_by || '未知'}</span>
+                <span>时间: {formatDateTime(performance.timestamp)}</span>
               </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              暂无性能分析数据
             </div>
           )}
         </div>
@@ -236,13 +330,13 @@ export default function ReactAgentInsights() {
             </Button>
           </div>
           
-          {settings && (
+          {settings ? (
             <div className="space-y-6">
               {/* 集成模式 */}
               <div>
                 <h4 className="font-medium mb-3">集成模式</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {settings.integration_modes?.map((mode) => (
+                  {settings.integration_modes && settings.integration_modes.length > 0 ? settings.integration_modes.map((mode) => (
                     <div 
                       key={mode.mode}
                       className={`border rounded p-4 cursor-pointer transition-colors ${
@@ -260,7 +354,11 @@ export default function ReactAgentInsights() {
                         ))}
                       </div>
                     </div>
-                  ))}
+                  )) : (
+                    <div className="col-span-full text-center py-4 text-gray-500">
+                      暂无集成模式配置
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -310,6 +408,10 @@ export default function ReactAgentInsights() {
                   </div>
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              暂无优化配置数据
             </div>
           )}
         </div>

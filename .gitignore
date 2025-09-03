@@ -407,3 +407,21 @@ test_reports/
 test_templates/
 test_uploads/
 test_data/
+
+# ========================================
+# AutoReportAI 开发环境目录屏蔽
+# ========================================
+# 屏蔽 autorport-dev/data/ 目录（包含Docker数据文件）
+autorport-dev/data/
+autorport-dev/data/**/*
+
+# 屏蔽 autorport-dev 目录下的临时和系统文件
+autorport-dev/.DS_Store
+autorport-dev/*.log
+autorport-dev/*.tmp
+autorport-dev/*.temp
+
+# 保留 autorport-dev 目录下的重要配置文件
+!autorport-dev/docker-compose.yml
+!autorport-dev/start.sh
+!autorport-dev/README.md

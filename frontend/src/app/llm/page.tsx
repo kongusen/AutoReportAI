@@ -5,19 +5,20 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { SettingsService, LLMServer, LLMModel } from '@/services/settingsService'
+import { LLMService } from '@/services/apiService'
+import { LLMServer } from '@/types/api'
 import { ModelList } from '@/components/llm/ModelList'
 import { ModelForm } from '@/components/llm/ModelForm'
 import { PlusIcon } from '@heroicons/react/24/outline'
 
 export default function LLMManagementPage() {
   const [servers, setServers] = useState<LLMServer[]>([])
-  const [activeServerId, setActiveServerId] = useState<number | null>(null)
+  const [activeServerId, setActiveServerId] = useState<string | null>(null)
   const [showModelForm, setShowModelForm] = useState(false)
-  const [editingModel, setEditingModel] = useState<LLMModel | undefined>(undefined)
+  const [editingModel, setEditingModel] = useState<any | undefined>(undefined)
 
   const loadServers = async () => {
-    const data = await SettingsService.getServers()
+    const data = await LLMService.getServers()
     setServers(data)
     if (!activeServerId && data.length > 0) {
       setActiveServerId(data[0].id)

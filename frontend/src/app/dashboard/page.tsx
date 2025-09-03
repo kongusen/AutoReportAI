@@ -16,10 +16,10 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { SystemService, TaskService, ReportService } from '@/services/apiService'
-import { formatRelativeTime, formatNumber } from '@/utils'
-import { DashboardStats, Task, Report } from '@/types'
+import { TaskService, ReportService } from '@/services/apiService'
 import { apiClient } from '@/lib/api-client'
+import { formatRelativeTime, formatNumber, formatDateTime } from '@/utils'
+import { DashboardStats, Task, Report } from '@/types/api'
 
 interface StatsCardProps {
   title: string
@@ -72,7 +72,11 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recentTasks, setRecentTasks] = useState<Task[]>([])
   const [recentReports, setRecentReports] = useState<Report[]>([])
-  const [systemHealth, setSystemHealth] = useState<any>(null)
+  const [systemHealth, setSystemHealth] = useState<any>({
+    overall_status: 'loading',
+    components: {},
+    checks: []
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [refreshing, setRefreshing] = useState(false)
@@ -80,7 +84,6 @@ export default function DashboardPage() {
   // WebSocket集成用于实时更新
   const { isConnected, subscribe, messages } = useWebSocket({
     autoConnect: true,
-    channels: ['dashboard', 'tasks', 'reports'],
     onMessage: handleRealtimeUpdate
   })
 
@@ -118,10 +121,10 @@ export default function DashboardPage() {
       
       // 使用新的API服务并行获取数据，包含React Agent系统健康状态
       const [statsData, tasksData, reportsData, healthData] = await Promise.allSettled([
-        SystemService.getDashboardStats(),
+        apiClient.getDashboardStats(),
         TaskService.list({ page: 1, size: 5 }),
         ReportService.list({ page: 1, size: 5 }),
-        apiClient.getSystemHealth()
+        apiClient.getHealthStatus()
       ])
 
       // 处理仪表板统计
@@ -178,6 +181,15 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchDashboardData()
   }, [fetchDashboardData])
+
+  // 订阅WebSocket频道
+  useEffect(() => {
+    if (isConnected) {
+      subscribe('dashboard')
+      subscribe('tasks')
+      subscribe('reports')
+    }
+  }, [isConnected, subscribe])
 
   if (loading) {
     return (
@@ -246,21 +258,21 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatsCard
           title="数据源"
-          value={stats?.system_stats?.total_data_sources || 0}
+          value={stats?.total_data_sources || 0}
           description="已配置的数据源"
           icon={CircleStackIcon}
           trend={{ value: 12, label: '较上月', type: 'increase' }}
         />
         <StatsCard
           title="模板"
-          value={stats?.system_stats?.total_templates || 0}
+          value={stats?.total_templates || 0}
           description="可用的报告模板"
           icon={DocumentTextIcon}
           trend={{ value: 8, label: '较上月', type: 'increase' }}
         />
         <StatsCard
           title="活跃任务"
-          value={stats?.system_stats?.total_tasks || 0}
+          value={stats?.recent_tasks || 0}
           description="正在运行的任务"
           icon={ClockIcon}
         />
@@ -274,7 +286,7 @@ export default function DashboardPage() {
       </div>
 
       {/* React Agent 系统状态 */}
-      {systemHealth && (
+      {systemHealth && systemHealth.overall_status !== 'loading' && (
         <Card className="mb-8">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -297,7 +309,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {Object.entries(systemHealth.components).map(([mode, component]: [string, any]) => (
+              {systemHealth.components && Object.entries(systemHealth.components).map(([mode, component]: [string, any]) => (
                 <div key={mode} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div className="flex-1">
                     <p className="text-sm font-medium">{mode} 模式</p>
@@ -313,10 +325,15 @@ export default function DashboardPage() {
                   </Badge>
                 </div>
               ))}
+              {(!systemHealth.components || Object.keys(systemHealth.components).length === 0) && (
+                <div className="col-span-full text-center py-4 text-gray-500">
+                  暂无系统组件信息
+                </div>
+              )}
             </div>
             <div className="mt-4 flex justify-between items-center">
               <div className="text-sm text-gray-500">
-                最后更新: {systemHealth.timestamp ? new Date(systemHealth.timestamp).toLocaleString() : '未知'}
+                最后更新: {formatDateTime(systemHealth.timestamp)}
               </div>
               <Button variant="outline" size="sm">
                 <ChartBarIcon className="mr-2 h-4 w-4" />

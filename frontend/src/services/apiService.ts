@@ -728,6 +728,55 @@ class SettingsService {
   static async resetToDefaults(): Promise<void> {
     return apiClient.request('POST', '/settings/reset-to-defaults')
   }
+
+  /**
+   * 创建LLM服务器
+   */
+  static async createServer(server: any): Promise<LLMServer> {
+    return apiClient.request('POST', '/settings/llm-servers', { data: server })
+  }
+
+  /**
+   * 更新LLM服务器
+   */
+  static async updateServer(id: string, server: any): Promise<LLMServer> {
+    return apiClient.request('PUT', `/settings/llm-servers/${id}`, { data: server })
+  }
+
+  /**
+   * 删除LLM服务器
+   */
+  static async deleteServer(id: string): Promise<void> {
+    return apiClient.request('DELETE', `/settings/llm-servers/${id}`)
+  }
+
+  /**
+   * 获取LLM服务器模型列表
+   */
+  static async getServerModels(serverId: string): Promise<any[]> {
+    return apiClient.request('GET', `/settings/llm-servers/${serverId}/models`, { cache: true })
+  }
+
+  /**
+   * 创建LLM服务器模型
+   */
+  static async createServerModel(serverId: string, model: any): Promise<any> {
+    return apiClient.request('POST', `/settings/llm-servers/${serverId}/models`, { data: model })
+  }
+
+  /**
+   * 更新LLM服务器模型
+   */
+  static async updateServerModel(serverId: string, modelId: string, model: any): Promise<any> {
+    return apiClient.request('PUT', `/settings/llm-servers/${serverId}/models/${modelId}`, { data: model })
+  }
+
+  /**
+   * 删除LLM服务器模型
+   */
+  static async deleteServerModel(serverId: string, modelId: string): Promise<void> {
+    return apiClient.request('DELETE', `/settings/llm-servers/${serverId}/models/${modelId}`)
+  }
 }
 
 // ============================================================================

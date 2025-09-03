@@ -6,9 +6,11 @@ import pytz
 from datetime import datetime
 from typing import Optional
 
+from .config import settings
 
-# 应用时区设置
-APP_TIMEZONE = pytz.timezone('Asia/Shanghai')
+
+# 应用时区设置 - 从配置文件读取
+APP_TIMEZONE = pytz.timezone(settings.APP_TIMEZONE)
 
 
 def now() -> datetime:

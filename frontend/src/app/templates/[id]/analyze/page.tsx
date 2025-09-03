@@ -11,6 +11,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import ReactAgentTemplateAnalyzer from '@/components/templates/ReactAgentTemplateAnalyzer'
 import { apiClient } from '@/lib/api-client'
 import { useToast } from '@/hooks/useToast'
+import { formatDateTime } from '@/utils'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 
 interface Template {
@@ -29,7 +30,7 @@ export default function TemplateAnalyzePage() {
   const router = useRouter()
   const [template, setTemplate] = useState<Template | null>(null)
   const [loading, setLoading] = useState(true)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   const templateId = Array.isArray(params.id) ? params.id[0] : params.id
 
@@ -45,11 +46,7 @@ export default function TemplateAnalyzePage() {
       setTemplate(templateData)
     } catch (error) {
       console.error('Failed to load template:', error)
-      toast({
-        title: '加载失败',
-        description: '无法加载模板信息',
-        variant: 'destructive'
-      })
+      showToast('无法加载模板信息', 'error')
       router.push('/templates')
     } finally {
       setLoading(false)
@@ -57,11 +54,7 @@ export default function TemplateAnalyzePage() {
   }
 
   const handleAnalysisComplete = (result: any) => {
-    toast({
-      title: '分析完成',
-      description: 'React Agent 已完成模板分析',
-      variant: 'default'
-    })
+    showToast('React Agent 已完成模板分析', 'success')
   }
 
   if (loading) {
@@ -128,12 +121,12 @@ export default function TemplateAnalyzePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-gray-600">创建时间:</span>
-                <span className="ml-2">{new Date(template.created_at).toLocaleString()}</span>
+                <span className="ml-2">{formatDateTime(template.created_at)}</span>
               </div>
               {template.updated_at && (
                 <div>
                   <span className="text-gray-600">更新时间:</span>
-                  <span className="ml-2">{new Date(template.updated_at).toLocaleString()}</span>
+                  <span className="ml-2">{formatDateTime(template.updated_at)}</span>
                 </div>
               )}
             </div>

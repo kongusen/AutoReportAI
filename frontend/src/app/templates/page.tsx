@@ -38,9 +38,8 @@ export default function TemplatesPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
 
   // WebSocket集成用于实时更新
-  const { isConnected, messages } = useWebSocket({
+  const { isConnected, messages, subscribe } = useWebSocket({
     autoConnect: true,
-    channels: ['templates', 'placeholders'],
     onMessage: handleRealtimeUpdate
   })
 
@@ -58,6 +57,14 @@ export default function TemplatesPage() {
   useEffect(() => {
     fetchTemplates()
   }, [fetchTemplates])
+
+  // 订阅WebSocket频道
+  useEffect(() => {
+    if (isConnected) {
+      subscribe('templates')
+      subscribe('placeholders')
+    }
+  }, [isConnected, subscribe])
 
   // 过滤模板
   const filteredTemplates = (templates || []).filter(template => {

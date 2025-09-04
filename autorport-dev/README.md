@@ -1,5 +1,31 @@
 # AutoReportAI 开发环境指南
 
+## 📋 版本说明
+
+本项目提供两个版本的配置文件：
+
+### 主版本 (默认)
+- `docker-compose.yml` - 标准Docker Compose配置
+- `.env.example` - 标准环境变量配置模板
+- 适用于大多数开发和生产环境
+
+### 代理版本 (特殊环境)
+- `docker-compose.proxy.yml` - 包含代理配置的Docker Compose配置
+- `.env.proxy.example` - 包含代理配置的环境变量模板
+- 适用于需要代理访问外网的企业内网环境
+
+**使用代理版本的方法：**
+```bash
+# 1. 复制代理版本的环境配置
+cp .env.proxy.example .env
+
+# 2. 配置代理设置
+# 编辑 .env 文件，设置 BUILD_HTTP_PROXY 和 BUILD_HTTPS_PROXY
+
+# 3. 使用代理版本的docker-compose文件启动
+docker-compose -f docker-compose.proxy.yml up
+```
+
 ## 🚀 快速开始
 
 ### 多架构镜像构建

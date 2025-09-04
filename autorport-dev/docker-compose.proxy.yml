@@ -1,7 +1,17 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-go/master/schema/compose-spec.json
 # ==========================================
-# AutoReportAI 开发环境 Docker Compose 配置
+# AutoReportAI 开发环境 Docker Compose 配置 (代理版本)
 # 基于 React Agent 架构 - 现代化微服务设计
+# 
+# 特殊版本说明：
+# - 此版本包含代理配置支持，适用于需要代理访问外网的环境
+# - 包含 BUILD_HTTP_PROXY 和 BUILD_HTTPS_PROXY 构建参数
+# - 适用于企业内网或需要代理的部署环境
+# 
+# 使用方法：
+# 1. 复制 .env.proxy.example 为 .env
+# 2. 配置 BUILD_HTTP_PROXY 和 BUILD_HTTPS_PROXY 环境变量
+# 3. 运行 docker-compose -f docker-compose.proxy.yml up
 # ==========================================
 
 services:
@@ -71,6 +81,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: development
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-backend-dev
     restart: unless-stopped
     command: ["/usr/local/bin/entrypoint.sh", "api"]
@@ -232,6 +245,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: worker
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-worker-dev
     restart: unless-stopped
     environment:
@@ -329,6 +345,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: beat
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-beat-dev
     restart: unless-stopped
     environment:
@@ -398,6 +417,9 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       target: development
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-frontend-dev
     restart: unless-stopped
     environment:

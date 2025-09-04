@@ -95,6 +95,7 @@ jobs:
           htmlcov/
           .coverage
         include-hidden-files: true
+        if-no-files-found: ignore
 
   # 集成测试
   integration-tests:
@@ -127,7 +128,7 @@ jobs:
           - 6379:6379
           
       minio:
-        image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+        image: minio/minio:latest
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin123
@@ -136,6 +137,8 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+          --entrypoint /bin/sh
+          -c "minio server /data --console-address :9001"
         ports:
           - 9000:9000
           - 9001:9001
@@ -184,6 +187,7 @@ jobs:
         path: |
           htmlcov/
           .coverage
+        if-no-files-found: ignore
 
   # Docker测试
   docker-tests:
@@ -215,6 +219,7 @@ jobs:
         path: |
           tests/docker/results/
           storage/
+        if-no-files-found: ignore
 
   # 前端测试
   frontend-tests:
@@ -256,6 +261,7 @@ jobs:
           frontend/.next/
           frontend/out/
         include-hidden-files: true
+        if-no-files-found: ignore
 
   # 端到端测试
   e2e-tests:
@@ -347,6 +353,7 @@ jobs:
         path: |
           tests/e2e/screenshots/
           tests/e2e/videos/
+        if-no-files-found: ignore
           
     - name: Cleanup
       if: always()
@@ -386,6 +393,7 @@ jobs:
         path: |
           tests/performance/reports/
           tests/performance/benchmarks/
+        if-no-files-found: ignore
 
   # 覆盖率报告
   coverage-report:
@@ -433,6 +441,7 @@ jobs:
         path: |
           htmlcov/
           coverage.xml
+        if-no-files-found: ignore
 
   # 安全扫描
   security-scan:

@@ -586,24 +586,6 @@ export class AutoReportAPIClient {
     })
   }
 
-  async uploadFile(file: File, path?: string, overwrite?: boolean): Promise<any> {
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    if (path) {
-      formData.append('path', path)
-    }
-    if (overwrite !== undefined) {
-      formData.append('overwrite', overwrite.toString())
-    }
-
-    return this.request<any>('POST', '/files/upload', {
-      data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    })
-  }
 
   async uploadTemplateFile(templateId: string, file: File): Promise<Template> {
     const formData = new FormData()

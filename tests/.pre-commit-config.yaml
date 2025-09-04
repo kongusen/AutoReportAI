@@ -114,7 +114,7 @@ repos:
       # 运行快速测试
       - id: run-tests
         name: Run unit tests
-        entry: python3 run_tests.py --unit
+        entry: python3 tests/run_tests.py --unit
         language: system
         pass_filenames: false
         stages: [push]
@@ -122,7 +122,7 @@ repos:
       # 检查覆盖率
       - id: coverage-check
         name: Check test coverage
-        entry: python3 run_tests.py --coverage --no-html
+        entry: python3 tests/run_tests.py --coverage --no-html
         language: system
         pass_filenames: false
         stages: [push]
@@ -130,7 +130,7 @@ repos:
       # 生成测试报告
       - id: test-report
         name: Generate test report
-        entry: bash -c "python3 run_tests.py --unit --integration --coverage && echo 'Tests passed!'"
+        entry: bash -c "python3 tests/run_tests.py --unit --integration --coverage && echo 'Tests passed!'"
         language: system
         pass_filenames: false
         stages: [manual]

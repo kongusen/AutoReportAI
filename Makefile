@@ -12,7 +12,7 @@ PYTHON := $(shell if [ "$$CI" = "true" ] || [ "$$GITHUB_ACTIONS" = "true" ]; the
 PIP := $(shell if [ "$$CI" = "true" ] || [ "$$GITHUB_ACTIONS" = "true" ]; then echo "pip"; elif [ -x "$(VENV_PYTHON)" ]; then echo "../venv/bin/pip"; else echo "pip3"; fi)
 PYTEST := $(PYTHON) -m pytest
 DOCKER_COMPOSE := docker-compose
-TEST_RUNNER := $(PYTHON) run_tests.py
+TEST_RUNNER := $(PYTHON) tests/run_tests.py
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
 TESTS_DIR := tests

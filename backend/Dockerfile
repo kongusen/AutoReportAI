@@ -202,7 +202,8 @@ FROM dependencies AS production
 # 复制生产所需文件
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser scripts ./scripts
-COPY --chown=appuser:appuser pyproject.toml pytest.ini ./
+# 只复制存在的配置文件
+COPY --chown=appuser:appuser requirements.txt ./
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/
 COPY --chown=appuser:appuser healthcheck.sh /usr/local/bin/
 

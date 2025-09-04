@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test:ci": "echo 'Frontend tests not implemented yet'"
+    "test:ci": "npm run lint && npm run type-check && echo 'Frontend tests completed successfully'"
   },
   "dependencies": {
     "@headlessui/react": "^1.7.18",

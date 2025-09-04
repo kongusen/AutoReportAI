@@ -65,3 +65,15 @@ PyMySQL>=1.1.1
 
 # 文件存储
 minio>=7.2.16
+
+# 测试和代码质量工具
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+pytest-mock>=3.14.0
+black>=24.10.0
+flake8>=7.1.1
+mypy>=1.13.0
+bandit>=1.7.10
+isort>=5.13.2
+coverage>=7.6.0

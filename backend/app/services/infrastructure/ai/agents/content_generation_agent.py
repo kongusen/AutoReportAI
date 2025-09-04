@@ -20,6 +20,10 @@ import asyncio
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 from enum import Enum
+from sqlalchemy.orm import Session
+
+from app.services.infrastructure.ai.llm.model_executor import ModelExecutor
+from app.services.infrastructure.ai.llm.simple_model_selector import TaskRequirement, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +64,9 @@ class ContentGenerationAgent:
     """
     
     def __init__(self):
+        # LLM执行器
+        self.model_executor = ModelExecutor()
+        
         # 生成统计
         self.generation_stats = {
             "total_generations": 0,
@@ -197,7 +204,7 @@ class ContentGenerationAgent:
             填充结果
         """
         try:
-            # 模拟模板填充（实际应该使用模板引擎）
+            # 执行模板变量替换
             filled_content = template
             
             for key, value in variables.items():
@@ -252,7 +259,7 @@ class ContentGenerationAgent:
             转换结果
         """
         try:
-            # 模拟格式转换
+            # 执行格式转换
             if source_type == ContentType.TEXT and target_type == ContentType.MARKDOWN:
                 converted_content = self._text_to_markdown(content)
             elif source_type == ContentType.MARKDOWN and target_type == ContentType.HTML:
@@ -307,7 +314,7 @@ class ContentGenerationAgent:
             摘要结果
         """
         try:
-            # 模拟内容摘要
+            # 生成内容摘要
             content_words = content.split()
             if len(content_words) <= summary_length:
                 summary = content
@@ -437,27 +444,45 @@ class ContentGenerationAgent:
     
     async def _execute_generation(self, request: Dict[str, Any]) -> str:
         """执行内容生成"""
-        # 模拟异步生成
-        await asyncio.sleep(0.1)
         
         prompt = request["prompt"]
         content_type = request["content_type"]
         generation_mode = request["generation_mode"]
+        user_id = request.get("user_id", "system")
+        temperature = request.get("temperature", 0.7)
+        max_length = request.get("max_length", 2000)
         
-        # 根据模式和类型生成不同的内容
-        if generation_mode == "creative":
-            if content_type == "report":
-                return f"# 报告标题\n\n基于提示 '{prompt}' 生成的创意报告内容...\n\n## 主要发现\n\n这是一个示例报告。"
-            elif content_type == "email":
-                return f"主题：关于 {prompt}\n\n亲爱的用户，\n\n这是基于您的需求生成的邮件内容...\n\n最好的问候"
+        # 构建任务要求
+        task_requirement = TaskRequirement(
+            task_type=self._map_to_task_type(generation_mode),
+            complexity="medium",
+            context_length=len(prompt),
+            quality_requirement="high"
+        )
+        
+        # 构建优化的提示词
+        optimized_prompt = self._build_optimized_prompt(prompt, content_type, generation_mode)
+        
+        try:
+            # 使用LLM执行器生成内容
+            result = await self.model_executor.execute_with_auto_selection(
+                user_id=user_id,
+                prompt=optimized_prompt,
+                task_requirement=task_requirement,
+                temperature=temperature,
+                max_tokens=max_length
+            )
+            
+            if result.get("success"):
+                return result.get("content", "")
             else:
-                return f"基于提示 '{prompt}' 生成的创意内容。这是一个模拟的内容生成结果。"
-        
-        elif generation_mode == "factual":
-            return f"关于 '{prompt}' 的事实性信息：这是一个模拟的事实性内容生成结果。"
-        
-        else:
-            return f"针对 '{prompt}' 生成的内容：这是一个通用的内容生成结果。"
+                logger.error(f"LLM生成失败: {result.get('error')}")
+                # 降级到简单模板
+                return self._generate_fallback_content(prompt, content_type, generation_mode)
+                
+        except Exception as e:
+            logger.error(f"内容生成异常: {e}")
+            return self._generate_fallback_content(prompt, content_type, generation_mode)
     
     async def _assess_content_quality(self,
                                     content: str,
@@ -582,3 +607,49 @@ class ContentGenerationAgent:
                 "batch_processing"
             ]
         }
+    
+    def _map_to_task_type(self, generation_mode: str) -> TaskType:
+        """映射生成模式到任务类型"""
+        mapping = {
+            "creative": TaskType.CREATIVE_WRITING,
+            "factual": TaskType.TEXT_GENERATION,
+            "analytical": TaskType.TEXT_GENERATION,
+            "summary": TaskType.TEXT_GENERATION,
+            "template_fill": TaskType.TEXT_GENERATION,
+            "translate": TaskType.TEXT_GENERATION
+        }
+        return mapping.get(generation_mode, TaskType.TEXT_GENERATION)
+    
+    def _build_optimized_prompt(self, prompt: str, content_type: str, generation_mode: str) -> str:
+        """构建优化的提示词"""
+        
+        # 根据内容类型添加格式指引
+        if content_type == "report":
+            format_guide = "请生成一份结构化的报告，包含标题、摘要、主要内容和结论。使用Markdown格式。"
+        elif content_type == "email":
+            format_guide = "请生成一封专业的邮件，包含合适的称呼、正文和结尾。"
+        elif content_type == "summary":
+            format_guide = "请生成简洁明确的摘要，突出要点。"
+        else:
+            format_guide = "请生成高质量的文本内容。"
+        
+        # 根据生成模式添加风格指引
+        if generation_mode == "creative":
+            style_guide = "请使用创意性和吸引人的语言风格。"
+        elif generation_mode == "factual":
+            style_guide = "请使用客观、准确的语言风格，基于事实。"
+        elif generation_mode == "analytical":
+            style_guide = "请使用分析性和逻辑性强的语言风格。"
+        else:
+            style_guide = "请使用清晰专业的语言风格。"
+        
+        return f"{format_guide}\n{style_guide}\n\n用户需求：{prompt}"
+    
+    def _generate_fallback_content(self, prompt: str, content_type: str, generation_mode: str) -> str:
+        """生成降级内容（当LLM不可用时）"""
+        if content_type == "report":
+            return f"# 报告：{prompt}\n\n## 概述\n\n基于您的需求，我们需要进一步分析相关信息。\n\n## 建议\n\n请提供更多详细信息以生成完整的报告。"
+        elif content_type == "email":
+            return f"主题：关于 {prompt}\n\n您好，\n\n感谢您的咨询。关于 {prompt} 的相关事宜，我们正在为您准备详细信息。\n\n如有任何疑问，请随时联系我们。\n\n此致\n敬礼"
+        else:
+            return f"关于 '{prompt}' 的内容正在准备中。请稍后重试或联系技术支持。"

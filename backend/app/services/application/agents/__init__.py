@@ -26,12 +26,17 @@ if TYPE_CHECKING:
 # 全局服务实例缓存
 _agent_instances = {}
 
-async def get_workflow_orchestration_agent() -> 'WorkflowOrchestrationAgent':
+async def get_workflow_orchestration_agent(user_id: str = None) -> 'WorkflowOrchestrationAgent':
     """获取工作流编排代理实例"""
-    if 'workflow_orchestration' not in _agent_instances:
+    # 使用用户ID作为缓存键，支持每个用户独立的实例
+    cache_key = f'workflow_orchestration_{user_id}' if user_id else 'workflow_orchestration_default'
+    
+    if cache_key not in _agent_instances:
         from .workflow_orchestration_agent import WorkflowOrchestrationAgent
-        _agent_instances['workflow_orchestration'] = WorkflowOrchestrationAgent()
-    return _agent_instances['workflow_orchestration']
+        # 如果没有提供user_id，使用默认值
+        agent_user_id = user_id or 'system'
+        _agent_instances[cache_key] = WorkflowOrchestrationAgent(user_id=agent_user_id)
+    return _agent_instances[cache_key]
 
 async def get_task_coordination_agent() -> 'TaskCoordinationAgent':
     """获取任务协调代理实例"""

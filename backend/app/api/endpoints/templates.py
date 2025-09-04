@@ -33,8 +33,9 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
     try:
         from app.services.application.agents import get_workflow_orchestration_agent
         
-        # 获取工作流编排代理
-        workflow_agent = await get_workflow_orchestration_agent()
+        # 获取工作流编排代理 - 传递用户ID
+        user_id = request.state.current_user.id if hasattr(request.state, 'current_user') else 'system'
+        workflow_agent = await get_workflow_orchestration_agent(user_id=str(user_id))
         
         logger.info("使用React Agent系统的API适配器")
         
@@ -507,9 +508,34 @@ async def upload_template_file(
         
         # 根据文件类型处理内容
         if file_extension in ['.docx', '.doc']:
-            # 这里应该添加docx文件解析逻辑
-            # 临时使用简单的文本内容
-            content_text = f"[文档文件: {file.filename}]\n\n这是一个 {file_extension} 文档文件。\n请在此处添加模板内容和占位符。\n\n示例占位符：\n{{company_name}}\n{{report_date}}\n{{data_summary}}"
+            try:
+                from docx import Document
+                import io
+                
+                # 解析docx文档
+                doc = Document(io.BytesIO(content))
+                
+                # 提取文本内容
+                full_text = []
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():
+                        full_text.append(paragraph.text)
+                
+                # 提取表格内容
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_text = []
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                row_text.append(cell.text.strip())
+                        if row_text:
+                            full_text.append(" | ".join(row_text))
+                
+                content_text = "\n\n".join(full_text) if full_text else f"[空文档: {file.filename}]"
+                
+            except Exception as e:
+                logger.error(f"解析docx文件失败: {str(e)}")
+                content_text = f"[文档解析失败: {file.filename}]\n错误信息: {str(e)}"
         else:
             content_text = content.decode('utf-8', errors='ignore')
         
@@ -549,4 +575,120 @@ async def upload_template_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="模板文件上传失败"
+        )
+
+
+@router.post("/{template_id}/placeholders/reparse", response_model=ApiResponse[Dict])
+async def reparse_template_placeholders(
+    request: Request,
+    template_id: str,
+    force_reparse: bool = Query(False, description="强制重新解析"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """重新解析模板占位符"""
+    try:
+        # 验证模板存在性
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+        
+        # 解析模板结构
+        structure = template_parser.parse_template_structure(template.content or "")
+        
+        logger.info(f"用户 {current_user.id} 重新解析了模板 {template_id} 的占位符: {len(structure.get('placeholders', []))} 个")
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "template_id": template_id,
+                "placeholders": structure.get('placeholders', []),
+                "sections": structure.get('sections', []),
+                "variables": structure.get('variables', {}),
+                "complexity_score": structure.get('complexity_score', 0),
+                "force_reparse": force_reparse
+            },
+            message=f"占位符重新解析完成，共发现 {len(structure.get('placeholders', []))} 个占位符"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重新解析占位符失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="重新解析占位符失败"
+        )
+
+
+@router.post("/{template_id}/analyze-with-agent", response_model=ApiResponse[Dict])
+async def analyze_with_agent(
+    request: Request,
+    template_id: str,
+    data_source_id: str = Query(..., description="数据源ID"),
+    force_reanalyze: bool = Query(False, description="强制重新分析"),
+    optimization_level: str = Query("enhanced", description="优化级别"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """使用AI Agent分析模板"""
+    try:
+        # 验证模板存在性
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+        
+        # 获取API适配器
+        api_adapter = await get_unified_api_adapter(
+            request=request,
+            db_session=db,
+            integration_mode="react_agent"
+        )
+        
+        # 执行分析
+        result = await api_adapter.analyze_with_agent_enhanced(
+            template_id=template_id,
+            data_source_id=data_source_id,
+            user_id=str(current_user.id),
+            force_reanalyze=force_reanalyze,
+            optimization_level=optimization_level
+        )
+        
+        logger.info(f"用户 {current_user.id} 使用Agent分析了模板 {template_id}")
+        
+        if result.get("success"):
+            return ApiResponse(
+                success=True,
+                data=result.get("data", {}),
+                message=result.get("message", "Agent分析完成")
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.get("message", "Agent分析失败")
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent模板分析失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Agent分析失败"
         )

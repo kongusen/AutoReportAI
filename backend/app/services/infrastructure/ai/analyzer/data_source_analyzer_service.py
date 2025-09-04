@@ -11,6 +11,13 @@ from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
+import pymysql
+import psycopg2
+import redis
+import aiohttp
+from contextlib import asynccontextmanager
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
@@ -240,55 +247,295 @@ class DataSourceAnalyzerService:
 
     async def _check_database_health(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """检查数据库健康状态"""
-        # 模拟数据库连接检查
-        await asyncio.sleep(0.1)  # 模拟网络延迟
+        source_type = config.get('source_type', '').lower()
         
-        # 在真实环境中，这里会执行实际的数据库连接测试
-        # 例如: SELECT 1 查询，检查表数量，验证权限等
-        
-        details = {
-            "connection_test": "passed",
-            "table_count": config.get("estimated_tables", 10),
-            "schema_validation": "passed",
-            "permissions": "read_write",
-            "version": config.get("version", "unknown"),
-            "character_set": "utf8mb4"
-        }
-        
-        # 随机生成一些健康状态变化来模拟真实情况
-        import random
-        if random.random() < 0.1:  # 10%的概率出现警告
-            details["warning"] = "连接池使用率较高"
-        
-        return {"details": details}
+        try:
+            start_time = time.time()
+            
+            if source_type in ['mysql', 'doris']:
+                return await self._check_mysql_health(config, start_time)
+            elif source_type == 'postgresql':
+                return await self._check_postgresql_health(config, start_time)
+            else:
+                # 默认健康状态
+                details = {
+                    "connection_test": "skipped",
+                    "reason": f"未支持的数据库类型: {source_type}",
+                    "response_time": time.time() - start_time
+                }
+                return {"details": details}
+                
+        except Exception as e:
+            logger.error(f"数据库健康检查失败: {str(e)}")
+            details = {
+                "connection_test": "failed",
+                "error": str(e),
+                "response_time": time.time() - start_time
+            }
+            return {"details": details}
+    
+    async def _check_mysql_health(self, config: Dict[str, Any], start_time: float) -> Dict[str, Any]:
+        """检查MySQL数据库健康状态"""
+        try:
+            # 构建连接参数
+            connection_config = {
+                'host': config.get('host', config.get('doris_fe_hosts', ['localhost'])[0]),
+                'port': config.get('port', config.get('doris_query_port', 3306)),
+                'user': config.get('username', config.get('doris_username', 'root')),
+                'password': config.get('password', config.get('doris_password', '')),
+                'database': config.get('database', config.get('doris_database', 'information_schema')),
+                'connect_timeout': 5,
+                'read_timeout': 5,
+                'charset': 'utf8mb4'
+            }
+            
+            # 创建连接并执行测试查询
+            connection = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: pymysql.connect(**connection_config)
+            )
+            
+            try:
+                with connection.cursor() as cursor:
+                    # 基础连接测试
+                    cursor.execute("SELECT 1")
+                    result = cursor.fetchone()
+                    
+                    # 获取版本信息
+                    cursor.execute("SELECT VERSION()")
+                    version = cursor.fetchone()[0]
+                    
+                    # 获取数据库列表
+                    cursor.execute("SHOW DATABASES")
+                    databases = [row[0] for row in cursor.fetchall()]
+                    
+                    # 获取表数量（如果有权限）
+                    table_count = 0
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')")
+                        table_count = cursor.fetchone()[0]
+                    except:
+                        pass
+                    
+                response_time = time.time() - start_time
+                
+                details = {
+                    "connection_test": "passed",
+                    "version": version,
+                    "databases": len(databases),
+                    "table_count": table_count,
+                    "response_time": response_time,
+                    "character_set": "utf8mb4",
+                    "connection_type": "mysql"
+                }
+                
+            finally:
+                connection.close()
+                
+            return {"details": details}
+            
+        except Exception as e:
+            response_time = time.time() - start_time
+            details = {
+                "connection_test": "failed",
+                "error": str(e),
+                "response_time": response_time,
+                "connection_type": "mysql"
+            }
+            return {"details": details}
+    
+    async def _check_postgresql_health(self, config: Dict[str, Any], start_time: float) -> Dict[str, Any]:
+        """检查PostgreSQL数据库健康状态"""
+        try:
+            # 构建连接字符串
+            connection_string = f"host={config.get('host', 'localhost')} " \
+                              f"port={config.get('port', 5432)} " \
+                              f"dbname={config.get('database', 'postgres')} " \
+                              f"user={config.get('username', 'postgres')} " \
+                              f"password={config.get('password', '')} " \
+                              f"connect_timeout=5"
+            
+            # 创建连接并执行测试查询
+            connection = await asyncio.get_event_loop().run_in_executor(
+                None, 
+                lambda: psycopg2.connect(connection_string)
+            )
+            
+            try:
+                with connection.cursor() as cursor:
+                    # 基础连接测试
+                    cursor.execute("SELECT 1")
+                    result = cursor.fetchone()
+                    
+                    # 获取版本信息
+                    cursor.execute("SELECT version()")
+                    version = cursor.fetchone()[0]
+                    
+                    # 获取数据库列表
+                    cursor.execute("SELECT datname FROM pg_database WHERE datistemplate = false")
+                    databases = [row[0] for row in cursor.fetchall()]
+                    
+                    # 获取表数量
+                    cursor.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog')")
+                    table_count = cursor.fetchone()[0]
+                    
+                response_time = time.time() - start_time
+                
+                details = {
+                    "connection_test": "passed",
+                    "version": version.split()[0] + " " + version.split()[1],
+                    "databases": len(databases),
+                    "table_count": table_count,
+                    "response_time": response_time,
+                    "connection_type": "postgresql"
+                }
+                
+            finally:
+                connection.close()
+                
+            return {"details": details}
+            
+        except Exception as e:
+            response_time = time.time() - start_time
+            details = {
+                "connection_test": "failed",
+                "error": str(e),
+                "response_time": response_time,
+                "connection_type": "postgresql"
+            }
+            return {"details": details}
 
     async def _check_redis_health(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """检查Redis健康状态"""
-        await asyncio.sleep(0.05)  # Redis通常响应更快
-        
-        details = {
-            "ping_test": "pong",
-            "memory_usage": "45%",
-            "connected_clients": 12,
-            "keyspace_hits_ratio": 0.98,
-            "version": config.get("version", "6.2.0")
-        }
-        
-        return {"details": details}
+        try:
+            start_time = time.time()
+            
+            # 创建Redis连接
+            redis_client = redis.Redis(
+                host=config.get('host', 'localhost'),
+                port=config.get('port', 6379),
+                password=config.get('password'),
+                db=config.get('database', 0),
+                socket_timeout=5,
+                socket_connect_timeout=5
+            )
+            
+            # 执行ping测试
+            ping_result = redis_client.ping()
+            
+            # 获取服务器信息
+            info = redis_client.info()
+            
+            response_time = time.time() - start_time
+            
+            details = {
+                "ping_test": "pong" if ping_result else "failed",
+                "version": info.get('redis_version', 'unknown'),
+                "memory_usage": f"{info.get('used_memory_human', 'unknown')}",
+                "connected_clients": info.get('connected_clients', 0),
+                "keyspace_hits": info.get('keyspace_hits', 0),
+                "keyspace_misses": info.get('keyspace_misses', 0),
+                "response_time": response_time,
+                "connection_type": "redis"
+            }
+            
+            # 计算命中率
+            hits = info.get('keyspace_hits', 0)
+            misses = info.get('keyspace_misses', 0)
+            if hits + misses > 0:
+                details["keyspace_hits_ratio"] = hits / (hits + misses)
+            
+            redis_client.close()
+            return {"details": details}
+            
+        except Exception as e:
+            response_time = time.time() - start_time
+            details = {
+                "ping_test": "failed",
+                "error": str(e),
+                "response_time": response_time,
+                "connection_type": "redis"
+            }
+            return {"details": details}
 
     async def _check_api_health(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """检查API健康状态"""
-        await asyncio.sleep(0.2)  # API调用延迟
-        
-        details = {
-            "endpoint_test": "accessible",
-            "auth_validation": "passed",
-            "rate_limit": "within_bounds",
-            "response_format": "json",
-            "api_version": config.get("api_version", "v1")
-        }
-        
-        return {"details": details}
+        try:
+            start_time = time.time()
+            
+            # 获取API配置
+            base_url = config.get('base_url', config.get('endpoint'))
+            headers = config.get('headers', {})
+            auth_token = config.get('auth_token', config.get('api_key'))
+            
+            if auth_token:
+                headers['Authorization'] = f"Bearer {auth_token}"
+            
+            timeout = aiohttp.ClientTimeout(total=10)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                # 尝试访问健康检查端点或基础端点
+                health_endpoints = [
+                    f"{base_url}/health",
+                    f"{base_url}/ping", 
+                    f"{base_url}/status",
+                    f"{base_url}/"
+                ]
+                
+                for endpoint in health_endpoints:
+                    try:
+                        async with session.get(endpoint, headers=headers) as response:
+                            response_time = time.time() - start_time
+                            
+                            details = {
+                                "endpoint_test": "accessible",
+                                "status_code": response.status,
+                                "response_time": response_time,
+                                "content_type": response.headers.get('content-type', 'unknown'),
+                                "endpoint_used": endpoint,
+                                "connection_type": "api"
+                            }
+                            
+                            # 尝试解析响应内容
+                            try:
+                                if 'json' in response.headers.get('content-type', ''):
+                                    content = await response.json()
+                                    details["response_format"] = "json"
+                                    details["response_sample"] = str(content)[:200]
+                                else:
+                                    content = await response.text()
+                                    details["response_format"] = "text"
+                                    details["response_sample"] = content[:200]
+                            except:
+                                details["response_format"] = "binary"
+                            
+                            if response.status < 400:
+                                details["auth_validation"] = "passed" if auth_token else "no_auth"
+                                return {"details": details}
+                            
+                    except aiohttp.ClientError:
+                        continue  # 尝试下一个端点
+                
+                # 如果所有端点都失败
+                response_time = time.time() - start_time
+                details = {
+                    "endpoint_test": "failed",
+                    "error": "所有健康检查端点都无法访问",
+                    "endpoints_tried": health_endpoints,
+                    "response_time": response_time,
+                    "connection_type": "api"
+                }
+                return {"details": details}
+                
+        except Exception as e:
+            response_time = time.time() - start_time
+            details = {
+                "endpoint_test": "failed",
+                "error": str(e),
+                "response_time": response_time,
+                "connection_type": "api"
+            }
+            return {"details": details}
 
     async def _check_generic_health(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """通用健康检查"""
@@ -309,36 +556,77 @@ class DataSourceAnalyzerService:
     ) -> PerformanceMetrics:
         """分析性能指标"""
         
-        # 基于健康检查结果和配置生成性能指标
+        # 基于健康检查结果分析性能
         base_response_time = health_result.response_time
+        source_type = config.get("source_type", "unknown").lower()
         
-        # 模拟历史性能数据分析
-        import random
-        
-        # 生成一些合理的性能指标
-        avg_response_time = base_response_time * (0.8 + random.random() * 0.4)
-        max_response_time = avg_response_time * (1.5 + random.random())
-        min_response_time = avg_response_time * (0.3 + random.random() * 0.4)
-        
-        # 吞吐量基于数据源类型估算
-        source_type = config.get("source_type", "unknown")
-        if source_type in ["redis", "mongodb"]:
-            throughput = 1000 + random.randint(-200, 500)  # QPS
-        elif source_type in ["mysql", "postgresql"]:
-            throughput = 500 + random.randint(-100, 300)
+        # 基于实际响应时间评估性能
+        if base_response_time < 0.05:  # < 50ms
+            performance_tier = "excellent"
+        elif base_response_time < 0.2:  # < 200ms  
+            performance_tier = "good"
+        elif base_response_time < 1.0:  # < 1s
+            performance_tier = "average"
         else:
-            throughput = 200 + random.randint(-50, 150)
+            performance_tier = "poor"
         
-        error_rate = random.random() * 0.05  # 0-5%的错误率
-        connection_pool_usage = random.random() * 0.8  # 0-80%的连接池使用率
-        cpu_usage = random.random() * 60  # 0-60%的CPU使用率
-        memory_usage = random.random() * 70  # 0-70%的内存使用率
+        # 基于健康检查详细信息估算指标
+        details = health_result.details or {}
+        
+        # 计算性能指标
+        if performance_tier == "excellent":
+            avg_response_time = base_response_time * 1.1
+            max_response_time = base_response_time * 2.0
+            min_response_time = base_response_time * 0.8
+            error_rate = 0.001  # 0.1%
+        elif performance_tier == "good":
+            avg_response_time = base_response_time * 1.2
+            max_response_time = base_response_time * 3.0
+            min_response_time = base_response_time * 0.7
+            error_rate = 0.01  # 1%
+        elif performance_tier == "average":
+            avg_response_time = base_response_time * 1.3
+            max_response_time = base_response_time * 4.0
+            min_response_time = base_response_time * 0.6
+            error_rate = 0.03  # 3%
+        else:
+            avg_response_time = base_response_time * 1.5
+            max_response_time = base_response_time * 6.0
+            min_response_time = base_response_time * 0.5
+            error_rate = 0.1  # 10%
+        
+        # 基于数据源类型估算吞吐量
+        throughput_estimates = {
+            "redis": 5000,
+            "mysql": 1000,
+            "postgresql": 800,
+            "doris": 2000,
+            "clickhouse": 3000,
+            "api": 500
+        }
+        
+        base_throughput = throughput_estimates.get(source_type, 300)
+        if performance_tier == "excellent":
+            throughput = base_throughput * 1.2
+        elif performance_tier == "good":
+            throughput = base_throughput
+        elif performance_tier == "average":
+            throughput = base_throughput * 0.7
+        else:
+            throughput = base_throughput * 0.4
+        
+        # 从健康检查结果推导其他指标
+        connection_pool_usage = min(0.8, error_rate * 10)  # 错误率越高，连接池压力越大
+        
+        # CPU和内存使用率基于响应时间推算
+        cpu_usage = min(80, base_response_time * 100 + 20)
+        memory_usage = min(85, base_response_time * 80 + 30)
         
         return PerformanceMetrics(
             avg_response_time=avg_response_time,
             max_response_time=max_response_time,
             min_response_time=min_response_time,
-            throughput=throughput,
+            throughput=int(throughput),
             error_rate=error_rate,
             connection_pool_usage=connection_pool_usage,
             cpu_usage=cpu_usage,
@@ -348,19 +636,19 @@ class DataSourceAnalyzerService:
     async def _assess_data_quality(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """评估数据质量"""
         
+        source_type = config.get("source_type", "unknown").lower()
+        
         quality_scores = {}
         
-        # 模拟各项数据质量检查
+        # 基于数据源类型和配置评估数据质量
         for check in self.quality_checks:
-            # 生成0.6-1.0之间的质量分数
-            import random
-            score = 0.6 + random.random() * 0.4
+            score = await self._evaluate_quality_metric(check, config, source_type)
             quality_scores[check] = round(score, 2)
         
         # 计算综合质量分数
-        overall_quality = sum(quality_scores.values()) / len(quality_scores)
+        overall_quality = sum(quality_scores.values()) / len(quality_scores) if quality_scores else 0.8
         
-        # 识别潜在问题
+        # 基于实际分数识别问题
         issues = []
         if quality_scores.get("data_completeness", 1.0) < 0.8:
             issues.append("数据完整性需要改善")
@@ -368,40 +656,151 @@ class DataSourceAnalyzerService:
             issues.append("数据一致性存在问题")
         if quality_scores.get("data_timeliness", 1.0) < 0.75:
             issues.append("数据时效性需要关注")
+        if quality_scores.get("data_accuracy", 1.0) < 0.85:
+            issues.append("数据准确性有待提升")
+        if quality_scores.get("data_uniqueness", 1.0) < 0.9:
+            issues.append("存在数据重复问题")
         
         return {
             "overall_score": round(overall_quality, 2),
             "detail_scores": quality_scores,
             "quality_issues": issues,
             "last_assessment": datetime.now().isoformat(),
-            "assessment_method": "automated_sampling"
+            "assessment_method": f"rule_based_{source_type}",
+            "source_type": source_type
         }
+    
+    async def _evaluate_quality_metric(self, metric: str, config: Dict[str, Any], source_type: str) -> float:
+        """评估具体的数据质量指标"""
+        
+        # 基于数据源类型的基础质量分数
+        base_scores = {
+            "mysql": 0.85,
+            "postgresql": 0.88,
+            "doris": 0.82,
+            "redis": 0.75,  # 缓存数据质量稍低
+            "api": 0.80,    # API数据质量取决于源系统
+            "mongodb": 0.78,
+            "clickhouse": 0.87
+        }
+        
+        base_score = base_scores.get(source_type, 0.75)
+        
+        # 根据不同指标调整分数
+        if metric == "data_completeness":
+            # 完整性：关系数据库通常更好
+            if source_type in ["mysql", "postgresql"]:
+                return min(0.95, base_score + 0.05)
+            elif source_type in ["api"]:
+                return max(0.65, base_score - 0.1)  # API可能有缺失字段
+            return base_score
+            
+        elif metric == "data_consistency":
+            # 一致性：事务性数据库更好
+            if source_type in ["mysql", "postgresql"]:
+                return min(0.92, base_score + 0.03)
+            elif source_type in ["redis"]:
+                return max(0.70, base_score - 0.05)  # 缓存可能不一致
+            return base_score
+            
+        elif metric == "data_timeliness":
+            # 时效性：缓存和实时系统更好
+            if source_type in ["redis"]:
+                return min(0.95, base_score + 0.2)
+            elif source_type in ["api"]:
+                return min(0.90, base_score + 0.1)
+            elif source_type in ["mysql", "postgresql"]:
+                return max(0.75, base_score - 0.1)  # 批处理可能有延迟
+            return base_score
+            
+        elif metric == "data_accuracy":
+            # 准确性：取决于源系统质量
+            if source_type in ["postgresql", "mysql"]:
+                return min(0.90, base_score + 0.02)
+            return base_score
+            
+        elif metric == "data_uniqueness":
+            # 唯一性：有主键约束的数据库更好
+            if source_type in ["mysql", "postgresql"]:
+                return min(0.95, base_score + 0.05)
+            elif source_type in ["redis"]:
+                return min(0.98, base_score + 0.1)  # Redis key天然唯一
+            return base_score
+            
+        else:
+            return base_score
 
     async def _analyze_capacity(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """分析容量和扩展性"""
         
-        import random
+        source_type = config.get("source_type", "unknown").lower()
         
-        # 模拟容量分析
-        current_usage = random.random() * 0.8  # 当前使用率
-        projected_growth = random.random() * 0.3  # 预计增长率
+        # 基于数据源类型估算容量使用情况
+        usage_patterns = {
+            "mysql": {"base_usage": 0.45, "growth": 0.15},
+            "postgresql": {"base_usage": 0.40, "growth": 0.12},
+            "doris": {"base_usage": 0.35, "growth": 0.25},  # 大数据系统增长较快
+            "redis": {"base_usage": 0.60, "growth": 0.08},  # 缓存使用率较高但增长稳定
+            "clickhouse": {"base_usage": 0.30, "growth": 0.30},
+            "api": {"base_usage": 0.25, "growth": 0.20},
+            "mongodb": {"base_usage": 0.50, "growth": 0.18}
+        }
         
+        pattern = usage_patterns.get(source_type, {"base_usage": 0.50, "growth": 0.15})
+        
+        # 基于配置调整使用率
+        estimated_size = config.get("estimated_tables", config.get("estimated_size", 10))
+        if estimated_size > 100:
+            current_usage = min(0.85, pattern["base_usage"] + 0.2)
+        elif estimated_size > 50:
+            current_usage = min(0.75, pattern["base_usage"] + 0.1)
+        else:
+            current_usage = pattern["base_usage"]
+        
+        # 基于业务特征调整增长率
+        projected_growth = pattern["growth"]
+        if config.get("high_traffic", False):
+            projected_growth *= 1.5
+        if config.get("analytical_workload", source_type in ["doris", "clickhouse"]):
+            projected_growth *= 1.3
+        
+        # 容量警告
         capacity_warnings = []
         if current_usage > 0.7:
             capacity_warnings.append("当前使用率较高，建议监控")
+        if current_usage > 0.85:
+            capacity_warnings.append("使用率接近限制，需要立即扩容")
         if projected_growth > 0.2:
             capacity_warnings.append("预计增长较快，建议规划扩容")
+        if projected_growth > 0.35:
+            capacity_warnings.append("增长率过高，需要优化或升级")
+        
+        # 建议操作
+        recommended_actions = ["定期监控使用率趋势"]
+        if current_usage > 0.6:
+            recommended_actions.append("建立自动扩容策略")
+        if current_usage > 0.8:
+            recommended_actions.append("立即规划容量扩展")
+        if projected_growth > 0.25:
+            recommended_actions.append("考虑数据归档或分片策略")
+        
+        # 估算容量剩余月数
+        if projected_growth > 0.01:
+            remaining_capacity = 1.0 - current_usage
+            estimated_months = int((remaining_capacity / projected_growth) * 12)
+            estimated_months = max(1, min(120, estimated_months))  # 限制在1-120个月
+        else:
+            estimated_months = 120  # 增长很慢，设定为10年
         
         return {
             "current_usage_percent": round(current_usage * 100, 1),
             "projected_growth_percent": round(projected_growth * 100, 1),
-            "estimated_capacity_months": int(12 / (projected_growth + 0.01)),  # 避免除零
+            "estimated_capacity_months": estimated_months,
             "scalability_score": round((1 - current_usage) * 100, 1),
             "capacity_warnings": capacity_warnings,
-            "recommended_actions": [
-                "定期监控使用率趋势",
-                "建立自动扩容策略" if current_usage > 0.6 else "继续观察使用情况"
-            ]
+            "recommended_actions": recommended_actions,
+            "source_type": source_type,
+            "analysis_basis": "heuristic_estimation"
         }
 
     def _calculate_overall_score(

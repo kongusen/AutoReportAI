@@ -484,34 +484,122 @@ class WorkflowOrchestrationAgent:
         method_name: str, 
         params: Dict[str, Any]
     ) -> Any:
-        """调用服务（模拟实现）"""
-        # 在实际实现中，这里应该通过依赖注入或服务定位器调用相应的服务
-        # 现在提供模拟实现
-        
-        await asyncio.sleep(0.1)  # 模拟异步操作
-        
-        if service_name == "ai_execution_engine":
+        """调用真实服务"""
+        try:
+            logger.debug(f"调用服务: {service_name}.{method_name}")
+            
+            if service_name == "ai_execution_engine":
+                from app.services.infrastructure.ai.agents import get_ai_execution_engine
+                engine = await get_ai_execution_engine()
+                
+                if method_name == "execute_placeholder_task":
+                    # 执行占位符处理任务
+                    return await engine.execute_task(
+                        task_context=params.get('task_context'),
+                        execution_steps=params.get('execution_steps', [])
+                    )
+                elif method_name == "execute_ai_task":
+                    # 执行AI任务
+                    return await engine.execute_task(
+                        task_context=params.get('task_context'),
+                        execution_steps=params.get('execution_steps', [])
+                    )
+                    
+            elif service_name == "context_aware_service":
+                from app.services.application.services.context_aware_service import ContextAwareService
+                service = ContextAwareService()
+                
+                if method_name == "analyze_context":
+                    # 上下文分析
+                    return await service.analyze_context(
+                        content=params.get('content', ''),
+                        user_context=params.get('user_context', {}),
+                        business_requirements=params.get('business_requirements', {})
+                    )
+                elif method_name == "enhance_context":
+                    # 上下文增强
+                    return await service.enhance_context_with_intelligence(
+                        base_context=params.get('base_context', {}),
+                        enhancement_requirements=params.get('enhancement_requirements', {})
+                    )
+                    
+            elif service_name == "task_service":
+                from app.services.application.services.task_service import TaskService
+                service = TaskService()
+                
+                if method_name == "validate_result":
+                    # 结果验证
+                    return await service.validate_task_result(
+                        task_result=params.get('task_result'),
+                        validation_criteria=params.get('validation_criteria', {})
+                    )
+                    
+            elif service_name == "data_orchestrator":
+                from app.services.data.processing.etl.etl_service import ETLService
+                etl_service = ETLService()
+                
+                if method_name == "collect_data":
+                    # 数据收集
+                    return await etl_service.extract_data(
+                        data_source_id=params.get('data_source_id'),
+                        query_config=params.get('query_config', {})
+                    )
+                elif method_name == "prepare_data":
+                    # 数据准备
+                    return await etl_service.transform_data(
+                        raw_data=params.get('raw_data'),
+                        transformation_config=params.get('transformation_config', {})
+                    )
+                    
+            elif service_name == "report_orchestrator":
+                from app.services.application.services.report_service import ReportService
+                report_service = ReportService()
+                
+                if method_name == "process_template":
+                    # 模板处理
+                    return await report_service.process_template(
+                        template_id=params.get('template_id'),
+                        data_context=params.get('data_context', {}),
+                        processing_options=params.get('processing_options', {})
+                    )
+                    
+            elif service_name == "report_service":
+                from app.services.application.services.report_service import ReportService
+                report_service = ReportService()
+                
+                if method_name == "compile_report":
+                    # 报告编译
+                    return await report_service.compile_report(
+                        template_data=params.get('template_data'),
+                        compilation_config=params.get('compilation_config', {})
+                    )
+                    
+            elif service_name == "task_coordination_agent":
+                from app.services.application.agents.task_coordination_agent import TaskCoordinationAgent
+                agent = TaskCoordinationAgent()
+                
+                if method_name == "validate_business_rules":
+                    # 业务规则验证
+                    return await agent.validate_business_rules(
+                        analysis_result=params.get('analysis_result'),
+                        business_context=params.get('business_context', {})
+                    )
+                    
+            else:
+                logger.warning(f"未知服务: {service_name}")
+                return {
+                    "error": f"Unknown service: {service_name}",
+                    "service": service_name,
+                    "method": method_name
+                }
+                
+        except Exception as e:
+            logger.error(f"服务调用失败: {service_name}.{method_name}, 错误: {e}")
             return {
-                "status": "success",
-                "result": "AI处理结果",
-                "confidence": 0.9
-            }
-        elif service_name == "context_aware_service":
-            return {
-                "enhanced_context": params,
-                "insights": ["insight1", "insight2"]
-            }
-        elif service_name == "task_service":
-            return {
-                "validation_result": "passed",
-                "quality_score": 0.8
-            }
-        else:
-            return {
+                "error": str(e),
                 "service": service_name,
                 "method": method_name,
-                "params_processed": len(params),
-                "result": f"模拟{service_name}执行结果"
+                "status": "failed"
             }
     
     async def pause_workflow(self, workflow_id: str) -> bool:
@@ -622,3 +710,123 @@ class WorkflowOrchestrationAgent:
                 ]
             })
         return templates
+    
+    async def orchestrate_report_generation(
+        self,
+        template_id: str,
+        data_source_ids: List[str],
+        execution_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        编排报告生成工作流
+        
+        Args:
+            template_id: 模板ID
+            data_source_ids: 数据源ID列表
+            execution_context: 执行上下文
+            
+        Returns:
+            工作流执行结果
+        """
+        try:
+            logger.info(f"开始编排报告生成工作流: template_id={template_id}")
+            
+            # 创建报告生成工作流
+            workflow_name = f"Report_Generation_{template_id[:8]}"
+            input_params = {
+                'template_id': template_id,
+                'data_source_ids': data_source_ids,
+                'execution_context': execution_context,
+                'user_id': self.user_id,
+                'optimization_level': execution_context.get('optimization_level', 'enhanced'),
+                'force_reanalyze': execution_context.get('force_reanalyze', False)
+            }
+            
+            # 使用报告生成工作流模板
+            workflow = await self.create_workflow_from_template(
+                template_name="report_generation",
+                workflow_name=workflow_name,
+                input_params=input_params,
+                priority=WorkflowPriority.HIGH
+            )
+            
+            # 执行工作流
+            result = await self.execute_workflow(workflow.workflow_id)
+            
+            if result.get('status') == 'success':
+                # 解析模板占位符作为报告生成的一部分
+                placeholder_analysis = await self._analyze_template_placeholders(
+                    template_id, data_source_ids[0] if data_source_ids else None
+                )
+                
+                return {
+                    'success': True,
+                    'results': {
+                        'workflow_result': result.get('result', {}),
+                        'placeholder_analysis': placeholder_analysis,
+                        'template_id': template_id,
+                        'data_source_ids': data_source_ids,
+                        'execution_time': result.get('execution_time', 0)
+                    },
+                    'workflow_id': workflow.workflow_id
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': result.get('error', 'Unknown error'),
+                    'workflow_id': workflow.workflow_id
+                }
+                
+        except Exception as e:
+            logger.error(f"报告生成工作流编排失败: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def _analyze_template_placeholders(
+        self, 
+        template_id: str, 
+        data_source_id: str = None
+    ) -> Dict[str, Any]:
+        """分析模板占位符"""
+        try:
+            from app.services.domain.template.services.template_domain_service import TemplateParser
+            from app.crud import template as crud_template
+            from app.db.session import SessionLocal
+            
+            # 获取模板内容
+            db = SessionLocal()
+            try:
+                template = crud_template.get(db, id=template_id)
+                if not template:
+                    raise ValueError(f"模板不存在: {template_id}")
+                
+                template_content = template.content or ""
+            finally:
+                db.close()
+            
+            # 解析模板结构
+            parser = TemplateParser()
+            structure = parser.parse_template_structure(template_content)
+            
+            return {
+                'template_id': template_id,
+                'data_source_id': data_source_id,
+                'placeholders_found': len(structure.get('placeholders', [])),
+                'placeholders': structure.get('placeholders', []),
+                'sections': structure.get('sections', []),
+                'variables': structure.get('variables', {}),
+                'complexity_score': structure.get('complexity_score', 0),
+                'analysis_timestamp': datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"模板占位符分析失败: {e}")
+            return {
+                'template_id': template_id,
+                'data_source_id': data_source_id,
+                'error': str(e),
+                'placeholders_found': 0,
+                'placeholders': []
+            }

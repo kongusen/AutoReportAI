@@ -137,8 +137,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-          --entrypoint /bin/sh
-          -c "minio server /data --console-address :9001"
         ports:
           - 9000:9000
           - 9001:9001
@@ -303,8 +301,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-          --entrypoint /bin/sh
-          -c "minio server /data --console-address :9001"
         ports:
           - 9000:9000
           - 9001:9001

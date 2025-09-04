@@ -233,15 +233,46 @@ class ContextAwareApplicationService:
         """处理占位符分析任务"""
         try:
             # 调用Domain层的占位符分析服务
-            # TODO: 集成智能占位符系统
+            from app.services.domain.template.services.template_domain_service import TemplateParser
+            from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
+            
+            # 解析模板内容中的占位符
+            parser = TemplateParser()
+            structure = parser.parse_template_structure(request.content)
+            
+            # 使用智能占位符服务进行分析
+            try:
+                placeholder_service = IntelligentPlaceholderService()
+                intelligence_result = await placeholder_service.analyze_placeholders(
+                    placeholders=structure.get('placeholders', []),
+                    content_context=request.content,
+                    user_context=context,
+                    business_requirements=request.business_requirements
+                )
+                
+                recommendations = intelligence_result.get('recommendations', [])
+                optimization_suggestions = intelligence_result.get('optimization_suggestions', [])
+                
+            except Exception as e:
+                logger.warning(f"智能占位符分析失败，使用基础分析: {e}")
+                recommendations = ['建议优化占位符命名', '建议增加业务上下文']
+                optimization_suggestions = []
             
             return {
                 'task_id': task_id,
                 'success': True,
                 'status': 'completed',
-                'message': '占位符分析完成（占位符实现）',
+                'message': f'占位符分析完成，发现 {len(structure.get("placeholders", []))} 个占位符',
                 'context_analysis': self._analyze_context(context),
-                'recommendations': ['建议优化占位符命名', '建议增加业务上下文']
+                'placeholder_analysis': {
+                    'placeholders_found': len(structure.get('placeholders', [])),
+                    'placeholders': structure.get('placeholders', []),
+                    'complexity_score': structure.get('complexity_score', 0),
+                    'sections': structure.get('sections', []),
+                    'variables': structure.get('variables', {})
+                },
+                'recommendations': recommendations,
+                'optimization_suggestions': optimization_suggestions
             }
             
         except Exception as e:

@@ -70,6 +70,165 @@ class IntelligentPlaceholderService:
             logger.error(f"占位符服务上下文工程初始化失败: {e}")
             raise
     
+    async def analyze_placeholders(
+        self,
+        placeholders: List[Dict[str, Any]],
+        content_context: str = "",
+        user_context: Dict[str, Any] = None,
+        business_requirements: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """分析占位符并提供智能建议"""
+        if not self.initialized:
+            await self.initialize()
+        
+        try:
+            user_context = user_context or {}
+            business_requirements = business_requirements or {}
+            
+            # 创建上下文对象
+            time_context = self._create_default_time_context()
+            business_context = BusinessContext(
+                industry=business_requirements.get('industry', '通用'),
+                department=business_requirements.get('department', '数据分析'),
+                business_purpose=business_requirements.get('purpose', '报告生成'),
+                domain_knowledge=business_requirements.get('domain_knowledge', {}),
+                glossary=business_requirements.get('glossary', {}),
+                business_rules=business_requirements.get('business_rules', [])
+            )
+            document_context = DocumentContext(
+                document_type="template",
+                content_summary=content_context[:500] if content_context else "",
+                structure_analysis={},
+                style_requirements={},
+                target_audience=business_requirements.get('target_audience', '管理层')
+            )
+            
+            # 分析每个占位符
+            analysis_results = []
+            recommendations = []
+            optimization_suggestions = []
+            
+            for placeholder in placeholders:
+                placeholder_name = placeholder.get('name', '')
+                placeholder_text = placeholder.get('text', '')
+                
+                # 基础分析
+                basic_analysis = {
+                    'name': placeholder_name,
+                    'text': placeholder_text,
+                    'type': self._classify_placeholder_type(placeholder_name),
+                    'complexity': self._assess_placeholder_complexity(placeholder_name),
+                    'suggestions': self._generate_placeholder_suggestions(placeholder_name)
+                }
+                
+                analysis_results.append(basic_analysis)
+                
+                # 生成建议
+                if not placeholder_name.replace('_', '').replace('-', '').isalnum():
+                    recommendations.append(f"占位符 '{placeholder_name}' 建议使用字母数字和下划线组合")
+                
+                if len(placeholder_name) < 3:
+                    recommendations.append(f"占位符 '{placeholder_name}' 名称过短，建议使用更具描述性的名称")
+                
+                if placeholder_name.isupper():
+                    optimization_suggestions.append(f"占位符 '{placeholder_name}' 建议使用小写加下划线格式")
+            
+            # 整体分析
+            total_placeholders = len(placeholders)
+            unique_types = len(set(r['type'] for r in analysis_results))
+            avg_complexity = sum(r['complexity'] for r in analysis_results) / max(total_placeholders, 1)
+            
+            return {
+                'total_placeholders': total_placeholders,
+                'unique_types': unique_types,
+                'average_complexity': round(avg_complexity, 2),
+                'analysis_results': analysis_results,
+                'recommendations': recommendations[:10],  # 限制建议数量
+                'optimization_suggestions': optimization_suggestions[:10],
+                'quality_score': self._calculate_quality_score(analysis_results),
+                'analysis_timestamp': datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"占位符智能分析失败: {e}")
+            return {
+                'total_placeholders': len(placeholders),
+                'error': str(e),
+                'recommendations': ['基础占位符检查失败，请检查占位符格式'],
+                'optimization_suggestions': [],
+                'analysis_timestamp': datetime.utcnow().isoformat()
+            }
+    
+    def _classify_placeholder_type(self, placeholder_name: str) -> str:
+        """分类占位符类型"""
+        name_lower = placeholder_name.lower()
+        
+        if any(keyword in name_lower for keyword in ['date', 'time', 'year', 'month', 'day']):
+            return 'temporal'
+        elif any(keyword in name_lower for keyword in ['name', 'title', 'company', 'department']):
+            return 'identity'
+        elif any(keyword in name_lower for keyword in ['amount', 'count', 'total', 'sum', 'avg']):
+            return 'numeric'
+        elif any(keyword in name_lower for keyword in ['description', 'summary', 'content', 'text']):
+            return 'textual'
+        elif any(keyword in name_lower for keyword in ['status', 'type', 'category', 'level']):
+            return 'categorical'
+        else:
+            return 'generic'
+    
+    def _assess_placeholder_complexity(self, placeholder_name: str) -> float:
+        """评估占位符复杂度"""
+        complexity = 0.0
+        
+        # 基于长度
+        complexity += min(len(placeholder_name) / 10, 1.0)
+        
+        # 基于单词数
+        word_count = len(placeholder_name.replace('_', ' ').replace('-', ' ').split())
+        complexity += min(word_count / 5, 1.0)
+        
+        # 基于特殊字符
+        special_chars = sum(1 for c in placeholder_name if c in '_-.')
+        complexity += min(special_chars / 5, 0.5)
+        
+        return min(complexity, 3.0)
+    
+    def _generate_placeholder_suggestions(self, placeholder_name: str) -> List[str]:
+        """生成占位符建议"""
+        suggestions = []
+        
+        if len(placeholder_name) > 50:
+            suggestions.append("名称过长，建议简化")
+        
+        if '_' not in placeholder_name and len(placeholder_name.split(' ')) > 1:
+            suggestions.append("建议使用下划线分隔单词")
+        
+        if placeholder_name.startswith('placeholder'):
+            suggestions.append("避免使用通用前缀，使用更具体的业务名称")
+        
+        return suggestions
+    
+    def _calculate_quality_score(self, analysis_results: List[Dict]) -> float:
+        """计算整体质量评分"""
+        if not analysis_results:
+            return 0.0
+        
+        total_score = 0.0
+        for result in analysis_results:
+            score = 1.0
+            
+            # 减分因素
+            if result['complexity'] > 2.0:
+                score -= 0.2
+            if result['type'] == 'generic':
+                score -= 0.1
+            if len(result['suggestions']) > 2:
+                score -= 0.1
+            
+            total_score += max(score, 0.0)
+        
+        return round(total_score / len(analysis_results), 2)
+    
     async def analyze_template_placeholders(
         self,
         template_content: str,

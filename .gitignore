@@ -351,8 +351,6 @@ yarn.lock
 # Local development overrides
 local_settings.py
 settings_local.py
-.env.local
-.env.development
 
 # Migration files (optional - uncomment if you want to ignore migrations)
 # */migrations/versions/

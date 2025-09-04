@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -301,7 +300,7 @@ function CreateTemplatePageContent() {
   };
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title={duplicateId ? '复制模板' : '创建模板'}
         description={duplicateId ? '基于现有模板创建副本' : '创建新的报告模板'}
@@ -452,7 +451,7 @@ function CreateTemplatePageContent() {
           </Button>
         </div>
       </form>
-    </AppLayout>
+    </>
   )
 }
 

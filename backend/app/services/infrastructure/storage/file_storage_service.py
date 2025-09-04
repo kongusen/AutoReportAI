@@ -7,6 +7,8 @@ import os
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
+from io import BytesIO
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,50 @@ class FileStorageService:
             }
         except Exception as e:
             logger.error(f"文件检索失败: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def upload_file(
+        self,
+        file_data: BytesIO,
+        original_filename: str,
+        file_type: str = "general",
+        content_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """上传文件 - 兼容API期望的接口"""
+        try:
+            # 生成唯一文件名
+            file_extension = os.path.splitext(original_filename)[1]
+            unique_filename = f"{uuid.uuid4()}{file_extension}"
+            
+            # 确保目录存在
+            category_path = os.path.join(self.base_path, file_type)
+            os.makedirs(category_path, exist_ok=True)
+            
+            # 完整文件路径
+            file_path = os.path.join(category_path, unique_filename)
+            
+            # 写入文件
+            with open(file_path, 'wb') as f:
+                f.write(file_data.read())
+            
+            file_size = os.path.getsize(file_path)
+            
+            return {
+                "success": True,
+                "file_id": str(uuid.uuid4()),
+                "filename": unique_filename,
+                "original_filename": original_filename,
+                "file_path": file_path,
+                "file_type": file_type,
+                "content_type": content_type,
+                "size": file_size,
+                "uploaded_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"文件上传失败: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)

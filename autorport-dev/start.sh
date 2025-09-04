@@ -64,6 +64,7 @@ show_menu() {
     echo -e "  ${GREEN}7)${NC} ${PACKAGE} 停止所有服务"
     echo -e "  ${GREEN}8)${NC} ${PACKAGE} 查看服务日志"
     echo -e "  ${GREEN}9)${NC} ${PACKAGE} 重启服务"
+    echo -e "  ${GREEN}10)${NC} ${PACKAGE} 重建并重启 (代码更新后)"
     echo -e "  ${RED}0)${NC} 退出"
     echo ""
 }
@@ -171,6 +172,63 @@ restart_services() {
     show_services_status
 }
 
+# 重建并重启服务
+rebuild_services() {
+    echo -e "${YELLOW}${PACKAGE} 重建并重启服务 (代码更新后)${NC}"
+    echo -e "${CYAN}选择要重建的服务:${NC}"
+    echo "1) 重建所有服务 (完整重建)"
+    echo "2) 重建后端服务 (API + Worker + Beat)"
+    echo "3) 重建前端服务 (Next.js)"
+    echo "4) 重建并重启所有服务"
+    echo ""
+    read -p "请选择 (1-4): " rebuild_choice
+    
+    case $rebuild_choice in
+        1)
+            echo -e "${YELLOW}停止所有服务...${NC}"
+            docker-compose down
+            echo -e "${YELLOW}重建所有镜像...${NC}"
+            docker-compose build --no-cache
+            echo -e "${GREEN}启动所有服务...${NC}"
+            docker-compose up -d
+            ;;
+        2)
+            echo -e "${YELLOW}停止后端服务...${NC}"
+            docker-compose stop backend celery-worker celery-beat
+            echo -e "${YELLOW}重建后端镜像...${NC}"
+            docker-compose build --no-cache backend
+            echo -e "${GREEN}启动后端服务...${NC}"
+            docker-compose up -d backend celery-worker celery-beat
+            ;;
+        3)
+            echo -e "${YELLOW}停止前端服务...${NC}"
+            docker-compose stop frontend
+            echo -e "${YELLOW}重建前端镜像...${NC}"
+            docker-compose build --no-cache frontend
+            echo -e "${GREEN}启动前端服务...${NC}"
+            docker-compose up -d frontend
+            ;;
+        4)
+            echo -e "${YELLOW}停止所有服务...${NC}"
+            docker-compose down
+            echo -e "${YELLOW}清理旧镜像...${NC}"
+            docker-compose build --no-cache
+            echo -e "${YELLOW}清理未使用的镜像...${NC}"
+            docker image prune -f
+            echo -e "${GREEN}启动所有服务...${NC}"
+            docker-compose up -d
+            ;;
+        *)
+            echo -e "${RED}无效选择${NC}"
+            return
+            ;;
+    esac
+    
+    echo -e "${GREEN}${CHECKMARK} 重建完成${NC}"
+    echo ""
+    show_services_status
+}
+
 # 主程序
 main() {
     check_requirements
@@ -179,7 +237,7 @@ main() {
     if [ $# -eq 0 ]; then
         while true; do
             show_menu
-            read -p "请选择 (0-9): " choice
+            read -p "请选择 (0-10): " choice
             echo ""
             
             case $choice in
@@ -212,6 +270,9 @@ main() {
                     ;;
                 9)
                     restart_services
+                    ;;
+                10)
+                    rebuild_services
                     ;;
                 0)
                     echo -e "${GREEN}再见！${NC}"
@@ -260,8 +321,11 @@ main() {
                 docker-compose restart
                 show_services_status
                 ;;
+            "rebuild")
+                rebuild_services
+                ;;
             *)
-                echo "用法: $0 [full|basic|backend|frontend|tools|status|stop|logs|restart]"
+                echo "用法: $0 [full|basic|backend|frontend|tools|status|stop|logs|restart|rebuild]"
                 echo "或运行不带参数进入交互模式"
                 ;;
         esac

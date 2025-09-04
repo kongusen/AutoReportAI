@@ -1,0 +1,71 @@
+{
+  "test_run_info": {
+    "start_time": "2025-09-04T16:26:21.384634",
+    "end_time": "2025-09-04T16:26:30.316646",
+    "total_duration": 8.932012
+  },
+  "summary": {
+    "total_test_suites": 4,
+    "successful_suites": 1,
+    "failed_suites": 3,
+    "success_rate": 25.0
+  },
+  "detailed_results": [
+    {
+      "name": "React Agent完整工作流测试",
+      "file": "tests/agent/test_react_agent_complete_workflow.py",
+      "success": true,
+      "duration": 2.316178,
+      "stats": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "warnings": 28,
+        "total": 28
+      },
+      "error": null
+    },
+    {
+      "name": "Context控制和Agent协调测试",
+      "file": "tests/integration/test_context_agent_coordination.py",
+      "success": false,
+      "duration": 2.023669,
+      "stats": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "warnings": 28,
+        "total": 28
+      },
+      "error": "sh: redis-cli: command not found\n"
+    },
+    {
+      "name": "端到端业务流程测试",
+      "file": "tests/e2e/test_complete_agent_workflow_e2e.py",
+      "success": false,
+      "duration": 1.909802,
+      "stats": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "warnings": 0,
+        "total": 0
+      },
+      "error": "sh: redis-cli: command not found\n"
+    },
+    {
+      "name": "负载压力测试",
+      "file": "tests/e2e/test_complete_agent_workflow_e2e.py",
+      "success": false,
+      "duration": 2.681804,
+      "stats": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "warnings": 28,
+        "total": 28
+      },
+      "error": "sh: redis-cli: command not found\n"
+    }
+  ]
+}

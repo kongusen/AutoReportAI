@@ -71,7 +71,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: development
-    args:
+      args:
         HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-backend-dev
@@ -235,7 +235,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: worker
-    args:
+      args:
         HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-worker-dev
@@ -335,7 +335,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: beat
-    args:
+      args:
         HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-beat-dev
@@ -407,7 +407,7 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       target: development
-    args:
+      args:
         HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-frontend-dev

@@ -43,9 +43,9 @@ export default function TemplatesPage() {
   // 监听模板相关的实时通知
   useEffect(() => {
     const templateNotifications = notifications.filter(n => 
-      n.message?.includes('模板') || 
-      n.message?.includes('占位符') ||
-      n.title?.includes('模板分析')
+      (n.message && n.message.includes('模板')) || 
+      (n.message && n.message.includes('占位符')) ||
+      (n.title && n.title.includes('模板分析'))
     )
     
     // 如果有模板相关通知，刷新列表
@@ -71,14 +71,15 @@ export default function TemplatesPage() {
 
   // 过滤模板
   const filteredTemplates = (templates || []).filter(template => {
-    const matchesSearch = template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         template.description?.toLowerCase().includes(searchTerm.toLowerCase())
+    const searchTermLower = (searchTerm || '').toLowerCase()
+    const matchesSearch = (template.name || '').toLowerCase().includes(searchTermLower) ||
+                         (template.description && template.description.toLowerCase().includes(searchTermLower))
     const matchesType = selectedType === 'all' || template.template_type === selectedType
     return matchesSearch && matchesType
   })
 
   // 获取模板类型列表
-  const templateTypes = [...new Set((templates || []).map(t => t.template_type))]
+  const templateTypes = [...new Set((templates || []).map(t => t.template_type).filter(Boolean))]
 
   const handleDeleteConfirm = async () => {
     if (!selectedTemplate) return
@@ -104,11 +105,11 @@ export default function TemplatesPage() {
       'dashboard': { label: '仪表板', color: 'purple' },
       'export': { label: '导出模板', color: 'orange' },
     }
-    return typeMap[type] || { label: type, color: 'gray' }
+    return typeMap[type || ''] || { label: type || '未知类型', color: 'gray' }
   }
 
   const getVariableCount = (template: Template) => {
-    if (!template.variables) return 0
+    if (!template || !template.variables || typeof template.variables !== 'object') return 0
     return Object.keys(template.variables).length
   }
 
@@ -217,10 +218,10 @@ export default function TemplatesPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <h3 className="text-sm font-medium text-gray-900 truncate">
-                        {template.name}
+                        {template.name || '未命名模板'}
                       </h3>
                       <p className="text-xs text-gray-500">
-                        {getTemplateTypeInfo(template.template_type).label}
+                        {getTemplateTypeInfo(template.template_type || '').label}
                       </p>
                     </div>
                   </div>

@@ -337,6 +337,11 @@ __pycache__/
 # Allow infrastructure cache service code to be tracked
 !backend/app/services/infrastructure/cache/*.py
 
+# Allow all service cache modules to be tracked
+!backend/app/services/**/cache/*.py
+!backend/app/services/**/cache/
+!backend/app/services/cache/__init__.py
+
 # Lock files (keep requirements.txt but ignore lock files)
 requirements.lock
 Pipfile.lock

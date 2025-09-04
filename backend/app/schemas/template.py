@@ -70,3 +70,16 @@ class TemplateUpload(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
     is_public: bool = Field(default=False)
+
+
+class TemplatePreview(BaseModel):
+    """模板预览模型"""
+    
+    template_id: UUID
+    content: Optional[str] = Field(None, description="模板内容预览")
+    html_content: Optional[str] = Field(None, description="HTML格式内容")
+    placeholders: Optional[list] = Field(default=[], description="占位符列表")
+    metadata: Optional[dict] = Field(default={}, description="模板元数据")
+    
+    class Config:
+        from_attributes = True

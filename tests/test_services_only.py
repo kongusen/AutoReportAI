@@ -14,7 +14,7 @@ async def test_sql_generation_logic():
     
     try:
         # 直接测试SQL生成逻辑
-        from app.services.infrastructure.ai.sql.sql_generator_service import SQLGeneratorService
+        from backend.app.services.infrastructure.ai.sql.sql_generator_service import SQLGeneratorService
         
         # 创建服务实例
         sql_service = SQLGeneratorService()
@@ -60,7 +60,7 @@ async def test_data_source_analyzer_logic():
     print("\n=== 测试数据源分析逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.analyzer.data_source_analyzer_service import DataSourceAnalyzerService
+        from backend.app.services.infrastructure.ai.analyzer.data_source_analyzer_service import DataSourceAnalyzerService
         
         analyzer = DataSourceAnalyzerService()
         
@@ -104,7 +104,7 @@ async def test_schema_inspector_logic():
     print("\n=== 测试Schema检查逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.schema.schema_inspector_service import SchemaInspectorService
+        from backend.app.services.infrastructure.ai.schema.schema_inspector_service import SchemaInspectorService
         
         inspector = SchemaInspectorService()
         
@@ -143,7 +143,7 @@ async def test_performance_optimizer_logic():
     print("\n=== 测试性能优化逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.performance.performance_optimizer_service import PerformanceOptimizerService
+        from backend.app.services.infrastructure.ai.performance.performance_optimizer_service import PerformanceOptimizerService
         
         optimizer = PerformanceOptimizerService()
         
@@ -182,7 +182,7 @@ async def test_report_quality_logic():
     print("\n=== 测试报告质量检查逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.quality.report_quality_checker_service import ReportQualityCheckerService
+        from backend.app.services.infrastructure.ai.quality.report_quality_checker_service import ReportQualityCheckerService
         
         checker = ReportQualityCheckerService()
         
@@ -215,7 +215,7 @@ async def test_report_quality_logic():
         print(f"   语言质量评估: {language_score}")
         
         # 测试整体评分计算
-        from app.services.infrastructure.ai.quality.report_quality_checker_service import QualityMetric, QualityDimension
+        from backend.app.services.infrastructure.ai.quality.report_quality_checker_service import QualityMetric, QualityDimension
         
         metrics = [
             QualityMetric(QualityDimension.CONTENT_COMPLETENESS, completeness_score, 0.2),
@@ -238,7 +238,7 @@ async def test_context_analyzer_logic():
     print("\n=== 测试上下文分析逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.context.context_analyzer_service import ContextAnalyzerService
+        from backend.app.services.infrastructure.ai.context.context_analyzer_service import ContextAnalyzerService
         
         analyzer = ContextAnalyzerService()
         
@@ -274,7 +274,7 @@ async def test_enhanced_reasoning_logic():
     print("\n=== 测试增强推理逻辑 ===")
     
     try:
-        from app.services.infrastructure.ai.reasoning.enhanced_reasoning_service import EnhancedReasoningService
+        from backend.app.services.infrastructure.ai.reasoning.enhanced_reasoning_service import EnhancedReasoningService
         
         reasoning = EnhancedReasoningService()
         

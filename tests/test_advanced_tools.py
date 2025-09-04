@@ -12,7 +12,7 @@ async def test_sql_generator():
     print("=== 测试SQL生成器 ===")
     
     try:
-        from app.services.infrastructure.ai.sql.sql_generator_service import sql_generator_service
+        from backend.app.services.infrastructure.ai.sql.sql_generator_service import sql_generator_service
         
         # 测试基础查询生成
         requirements = {
@@ -59,7 +59,7 @@ async def test_data_source_analyzer():
     print("\n=== 测试数据源分析器 ===")
     
     try:
-        from app.services.infrastructure.ai.analyzer.data_source_analyzer_service import data_source_analyzer_service
+        from backend.app.services.infrastructure.ai.analyzer.data_source_analyzer_service import data_source_analyzer_service
         
         # 测试数据源分析
         data_source_config = {
@@ -94,7 +94,7 @@ async def test_schema_inspector():
     print("\n=== 测试Schema检查器 ===")
     
     try:
-        from app.services.infrastructure.ai.schema.schema_inspector_service import schema_inspector_service
+        from backend.app.services.infrastructure.ai.schema.schema_inspector_service import schema_inspector_service
         
         # 测试Schema分析
         schema_info = {
@@ -157,7 +157,7 @@ async def test_performance_optimizer():
     print("\n=== 测试性能优化器 ===")
     
     try:
-        from app.services.infrastructure.ai.performance.performance_optimizer_service import performance_optimizer_service
+        from backend.app.services.infrastructure.ai.performance.performance_optimizer_service import performance_optimizer_service
         
         # 测试性能优化
         performance_data = {
@@ -194,7 +194,7 @@ async def test_report_quality_checker():
     print("\n=== 测试报告质量检查器 ===")
     
     try:
-        from app.services.infrastructure.ai.quality.report_quality_checker_service import report_quality_checker_service
+        from backend.app.services.infrastructure.ai.quality.report_quality_checker_service import report_quality_checker_service
         
         # 测试报告质量检查
         report_content = """
@@ -252,7 +252,7 @@ async def test_context_analyzer():
     print("\n=== 测试上下文分析器 ===")
     
     try:
-        from app.services.infrastructure.ai.context.context_analyzer_service import context_analyzer_service
+        from backend.app.services.infrastructure.ai.context.context_analyzer_service import context_analyzer_service
         
         # 测试上下文分析
         context_data = {
@@ -285,7 +285,7 @@ async def test_enhanced_reasoning():
     print("\n=== 测试增强推理 ===")
     
     try:
-        from app.services.infrastructure.ai.reasoning.enhanced_reasoning_service import enhanced_reasoning_service
+        from backend.app.services.infrastructure.ai.reasoning.enhanced_reasoning_service import enhanced_reasoning_service
         
         # 测试增强推理
         problem = "分析电商平台销售数据下降的可能原因，并提出解决方案"
@@ -318,7 +318,7 @@ async def test_tool_monitoring():
     print("\n=== 测试工具监控 ===")
     
     try:
-        from app.services.infrastructure.ai.monitoring.tool_monitor_service import tool_monitor_service
+        from backend.app.services.infrastructure.ai.monitoring.tool_monitor_service import tool_monitor_service
         
         # 启动监控
         tool_monitor_service.start_monitoring()

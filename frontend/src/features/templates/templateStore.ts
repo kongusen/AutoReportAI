@@ -103,7 +103,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       }
 
       if (file) {
-        const updatedTemplate = await TemplateService.uploadFile(file);
+        const updatedTemplate = await TemplateService.uploadFile(newTemplate.id, file);
         get().addTemplate(updatedTemplate);
         return updatedTemplate;
       }
@@ -182,7 +182,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   uploadTemplateFile: async (id: string, file: File) => {
     try {
       get().setLoading(true);
-      const updatedTemplate = await TemplateService.uploadFile(file);
+      const updatedTemplate = await TemplateService.uploadFile(id, file);
 
       get().updateTemplateInList(updatedTemplate);
       if (get().currentTemplate?.id === id) {

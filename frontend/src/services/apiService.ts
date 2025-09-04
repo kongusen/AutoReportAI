@@ -235,8 +235,8 @@ class TemplateService {
   /**
    * 上传模板文件
    */
-  static async uploadFile(file: File): Promise<any> {
-    return apiClient.uploadFile(file, 'templates/')
+  static async uploadFile(templateId: string, file: File): Promise<any> {
+    return apiClient.uploadTemplateFile(templateId, file)
   }
 
   /**

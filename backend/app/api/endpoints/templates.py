@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.template import Template as TemplateModel
-from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema
+from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema, TemplatePreview
 from app.crud import template as crud_template
 from app.services.domain.template.services.template_domain_service import TemplateParser
 import re
@@ -405,4 +405,148 @@ async def analyze_template_placeholders(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="模板分析失败"
+        )
+
+
+@router.get("/{template_id}/preview", response_model=ApiResponse[TemplatePreview])
+async def preview_template(
+    request: Request,
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """预览模板内容和占位符"""
+    try:
+        # 验证模板存在性
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+        
+        # 解析模板结构
+        structure = template_parser.parse_template_structure(template.content or "")
+        
+        # 构建预览数据
+        preview_data = TemplatePreview(
+            template_id=template.id,
+            content=template.content,
+            html_content=template.content,  # 可以在这里添加HTML转换逻辑
+            placeholders=structure.get('placeholders', []),
+            metadata={
+                'name': template.name,
+                'description': template.description,
+                'template_type': template.template_type,
+                'original_filename': template.original_filename,
+                'file_size': template.file_size,
+                'complexity_score': structure.get('complexity_score', 0),
+                'sections': structure.get('sections', []),
+                'variables': structure.get('variables', {})
+            }
+        )
+        
+        logger.info(f"用户 {current_user.id} 预览了模板 {template_id}")
+        
+        return ApiResponse(
+            success=True,
+            data=preview_data,
+            message="模板预览获取成功"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"模板预览失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="模板预览失败"
+        )
+
+
+@router.post("/{template_id}/upload", response_model=ApiResponse[TemplateSchema])
+async def upload_template_file(
+    request: Request,
+    template_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """上传模板文件并更新内容"""
+    try:
+        # 验证模板存在性
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+        
+        # 验证文件类型
+        allowed_extensions = {'.docx', '.doc', '.txt', '.html', '.md'}
+        file_extension = '.' + file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的文件类型。支持的类型: {', '.join(allowed_extensions)}"
+            )
+        
+        # 读取文件内容
+        content = await file.read()
+        file_size = len(content)
+        
+        # 根据文件类型处理内容
+        if file_extension in ['.docx', '.doc']:
+            # 这里应该添加docx文件解析逻辑
+            # 临时使用简单的文本内容
+            content_text = f"[文档文件: {file.filename}]\n\n这是一个 {file_extension} 文档文件。\n请在此处添加模板内容和占位符。\n\n示例占位符：\n{{company_name}}\n{{report_date}}\n{{data_summary}}"
+        else:
+            content_text = content.decode('utf-8', errors='ignore')
+        
+        # 更新模板
+        template_update = TemplateUpdate(
+            content=content_text,
+            original_filename=file.filename,
+            file_size=file_size,
+            template_type=file_extension.lstrip('.')
+        )
+        
+        updated_template = crud_template.update(
+            db=db,
+            db_obj=template,
+            obj_in=template_update
+        )
+        
+        logger.info(f"用户 {current_user.id} 上传了模板文件 {file.filename} 到模板 {template_id}")
+        
+        # 自动触发占位符分析
+        try:
+            structure = template_parser.parse_template_structure(content_text)
+            logger.info(f"自动解析了模板 {template_id} 的占位符: {len(structure.get('placeholders', []))} 个")
+        except Exception as parse_error:
+            logger.warning(f"自动占位符解析失败: {parse_error}")
+        
+        return ApiResponse(
+            success=True,
+            data=updated_template,
+            message=f"模板文件上传成功，解析到 {len(structure.get('placeholders', []))} 个占位符"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"模板文件上传失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="模板文件上传失败"
         )

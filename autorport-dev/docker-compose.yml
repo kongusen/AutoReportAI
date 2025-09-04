@@ -71,6 +71,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: development
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-backend-dev
     restart: unless-stopped
     command: ["/usr/local/bin/entrypoint.sh", "api"]
@@ -232,6 +235,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: worker
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-worker-dev
     restart: unless-stopped
     environment:
@@ -329,6 +335,9 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       target: beat
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-beat-dev
     restart: unless-stopped
     environment:
@@ -398,6 +407,9 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       target: development
+    args:
+        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-frontend-dev
     restart: unless-stopped
     environment:

@@ -238,7 +238,7 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
     clientRef.current = client
 
     // 注册连接状态监听器
-    const unsubscribeConnection = client.onConnectionChange((newStatus, error) => {
+    const unsubscribeConnection = client.onConnectionChange((newStatus: ConnectionStatus, error?: Error) => {
       setStatus(newStatus)
       onConnectionChange?.(newStatus, error)
       

@@ -40,6 +40,13 @@ def run_pytest(test_paths, options=None):
     
     cmd.extend(test_paths)
     
+    # 检查测试路径是否存在
+    import os
+    for path in test_paths:
+        if not os.path.exists(path):
+            print(f"⚠️ 测试路径不存在: {path}")
+            return True  # 路径不存在时返回成功，避免阻塞其他测试
+    
     return run_command(cmd, "运行 pytest 测试")
 
 

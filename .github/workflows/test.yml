@@ -94,6 +94,7 @@ jobs:
         path: |
           htmlcov/
           .coverage
+        include-hidden-files: true
 
   # 集成测试
   integration-tests:
@@ -194,7 +195,7 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
+      uses: docker/setup-buildx-action@v3
       
     - name: Build backend image
       run: |
@@ -254,6 +255,7 @@ jobs:
         path: |
           frontend/.next/
           frontend/out/
+        include-hidden-files: true
 
   # 端到端测试
   e2e-tests:

@@ -334,6 +334,9 @@ monitoring/
 cache/
 __pycache__/
 
+# Allow infrastructure cache service code to be tracked
+!backend/app/services/infrastructure/cache/*.py
+
 # Lock files (keep requirements.txt but ignore lock files)
 requirements.lock
 Pipfile.lock

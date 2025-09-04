@@ -31,9 +31,9 @@ interface DataSourceState {
   testConnection: (id: string) => Promise<boolean>
   
   // New enhanced API methods
-  getTables: (id: string) => Promise<DataSourceTablesResponse>
-  getTableSchema: (id: string, tableName: string) => Promise<TableSchema>
-  getFields: (id: string, tableName?: string) => Promise<DataSourceFieldsResponse>
+  getTables: (id: string) => Promise<string[]>
+  getTableSchema: (id: string, tableName: string) => Promise<TableSchema | null>
+  getFields: (id: string, tableName: string) => Promise<string[]>
   executeQuery: (id: string, query: QueryRequest) => Promise<QueryExecutionResult>
   
   // Internal methods
@@ -159,7 +159,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
     try {
       const response = await DataSourceService.getSchema(id)
       // 从schema中找到对应的表
-      return response.tables?.find(table => table.name === tableName) || null
+      return response.tables?.find(table => table.table_name === tableName) || null
     } catch (error: any) {
       console.error('Failed to get table schema:', error)
       throw error
@@ -167,7 +167,7 @@ export const useDataSourceStore = create<DataSourceState>((set, get) => ({
   },
 
   // 获取数据源字段列表
-  getFields: async (id: string, tableName?: string) => {
+  getFields: async (id: string, tableName: string) => {
     try {
       return await DataSourceService.getFields(id, tableName)
     } catch (error: any) {

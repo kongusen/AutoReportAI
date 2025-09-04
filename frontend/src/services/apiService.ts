@@ -160,17 +160,21 @@ class DataSourceService {
    * 获取数据源表列表
    */
   static async getTables(id: string): Promise<string[]> {
-    return apiClient.request('GET', `/data-sources/${id}/tables`, { cache: true })
+    const response = await apiClient.request<any>('GET', `/data-sources/${id}/tables`, { cache: true })
+    // 后端返回 ApiResponse { data: { tables: string[], ... } }
+    return response.data?.tables || response.tables || []
   }
 
   /**
    * 获取表字段列表
    */
   static async getFields(id: string, tableName: string): Promise<string[]> {
-    return apiClient.request('GET', `/data-sources/${id}/fields`, {
+    const response = await apiClient.request<any>('GET', `/data-sources/${id}/fields`, {
       params: { table_name: tableName },
       cache: true
     })
+    // 后端返回 ApiResponse { data: { fields: string[], ... } }
+    return response.data?.fields || response.fields || []
   }
 }
 
@@ -231,7 +235,7 @@ class TemplateService {
   /**
    * 上传模板文件
    */
-  static async uploadFile(file: File): Promise<Template> {
+  static async uploadFile(file: File): Promise<any> {
     return apiClient.uploadFile(file, 'templates/')
   }
 
@@ -598,7 +602,7 @@ class FileService {
    * 获取文件URL
    */
   static async getFileUrl(filePath: string): Promise<string> {
-    const result = await apiClient.request('GET', `/files/url/${filePath}`)
+    const result = await apiClient.request<any>('GET', `/files/url/${filePath}`)
     return result.url
   }
 
@@ -1009,7 +1013,7 @@ class NotificationService {
    * 更新通知偏好设置
    */
   static async updatePreferences(preferences: Partial<NotificationPreference>): Promise<NotificationPreference> {
-    return apiClient.patch<NotificationPreference>('/v1/notifications/preferences/', preferences)
+    return apiClient.patch<NotificationPreference>('/v1/notifications/preferences/', { data: preferences })
   }
 
   /**

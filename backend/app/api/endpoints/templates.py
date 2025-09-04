@@ -78,26 +78,26 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
                     
                     if result.get('success'):
                         logger.info(f"React Agent模板分析完成: {template_id}")
-                        return {
-                            "success": True,
-                            "data": result.get('results', {}),
-                            "message": "智能Agent分析完成（React Agent系统）"
-                        }
+                        return ApiResponse(
+                            success=True,
+                            data=result.get('results', {}),
+                            message="智能Agent分析完成（React Agent系统）"
+                        )
                     else:
                         logger.error(f"React Agent分析失败: {result.get('error')}")
-                        return {
-                            "success": False,
-                            "error": result.get('error'),
-                            "message": f"分析失败: {result.get('error')}"
-                        }
+                        return ApiResponse(
+                            success=False,
+                            error=result.get('error'),
+                            message=f"分析失败: {result.get('error')}"
+                        )
                         
                 except Exception as e:
                     logger.error(f"React Agent分析异常: {e}")
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "message": f"分析失败: {str(e)}"
-                    }
+                    return ApiResponse(
+                        success=False,
+                        error=str(e),
+                        message=f"分析失败: {str(e)}"
+                    )
         
         return ReactAgentAPIAdapter(workflow_agent, db_session, integration_mode)
         
@@ -132,19 +132,19 @@ async def get_unified_api_adapter(request: Request, db_session: Session, integra
                     
                     result = await agent.chat(f"分析模板占位符并生成SQL: template_id={template_id}, data_source_id={data_source_id}, force_reanalyze={force_reanalyze}")
                     
-                    return {
-                        "success": True,
-                        "data": result,
-                        "message": "模板分析完成（React Agent系统）"
-                    }
+                    return ApiResponse(
+                        success=True,
+                        data=result,
+                        message="模板分析完成（React Agent系统）"
+                    )
                     
                 except Exception as e:
                     logger.error(f"纯数据库模式分析失败: {e}")
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "message": f"分析失败: {str(e)}"
-                    }
+                    return ApiResponse(
+                        success=False,
+                        error=str(e),
+                        message=f"分析失败: {str(e)}"
+                    )
         
         return PureDatabaseAPIAdapterWrapper(db_session, integration_mode)
 

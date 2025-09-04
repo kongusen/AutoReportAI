@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.api import deps
+from app.core.architecture import ApiResponse
 from app.services.infrastructure.ai.llm.simple_model_selector import (
     get_simple_model_selector,
     TaskRequirement,
@@ -86,7 +87,7 @@ async def select_model(
         )
 
 
-@router.get("/stats")
+@router.get("/stats", response_model=ApiResponse)
 async def get_user_model_stats(
     *,
     db: Session = Depends(deps.get_db),
@@ -101,10 +102,14 @@ async def get_user_model_stats(
             db=db
         )
         
-        return {
-            "user_id": str(current_user.id),
-            "stats": stats
-        }
+        return ApiResponse(
+            success=True,
+            data={
+                "user_id": str(current_user.id),
+                "stats": stats
+            },
+            message="获取用户模型统计成功"
+        )
         
     except Exception as e:
         raise HTTPException(
@@ -113,7 +118,7 @@ async def get_user_model_stats(
         )
 
 
-@router.get("/available-types")
+@router.get("/available-types", response_model=ApiResponse)
 async def get_available_model_types(
     *,
     db: Session = Depends(deps.get_db),
@@ -145,11 +150,15 @@ async def get_available_model_types(
                 "count": stats["think_models"]
             })
         
-        return {
-            "available_types": available_types,
-            "total_models": stats["total_models"],
-            "servers_count": stats["servers_count"]
-        }
+        return ApiResponse(
+            success=True,
+            data={
+                "available_types": available_types,
+                "total_models": stats["total_models"],
+                "servers_count": stats["servers_count"]
+            },
+            message="获取可用模型类型成功"
+        )
         
     except Exception as e:
         raise HTTPException(

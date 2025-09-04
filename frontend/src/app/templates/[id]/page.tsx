@@ -66,7 +66,7 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
     if (!currentTemplate) return
     
     try {
-      await previewTemplate(currentTemplate.content, previewVariables)
+      await previewTemplate(currentTemplate.content || '', previewVariables)
       setShowPreview(true)
     } catch (error) {
       // 错误处理在store中已处理
@@ -278,7 +278,7 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                   <div>
                     <dt className="text-sm font-medium text-gray-500">内容长度</dt>
                     <dd className="mt-1 text-sm text-gray-900">
-                      {currentTemplate.content.length} 字符
+                      {(currentTemplate.content || '').length} 字符
                     </dd>
                   </div>
                   

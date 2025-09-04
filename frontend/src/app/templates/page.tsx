@@ -251,7 +251,7 @@ export default function TemplatesPage() {
                   )}
                   {template.template_type !== 'docx' ? (
                     <p className="text-xs text-gray-500">
-                      内容长度: {template.content.length} 字符
+                      内容长度: {(template.content || '').length} 字符
                     </p>
                   ) : template.file_size ? (
                     <p className="text-xs text-gray-500">

@@ -272,7 +272,7 @@ export class AutoReportAPIClient {
   // 通用请求方法
   // ============================================================================
 
-  private async request<T>(
+  public async request<T>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     url: string,
     options: RequestOptions = {}
@@ -371,6 +371,30 @@ export class AutoReportAPIClient {
     }
 
     throw lastError
+  }
+
+  // ============================================================================
+  // 便捷HTTP方法
+  // ============================================================================
+
+  async get<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>('GET', url, options)
+  }
+
+  async post<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>('POST', url, options)
+  }
+
+  async put<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>('PUT', url, options)
+  }
+
+  async patch<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>('PUT', url, options) // 使用PUT代替PATCH，因为request方法只支持这4种
+  }
+
+  async delete<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>('DELETE', url, options)
   }
 
   // ============================================================================
@@ -735,7 +759,7 @@ export class AutoReportAPIClient {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
-    return response.data.data || response.data
+    return (response.data as any).data || response.data
   }
 
   async downloadFile(filePath: string): Promise<Blob> {

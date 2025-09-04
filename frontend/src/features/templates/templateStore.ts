@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { Template, TemplateCreate, TemplateUpdate, TemplatePreview, PlaceholderConfig, PlaceholderAnalytics, ApiResponse } from '@/types'
 import { TemplateService, PlaceholderService } from '@/services/apiService'
+import { apiClient } from '@/lib/api-client'
 import toast from 'react-hot-toast'
 
 interface TemplateState {
@@ -170,7 +171,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       // 删除临时模板
       await TemplateService.delete(tempTemplate.id)
       
-      return preview.content
+      return preview.content || preview.html_content || ''
     } catch (error: any) {
       console.error('Failed to preview template:', error)
       throw error
@@ -202,7 +203,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
       set({ previewLoading: true, placeholderPreview: null });
       const previewData = await TemplateService.preview(id)
       if (previewData) {
-        set({ placeholderPreview: previewData });
+        set({ placeholderPreview: previewData as any });
       }
     } catch (error: any) {
       console.error('Failed to fetch placeholder preview:', error);
@@ -332,7 +333,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   getTemplateReadiness: async (templateId: string, dataSourceId?: string) => {
     try {
       const params = dataSourceId ? { data_source_id: dataSourceId } : {}
-      const response = await api.get(`/templates/${templateId}/readiness`, { params })
+      const response = await apiClient.get<any>(`/templates/${templateId}/readiness`, { params })
       return response.data?.data || response.data
     } catch (error: any) {
       console.error('Failed to get template readiness:', error)
@@ -345,7 +346,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   invalidateCache: async (templateId: string, cacheLevel?: string) => {
     try {
       const params = cacheLevel ? { cache_level: cacheLevel } : {}
-      const response = await api.post(`/templates/${templateId}/invalidate-cache`, {}, { params })
+      const response = await apiClient.post<any>(`/templates/${templateId}/invalidate-cache`, { data: {}, params })
       
       if (response.data?.success) {
         toast.success(`缓存清除完成，共清除 ${response.data.data?.cleared_cache_entries || 0} 个缓存条目`)
@@ -361,7 +362,7 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   // 获取缓存统计
   getCacheStatistics: async (templateId: string) => {
     try {
-      const response = await api.get(`/templates/${templateId}/cache-statistics`)
+      const response = await apiClient.get<any>(`/templates/${templateId}/cache-statistics`)
       return response.data?.data || response.data
     } catch (error: any) {
       console.error('Failed to get cache statistics:', error)

@@ -145,7 +145,11 @@ async def create_data_source(
         data_source_schema = DataSourceSchema.model_validate(data_source_obj)
         data_source_dict = data_source_schema.model_dump()
         data_source_dict['unique_id'] = str(data_source_dict.get('id'))
-        return {"id": data_source_dict["id"], **data_source_dict}
+        return ApiResponse(
+            success=True,
+            data=data_source_dict,
+            message="数据源创建成功"
+        )
     except IntegrityError as e:
         db.rollback()
         return ApiResponse(

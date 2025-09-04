@@ -41,6 +41,7 @@
     "@tailwindcss/typography": "^0.5.10",
     "case-sensitive-paths-webpack-plugin": "^2.4.0",
     "eslint": "^8.56.0",
-    "eslint-config-next": "14.1.0"
+    "eslint-config-next": "14.1.0",
+    "madge": "^8.0.0"
   }
 }

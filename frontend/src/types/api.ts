@@ -153,34 +153,56 @@ export interface RefreshTokenRequest {
 // ============================================================================
 
 /**
- * 数据源类型
+ * 数据源类型 - 与后端保持一致
  */
-export type DataSourceType = 'mysql' | 'postgresql' | 'doris' | 'csv' | 'api'
+export type DataSourceType = 'sql' | 'csv' | 'api' | 'push' | 'doris'
 
 /**
- * 数据源信息
+ * 数据源信息 - 与后端schema保持一致
  */
 export interface DataSource {
   id: string
+  user_id: string
   name: string
+  slug?: string
+  display_name?: string
   source_type: DataSourceType
-  host?: string
-  port?: number
-  database?: string
-  username?: string
-  password?: string // 只在创建时使用，获取时为空
+  
+  // SQL数据库配置
+  connection_string?: string
+  sql_query_type: 'single_table' | 'multi_table' | 'custom_view'
+  base_query?: string
+  join_config?: Record<string, any>
+  column_mapping?: Record<string, any>
+  where_conditions?: Record<string, any>
+  wide_table_name?: string
+  wide_table_schema?: Record<string, any>
+  
+  // API数据源配置
+  api_url?: string
+  api_method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  api_headers?: Record<string, string>
+  api_body?: Record<string, any>
+  
+  // 推送数据源配置
+  push_endpoint?: string
+  push_auth_config?: Record<string, any>
+  
+  // Doris数据库配置
+  doris_fe_hosts?: string[]
+  doris_be_hosts?: string[]
+  doris_http_port?: number
+  doris_query_port?: number
+  doris_database?: string
+  doris_username?: string
+  doris_password?: string
+  
   is_active: boolean
-  description?: string
   created_at: string
   updated_at?: string
-  user_id: string
   
-  // 特定于数据源类型的字段
-  doris_fe_hosts?: string[]
-  doris_query_port?: number
-  csv_file_path?: string
-  api_base_url?: string
-  api_headers?: Record<string, string>
+  // 计算字段
+  unique_id?: string
 }
 
 /**
@@ -188,19 +210,40 @@ export interface DataSource {
  */
 export interface CreateDataSourceRequest {
   name: string
+  slug?: string
+  display_name?: string
   source_type: DataSourceType
-  host?: string
-  port?: number
-  database?: string
-  username?: string
-  password?: string
-  is_active?: boolean
-  description?: string
-  doris_fe_hosts?: string[]
-  doris_query_port?: number
-  csv_file_path?: string
-  api_base_url?: string
+  
+  // SQL数据库配置
+  connection_string?: string
+  sql_query_type?: 'single_table' | 'multi_table' | 'custom_view'
+  base_query?: string
+  join_config?: Record<string, any>
+  column_mapping?: Record<string, any>
+  where_conditions?: Record<string, any>
+  wide_table_name?: string
+  wide_table_schema?: Record<string, any>
+  
+  // API数据源配置
+  api_url?: string
+  api_method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   api_headers?: Record<string, string>
+  api_body?: Record<string, any>
+  
+  // 推送数据源配置
+  push_endpoint?: string
+  push_auth_config?: Record<string, any>
+  
+  // Doris数据库配置
+  doris_fe_hosts?: string[]
+  doris_be_hosts?: string[]
+  doris_http_port?: number
+  doris_query_port?: number
+  doris_database?: string
+  doris_username?: string
+  doris_password?: string
+  
+  is_active?: boolean
 }
 
 /**
@@ -227,22 +270,33 @@ export interface DataSourceSchema {
 }
 
 /**
- * 表结构信息
+ * 表结构信息 - 与index.ts保持一致
  */
 export interface TableSchema {
   table_name: string
-  columns: ColumnSchema[]
+  columns: TableColumn[]
+  total_columns: number
+  estimated_rows?: number
+  table_size?: number
+  last_analyzed?: string
   row_count?: number
   table_comment?: string
 }
 
 /**
- * 列结构信息
+ * 列结构信息 - 与index.ts保持一致
  */
-export interface ColumnSchema {
-  column_name: string
-  data_type: string
-  is_nullable: boolean
+export interface TableColumn {
+  name: string
+  type: string
+  nullable: boolean
+  key: string
+  default: string | null
+  extra: string
+  // 向后兼容字段
+  column_name?: string
+  data_type?: string
+  is_nullable?: boolean
   column_default?: string
   column_comment?: string
 }
@@ -258,15 +312,16 @@ export interface Template {
   id: string
   name: string
   description?: string
-  content: string
-  template_type: 'report' | 'dashboard' | 'chart'
-  is_active: boolean
+  content?: string
+  template_type: string
+  is_active?: boolean
+  is_public?: boolean
   created_at: string
   updated_at?: string
   user_id: string
-  tags?: string[]
-  version: number
-  parent_id?: string // 用于复制关系
+  original_filename?: string
+  file_size?: number
+  unique_id?: string
 }
 
 /**
@@ -275,10 +330,12 @@ export interface Template {
 export interface CreateTemplateRequest {
   name: string
   description?: string
-  content: string
-  template_type: 'report' | 'dashboard' | 'chart'
+  content?: string
+  template_type?: string
   is_active?: boolean
-  tags?: string[]
+  is_public?: boolean
+  original_filename?: string
+  file_size?: number
 }
 
 /**
@@ -287,12 +344,26 @@ export interface CreateTemplateRequest {
 export interface UpdateTemplateRequest extends Partial<CreateTemplateRequest> {}
 
 /**
- * 模板预览结果
+ * 模板预览结果 - 与index.ts保持一致
  */
 export interface TemplatePreview {
-  html_content: string
-  placeholders: string[]
-  estimated_generation_time: number
+  template_type: string
+  placeholders: Placeholder[]
+  total_count: number
+  stats_count: number
+  chart_count: number
+  table_count?: number
+  analysis_count?: number
+  datetime_count?: number
+  title_count?: number
+  variable_count?: number
+  content_type_stats?: Record<string, number>
+  has_errors?: boolean
+  error_count?: number
+  // 兼容字段
+  html_content?: string
+  content?: string
+  estimated_generation_time?: number
 }
 
 /**
@@ -355,7 +426,7 @@ export interface PlaceholderAnalysis {
   analysis_result: {
     sql_validity: boolean
     data_preview?: any[]
-    column_info?: ColumnSchema[]
+    column_info?: TableColumn[]
     estimated_rows: number
     suggestions?: string[]
     errors?: string[]
@@ -769,7 +840,17 @@ export enum WebSocketMessageType {
   REPORT_UPDATE = 'report_update',
   SYSTEM_ALERT = 'system_alert',
   SUBSCRIBE = 'subscribe',
-  UNSUBSCRIBE = 'unsubscribe'
+  UNSUBSCRIBE = 'unsubscribe',
+  // Template related messages
+  TEMPLATE_CREATED = 'template_created',
+  TEMPLATE_UPDATED = 'template_updated', 
+  TEMPLATE_DELETED = 'template_deleted',
+  PLACEHOLDER_ANALYSIS_COMPLETED = 'placeholder_analysis_completed',
+  // Data source related messages
+  DATA_SOURCE_CREATED = 'data_source_created',
+  DATA_SOURCE_UPDATED = 'data_source_updated',
+  DATA_SOURCE_DELETED = 'data_source_deleted',
+  DATA_SOURCE_TEST_COMPLETED = 'data_source_test_completed'
 }
 
 /**
@@ -783,6 +864,7 @@ export interface WebSocketMessage {
   timestamp?: string
   priority?: number
   expires_at?: string
+  token?: string // 用于认证
 }
 
 /**
@@ -1013,6 +1095,5 @@ export type {
   APIResponse as ApiResponse,
   Template as TemplateType,
   Report as ReportType,
-  Task as TaskType,
   WebSocketMessage as WSMessage
 }

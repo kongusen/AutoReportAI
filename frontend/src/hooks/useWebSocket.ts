@@ -178,13 +178,16 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
 
     // 显示报告生成进度
     if (message.status === 'completed') {
-      toast.success('报告生成完成！', {
-        duration: 5000,
-        action: message.file_url ? {
-          label: '下载',
-          onClick: () => window.open(message.file_url, '_blank')
-        } : undefined
+      toast.success(message.file_url ? 
+        '报告生成完成！点击下载' : 
+        '报告生成完成！', {
+        duration: 5000
       })
+      
+      // 如果有下载链接，自动打开
+      if (message.file_url) {
+        setTimeout(() => window.open(message.file_url, '_blank'), 1000)
+      }
     } else if (message.status === 'failed') {
       toast.error('报告生成失败')
     }

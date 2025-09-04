@@ -18,9 +18,9 @@ interface Template {
   id: string
   name: string
   description?: string
-  content: string
+  content?: string
   template_type: string
-  is_active: boolean
+  is_active?: boolean
   created_at: string
   updated_at?: string
 }

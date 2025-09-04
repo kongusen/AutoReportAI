@@ -47,7 +47,7 @@ export interface UserProfile {
   updated_at?: string
 }
 
-// 数据源类型
+// 数据源类型 - 与api.ts和后端保持一致
 export type DataSourceType = 'sql' | 'csv' | 'api' | 'push' | 'doris'
 
 export interface DataSource {
@@ -302,19 +302,22 @@ export interface TemplatePreview {
 }
 
 
-// 模板类型
+// 模板类型 - 与api.ts保持一致
 export interface Template {
   id: string;
   user_id: string;
   name: string;
   description?: string;
-  content: string;
+  content?: string;
   template_type: string;
-  variables?: Record<string, any>;
+  is_active?: boolean;
+  is_public?: boolean;
   created_at: string;
   updated_at?: string;
   original_filename?: string;
   file_size?: number;
+  unique_id?: string;
+  variables?: Record<string, any>;
 }
 
 export interface TemplateCreate extends Omit<Template, 'id' | 'user_id' | 'created_at' | 'updated_at'> {

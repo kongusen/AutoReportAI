@@ -202,9 +202,6 @@ services:
       - ./data/backend/cache:/app/cache
       - ./data/backend/storage:/app/storage
       - ./data/backend/temp:/app/temp
-      # 时区配置挂载
-      - /etc/localtime:/etc/localtime:ro
-      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
     depends_on:
       db:
         condition: service_healthy

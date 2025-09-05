@@ -1,96 +1,108 @@
 """
-Infrastructure层AI智能代理服务
+AutoReportAI Agent 核心智能代理服务
 
-提供DAG编排、执行引擎和智能代理的基础设施支撑：
+提供AutoReportAI系统的核心智能代理组件：
 
 核心组件：
-1. DAGController - DAG编排和流程控制
-2. AIExecutionEngine - AI任务执行引擎
-3. TaskContext - 任务上下文管理
-4. ReactAgent - 纯数据库驱动React模式智能代理（需要user_id）
+1. AutoReportAIAgent - 主编排器，协调三大核心功能
+2. PlaceholderToSQLAgent - 占位符→SQL转换专用代理
+3. TaskSupplementAgent - 任务补充机制代理
+4. MultiContextIntegrator - 多上下文集成器
+5. SQLTestingValidator - SQL测试验证器
+6. ToolBasedAgent - 现代化工具注册架构代理
 
-技术职责：
-- 提供AI执行的技术基础设施
-- 管理DAG编排和步骤控制
-- 处理模型调度和资源管理
-- 支撑上层业务代理的技术需求
-
-不包含业务逻辑，专注于技术实现层面。
+设计理念：
+- 聚焦三大核心功能：占位符→SQL转换、任务补充机制、图表生成
+- 支持五大主要工作流
+- 基于现代化工具注册架构
+- 多上下文智能集成（数据源、任务、模板、时间）
+- 删除冗余组件，保持核心功能
 """
 
 from typing import TYPE_CHECKING
 
+# 类型检查时的延迟导入
 if TYPE_CHECKING:
-    from .dag_controller import DAGController
-    from .execution_engine import AIExecutionEngine  
-    from .task_context import AITaskContext
-    from .react_agent import ReactAgent
+    from .autoreport_ai_agent import AutoReportAIAgent
+    from .placeholder_to_sql_agent import PlaceholderToSqlAgent
+    from .task_supplement_agent import TaskSupplementAgent
+    from .multi_context_integrator import MultiContextIntegrator
+    from .sql_testing_validator import SqlTestingValidator
+    from .tool_based_agent import ToolBasedAgent
 
-# 延迟导入和服务获取
+# 全局代理实例缓存
 _agent_instances = {}
 
-# 导出核心类用于直接导入
-from .data_transformation_agent import DataTransformationAgent, create_data_transformation_agent
-from .dag_controller import (
-    DAGController, 
-    ControlContext, 
-    ControlDecision, 
-    ExecutionStatus, 
-    StepResult,
-    create_control_context
-)
-from .execution_engine import AIExecutionEngine
-from .task_context import (
-    AITaskContext, 
-    ExecutionStep, 
-    ExecutionStepType, 
-    ModelRequirement, 
-    TaskComplexity,
-    create_ai_task_context_from_placeholder_analysis
-)
-from .react_agent import ReactAgent
+# ===========================================
+# 核心Agent导入和导出
+# ===========================================
 
-async def get_dag_controller() -> 'DAGController':
-    """获取DAG编排控制器"""
-    if 'dag_controller' not in _agent_instances:
-        from .dag_controller import DAGController
-        _agent_instances['dag_controller'] = DAGController()
-    return _agent_instances['dag_controller']
+# 导出核心Agent类
+from .autoreport_ai_agent import AutoReportAIAgent
+from .placeholder_to_sql_agent import PlaceholderToSqlAgent
+from .task_supplement_agent import TaskSupplementAgent  
+from .multi_context_integrator import MultiContextIntegrator
+from .sql_testing_validator import SqlTestingValidator
+from .tool_based_agent import ToolBasedAgent
 
-async def get_ai_execution_engine() -> 'AIExecutionEngine':
-    """获取AI执行引擎"""
-    if 'execution_engine' not in _agent_instances:
-        from .execution_engine import AIExecutionEngine
-        _agent_instances['execution_engine'] = AIExecutionEngine()
-    return _agent_instances['execution_engine']
+# ===========================================
+# Agent实例获取服务
+# ===========================================
 
-async def get_ai_task_context() -> 'AITaskContext':
-    """获取AI任务上下文管理器"""
-    if 'task_context' not in _agent_instances:
-        from .task_context import AITaskContext
-        _agent_instances['task_context'] = AITaskContext()
-    return _agent_instances['task_context']
+async def get_autoreport_ai_agent() -> 'AutoReportAIAgent':
+    """获取AutoReportAI Agent主编排器"""
+    if 'autoreport_ai_agent' not in _agent_instances:
+        _agent_instances['autoreport_ai_agent'] = AutoReportAIAgent()
+    return _agent_instances['autoreport_ai_agent']
 
-def create_react_agent(user_id: str) -> 'ReactAgent':
-    """
-    创建React智能代理
-    注意：每个用户需要独立的agent实例
-    """
-    if not user_id:
-        raise ValueError("user_id is required for ReactAgent")
-    
-    from .react_agent import ReactAgent
-    return ReactAgent(user_id=user_id)
+async def get_placeholder_to_sql_agent() -> 'PlaceholderToSqlAgent':
+    """获取占位符→SQL转换Agent"""
+    if 'placeholder_to_sql_agent' not in _agent_instances:
+        _agent_instances['placeholder_to_sql_agent'] = PlaceholderToSqlAgent()
+    return _agent_instances['placeholder_to_sql_agent']
+
+async def get_task_supplement_agent() -> 'TaskSupplementAgent':
+    """获取任务补充Agent"""
+    if 'task_supplement_agent' not in _agent_instances:
+        _agent_instances['task_supplement_agent'] = TaskSupplementAgent()
+    return _agent_instances['task_supplement_agent']
+
+async def get_multi_context_integrator() -> 'MultiContextIntegrator':
+    """获取多上下文集成器"""
+    if 'multi_context_integrator' not in _agent_instances:
+        _agent_instances['multi_context_integrator'] = MultiContextIntegrator()
+    return _agent_instances['multi_context_integrator']
+
+async def get_sql_testing_validator() -> 'SQLTestingValidator':
+    """获取SQL测试验证器"""
+    if 'sql_testing_validator' not in _agent_instances:
+        _agent_instances['sql_testing_validator'] = SQLTestingValidator()
+    return _agent_instances['sql_testing_validator']
+
+async def get_tool_based_agent() -> 'ToolBasedAgent':
+    """获取基于工具的Agent"""
+    if 'tool_based_agent' not in _agent_instances:
+        _agent_instances['tool_based_agent'] = ToolBasedAgent()
+    return _agent_instances['tool_based_agent']
+
+# ===========================================
+# 导出接口
+# ===========================================
 
 __all__ = [
-    'get_dag_controller',
-    'get_ai_execution_engine',
-    'get_ai_task_context', 
-    'create_react_agent',
-    'ReactAgent',
-    'create_data_transformation_agent',
-    'DataTransformationAgent',
-    'DAGController',
-    'AIExecutionEngine',
-    'AITaskContext'
+    # 核心Agent类
+    'AutoReportAIAgent',
+    'PlaceholderToSQLAgent',
+    'TaskSupplementAgent', 
+    'MultiContextIntegrator',
+    'SQLTestingValidator',
+    'ToolBasedAgent',
+    
+    # Agent实例获取服务
+    'get_autoreport_ai_agent',
+    'get_placeholder_to_sql_agent',
+    'get_task_supplement_agent',
+    'get_multi_context_integrator',
+    'get_sql_testing_validator',
+    'get_tool_based_agent'
 ]

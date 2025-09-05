@@ -40,7 +40,7 @@ def get_database_url():
     # 根据环境动态生成URL
     env = detect_environment()
     db_user = os.getenv("POSTGRES_USER", "postgres")
-    db_password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    db_password = os.getenv("POSTGRES_PASSWORD", "postgres123")  # 修改默认密码以匹配Docker配置
     db_name = os.getenv("POSTGRES_DB", "autoreport")
     db_port = os.getenv("POSTGRES_PORT", "5432")
     
@@ -207,11 +207,24 @@ class Settings(BaseSettings):
     REPORT_OUTPUT_DIR: str = os.getenv("REPORT_OUTPUT_DIR", "./reports")
     MAX_UPLOAD_SIZE: int = int(os.getenv("MAX_UPLOAD_SIZE", 100 * 1024 * 1024))  # 100MB
     
-    # MinIO配置
-    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport")
+    # MinIO配置 - 智能环境检测
+    @property
+    def MINIO_ENDPOINT(self) -> str:
+        """MinIO服务端点 - 根据环境自动选择"""
+        env_endpoint = os.getenv("MINIO_ENDPOINT")
+        if env_endpoint:
+            return env_endpoint
+        
+        # 环境检测
+        env = detect_environment()
+        if env == "docker":
+            return "minio:9000"  # Docker环境使用服务名
+        else:
+            return "localhost:9000"  # 本地环境
+    
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "autoreport_minio_admin") 
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "AutoReport2024Minio!Secure#Storage")
+    MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport-prod")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     
     # 本地存储配置

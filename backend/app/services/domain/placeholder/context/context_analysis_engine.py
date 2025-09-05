@@ -42,6 +42,32 @@ class ContextAnalysisEngine(ContextAnalyzerInterface):
         # 分析缓存
         self.analysis_cache: Dict[str, ContextAnalysisResult] = {}
         self.cache_size_limit = 1000
+        
+        # 初始化状态
+        self.initialized = False
+    
+    async def initialize(self):
+        """初始化上下文分析引擎"""
+        if self.initialized:
+            return
+        
+        try:
+            # 初始化各层级分析器
+            if hasattr(self.paragraph_analyzer, 'initialize'):
+                await self.paragraph_analyzer.initialize()
+            if hasattr(self.section_analyzer, 'initialize'):
+                await self.section_analyzer.initialize()
+            if hasattr(self.document_analyzer, 'initialize'):
+                await self.document_analyzer.initialize()
+            if hasattr(self.business_rule_analyzer, 'initialize'):
+                await self.business_rule_analyzer.initialize()
+            
+            self.initialized = True
+            logger.info("上下文分析引擎初始化完成")
+            
+        except Exception as e:
+            logger.error(f"上下文分析引擎初始化失败: {e}")
+            raise
     
     async def analyze(
         self,

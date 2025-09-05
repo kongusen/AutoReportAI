@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { Template, TemplateCreate, TemplateUpdate, TemplatePreview, PlaceholderConfig, PlaceholderAnalytics, ApiResponse } from '@/types'
 import { TemplateService, PlaceholderService } from '@/services/apiService'
 import { apiClient } from '@/lib/api-client'
+import { normalizePlaceholders } from '@/utils/placeholderUtils'
 import toast from 'react-hot-toast'
 
 interface TemplateState {
@@ -28,6 +29,7 @@ interface TemplateState {
   previewTemplate: (content: string, variables?: Record<string, any>) => Promise<string>
   uploadTemplateFile: (id: string, file: File) => Promise<Template>
   fetchPlaceholderPreview: (id: string) => Promise<void>
+  downloadTemplateFile: (id: string) => Promise<void>
   
   // 占位符管理方法
   fetchPlaceholders: (templateId: string) => Promise<void>
@@ -213,6 +215,37 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
     }
   },
 
+  // 下载模板文件
+  downloadTemplateFile: async (id: string) => {
+    try {
+      const blob = await TemplateService.downloadFile(id);
+      
+      // 创建下载链接
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // 从当前模板获取文件名
+      const template = get().currentTemplate;
+      const filename = template?.original_filename || `template_${id}.docx`;
+      link.download = filename;
+      
+      // 触发下载
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // 清理URL对象
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('文件下载成功');
+    } catch (error: any) {
+      console.error('Failed to download template file:', error);
+      toast.error('文件下载失败');
+      throw error;
+    }
+  },
+
   // Internal methods
   setLoading: (loading: boolean) => set({ loading }),
   
@@ -249,17 +282,20 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   fetchPlaceholders: async (templateId: string) => {
     try {
       set({ placeholderLoading: true })
-      const placeholders = await PlaceholderService.list(templateId)
+      const rawPlaceholders = await PlaceholderService.list(templateId)
+      
+      // 使用工具函数规范化占位符数据
+      const normalizedPlaceholdersData = normalizePlaceholders(rawPlaceholders || [])
       
       set({ 
-        placeholders: placeholders || [],
+        placeholders: normalizedPlaceholdersData as any[],
         placeholderAnalytics: {
-          total_placeholders: placeholders?.length || 0,
-          analyzed_placeholders: placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0,
-          sql_validated_placeholders: placeholders?.filter((p: PlaceholderConfig) => p.sql_validated).length || 0,
-          average_confidence_score: placeholders?.reduce((sum: number, p: PlaceholderConfig) => sum + p.confidence_score, 0) / (placeholders?.length || 1) || 0,
+          total_placeholders: normalizedPlaceholdersData.length,
+          analyzed_placeholders: normalizedPlaceholdersData.filter((p: any) => p.agent_analyzed).length,
+          sql_validated_placeholders: normalizedPlaceholdersData.filter((p: any) => p.sql_validated).length,
+          average_confidence_score: normalizedPlaceholdersData.reduce((sum: number, p: any) => sum + (p.confidence_score || 0), 0) / (normalizedPlaceholdersData.length || 1),
           cache_hit_rate: 0,
-          analysis_coverage: (placeholders?.length > 0 ? (placeholders?.filter((p: PlaceholderConfig) => p.agent_analyzed).length || 0) / placeholders.length * 100 : 0),
+          analysis_coverage: normalizedPlaceholdersData.length > 0 ? (normalizedPlaceholdersData.filter((p: any) => p.agent_analyzed).length / normalizedPlaceholdersData.length * 100) : 0,
           execution_stats: {
             total_executions: 0,
             successful_executions: 0,
@@ -280,13 +316,20 @@ export const useTemplateStore = create<TemplateState>((set, get) => ({
   analyzePlaceholders: async (templateId: string, forceReparse = false) => {
     try {
       set({ placeholderLoading: true })
-      await TemplateService.parsePlaceholders(templateId)
+      const result = await TemplateService.parsePlaceholders(templateId, forceReparse)
       
-      toast.success('占位符分析完成')
-      // 重新获取占位符列表
-      await get().fetchPlaceholders(templateId)
+      if (result?.success) {
+        toast.success(result.message || '占位符分析完成')
+        // 重新获取占位符列表
+        await get().fetchPlaceholders(templateId)
+        // 刷新预览数据
+        await get().fetchPlaceholderPreview(templateId)
+      } else {
+        toast.error(result?.message || '占位符分析失败')
+      }
     } catch (error: any) {
       console.error('Failed to analyze placeholders:', error)
+      toast.error(error.response?.data?.message || '占位符分析失败')
     } finally {
       set({ placeholderLoading: false })
     }

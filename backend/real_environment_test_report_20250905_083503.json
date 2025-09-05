@@ -1,0 +1,119 @@
+{
+  "test_summary": {
+    "total_tests": 6,
+    "successful_tests": 5,
+    "success_rate": 0.8333333333333334,
+    "test_time": "2025-09-05T08:35:03.784957",
+    "environment": "real_venv_docker"
+  },
+  "detailed_results": {
+    "database_connection": {
+      "success": true,
+      "database_url": "postgresql://***@localhost:5432/autoreport",
+      "database_version": "PostgreSQL 15.14 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit",
+      "available_tables": [
+        "ai_providers",
+        "analytics_data",
+        "column_schemas",
+        "data_sources",
+        "databases",
+        "error_logs",
+        "etl_jobs",
+        "field_mapping_cache",
+        "knowledge_base",
+        "learning_rules",
+        "llm_call_logs",
+        "llm_models",
+        "llm_servers",
+        "placeholder_chart_cache",
+        "placeholder_mapping_cache",
+        "placeholder_mappings",
+        "placeholder_processing_history",
+        "placeholder_values",
+        "report_history",
+        "report_quality_scores",
+        "table_columns",
+        "table_indexes",
+        "table_relations",
+        "table_relationships",
+        "table_schemas",
+        "tables",
+        "task_executions",
+        "tasks",
+        "template_execution_history",
+        "template_placeholders",
+        "templates",
+        "user_feedbacks",
+        "user_llm_preferences",
+        "user_llm_usage_quotas",
+        "user_profiles",
+        "users"
+      ],
+      "tables_count": 36
+    },
+    "real_data": {
+      "success": true,
+      "users_count": 1,
+      "data_sources_count": 2,
+      "templates_count": 2,
+      "llm_servers_count": 1
+    },
+    "agent_health": {
+      "success": true,
+      "status": "healthy",
+      "details": {
+        "status": "healthy",
+        "timestamp": "2025-09-05T08:35:03.784367",
+        "agent_id": "c9244981-d32d-4ff7-9e92-b50bfd7e4502",
+        "sub_agents": {
+          "placeholder_sql_agent": "healthy",
+          "task_supplement_agent": "healthy",
+          "sql_validator": "healthy",
+          "context_integrator": "healthy",
+          "tool_agent": "healthy"
+        },
+        "system_metrics": {
+          "running_requests": 0,
+          "total_executions": 0,
+          "context_count": 0,
+          "memory_usage": "normal"
+        }
+      }
+    },
+    "real_placeholder_to_sql": {
+      "success": true,
+      "status": "completed",
+      "confidence_score": 0.0,
+      "execution_time": 0.000248,
+      "result": {
+        "sql_query": "",
+        "explanation": "SQL生成失败: Expecting value: line 1 column 1 (char 0)",
+        "confidence_score": 0.0,
+        "used_tables": [],
+        "used_columns": [],
+        "time_filters": [],
+        "validation_errors": [
+          "Expecting value: line 1 column 1 (char 0)"
+        ],
+        "correction_attempts": 0,
+        "workflow": "placeholder_to_sql"
+      }
+    },
+    "real_template_functionality": {
+      "success": false,
+      "status": "failed",
+      "template_id": "439370c9-e97c-4bd1-81ba-755b3e5a6282",
+      "template_name": "测试-个人",
+      "execution_time": 3e-05,
+      "result": {
+        "error": "DataSourceContext.__init__() missing 1 required positional argument: 'connection_info'"
+      }
+    },
+    "agent_statistics": {
+      "success": true,
+      "total_requests": 2,
+      "success_rate": 0.5,
+      "sub_agents_count": 5
+    }
+  }
+}

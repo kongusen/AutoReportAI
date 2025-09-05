@@ -516,13 +516,13 @@ async def get_report_content(
     )
 
 
-@router.get("/{report_id}/download")
-async def download_report(
+@router.get("/{report_id}/download-info")
+async def get_report_download_info(
     report_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """下载报告"""
+    """获取报告下载信息"""
     user_id = current_user.id
     if isinstance(user_id, str):
         user_id = UUID(user_id)
@@ -545,14 +545,52 @@ async def download_report(
             detail="报告尚未完成生成"
         )
     
-    # 这里应该实现实际的文件下载逻辑
+    # 检查是否有文件路径存储
+    if not report.file_path:
+        # 如果没有文件，生成一个临时的内容文件
+        try:
+            from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+            from io import BytesIO
+            import tempfile
+            import os
+            
+            storage_service = get_hybrid_storage_service()
+            
+            # 创建报告内容文件
+            report_content = report.result or "报告内容为空"
+            filename = f"report_{report_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            
+            # 上传到存储系统
+            file_info = storage_service.upload_file(
+                file_data=BytesIO(report_content.encode('utf-8')),
+                original_filename=filename,
+                file_type="reports",
+                content_type="text/plain"
+            )
+            
+            # 更新报告记录
+            report.file_path = file_info["file_path"]
+            db.commit()
+            
+            logger.info(f"为报告 {report_id} 创建了临时文件: {file_info['file_path']}")
+            
+        except Exception as e:
+            logger.error(f"创建报告文件失败: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="无法准备报告下载"
+            )
+    
     return ApiResponse(
         success=True,
         data={
-            "download_url": f"/api/v2/reports/{report_id}/download/file",
-            "filename": f"report_{report_id}.docx"
+            "report_id": report_id,
+            "download_url": f"/api/v1/reports/{report_id}/download",
+            "filename": f"report_{report_id}.txt",
+            "file_size": len(report.result.encode('utf-8')) if report.result else 0,
+            "has_file": bool(report.file_path)
         },
-        message="报告下载链接已生成"
+        message="报告下载信息已准备"
     )
 
 
@@ -1083,36 +1121,102 @@ async def download_report(
                 detail=f"报告尚未生成完成，当前状态: {report.status}"
             )
         
+        # 如果没有文件路径，尝试从存储服务获取
         if not report.file_path:
-            raise HTTPException(
-                status_code=404,
-                detail="报告文件路径不存在"
+            # 先尝试准备文件
+            try:
+                from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+                from io import BytesIO
+                
+                storage_service = get_hybrid_storage_service()
+                
+                # 创建报告内容文件
+                report_content = report.result or "报告内容为空"
+                filename = f"report_{report_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                
+                # 上传到存储系统
+                file_info = storage_service.upload_file(
+                    file_data=BytesIO(report_content.encode('utf-8')),
+                    original_filename=filename,
+                    file_type="reports",
+                    content_type="text/markdown"
+                )
+                
+                # 更新报告记录
+                report.file_path = file_info["file_path"]
+                db.commit()
+                
+            except Exception as prep_error:
+                logger.error(f"准备报告文件失败: {prep_error}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="报告文件准备失败"
+                )
+        
+        # 从存储系统下载文件
+        try:
+            from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+            from fastapi.responses import StreamingResponse
+            import io
+            
+            storage_service = get_hybrid_storage_service()
+            
+            # 检查文件是否存在
+            if not storage_service.file_exists(report.file_path):
+                raise HTTPException(
+                    status_code=404,
+                    detail="报告文件在存储系统中不存在"
+                )
+            
+            # 下载文件
+            file_data, backend_type = storage_service.download_file(report.file_path)
+            
+            # 生成友好的文件名
+            task_name = report.task.name if report.task else f"报告_{report_id}"
+            timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S") if report.generated_at else "unknown"
+            
+            # 根据文件路径确定扩展名
+            file_ext = report.file_path.split('.')[-1] if '.' in report.file_path else 'txt'
+            filename = f"{task_name}_{timestamp}.{file_ext}"
+            
+            # 清理文件名中的非法字符
+            import re
+            filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+            
+            # 确定Content-Type
+            content_type = "application/octet-stream"
+            if file_ext == 'md':
+                content_type = "text/markdown"
+            elif file_ext == 'txt':
+                content_type = "text/plain"
+            elif file_ext == 'html':
+                content_type = "text/html"
+            elif file_ext == 'docx':
+                content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif file_ext == 'pdf':
+                content_type = "application/pdf"
+            
+            # 创建响应
+            file_stream = io.BytesIO(file_data)
+            
+            logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {report.file_path}")
+            
+            return StreamingResponse(
+                file_stream,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Storage-Backend": backend_type,
+                    "X-Report-ID": str(report_id)
+                }
             )
-        
-        # 检查文件是否存在
-        file_path = Path(report.file_path)
-        if not file_path.exists():
+            
+        except Exception as download_error:
+            logger.error(f"从存储系统下载报告文件失败: {download_error}")
             raise HTTPException(
-                status_code=404,
-                detail="报告文件已被删除或移动"
+                status_code=500,
+                detail="报告文件下载失败"
             )
-        
-        # 生成友好的文件名
-        task_name = report.task.name if report.task else f"报告_{report_id}"
-        timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S") if report.generated_at else "unknown"
-        filename = f"{task_name}_{timestamp}.{file_path.suffix.lstrip('.')}"
-        
-        # 清理文件名中的非法字符
-        import re
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        
-        logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {file_path}")
-        
-        return FileResponse(
-            path=str(file_path),
-            filename=filename,
-            media_type='application/octet-stream'
-        )
         
     except HTTPException:
         raise

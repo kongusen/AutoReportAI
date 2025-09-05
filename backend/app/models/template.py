@@ -27,6 +27,7 @@ class Template(Base):
     content = Column(Text)
     template_type = Column(String(50), default="docx")
     original_filename = Column(String(255))
+    file_path = Column(String(500))  # 存储文件在存储系统中的路径
     file_size = Column(Integer)
     is_public = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)

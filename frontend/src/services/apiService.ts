@@ -242,8 +242,16 @@ class TemplateService {
   /**
    * 解析模板占位符
    */
-  static async parsePlaceholders(templateId: string): Promise<any> {
-    return apiClient.request('POST', `/templates/${templateId}/parse`)
+  static async parsePlaceholders(templateId: string, forceReparse = false): Promise<any> {
+    const params = forceReparse ? '?force_reparse=true' : ''
+    return apiClient.request('POST', `/templates/${templateId}/placeholders/reparse${params}`)
+  }
+
+  /**
+   * 下载模板文件
+   */
+  static async downloadFile(templateId: string): Promise<Blob> {
+    return apiClient.downloadTemplateFile(templateId)
   }
 }
 
@@ -256,7 +264,21 @@ class PlaceholderService {
    * 获取模板占位符列表
    */
   static async list(templateId: string): Promise<any[]> {
-    return apiClient.request('GET', `/placeholders/${templateId}`)
+    try {
+      // 首先尝试获取模板预览数据
+      const previewData = await apiClient.request<any>('GET', `/templates/${templateId}/preview`)
+      return previewData?.placeholders || []
+    } catch (error) {
+      console.error('Failed to get placeholders from preview:', error)
+      // 回退到重新解析
+      try {
+        const reparseResult = await apiClient.request<any>('POST', `/templates/${templateId}/placeholders/reparse`)
+        return reparseResult?.placeholders || []
+      } catch (reparseError) {
+        console.error('Failed to reparse placeholders:', reparseError)
+        return []
+      }
+    }
   }
 
   /**

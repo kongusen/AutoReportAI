@@ -599,6 +599,13 @@ export class AutoReportAPIClient {
     })
   }
 
+  async downloadTemplateFile(templateId: string): Promise<Blob> {
+    const response = await this.axiosInstance.get(`/templates/${templateId}/download`, {
+      responseType: 'blob'
+    })
+    return response.data
+  }
+
   // ============================================================================
   // 报告API
   // ============================================================================
@@ -623,6 +630,10 @@ export class AutoReportAPIClient {
       responseType: 'blob'
     })
     return response.data
+  }
+
+  async getReportDownloadInfo(id: string): Promise<any> {
+    return this.request<any>('GET', `/reports/${id}/download-info`)
   }
 
   async deleteReport(id: string): Promise<void> {

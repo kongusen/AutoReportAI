@@ -197,7 +197,6 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     volumes:
-      - ../backend:/app:rw
       - ./data/backend/logs:/app/logs
       - ./data/backend/uploads:/app/uploads
       - ./data/backend/cache:/app/cache
@@ -298,7 +297,6 @@ services:
       - LLAMAINDEX_ENABLE_CACHE=true
       
     volumes:
-      - ../backend:/app:rw
       - ./data/backend/logs:/app/logs
       - ./data/backend/cache:/app/cache
       - ./data/backend/storage:/app/storage
@@ -380,7 +378,6 @@ services:
       - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
       
     volumes:
-      - ../backend:/app:rw
       - ./data/backend/logs:/app/logs
       - ./data/celery/beat:/tmp/celerybeat
       # 时区配置挂载
@@ -410,6 +407,9 @@ services:
       args:
         HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+        NODE_ENV: ${NODE_ENV:-}
     container_name: autoreport-frontend-dev
     restart: unless-stopped
     environment:
@@ -429,9 +429,6 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
-    volumes:
-      - ../frontend:/app:rw
-      - /app/node_modules
     depends_on:
       backend:
         condition: service_healthy

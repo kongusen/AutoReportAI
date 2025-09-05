@@ -98,11 +98,6 @@ COPY --from=dev-deps /app/node_modules ./node_modules
 # 复制源代码
 COPY . .
 
-# 构建参数和环境变量
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
-ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
-ARG NODE_ENV=production
-
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NODE_ENV=$NODE_ENV

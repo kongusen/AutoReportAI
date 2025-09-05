@@ -413,10 +413,10 @@ services:
     container_name: autoreport-frontend-dev
     restart: unless-stopped
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=${NODE_ENV:-}
       - NEXT_TELEMETRY_DISABLED=1
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
-      - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-}
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
       - FORCE_COLOR=1

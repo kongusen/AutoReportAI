@@ -320,6 +320,7 @@ export interface Template {
   updated_at?: string
   user_id: string
   original_filename?: string
+  file_path?: string  // MinIO/storage file path for original uploaded files
   file_size?: number
   unique_id?: string
 }

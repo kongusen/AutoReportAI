@@ -44,7 +44,30 @@ class CacheManager:
             'cache_misses': 0
         }
         
-        logger.info("缓存管理器初始化完成")
+        self.initialized = False
+        
+        logger.info("缓存管理器构造完成")
+    
+    async def initialize(self):
+        """异步初始化缓存管理器"""
+        if self.initialized:
+            return
+        
+        try:
+            # 初始化各个缓存组件
+            if hasattr(self.result_cache, 'initialize'):
+                await self.result_cache.initialize()
+            if hasattr(self.context_cache, 'initialize'):
+                await self.context_cache.initialize()
+            if hasattr(self.execution_cache, 'initialize'):
+                await self.execution_cache.initialize()
+            
+            self.initialized = True
+            logger.info("缓存管理器异步初始化完成")
+            
+        except Exception as e:
+            logger.error(f"缓存管理器初始化失败: {e}")
+            raise
     
     # ========== 结果缓存操作 ==========
     

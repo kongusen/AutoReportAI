@@ -107,6 +107,7 @@ class FileStorageService:
             file_path = os.path.join(category_path, unique_filename)
             
             # 写入文件
+            file_data.seek(0)  # 重置指针
             with open(file_path, 'wb') as f:
                 f.write(file_data.read())
             
@@ -117,14 +118,161 @@ class FileStorageService:
                 "file_id": str(uuid.uuid4()),
                 "filename": unique_filename,
                 "original_filename": original_filename,
-                "file_path": file_path,
+                "file_path": os.path.join(file_type, unique_filename),  # 相对路径用于存储
                 "file_type": file_type,
                 "content_type": content_type,
                 "size": file_size,
-                "uploaded_at": datetime.now().isoformat()
+                "uploaded_at": datetime.now().isoformat(),
+                "backend": "local"
             }
         except Exception as e:
             logger.error(f"文件上传失败: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def file_exists(self, file_path: str) -> bool:
+        """检查文件是否存在"""
+        try:
+            full_path = os.path.join(self.base_path, file_path) if not os.path.isabs(file_path) else file_path
+            return os.path.exists(full_path)
+        except Exception:
+            return False
+    
+    def download_file(self, file_path: str) -> tuple[bytes, str]:
+        """下载文件"""
+        try:
+            full_path = os.path.join(self.base_path, file_path) if not os.path.isabs(file_path) else file_path
+            
+            if not os.path.exists(full_path):
+                raise FileNotFoundError(f"文件不存在: {file_path}")
+            
+            with open(full_path, 'rb') as f:
+                data = f.read()
+            
+            return data, "local"
+        except Exception as e:
+            logger.error(f"文件下载失败: {e}")
+            raise
+    
+    def get_download_url(self, file_path: str, expires: int = 3600) -> str:
+        """获取文件下载URL（本地存储返回相对路径）"""
+        # 本地存储直接返回API路径
+        return f"/api/v1/files/download/{file_path}"
+    
+    def delete_file(self, file_path: str) -> bool:
+        """删除文件"""
+        try:
+            full_path = os.path.join(self.base_path, file_path) if not os.path.isabs(file_path) else file_path
+            
+            if os.path.exists(full_path):
+                os.remove(full_path)
+                logger.info(f"文件已删除: {file_path}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"文件删除失败: {e}")
+            return False
+    
+    def list_files(self, file_type: str = "", limit: int = 100) -> list[Dict[str, Any]]:
+        """列出文件"""
+        try:
+            files = []
+            
+            if file_type:
+                search_path = os.path.join(self.base_path, file_type)
+            else:
+                search_path = self.base_path
+            
+            if not os.path.exists(search_path):
+                return []
+            
+            count = 0
+            for root, dirs, filenames in os.walk(search_path):
+                for filename in filenames:
+                    if count >= limit:
+                        break
+                    
+                    file_full_path = os.path.join(root, filename)
+                    relative_path = os.path.relpath(file_full_path, self.base_path)
+                    
+                    stat_info = os.stat(file_full_path)
+                    
+                    files.append({
+                        "filename": filename,
+                        "file_path": relative_path,
+                        "file_type": os.path.basename(root) if root != self.base_path else "general",
+                        "size": stat_info.st_size,
+                        "created_at": datetime.fromtimestamp(stat_info.st_ctime).isoformat(),
+                        "modified_at": datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+                        "backend": "local"
+                    })
+                    count += 1
+                
+                if count >= limit:
+                    break
+            
+            return files
+        except Exception as e:
+            logger.error(f"列出文件失败: {e}")
+            return []
+    
+    def get_storage_status(self) -> Dict[str, Any]:
+        """获取存储状态"""
+        try:
+            total_size = 0
+            file_count = 0
+            
+            for root, dirs, files in os.walk(self.base_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    total_size += os.path.getsize(file_path)
+                    file_count += 1
+            
+            return {
+                "backend_type": "local",
+                "base_path": self.base_path,
+                "total_files": file_count,
+                "total_size": total_size,
+                "total_size_mb": round(total_size / 1024 / 1024, 2),
+                "available_space": "unlimited",  # 本地存储
+                "status": "healthy"
+            }
+        except Exception as e:
+            logger.error(f"获取存储状态失败: {e}")
+            return {
+                "backend_type": "local",
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def sync_files(self, source: str, target: str) -> Dict[str, Any]:
+        """同步文件（本地存储内部文件移动）"""
+        try:
+            source_path = os.path.join(self.base_path, source)
+            target_path = os.path.join(self.base_path, target)
+            
+            if not os.path.exists(source_path):
+                raise FileNotFoundError(f"源路径不存在: {source}")
+            
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            
+            if os.path.isdir(source_path):
+                import shutil
+                shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+            else:
+                import shutil
+                shutil.copy2(source_path, target_path)
+            
+            return {
+                "success": True,
+                "source": source,
+                "target": target,
+                "sync_type": "local_copy"
+            }
+        except Exception as e:
+            logger.error(f"文件同步失败: {e}")
             return {
                 "success": False,
                 "error": str(e)

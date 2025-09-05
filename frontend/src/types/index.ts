@@ -315,6 +315,7 @@ export interface Template {
   created_at: string;
   updated_at?: string;
   original_filename?: string;
+  file_path?: string;  // MinIO/storage file path for original uploaded files
   file_size?: number;
   unique_id?: string;
   variables?: Record<string, any>;

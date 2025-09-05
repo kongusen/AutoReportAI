@@ -536,12 +536,19 @@ class WorkflowOrchestrationAgent:
                     
             elif service_name == "data_orchestrator":
                 from app.services.data.processing.etl.etl_service import ETLService
-                etl_service = ETLService()
+                etl_service = ETLService(user_id=self.user_id)
                 
                 if method_name == "collect_data":
-                    # 数据收集
+                    # 数据收集 - 确保数据源ID正确传递
+                    data_source_id = params.get('data_source_id')
+                    if not data_source_id and params.get('data_source_ids'):
+                        # 从数据源ID列表中取第一个
+                        data_source_id = params.get('data_source_ids')[0]
+                    
+                    logger.info(f"数据收集步骤: data_source_id={data_source_id}")
+                    
                     return await etl_service.extract_data(
-                        data_source_id=params.get('data_source_id'),
+                        data_source_id=data_source_id,
                         query_config=params.get('query_config', {})
                     )
                 elif method_name == "prepare_data":
@@ -552,27 +559,55 @@ class WorkflowOrchestrationAgent:
                     )
                     
             elif service_name == "report_orchestrator":
-                from app.services.application.services.report_service import ReportService
-                report_service = ReportService()
+                from app.services.application.services.report_service import ReportApplicationService
+                report_service = ReportApplicationService()
                 
                 if method_name == "process_template":
-                    # 模板处理
-                    return await report_service.process_template(
-                        template_id=params.get('template_id'),
-                        data_context=params.get('data_context', {}),
-                        processing_options=params.get('processing_options', {})
-                    )
+                    # 模板处理 - 使用报告状态查询方法
+                    report_id = params.get('template_id')
+                    if report_id:
+                        result = await report_service.get_report_status(report_id)
+                        return {
+                            "success": True,
+                            "data": result,
+                            "message": "模板处理完成"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": "缺少template_id参数",
+                            "message": "模板处理失败"
+                        }
                     
             elif service_name == "report_service":
-                from app.services.application.services.report_service import ReportService
-                report_service = ReportService()
+                from app.services.application.services.report_service import ReportApplicationService
+                report_service = ReportApplicationService()
                 
                 if method_name == "compile_report":
-                    # 报告编译
-                    return await report_service.compile_report(
-                        template_data=params.get('template_data'),
-                        compilation_config=params.get('compilation_config', {})
+                    # 报告编译 - 使用现有的报告生成方法
+                    from app.services.application.services.report_service import ReportGenerationRequest
+                    
+                    # 构建报告生成请求
+                    request = ReportGenerationRequest(
+                        template_id=params.get('template_id', ''),
+                        data_source_ids=params.get('data_source_ids', []),
+                        user_id=self.user_id,
+                        report_name=params.get('report_name'),
+                        output_format=params.get('output_format', 'html'),
+                        execution_context=params.get('execution_context', {})
                     )
+                    
+                    result = await report_service.generate_report(request)
+                    return {
+                        "success": result.success,
+                        "data": {
+                            "report_id": result.report_id,
+                            "task_id": result.celery_task_id,
+                            "status": result.status
+                        },
+                        "message": result.message or "报告编译完成",
+                        "error": result.error
+                    }
                     
             elif service_name == "task_coordination_agent":
                 from app.services.application.agents.task_coordination_agent import TaskCoordinationAgent

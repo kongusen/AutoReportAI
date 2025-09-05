@@ -56,6 +56,24 @@ class WeightCalculator:
         self.config = config or self._default_config()
         self.calculation_cache = {}
         self.performance_metrics = {}
+        self.initialized = False
+    
+    async def initialize(self):
+        """初始化权重计算器"""
+        if self.initialized:
+            return
+        
+        try:
+            # 清理缓存
+            self.calculation_cache.clear()
+            self.performance_metrics.clear()
+            
+            self.initialized = True
+            logger.info("权重计算器初始化完成")
+            
+        except Exception as e:
+            logger.error(f"权重计算器初始化失败: {e}")
+            raise
         
     def _default_config(self) -> WeightConfig:
         """默认权重配置"""

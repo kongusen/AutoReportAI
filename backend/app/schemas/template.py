@@ -15,6 +15,7 @@ class TemplateBase(BaseModel):
     original_filename: Optional[str] = Field(
         None, max_length=255, description="原始文件名"
     )
+    file_path: Optional[str] = Field(None, max_length=500, description="文件存储路径")
     file_size: Optional[int] = Field(None, description="文件大小")
     is_public: bool = Field(default=False, description="是否公开模板")
     is_active: bool = Field(default=True, description="是否激活")
@@ -34,6 +35,7 @@ class TemplateUpdate(BaseModel):
     content: Optional[str] = None
     template_type: Optional[str] = None
     original_filename: Optional[str] = Field(None, max_length=255)
+    file_path: Optional[str] = Field(None, max_length=500)
     file_size: Optional[int] = None
     is_public: Optional[bool] = None
     is_active: Optional[bool] = None

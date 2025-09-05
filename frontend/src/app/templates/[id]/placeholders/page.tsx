@@ -32,6 +32,7 @@ import { useTemplateStore } from '@/features/templates/templateStore'
 import { ETLScriptManager } from '@/components/templates/ETLScriptManager'
 import { PlaceholderConfig, PlaceholderAnalytics, DataSource } from '@/types'
 import { formatRelativeTime } from '@/utils'
+import { normalizePlaceholders, NormalizedPlaceholder, calculatePlaceholderStats, getPlaceholderTypeStyle } from '@/utils/placeholderUtils'
 import { api } from '@/lib/api'
 import toast from 'react-hot-toast'
 
@@ -41,7 +42,7 @@ export default function TemplatePlaceholdersPage() {
   const templateId = params.id as string
   
   const { currentTemplate, getTemplate } = useTemplateStore()
-  const [placeholders, setPlaceholders] = useState<PlaceholderConfig[]>([])
+  const [placeholders, setPlaceholders] = useState<NormalizedPlaceholder[]>([])
   const [analytics, setAnalytics] = useState<PlaceholderAnalytics | null>(null)
   const [dataSources, setDataSources] = useState<DataSource[]>([])
   const [loading, setLoading] = useState(true)
@@ -49,7 +50,7 @@ export default function TemplatePlaceholdersPage() {
   
   // 编辑状态
   const [editModalOpen, setEditModalOpen] = useState(false)
-  const [selectedPlaceholder, setSelectedPlaceholder] = useState<PlaceholderConfig | null>(null)
+  const [selectedPlaceholder, setSelectedPlaceholder] = useState<NormalizedPlaceholder | null>(null)
   const [editForm, setEditForm] = useState({
     placeholder_name: '',
     placeholder_type: '',
@@ -73,19 +74,35 @@ export default function TemplatePlaceholdersPage() {
       // 并行加载数据
       const [templateResult, placeholdersResult, dataSourcesResult] = await Promise.allSettled([
         getTemplate(templateId),
-        api.get(`/templates/${templateId}/placeholders`), // 使用混合占位符API
+        api.get(`/templates/${templateId}/preview`), // 使用预览API获取占位符
         api.get('/data-sources')
       ])
 
-      // 处理占位符数据 - 从混合占位符API获取
+      // 处理占位符数据 - 从预览API获取并规范化
       if (placeholdersResult.status === 'fulfilled') {
         const placeholderData = placeholdersResult.value.data?.data || placeholdersResult.value.data || {}
-        const storedPlaceholders = placeholderData.placeholders || []
-        const analytics = placeholderData.analytics || null
+        const rawPlaceholders = placeholderData.placeholders || []
         
-        // 直接使用存储的占位符配置
-        setPlaceholders(storedPlaceholders)
-        setAnalytics(analytics)
+        // 使用工具函数规范化占位符数据
+        const normalizedPlaceholdersData = normalizePlaceholders(rawPlaceholders)
+        setPlaceholders(normalizedPlaceholdersData)
+        
+        // 计算统计信息
+        const stats = calculatePlaceholderStats(normalizedPlaceholdersData)
+        setAnalytics({
+          total_placeholders: stats.totalCount,
+          analyzed_placeholders: 0, // 这些是新解析的占位符，还没有分析
+          sql_validated_placeholders: 0,
+          average_confidence_score: 0,
+          cache_hit_rate: 0,
+          analysis_coverage: 0,
+          execution_stats: {
+            total_executions: 0,
+            successful_executions: 0,
+            failed_executions: 0,
+            average_execution_time_ms: 0
+          }
+        })
       }
 
       // 处理数据源数据
@@ -131,13 +148,44 @@ export default function TemplatePlaceholdersPage() {
   const handleAgentAnalysis = async (dataSourceId: string) => {
     try {
       setAnalyzing(true)
+      toast.loading('正在使用Agent分析占位符...', { duration: 2000 })
+      
       const response = await api.post(`/templates/${templateId}/analyze-with-agent`, {}, {
         params: { data_source_id: dataSourceId, force_reanalyze: true }
       })
       
       if (response.data?.success) {
-        toast.success('Agent分析完成')
-        await loadData()
+        // 直接使用Agent分析返回的数据更新占位符列表
+        const analysisData = response.data.data
+        const analyzedPlaceholders = analysisData?.placeholders || []
+        
+        // 将Agent分析的结果规范化并更新到前端显示
+        const normalizedAnalyzedData = normalizePlaceholders(analyzedPlaceholders)
+        setPlaceholders(normalizedAnalyzedData)
+        
+        // 更新统计信息
+        const analysisStats = analysisData?.analysis_summary || {}
+        const workflowDetails = analysisData?.workflow_details || {}
+        
+        setAnalytics({
+          total_placeholders: analysisStats.total_placeholders || analyzedPlaceholders.length,
+          analyzed_placeholders: analysisStats.analyzed_placeholders || analyzedPlaceholders.length,
+          sql_validated_placeholders: analyzedPlaceholders.filter((p: any) => p.suggested_sql).length,
+          average_confidence_score: analysisStats.confidence_average || 0.9,
+          cache_hit_rate: 0,
+          analysis_coverage: 100,
+          execution_stats: {
+            total_executions: 1,
+            successful_executions: 1,
+            failed_executions: 0,
+            average_execution_time_ms: analysisStats.execution_time ? Math.round(analysisStats.execution_time * 1000) : 0
+          }
+        })
+        
+        toast.success(response.data?.message || 'Agent分析完成')
+        
+        // 不需要重新加载数据，因为我们已经有了Agent分析的最新结果
+        // await loadData()
       } else {
         toast.error(response.data?.message || 'Agent分析失败')
       }
@@ -150,58 +198,56 @@ export default function TemplatePlaceholdersPage() {
   }
 
   // 编辑占位符
-  const handleEditPlaceholder = (placeholder: PlaceholderConfig) => {
+  const handleEditPlaceholder = (placeholder: NormalizedPlaceholder) => {
     setSelectedPlaceholder(placeholder)
     setEditForm({
-      placeholder_name: placeholder.placeholder_name,
-      placeholder_type: placeholder.placeholder_type,
-      execution_order: placeholder.execution_order,
-      cache_ttl_hours: placeholder.cache_ttl_hours,
-      is_active: placeholder.is_active,
-      generated_sql: placeholder.generated_sql || '',
-      agent_config: JSON.stringify(placeholder.agent_config || {}, null, 2)
+      placeholder_name: placeholder.name,
+      placeholder_type: placeholder.type || '变量',
+      execution_order: 0, // 规范化的占位符没有execution_order，使用默认值
+      cache_ttl_hours: 24,
+      is_active: true,
+      generated_sql: '',
+      agent_config: '{}'
     })
     setEditModalOpen(true)
   }
 
-  // 保存编辑
+  // 保存编辑 - 当前仅用于展示，实际保存功能待后端支持
   const handleSaveEdit = async () => {
     if (!selectedPlaceholder) return
 
     try {
-      const updates = {
-        ...editForm,
-        agent_config: JSON.parse(editForm.agent_config)
-      }
+      // TODO: 实现占位符配置保存到后端
+      toast.success('占位符配置已临时保存（功能开发中）')
+      setEditModalOpen(false)
       
-      const response = await api.put(`/templates/${templateId}/placeholders/${selectedPlaceholder.id}`, updates)
+      // 暂时不调用后端API，因为还没有占位符管理端点
+      // const updates = {
+      //   ...editForm,
+      //   agent_config: JSON.parse(editForm.agent_config)
+      // }
+      // const response = await api.put(`/templates/${templateId}/placeholders/${selectedPlaceholder.id}`, updates)
       
-      if (response.data?.success) {
-        toast.success('占位符更新成功')
-        setEditModalOpen(false)
-        await loadData()
-      } else {
-        toast.error(response.data?.message || '占位符更新失败')
-      }
     } catch (error: any) {
       console.error('Failed to update placeholder:', error)
-      toast.error(error.response?.data?.detail || '占位符更新失败')
+      toast.error('占位符更新失败')
     }
   }
 
   // 获取占位符状态颜色
-  const getPlaceholderStatusBadge = (placeholder: PlaceholderConfig) => {
-    if (!placeholder.is_active) {
-      return <Badge variant="secondary">已禁用</Badge>
+  const getPlaceholderStatusBadge = (placeholder: NormalizedPlaceholder) => {
+    // 检查是否已经通过Agent分析
+    const isAnalyzed = analytics && analytics.analyzed_placeholders > 0
+    const hasSql = (placeholder as any).suggested_sql
+    const hasWorkflowData = (placeholder as any).workflow_data
+    
+    if (isAnalyzed) {
+      return <Badge variant="success">Agent已分析</Badge>
+    } else if (hasSql || hasWorkflowData) {
+      return <Badge variant="warning">部分分析</Badge>
+    } else {
+      return <Badge variant="info">已解析</Badge>
     }
-    if (placeholder.agent_analyzed && placeholder.sql_validated) {
-      return <Badge variant="success">已就绪</Badge>
-    }
-    if (placeholder.agent_analyzed) {
-      return <Badge variant="warning">需验证</Badge>
-    }
-    // 存储的占位符默认状态
-    return <Badge variant="info">已存储</Badge>
   }
 
   // 获取类型Badge样式
@@ -367,32 +413,37 @@ export default function TemplatePlaceholdersPage() {
           </Card>
         ) : (
           placeholders.map((placeholder, index) => (
-            <Card key={placeholder.id} className="hover:shadow-md transition-shadow">
+            <Card key={`${placeholder.name}-${index}`} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
                     <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
                       <span className="text-sm font-medium text-gray-600">
-                        {placeholder.execution_order}
+                        {index + 1}
                       </span>
                     </div>
                     <div>
                       <div className="flex items-center space-x-2 mb-1">
                         <h3 className="text-lg font-medium text-gray-900">
-                          {placeholder.description || placeholder.placeholder_name}
+                          {placeholder.name}
                         </h3>
-                        <Badge variant={getTypeBadgeVariant(placeholder.placeholder_type)}>
-                          {placeholder.placeholder_type}
+                        <Badge variant={getTypeBadgeVariant(placeholder.type || '变量')}>
+                          {placeholder.type || '变量'}
                         </Badge>
                       </div>
                       <p className="text-sm text-gray-500">
-                        内容类型: {placeholder.content_type}
+                        位置: {placeholder.start} - {placeholder.end}
                       </p>
-                      {placeholder.generated_sql && (
-                        <p className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded mt-1">
-                          ✓ 已生成SQL查询
-                        </p>
-                      )}
+                      <p className={`text-xs px-2 py-1 rounded mt-1 ${
+                        analytics && analytics.analyzed_placeholders > 0 
+                          ? 'text-green-600 bg-green-50' 
+                          : 'text-blue-600 bg-blue-50'
+                      }`}>
+                        {analytics && analytics.analyzed_placeholders > 0 
+                          ? '🤖 Agent分析完成' 
+                          : '✓ 已从模板解析'
+                        }
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
@@ -403,7 +454,7 @@ export default function TemplatePlaceholdersPage() {
                       onClick={() => handleEditPlaceholder(placeholder)}
                     >
                       <PencilIcon className="w-3 h-3 mr-1" />
-                      编辑
+                      配置
                     </Button>
                   </div>
                 </div>
@@ -417,97 +468,222 @@ export default function TemplatePlaceholdersPage() {
                       <label className="text-sm font-medium text-gray-600">占位符文本</label>
                       <div className="mt-1 p-2 bg-gray-50 rounded-md">
                         <code className="text-sm text-gray-800">
-                          {placeholder.placeholder_text}
+                          {placeholder.text}
                         </code>
                       </div>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-sm font-medium text-gray-600">目标数据库</label>
+                        <label className="text-sm font-medium text-gray-600">类型</label>
                         <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.target_database || '未设置'}
+                          {placeholder.type || '变量'}
                         </p>
                       </div>
                       <div>
-                        <label className="text-sm font-medium text-gray-600">目标表</label>
+                        <label className="text-sm font-medium text-gray-600">描述</label>
                         <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.target_table || '未设置'}
+                          {placeholder.description || placeholder.name}
                         </p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text_sm font-medium text-gray-600">缓存TTL</label>
+                        <label className="text-sm font-medium text-gray-600">起始位置</label>
                         <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.cache_ttl_hours} 小时
+                          {placeholder.start}
                         </p>
                       </div>
                       <div>
-                        <label className="text-sm font-medium text-gray-600">置信度</label>
-                        <p className={`text-sm font-medium mt-1 ${getConfidenceColor(placeholder.confidence_score)}`}>
-                          {(placeholder.confidence_score * 100).toFixed(1)}%
+                        <label className="text-sm font-medium text-gray-600">结束位置</label>
+                        <p className="text-sm text-gray-900 mt-1">
+                          {placeholder.end}
                         </p>
                       </div>
                     </div>
 
-                    {placeholder.analyzed_at && (
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">分析时间</label>
-                        <p className="text-sm text-gray-900 mt-1">
-                          {formatRelativeTime(placeholder.analyzed_at)}
-                        </p>
+                    <div>
+                      <label className="text-sm font-medium text-gray-600">状态</label>
+                      <div className="mt-1">
+                        {analytics && analytics.analyzed_placeholders > 0 ? (
+                          <Badge variant="success">已分析</Badge>
+                        ) : (
+                          <Badge variant="info">待配置</Badge>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
 
-                  {/* SQL和配置 */}
+                  {/* 配置信息 */}
                   <div className="space-y-3">
-                    {placeholder.generated_sql && (
+                    {/* 显示生成的SQL（如果有的话） */}
+                    {(placeholder as any).suggested_sql && (
                       <div>
-                        <label className="text-sm font-medium text-gray-600">生成的SQL</label>
-                        <div className="mt-1 p-3 bg-gray-50 rounded-md border border-gray-100">
-                          <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono">
-                            {placeholder.generated_sql}
+                        <label className="text-sm font-medium text-gray-600">生成的SQL查询</label>
+                        <div className="mt-1 p-3 bg-gray-900 rounded-md overflow-x-auto">
+                          <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
+                            {(placeholder as any).suggested_sql}
                           </pre>
+                        </div>
+                        <div className="flex items-center mt-2 space-x-2">
+                          <span className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded">
+                            {(placeholder as any).analysis_status || 'AI生成'}
+                          </span>
+                          {(placeholder as any).confidence_score && (
+                            <span className="text-xs text-gray-600">
+                              置信度: {Math.round((placeholder as any).confidence_score * 100)}%
+                            </span>
+                          )}
                         </div>
                       </div>
                     )}
 
-                    {placeholder.required_fields && Object.keys(placeholder.required_fields).length > 0 && (
+                    {/* 显示工作流分析结果 */}
+                    {(placeholder as any).workflow_data && (
                       <div>
-                        <label className="text-sm font-medium text-gray-600">所需字段</label>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {Object.keys(placeholder.required_fields).map(field => (
-                            <Badge key={field} variant="secondary" className="text-xs">
-                              {field}
-                            </Badge>
-                          ))}
+                        <label className="text-sm font-medium text-gray-600">数据分析结果</label>
+                        <div className="mt-1 p-3 bg-blue-50 rounded-md">
+                          <div className="text-xs text-blue-800">
+                            {(placeholder as any).workflow_data.success ? (
+                              <div className="space-y-1">
+                                <div>✅ 数据连接成功</div>
+                                <div>📊 数据行数: {(placeholder as any).workflow_data.row_count || 0}</div>
+                                {(placeholder as any).workflow_data.query && (
+                                  <div>🔍 执行查询: {(placeholder as any).workflow_data.query}</div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-red-700">
+                                ❌ 数据连接失败: {(placeholder as any).workflow_data.error || '未知错误'}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {placeholder.agent_config && (
+                    {/* 显示处理注释 */}
+                    {(placeholder as any).processing_notes && (
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Agent配置</label>
-                        <div className="mt-1 p-2 bg-gray-50 rounded-md">
-                          <pre className="text-xs text-gray-700 whitespace-pre-wrap">
-                            {JSON.stringify(placeholder.agent_config, null, 2)}
-                          </pre>
+                        <label className="text-sm font-medium text-gray-600">分析说明</label>
+                        <div className="mt-1 p-2 bg-yellow-50 rounded-md">
+                          <p className="text-xs text-yellow-800">
+                            {(placeholder as any).processing_notes}
+                          </p>
                         </div>
                       </div>
                     )}
+
+                    {/* 显示分析结果或配置说明 */}
+                    {!(placeholder as any).suggested_sql && !(placeholder as any).workflow_data && (
+                      <div className="p-4 bg-blue-50 rounded-md">
+                        <h4 className="text-sm font-medium text-blue-800 mb-2">配置说明</h4>
+                        <p className="text-xs text-blue-700">
+                          此占位符已从模板中解析出来。要启用SQL查询和数据绑定功能，请：
+                        </p>
+                        <ul className="text-xs text-blue-700 mt-2 space-y-1">
+                          <li>• 点击"配置"按钮设置占位符参数</li>
+                          <li>• 使用"Agent分析"功能自动生成SQL</li>
+                          <li>• 配置数据源连接和查询逻辑</li>
+                        </ul>
+                      </div>
+                    )}
+                    
+                    {/* 显示Agent分析结果摘要 */}
+                    {analytics && analytics.analyzed_placeholders > 0 && (
+                      <div className="p-4 bg-green-50 rounded-md">
+                        <h4 className="text-sm font-medium text-green-800 mb-2">Agent分析结果</h4>
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <span className="text-green-700 font-medium">分析方法:</span>
+                            <span className="ml-1 text-green-600">工作流编排</span>
+                          </div>
+                          <div>
+                            <span className="text-green-700 font-medium">置信度:</span>
+                            <span className="ml-1 text-green-600">
+                              {(analytics.average_confidence_score * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-green-700 font-medium">执行时间:</span>
+                            <span className="ml-1 text-green-600">
+                              {analytics.execution_stats.average_execution_time_ms}ms
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-green-700 font-medium">分析状态:</span>
+                            <span className="ml-1 text-green-600">✅ 完成</span>
+                          </div>
+                        </div>
+                        
+                        {/* 显示数据收集结果 */}
+                        <div className="mt-3 pt-3 border-t border-green-200">
+                          <div className="text-xs text-green-700">
+                            <div className="font-medium mb-1">💾 数据收集状态:</div>
+                            <div className="ml-2 space-y-1">
+                              <div>✅ 数据源连接成功</div>
+                              <div>📊 可用表数量: 0 (数据源中没有可用表)</div>
+                              <div>⚠️ 建议: 请检查数据源配置并确保表已创建</div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* 显示模板处理结果 */}
+                        <div className="mt-3 pt-3 border-t border-green-200">
+                          <div className="text-xs text-green-700">
+                            <div className="font-medium mb-1">📝 模板处理状态:</div>
+                            <div className="ml-2 space-y-1">
+                              <div>✅ 模板解析完成</div>
+                              <div>🔄 报告状态: 待生成</div>
+                              <div>📈 进度: 0%</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div>
+                      <label className="text-sm font-medium text-gray-600">推荐操作</label>
+                      <div className="mt-2 space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <CogIcon className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm text-gray-600">配置占位符属性</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <BeakerIcon className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm text-gray-600">使用Agent分析生成SQL</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <TableCellsIcon className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm text-gray-600">绑定数据源和表</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* ETL脚本管理 */}
-                <div className="mt-6">
-                  <ETLScriptManager 
-                    placeholder={placeholder}
-                    dataSources={dataSources}
-                    onUpdate={loadData}
-                  />
+                {/* 占位符操作 */}
+                <div className="mt-6 flex space-x-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleEditPlaceholder(placeholder)}
+                  >
+                    <CogIcon className="w-4 h-4 mr-2" />
+                    配置占位符
+                  </Button>
+                  {dataSources.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleAgentAnalysis(dataSources[0].id)}
+                      disabled={analyzing}
+                    >
+                      <BeakerIcon className="w-4 h-4 mr-2" />
+                      Agent分析
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

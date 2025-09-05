@@ -10,6 +10,7 @@ import {
   EyeSlashIcon,
   CogIcon,
   TableCellsIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
@@ -19,6 +20,7 @@ import { Modal } from '@/components/ui/Modal'
 import { useTemplateStore } from '@/features/templates/templateStore'
 import { formatRelativeTime } from '@/utils'
 import { Template } from '@/types'
+import { normalizePlaceholders, calculatePlaceholderStats, getPlaceholderTypeStyle } from '@/utils/placeholderUtils'
 
 interface TemplateDetailPageProps {
   params: {
@@ -28,7 +30,7 @@ interface TemplateDetailPageProps {
 
 export default function TemplateDetailPage({ params }: TemplateDetailPageProps) {
   const router = useRouter()
-  const { currentTemplate, loading, getTemplate, deleteTemplate, previewTemplate, previewContent, fetchPlaceholderPreview, placeholderPreview, previewLoading } = useTemplateStore()
+  const { currentTemplate, loading, getTemplate, deleteTemplate, previewTemplate, previewContent, fetchPlaceholderPreview, placeholderPreview, previewLoading, downloadTemplateFile } = useTemplateStore()
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [previewVariables, setPreviewVariables] = useState<Record<string, any>>({})
@@ -76,6 +78,16 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
   const handleDuplicate = () => {
     if (currentTemplate) {
       router.push(`/templates/create?duplicate=${currentTemplate.id}`)
+    }
+  }
+
+  const handleDownload = async () => {
+    if (!currentTemplate) return
+    
+    try {
+      await downloadTemplateFile(currentTemplate.id)
+    } catch (error) {
+      // 错误处理在store中已处理
     }
   }
 
@@ -157,6 +169,16 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
               <TableCellsIcon className="w-4 h-4 mr-2" />
               占位符管理
             </Button>
+            {currentTemplate.file_path && currentTemplate.original_filename && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownload}
+              >
+                <ArrowDownTrayIcon className="w-4 h-4 mr-2" />
+                下载原文件
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -209,14 +231,14 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                     这是一个 DOCX 模板文件。文件信息：
                   </p>
                   <div className="mt-2 space-y-1">
-                    {false && (
+                    {currentTemplate.original_filename && (
                       <p className="text-sm">
-                        <span className="font-medium">文件名:</span> {}
+                        <span className="font-medium">文件名:</span> {currentTemplate.original_filename}
                       </p>
                     )}
-                    {false && (
+                    {currentTemplate.file_size && (
                       <p className="text-sm">
-                        <span className="font-medium">文件大小:</span> {} KB
+                        <span className="font-medium">文件大小:</span> {(currentTemplate.file_size / 1024).toFixed(2)} KB
                       </p>
                     )}
                     <p className="text-sm">
@@ -307,94 +329,43 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                     <div className="h-4 bg-gray-200 rounded"></div>
                   </div>
                 ) : placeholderPreview ? (
-                  <div className="space-y-4">
-                    {/* 总计和错误状态 */}
-                    <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="bg-blue-50 p-2 rounded">
-                        <div className="text-lg font-bold text-blue-600">{placeholderPreview.total_count}</div>
-                        <div className="text-xs text-gray-600">总计</div>
-                      </div>
-                      {placeholderPreview.has_errors && (
-                        <div className="bg-red-50 p-2 rounded">
-                          <div className="text-lg font-bold text-red-600">{placeholderPreview.error_count || 0}</div>
-                          <div className="text-xs text-gray-600">错误</div>
+                  (() => {
+                    // 使用工具函数规范化占位符数据并计算统计
+                    const rawPlaceholders = placeholderPreview.placeholders || []
+                    const normalizedPlaceholders = normalizePlaceholders(rawPlaceholders)
+                    const stats = calculatePlaceholderStats(normalizedPlaceholders)
+                    
+                    return (
+                      <div className="space-y-4">
+                        {/* 总计 */}
+                        <div className="grid grid-cols-1 gap-2 text-center">
+                          <div className="bg-blue-50 p-2 rounded">
+                            <div className="text-lg font-bold text-blue-600">{stats.totalCount}</div>
+                            <div className="text-xs text-gray-600">总计</div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    
-                    {/* 业务类型统计 */}
-                    <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="bg-green-50 p-2 rounded">
-                        <div className="text-lg font-bold text-green-600">{placeholderPreview.stats_count || 0}</div>
-                        <div className="text-xs text-gray-600">统计</div>
-                      </div>
-                      <div className="bg-purple-50 p-2 rounded">
-                        <div className="text-lg font-bold text-purple-600">{placeholderPreview.chart_count || 0}</div>
-                        <div className="text-xs text-gray-600">图表</div>
-                      </div>
-                    </div>
-                    
-                    {/* 其他类型统计 */}
-                    {((placeholderPreview.table_count || 0) > 0 || (placeholderPreview.analysis_count || 0) > 0) && (
-                      <div className="grid grid-cols-2 gap-2 text-center">
-                        {(placeholderPreview.table_count || 0) > 0 && (
-                          <div className="bg-indigo-50 p-2 rounded">
-                            <div className="text-lg font-bold text-indigo-600">{placeholderPreview.table_count}</div>
-                            <div className="text-xs text-gray-600">表格</div>
+                        
+                        {/* 按类型统计 */}
+                        {stats.hasContent && (
+                          <div className="grid grid-cols-2 gap-2 text-center">
+                            {Object.entries(stats.typeCounts).map(([type, count]) => {
+                              const typeStyle = getPlaceholderTypeStyle(type)
+                              return (
+                                <div key={type} className={`${typeStyle.bgColor} p-2 rounded`}>
+                                  <div className={`text-lg font-bold ${typeStyle.textColor}`}>{count}</div>
+                                  <div className="text-xs text-gray-600">{type}</div>
+                                </div>
+                              )
+                            })}
                           </div>
                         )}
-                        {(placeholderPreview.analysis_count || 0) > 0 && (
-                          <div className="bg-orange-50 p-2 rounded">
-                            <div className="text-lg font-bold text-orange-600">{placeholderPreview.analysis_count}</div>
-                            <div className="text-xs text-gray-600">分析</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* 配置类型统计 */}
-                    {((placeholderPreview.datetime_count || 0) > 0 || (placeholderPreview.variable_count || 0) > 0) && (
-                      <div className="grid grid-cols-2 gap-2 text-center">
-                        {(placeholderPreview.datetime_count || 0) > 0 && (
-                          <div className="bg-yellow-50 p-2 rounded">
-                            <div className="text-lg font-bold text-yellow-600">{placeholderPreview.datetime_count}</div>
-                            <div className="text-xs text-gray-600">时间</div>
-                          </div>
-                        )}
-                        {(placeholderPreview.variable_count || 0) > 0 && (
-                          <div className="bg-gray-50 p-2 rounded">
-                            <div className="text-lg font-bold text-gray-600">{placeholderPreview.variable_count}</div>
-                            <div className="text-xs text-gray-600">变量</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {placeholderPreview.placeholders.length > 0 ? (
+                        
+                        {/* 占位符详细列表 */}
+                        {stats.hasContent ? (
                       <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {placeholderPreview.placeholders.map((placeholder: any, index: number) => {
-                          // 定义类型样式映射
-                          const getTypeStyle = (type: string) => {
-                            const styleMap: Record<string, { variant: any; bgColor: string; textColor: string }> = {
-                              '统计': { variant: 'success', bgColor: 'bg-green-50', textColor: 'text-green-700' },
-                              '图表': { variant: 'info', bgColor: 'bg-blue-50', textColor: 'text-blue-700' },
-                              '表格': { variant: 'info', bgColor: 'bg-indigo-50', textColor: 'text-indigo-700' },
-                              '分析': { variant: 'warning', bgColor: 'bg-orange-50', textColor: 'text-orange-700' },
-                              '日期时间': { variant: 'warning', bgColor: 'bg-yellow-50', textColor: 'text-yellow-700' },
-                              '标题': { variant: 'info', bgColor: 'bg-cyan-50', textColor: 'text-cyan-700' },
-                              '摘要': { variant: 'secondary', bgColor: 'bg-gray-50', textColor: 'text-gray-700' },
-                              '作者': { variant: 'secondary', bgColor: 'bg-slate-50', textColor: 'text-slate-700' },
-                              '变量': { variant: 'secondary', bgColor: 'bg-gray-50', textColor: 'text-gray-600' },
-                              '中文': { variant: 'secondary', bgColor: 'bg-pink-50', textColor: 'text-pink-700' },
-                              '文本': { variant: 'secondary', bgColor: 'bg-gray-50', textColor: 'text-gray-600' },
-                              '错误': { variant: 'destructive', bgColor: 'bg-red-50', textColor: 'text-red-700' },
-                              '系统错误': { variant: 'destructive', bgColor: 'bg-red-100', textColor: 'text-red-800' }
-                            }
-                            return styleMap[type] || { variant: 'secondary', bgColor: 'bg-gray-50', textColor: 'text-gray-600' }
-                          }
-                          
-                          const typeStyle = getTypeStyle(placeholder.type)
-                          const hasError = placeholder.type === '错误' || placeholder.type === '系统错误'
+                        {normalizedPlaceholders.map((placeholder, index) => {
+                          const typeStyle = getPlaceholderTypeStyle(placeholder.type || '变量')
+                          const hasError = placeholder.type === '错误'
                           
                           return (
                             <div key={index} className={`border-l-4 ${hasError ? 'border-red-300' : 'border-gray-200'} pl-3 pb-2`}>
@@ -407,26 +378,16 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                                     >
                                       {placeholder.type}
                                     </Badge>
-                                    {placeholder.requirements?.content_type && (
-                                      <span className="text-xs text-gray-400 bg-gray-100 px-1 py-0.5 rounded">
-                                        {placeholder.requirements.content_type}
-                                      </span>
-                                    )}
+                                    <span className="text-xs text-gray-400">
+                                      位置: {placeholder.start}-{placeholder.end}
+                                    </span>
                                   </div>
                                   <div className="text-sm font-medium text-gray-900 mb-1">
-                                    {placeholder.description}
+                                    {placeholder.name}
                                   </div>
-                                  <div className="text-xs text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded">
-                                    {placeholder.placeholder_text}
-                                  </div>
-                                  {hasError && placeholder.requirements?.error && (
-                                    <div className="text-xs text-red-600 mt-1 bg-red-50 px-2 py-1 rounded">
-                                      错误: {placeholder.requirements.error}
-                                    </div>
-                                  )}
-                                  {placeholder.requirements?.fallback_mode && (
-                                    <div className="text-xs text-amber-600 mt-1">
-                                      ⚠️ 使用备用解析模式
+                                  {placeholder.text && (
+                                    <div className="text-xs text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded max-w-full truncate">
+                                      {placeholder.text.length > 50 ? placeholder.text.substring(0, 50) + '...' : placeholder.text}
                                     </div>
                                   )}
                                 </div>
@@ -436,11 +397,13 @@ export default function TemplateDetailPage({ params }: TemplateDetailPageProps) 
                         })}
                       </div>
                     ) : (
-                      <p className="text-sm text-gray-500 text-center py-4">
-                        未检测到占位符
-                      </p>
-                    )}
-                  </div>
+                          <p className="text-sm text-gray-500 text-center py-4">
+                            未检测到占位符
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })()
                 ) : (
                   <p className="text-sm text-gray-500 text-center py-4">
                     无法加载占位符信息

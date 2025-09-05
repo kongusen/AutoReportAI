@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS templates (
     content TEXT,
     template_type VARCHAR(50),
     original_filename VARCHAR(255),
+    file_path VARCHAR(500),  -- MinIO/storage file path for original uploaded files
     file_size INTEGER,
     is_public BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,

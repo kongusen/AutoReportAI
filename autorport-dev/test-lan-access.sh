@@ -57,13 +57,25 @@ echo ""
 # 检查服务状态
 echo -e "${YELLOW}检查服务状态...${NC}"
 
-if command -v docker-compose &> /dev/null; then
-    if docker-compose ps | grep -q "Up"; then
+# 获取Docker Compose命令
+get_docker_compose_cmd() {
+    if command -v docker-compose &> /dev/null; then
+        echo "docker-compose"
+    elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        echo "docker compose"
+    else
+        echo ""
+    fi
+}
+
+compose_cmd=$(get_docker_compose_cmd)
+if [ -n "$compose_cmd" ]; then
+    if eval "$compose_cmd ps" | grep -q "Up" 2>/dev/null; then
         echo -e "${GREEN}✓ Docker服务正在运行${NC}"
         
         # 显示运行中的服务
         echo -e "${BLUE}运行中的服务:${NC}"
-        docker-compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+        eval "$compose_cmd ps"
         
     else
         echo -e "${YELLOW}⚠ Docker服务未运行，请先启动服务${NC}"

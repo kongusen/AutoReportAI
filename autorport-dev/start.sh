@@ -45,6 +45,17 @@ check_requirements() {
     echo ""
 }
 
+# 获取Docker Compose命令
+get_docker_compose_cmd() {
+    if command -v docker-compose &> /dev/null; then
+        echo "docker-compose"
+    elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        echo "docker compose"
+    else
+        echo ""
+    fi
+}
+
 # 检查并创建必要的目录（如果需要）
 ensure_directories() {
     echo -e "${YELLOW}检查数据目录...${NC}"
@@ -185,11 +196,17 @@ show_menu() {
 # 启动完整环境
 start_full() {
     echo -e "${GREEN}${ROCKET} 启动完整开发环境...${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd up -d"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE up -d"
+    else
+        eval "$compose_cmd up -d"
+    fi
     show_services_status
 }
 
@@ -209,7 +226,12 @@ start_deployment() {
     
     # 启动服务
     echo -e "${GREEN}启动所有服务...${NC}"
-    docker-compose up -d
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    eval "$compose_cmd up -d"
     
     # 显示状态
     show_services_status
@@ -253,7 +275,12 @@ start_proxy() {
     
     # 启动服务
     echo -e "${GREEN}启动所有服务 (使用代理配置)...${NC}"
-    docker-compose -f docker-compose.proxy.yml up -d
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    eval "$compose_cmd -f docker-compose.proxy.yml up -d"
     
     # 显示状态
     show_services_status
@@ -273,44 +300,68 @@ start_proxy() {
 # 启动基础服务
 start_basic() {
     echo -e "${GREEN}${DATABASE} 启动基础服务...${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd up -d db redis minio"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE up -d db redis minio"
+    else
+        eval "$compose_cmd up -d db redis minio"
+    fi
     show_services_status
 }
 
 # 启动后端服务
 start_backend() {
     echo -e "${GREEN}${GEAR} 启动后端服务...${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd up -d db redis minio backend celery-worker celery-beat"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE up -d db redis minio backend celery-worker celery-beat"
+    else
+        eval "$compose_cmd up -d db redis minio backend celery-worker celery-beat"
+    fi
     show_services_status
 }
 
 # 启动前端服务
 start_frontend() {
     echo -e "${GREEN}${PAINT} 启动前端服务...${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd up -d frontend"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE up -d frontend"
+    else
+        eval "$compose_cmd up -d frontend"
+    fi
     show_services_status
 }
 
 # 启动开发工具
 start_tools() {
     echo -e "${GREEN}${GEAR} 启动开发工具...${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd --profile tools up -d"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE --profile tools up -d"
+    else
+        eval "$compose_cmd --profile tools up -d"
+    fi
     show_services_status
 }
 
@@ -337,9 +388,12 @@ clean_environment() {
     
     # 停止所有服务
     echo -e "${YELLOW}停止所有服务...${NC}"
-    docker-compose down 2>/dev/null || true
-    docker-compose -f docker-compose.proxy.yml down 2>/dev/null || true
-    docker-compose --profile tools down 2>/dev/null || true
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -n "$compose_cmd" ]; then
+        eval "$compose_cmd down 2>/dev/null || true"
+        eval "$compose_cmd -f docker-compose.proxy.yml down 2>/dev/null || true"
+        eval "$compose_cmd --profile tools down 2>/dev/null || true"
+    fi
     
     # 删除数据目录
     if [ -d "./data" ]; then
@@ -366,11 +420,17 @@ clean_environment() {
 # 查看服务状态
 show_services_status() {
     echo -e "${YELLOW}服务状态:${NC}"
-    local compose_cmd="docker-compose"
-    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-        compose_cmd="docker-compose -f $COMPOSE_FILE"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
     fi
-    eval "$compose_cmd ps"
+    
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        eval "$compose_cmd -f $COMPOSE_FILE ps"
+    else
+        eval "$compose_cmd ps"
+    fi
     echo ""
     
     # 获取当前IP
@@ -402,12 +462,18 @@ show_services_status() {
 stop_all() {
     echo -e "${RED}停止所有服务...${NC}"
     
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    
     # 停止标准配置
-    docker-compose down 2>/dev/null || true
-    docker-compose --profile tools down 2>/dev/null || true
+    eval "$compose_cmd down 2>/dev/null || true"
+    eval "$compose_cmd --profile tools down 2>/dev/null || true"
     
     # 停止代理配置
-    docker-compose -f docker-compose.proxy.yml down 2>/dev/null || true
+    eval "$compose_cmd -f docker-compose.proxy.yml down 2>/dev/null || true"
     
     # 清理网络
     docker network prune -f 2>/dev/null || true
@@ -621,18 +687,30 @@ main() {
                 clean_environment
                 ;;
             "logs")
-                local compose_cmd="docker-compose"
-                if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-                    compose_cmd="docker-compose -f $COMPOSE_FILE"
+                local compose_cmd=$(get_docker_compose_cmd)
+                if [ -z "$compose_cmd" ]; then
+                    echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+                    exit 1
                 fi
-                eval "$compose_cmd logs -f"
+                
+                if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+                    eval "$compose_cmd -f $COMPOSE_FILE logs -f"
+                else
+                    eval "$compose_cmd logs -f"
+                fi
                 ;;
             "restart")
-                local compose_cmd="docker-compose"
-                if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
-                    compose_cmd="docker-compose -f $COMPOSE_FILE"
+                local compose_cmd=$(get_docker_compose_cmd)
+                if [ -z "$compose_cmd" ]; then
+                    echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+                    exit 1
                 fi
-                eval "$compose_cmd restart"
+                
+                if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+                    eval "$compose_cmd -f $COMPOSE_FILE restart"
+                else
+                    eval "$compose_cmd restart"
+                fi
                 show_services_status
                 ;;
             "rebuild")

@@ -494,14 +494,26 @@ show_logs() {
     echo ""
     read -p "请选择 (1-7): " log_choice
     
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    
+    # 确定使用的compose文件
+    local compose_file_arg=""
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        compose_file_arg="-f $COMPOSE_FILE"
+    fi
+    
     case $log_choice in
-        1) docker-compose logs -f ;;
-        2) docker-compose logs -f backend ;;
-        3) docker-compose logs -f frontend ;;
-        4) docker-compose logs -f db ;;
-        5) docker-compose logs -f redis ;;
-        6) docker-compose logs -f celery-worker ;;
-        7) docker-compose logs -f celery-beat ;;
+        1) eval "$compose_cmd $compose_file_arg logs -f" ;;
+        2) eval "$compose_cmd $compose_file_arg logs -f backend" ;;
+        3) eval "$compose_cmd $compose_file_arg logs -f frontend" ;;
+        4) eval "$compose_cmd $compose_file_arg logs -f db" ;;
+        5) eval "$compose_cmd $compose_file_arg logs -f redis" ;;
+        6) eval "$compose_cmd $compose_file_arg logs -f celery-worker" ;;
+        7) eval "$compose_cmd $compose_file_arg logs -f celery-beat" ;;
         *) echo "无效选择" ;;
     esac
 }
@@ -516,11 +528,23 @@ restart_services() {
     echo ""
     read -p "请选择 (1-4): " restart_choice
     
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    
+    # 确定使用的compose文件
+    local compose_file_arg=""
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        compose_file_arg="-f $COMPOSE_FILE"
+    fi
+    
     case $restart_choice in
-        1) docker-compose restart ;;
-        2) docker-compose restart backend celery-worker celery-beat ;;
-        3) docker-compose restart frontend ;;
-        4) docker-compose restart db redis minio ;;
+        1) eval "$compose_cmd $compose_file_arg restart" ;;
+        2) eval "$compose_cmd $compose_file_arg restart backend celery-worker celery-beat" ;;
+        3) eval "$compose_cmd $compose_file_arg restart frontend" ;;
+        4) eval "$compose_cmd $compose_file_arg restart db redis minio" ;;
         *) echo "无效选择" ;;
     esac
     show_services_status
@@ -537,40 +561,52 @@ rebuild_services() {
     echo ""
     read -p "请选择 (1-4): " rebuild_choice
     
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    
+    # 确定使用的compose文件
+    local compose_file_arg=""
+    if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
+        compose_file_arg="-f $COMPOSE_FILE"
+    fi
+    
     case $rebuild_choice in
         1)
             echo -e "${YELLOW}停止所有服务...${NC}"
-            docker-compose down
+            eval "$compose_cmd $compose_file_arg down"
             echo -e "${YELLOW}重建所有镜像...${NC}"
-            docker-compose build --no-cache
+            eval "$compose_cmd $compose_file_arg build --no-cache"
             echo -e "${GREEN}启动所有服务...${NC}"
-            docker-compose up -d
+            eval "$compose_cmd $compose_file_arg up -d"
             ;;
         2)
             echo -e "${YELLOW}停止后端服务...${NC}"
-            docker-compose stop backend celery-worker celery-beat
+            eval "$compose_cmd $compose_file_arg stop backend celery-worker celery-beat"
             echo -e "${YELLOW}重建后端镜像...${NC}"
-            docker-compose build --no-cache backend
+            eval "$compose_cmd $compose_file_arg build --no-cache backend"
             echo -e "${GREEN}启动后端服务...${NC}"
-            docker-compose up -d backend celery-worker celery-beat
+            eval "$compose_cmd $compose_file_arg up -d backend celery-worker celery-beat"
             ;;
         3)
             echo -e "${YELLOW}停止前端服务...${NC}"
-            docker-compose stop frontend
+            eval "$compose_cmd $compose_file_arg stop frontend"
             echo -e "${YELLOW}重建前端镜像...${NC}"
-            docker-compose build --no-cache frontend
+            eval "$compose_cmd $compose_file_arg build --no-cache frontend"
             echo -e "${GREEN}启动前端服务...${NC}"
-            docker-compose up -d frontend
+            eval "$compose_cmd $compose_file_arg up -d frontend"
             ;;
         4)
             echo -e "${YELLOW}停止所有服务...${NC}"
-            docker-compose down
+            eval "$compose_cmd $compose_file_arg down"
             echo -e "${YELLOW}清理旧镜像...${NC}"
-            docker-compose build --no-cache
+            eval "$compose_cmd $compose_file_arg build --no-cache"
             echo -e "${YELLOW}清理未使用的镜像...${NC}"
             docker image prune -f
             echo -e "${GREEN}启动所有服务...${NC}"
-            docker-compose up -d
+            eval "$compose_cmd $compose_file_arg up -d"
             ;;
         *)
             echo -e "${RED}无效选择${NC}"

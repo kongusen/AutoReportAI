@@ -142,6 +142,23 @@ def create_ai_tools_integration_service(user_id: str):
     return create_integration_impl(user_id)
 
 
+# === 任务服务工厂 ===
+
+def create_task_application_service(user_id: str = None):
+    """创建任务应用服务"""
+    from app.services.application.tasks.task_application_service import TaskApplicationService
+    return TaskApplicationService()
+
+
+def create_task_execution_service(user_id: str):
+    """创建任务执行服务"""
+    if not user_id:
+        raise ValueError("user_id is required for Task Execution Service")
+    
+    from app.services.application.tasks.task_execution_service import TaskExecutionService
+    return TaskExecutionService(user_id=user_id)
+
+
 # === 导出列表 ===
 
 __all__ = [
@@ -166,4 +183,8 @@ __all__ = [
     
     # AI工具集成服务
     "create_ai_tools_integration_service",
+    
+    # 任务服务工厂
+    "create_task_application_service",
+    "create_task_execution_service",
 ]

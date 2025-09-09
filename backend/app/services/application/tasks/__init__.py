@@ -14,7 +14,11 @@ Application层编排任务
 4. 协调事务边界
 """
 
-# 注意：这里只导出编排任务，不包含具体业务逻辑
+# 任务应用服务
+from .task_application_service import TaskApplicationService
+from .task_execution_service import TaskExecutionService
+
+# 编排任务
 try:
     from .orchestration_tasks import (
         orchestrate_report_generation,
@@ -22,13 +26,20 @@ try:
         orchestrate_context_aware_task
     )
     
-    __all__ = [
+    _orchestration_tasks = [
         'orchestrate_report_generation', 
         'orchestrate_data_processing',
         'orchestrate_context_aware_task'
     ]
 except ImportError:
     # 编排任务还未创建时的占位符
-    __all__ = []
+    _orchestration_tasks = []
+
+# 导出所有任务相关组件
+__all__ = [
+    # 任务服务
+    'TaskApplicationService',
+    'TaskExecutionService',
+] + _orchestration_tasks
 
 __version__ = "2.0.0"

@@ -11,7 +11,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
-from app.services.application.task_application_service import TaskApplicationService
+from app.services.application.tasks.task_application_service import TaskApplicationService
 from app.services.infrastructure.task_queue.celery_config import celery_app
 
 router = APIRouter()

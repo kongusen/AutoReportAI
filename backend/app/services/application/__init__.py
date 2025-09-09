@@ -11,10 +11,15 @@ DDD架构应用层，包含：
 
 # 应用服务
 from .services import (
-    TaskApplicationService,
     ReportApplicationService, 
     WorkflowApplicationService,
     ContextAwareApplicationService
+)
+
+# 任务服务（从 tasks 目录导入）
+from .tasks import (
+    TaskApplicationService,
+    TaskExecutionService
 )
 
 # 编排器
@@ -45,10 +50,13 @@ except ImportError:
 
 __all__ = [
     # 应用服务
-    "TaskApplicationService",
     "ReportApplicationService", 
     "WorkflowApplicationService",
     "ContextAwareApplicationService",
+    
+    # 任务服务
+    "TaskApplicationService",
+    "TaskExecutionService",
     
     # 编排器
     "ReportOrchestrator",

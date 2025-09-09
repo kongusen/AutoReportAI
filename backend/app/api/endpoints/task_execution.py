@@ -77,7 +77,7 @@ async def execute_task(
     try:
         logger.info(f"启动任务执行: user_id={current_user.id}, template_id={request.template_id}")
         
-        from app.services.application.task_execution_service import (
+        from app.services.application.tasks.task_execution_service import (
             create_task_execution_service, TaskExecutionRequest
         )
         
@@ -133,7 +133,7 @@ async def get_task_status(
 ) -> APIResponse[Optional[TaskStatusResponse]]:
     """获取任务状态"""
     try:
-        from app.services.application.task_execution_service import create_task_execution_service
+        from app.services.application.tasks.task_execution_service import create_task_execution_service
         
         task_service = create_task_execution_service(str(current_user.id))
         task_status = task_service.get_task_status(task_id)
@@ -175,7 +175,7 @@ async def list_active_tasks(
 ) -> APIResponse[List[Dict[str, Any]]]:
     """列出活跃任务"""
     try:
-        from app.services.application.task_execution_service import create_task_execution_service
+        from app.services.application.tasks.task_execution_service import create_task_execution_service
         
         task_service = create_task_execution_service(str(current_user.id))
         active_tasks = task_service.list_active_tasks()
@@ -214,7 +214,7 @@ async def cancel_task(
 ) -> APIResponse[bool]:
     """取消任务"""
     try:
-        from app.services.application.task_execution_service import create_task_execution_service
+        from app.services.application.tasks.task_execution_service import create_task_execution_service
         
         task_service = create_task_execution_service(str(current_user.id))
         success = await task_service.cancel_task(task_id)
@@ -391,7 +391,7 @@ async def test_workflow_components(
         if component in ["all", "task"]:
             # 测试任务执行服务
             try:
-                from app.services.application.task_execution_service import (
+                from app.services.application.tasks.task_execution_service import (
                     create_task_execution_service
                 )
                 task_service = create_task_execution_service(str(current_user.id))

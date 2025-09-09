@@ -14,7 +14,7 @@ from app.models.task import Task, TaskExecution, TaskStatus, ReportPeriod
 from app.models.user import User
 from app.models.data_source import DataSource  
 from app.models.template import Template
-from app.services.application.task_execution_service import TaskExecutionService
+from app.services.application.tasks.task_execution_service import TaskExecutionService
 from app.services.infrastructure.task_queue.tasks import execute_report_task, validate_placeholders_task, scheduled_task_runner
 from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.core.exceptions import ValidationError, NotFoundError

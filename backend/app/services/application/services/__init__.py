@@ -13,13 +13,11 @@ Application Services
 - 处理应用级的横切关注点
 """
 
-from .task_service import TaskApplicationService
 from .report_service import ReportApplicationService
 from .workflow_service import WorkflowApplicationService
 from .context_aware_service import ContextAwareApplicationService
 
 __all__ = [
-    'TaskApplicationService',
     'ReportApplicationService', 
     'WorkflowApplicationService',
     'ContextAwareApplicationService'

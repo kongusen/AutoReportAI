@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.task import Task, TaskExecution, TaskStatus
-from app.services.application.task_execution_service import TaskExecutionService
+from app.services.application.tasks.task_execution_service import TaskExecutionService
 from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.services.infrastructure.notification.notification_service import NotificationService
 from celery.schedules import crontab

@@ -25,6 +25,7 @@ python-docx>=1.1.2
 # 任务队列和调度
 celery[redis]>=5.4.0
 apscheduler>=3.11.0
+cron-validator>=1.0.8
 
 # 数据处理
 pandas>=2.2.3

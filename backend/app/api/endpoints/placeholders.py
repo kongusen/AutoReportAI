@@ -690,7 +690,7 @@ async def generate_report_task(
         logger.info(f"启动报告生成任务: template_id={template_id}")
         
         # 创建任务执行服务
-        from app.services.application.task_execution_service import (
+        from app.services.application.tasks.task_execution_service import (
             create_task_execution_service, TaskExecutionRequest
         )
         
@@ -744,7 +744,7 @@ async def get_report_task_status(
 ) -> APIResponse[Dict[str, Any]]:
     """获取报告生成任务状态"""
     try:
-        from app.services.application.task_execution_service import create_task_execution_service
+        from app.services.application.tasks.task_execution_service import create_task_execution_service
         
         task_service = create_task_execution_service(str(current_user.id))
         task_status = task_service.get_task_status(task_id)
@@ -786,7 +786,7 @@ async def cancel_report_task(
 ) -> APIResponse[bool]:
     """取消报告生成任务"""
     try:
-        from app.services.application.task_execution_service import create_task_execution_service
+        from app.services.application.tasks.task_execution_service import create_task_execution_service
         
         task_service = create_task_execution_service(str(current_user.id))
         success = await task_service.cancel_task(task_id)

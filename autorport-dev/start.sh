@@ -36,9 +36,10 @@ check_requirements() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null && ! command -v docker compose &> /dev/null; then
         echo -e "${RED}${CROSS} Docker Compose 未安装${NC}"
         exit 1
+    fi
     fi
     
     echo -e "${GREEN}${CHECKMARK} 系统要求检查通过${NC}"

@@ -329,49 +329,42 @@ class TemplateService:
                     "analysis_errors": ["未发现有效占位符"]
                 }
             
-            # 2. 使用React Agent进行智能分析
+            # 2. 使用统一AI门面进行智能分析
             enhanced_placeholders = []
-            if self.user_id and hasattr(self, 'llm_selector'):
+            if self.user_id:
                 try:
-                    from app.services.infrastructure.ai.agents import create_react_agent
+                    from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
                     
-                    agent = create_react_agent(self.user_id)
-                    await agent.initialize()
+                    ai_facade = get_unified_ai_facade()
                     
-                    # 构造分析提示
-                    analysis_prompt = f"""
-                    分析以下模板中的占位符，为每个占位符提供智能分类和建议：
-                    
-                    模板内容片段：
-                    {content[:500]}...
-                    
-                    发现的占位符：
-                    {[p['name'] for p in placeholders]}
-                    
-                    请为每个占位符提供：
-                    1. 数据类型（统计、趋势、列表等）
-                    2. 复杂度评估
-                    3. 处理建议
-                    4. 可能的数据源字段
-                    """
-                    
-                    analysis_result = await agent.chat(analysis_prompt)
+                    # 使用统一的模板分析服务
+                    analysis_result = await ai_facade.analyze_template(
+                        user_id=str(self.user_id),
+                        template_id=str(template_id),
+                        template_content=content,
+                        data_source_info={
+                            "type": "placeholder_analysis",
+                            "placeholders_count": len(placeholders),
+                            "discovered_placeholders": [p['name'] for p in placeholders]
+                        }
+                    )
                     
                     # 增强占位符信息
+                    analysis_response = str(analysis_result)
                     for i, placeholder in enumerate(placeholders):
                         enhanced_placeholder = {
                             **placeholder,
-                            "type": "intelligent",  # React Agent分析的类型
+                            "type": "intelligent",  # ServiceOrchestrator分析的类型
                             "content_type": "mixed",
-                            "description": f"智能分析结果：{analysis_result[:100]}...",
+                            "description": f"智能分析结果：{analysis_response[:100]}...",
                             "complexity": "medium",
-                            "ai_suggestions": analysis_result,
+                            "ai_suggestions": analysis_response,
                             "requires_data_source": True
                         }
                         enhanced_placeholders.append(enhanced_placeholder)
                         
                 except Exception as e:
-                    logger.warning(f"React Agent分析失败，使用基础解析: {str(e)}")
+                    logger.warning(f"ServiceOrchestrator分析失败，使用基础解析: {str(e)}")
                     # 回退到基础分析
                     for placeholder in placeholders:
                         enhanced_placeholders.append({
@@ -465,40 +458,36 @@ class TemplateService:
         使用React Agent为模板占位符生成SQL
         """
         try:
-            if self.user_id and hasattr(self, 'llm_selector'):
-                from app.services.infrastructure.ai.agents import create_react_agent
+            if self.user_id:
+                from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
                 
-                agent = create_react_agent(str(user_id))
-                await agent.initialize()
+                ai_facade = get_unified_ai_facade()
                 
-                sql_prompt = f"""
-                为模板 {template_id} 的占位符生成SQL查询语句。
-                数据源ID: {data_source_id}
+                # 获取模板的占位符信息
+                from app.crud import template_placeholder as crud_placeholder
+                placeholders = crud_placeholder.get_by_template(self.db, template_id=str(template_id))
                 
-                请分析模板中的每个占位符，并生成对应的SQL查询。
-                考虑以下因素：
-                1. 占位符的语义含义
-                2. 数据源的表结构
-                3. 查询的性能优化
-                4. 数据类型的兼容性
+                placeholder_data = [
+                    {
+                        "name": p.placeholder_name,
+                        "text": p.placeholder_text,
+                        "type": p.placeholder_type
+                    } for p in placeholders
+                ]
                 
-                返回格式：
-                - 每个占位符对应的SQL语句
-                - SQL执行建议
-                - 性能优化提示
-                """
-                
-                result = await agent.chat(sql_prompt, context={
-                    "template_id": str(template_id),
-                    "data_source_id": data_source_id,
-                    "task_type": "sql_generation"
-                })
+                # 使用统一的SQL生成服务
+                sql_result = await ai_facade.generate_sql(
+                    user_id=str(user_id),
+                    placeholders=placeholder_data,
+                    data_source_info={"data_source_id": str(data_source_id)},
+                    template_context=f"Template ID: {template_id}"
+                )
                 
                 return {
                     "sql_generation_enabled": True,
-                    "sql_generation_result": result,
-                    "total_sqls_generated": 1,  # React Agent会生成整体分析
-                    "sql_generation_method": "react_agent"
+                    "sql_generation_result": sql_result,
+                    "total_sqls_generated": len(placeholder_data),
+                    "sql_generation_method": "unified_ai_facade"
                 }
             else:
                 return {

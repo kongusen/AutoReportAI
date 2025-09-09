@@ -827,32 +827,33 @@ async def generate_agent_based_intelligent_report_task(
             template = db.query(Template).filter(Template.id == UUID(template_id)).first()
             data_source = db.query(DataSource).filter(DataSource.id == UUID(data_source_id)).first()
         
-        # 使用React Agent生成智能报告内容
+        # 使用新的Claude Code架构生成智能报告内容
         try:
-            from app.services.infrastructure.ai.agents import create_react_agent
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
             
-            agent = create_react_agent(user_id)
-            await agent.initialize()
+            orchestrator = get_service_orchestrator()
             
-            # 构建报告生成提示
-            report_prompt = f"""
-            生成一份详细的业务分析报告，基于以下信息：
+            # 构建报告生成内容
+            report_content = f"""
+            业务分析报告生成请求 - 报告ID: {report_record_id}
             
             模板信息:
             - 模板名称: {template.name if template else '未知模板'}
             - 模板类型: {template.template_type if template else 'docx'}
+            - 模板ID: {template_id}
             
             数据源信息:
             - 数据源名称: {data_source.name if data_source else '未知数据源'}
             - 数据源类型: {data_source.source_type if data_source else 'unknown'}
             - 主机地址: {data_source.doris_fe_hosts[0] if data_source and data_source.doris_fe_hosts else '192.168.31.160'}
+            - 数据源ID: {data_source_id}
             
             优化配置:
             - 优化级别: {optimization_level}
             - 批处理大小: {batch_size}
             - 智能ETL: {enable_intelligent_etl}
             
-            请生成一份包含以下内容的完整报告：
+            生成要求：
             1. 执行摘要
             2. 数据概览和统计
             3. 关键业务指标分析
@@ -862,14 +863,24 @@ async def generate_agent_based_intelligent_report_task(
             
             报告应该专业、详细，包含数据驱动的洞察和可视化图表的描述。
             使用Markdown格式生成报告内容。
+            
+            用户ID: {user_id}
+            生成时间: {datetime.utcnow().isoformat()}
             """
             
-            agent_result = await agent.chat(report_prompt, context={
-                "task_type": "report_generation",
-                "template_id": template_id,
-                "data_source_id": data_source_id,
-                "optimization_level": optimization_level
-            })
+            agent_result = await orchestrator.analyze_template_simple(
+                user_id=user_id,
+                template_id=template_id,
+                template_content=report_content,
+                data_source_info={
+                    "type": data_source.source_type.value if data_source and hasattr(data_source.source_type, 'value') else 'unknown',
+                    "database": getattr(data_source, 'doris_database', 'unknown') if data_source else 'unknown',
+                    "name": data_source.name if data_source else 'unknown',
+                    "optimization_level": optimization_level,
+                    "task_type": "report_generation",
+                    "data_source_id": data_source_id
+                }
+            )
             
             # 提取实际的响应内容
             raw_response = agent_result.get('response', str(agent_result))
@@ -919,10 +930,17 @@ async def generate_agent_based_intelligent_report_task(
             格式：JSON配置 + 图表说明
             """
             
-            chart_result = await agent.chat(chart_prompt, context={
-                "task_type": "chart_generation",
-                "chart_types": ["bar", "line", "pie", "area"]
-            })
+            # Generate chart descriptions using the same orchestrator
+            chart_result = await orchestrator.analyze_template_simple(
+                user_id=user_id,
+                template_id=f"{template_id}_charts",
+                template_content=chart_prompt,
+                data_source_info={
+                    "type": "chart_generation",
+                    "chart_types": ["bar", "line", "pie", "area"],
+                    "optimization_level": optimization_level
+                }
+            )
             
             # 提取图表响应内容
             raw_chart_response = chart_result.get('response', str(chart_result))

@@ -723,12 +723,50 @@ export class AutoReportAPIClient {
   }
 
   // ============================================================================
-  // 系统洞察API - React Agent集成
+  // 统一AI架构洞察API
+  // ============================================================================
+
+  async getUnifiedAIArchitectureStatus(): Promise<any> {
+    return this.request<any>('GET', '/system-insights/unified-ai/architecture-status', { 
+      cache: true,
+      cacheTTL: 30000 
+    })
+  }
+
+  async getUnifiedAISystemHealth(): Promise<any> {
+    return this.request<any>('GET', '/system-insights/unified-ai/system-health', { 
+      cache: true,
+      cacheTTL: 30000 
+    })
+  }
+
+  async getUnifiedAIPerformanceMetrics(): Promise<any> {
+    return this.request<any>('GET', '/system-insights/unified-ai/performance-metrics', { 
+      cache: true,
+      cacheTTL: 60000 
+    })
+  }
+
+  async testUnifiedAITask(taskType: string): Promise<any> {
+    return this.request<any>('POST', '/system-insights/unified-ai/test-task', { 
+      data: { task_type: taskType }
+    })
+  }
+
+  async getActiveTasks(): Promise<any> {
+    return this.request<any>('GET', '/system-insights/unified-ai/active-tasks', { 
+      cache: true,
+      cacheTTL: 10000 // 10秒缓存
+    })
+  }
+
+  // ============================================================================
+  // 系统洞察API - React Agent集成 (保留向后兼容)
   // ============================================================================
 
   async getSystemPerformance(integrationMode: string = 'intelligent'): Promise<any> {
-    return this.request<any>('GET', '/react-agent/system-performance', { 
-      params: { performance_type: integrationMode },
+    return this.request<any>('GET', '/system-insights/context-system/performance', { 
+      params: { integration_mode: integrationMode },
       cache: true,
       cacheTTL: 60000 
     })

@@ -25,5 +25,9 @@ from . import (
     templates,
     user_llm_preferences,  # 用户LLM偏好管理
     users,
-    chart_test  # 图表测试端点
+    chart_test,  # 图表测试端点
+    task_execution,  # 任务执行系统
+    model_execution,  # 模型执行
+    simple_model_selection,  # 简化模型选择
+    notifications  # 通知系统
 )

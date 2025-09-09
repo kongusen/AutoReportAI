@@ -32,9 +32,9 @@ def create_enhanced_template_parser(db: Session, user_id: str):
     if not user_id:
         raise ValueError("user_id is required for Enhanced Template Parser")
     
-    # 使用React Agent模板解析服务
-    from app.services.infrastructure.ai.agents import create_react_agent
-    return create_react_agent(user_id)
+    # 使用新的Claude Code架构模板解析服务
+    from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
 
 def create_intelligent_placeholder_workflow(user_id: str, config=None):
@@ -84,13 +84,11 @@ def create_pure_database_schema_analysis_service(db: Session, user_id: str):
     return create_schema_analysis_service(db, user_id)
 
 
-def create_react_agent(user_id: str):
-    """创建React智能代理"""
-    if not user_id:
-        raise ValueError("user_id is required for React Agent")
-    
-    from app.services.infrastructure.ai.agents import create_react_agent
-    return create_react_agent(user_id)
+def create_service_orchestrator(user_id: str = None):
+    """创建新的Claude Code架构ServiceOrchestrator实例"""
+    # user_id只用于向后兼容，ServiceOrchestrator不需要用户ID在初始化时
+    from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
 
 def create_user_etl_service(user_id: str):
@@ -157,7 +155,7 @@ __all__ = [
     
     # 现代化纯数据库驱动工厂
     "create_pure_database_schema_analysis_service",
-    "create_react_agent", 
+    "create_service_orchestrator",  # 新的Claude Code架构 
     "create_user_etl_service",
     
     # 数据处理服务工厂

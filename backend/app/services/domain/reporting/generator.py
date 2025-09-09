@@ -106,37 +106,34 @@ class ReportGenerationService:
                         "data_source_id": str(data_source_id),
                     }
                     
-                    # 使用React Agent工作流编排处理占位符
+                    # 使用统一AI门面处理占位符内容生成
                     try:
-                        from app.services.infrastructure.ai.agents import create_react_agent
+                        from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
                         
-                        # 为占位符创建用户上下文（如果可用）
-                        user_id = "system"  # 默认系统用户，实际使用时应传入真实用户ID
+                        ai_facade = get_unified_ai_facade()
                         
-                        agent = create_react_agent(user_id)
-                        await agent.initialize()
-                        
-                        placeholder_prompt = f"""
-                        处理报告模板中的占位符：
-                        
-                        占位符名称: {placeholder_name}
-                        占位符类型: {placeholder_type}
-                        描述: {placeholder_description}
-                        数据源ID: {data_source_id}
-                        
-                        请根据占位符的语义和类型，生成相应的内容或查询结果。
-                        如果是数据类型占位符，请生成合适的查询；
-                        如果是文本类型占位符，请生成相应的说明文本。
-                        """
-                        
-                        agent_result = await agent.chat(placeholder_prompt, context={
+                        # 构建内容生成的数据上下文
+                        template_parts = [{
                             "placeholder_name": placeholder_name,
                             "placeholder_type": placeholder_type,
-                            "data_source_id": data_source_id,
-                            "task_type": "placeholder_processing"
-                        })
+                            "description": placeholder_description
+                        }]
                         
-                        result = agent_result if isinstance(agent_result, str) else str(agent_result)
+                        data_context = {
+                            "data_source_id": data_source_id,
+                            "task_id": task_id,
+                            "template_id": template_id
+                        }
+                        
+                        # 使用统一的内容生成服务
+                        content_result = await ai_facade.generate_content(
+                            user_id="system",  # 系统级任务
+                            template_parts=template_parts,
+                            data_context=data_context,
+                            style_requirements={"target": "report", "format": "professional"}
+                        )
+                        
+                        result = content_result.get("result", "") if isinstance(content_result, dict) else str(content_result)
                         
                     except Exception as e:
                         logger.warning(f"React Agent处理占位符失败: {str(e)}")
@@ -298,34 +295,29 @@ class ReportGenerationService:
                 # Get AI interpretation if description is provided
                 if placeholder.get("description"):
                     try:
-                        # 使用React Agent进行AI分析和解释
-                        from app.services.infrastructure.ai.agents import create_react_agent
+                        # 使用统一AI门面进行业务洞察解释
+                        from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
                         
-                        agent = create_react_agent("system")
-                        await agent.initialize()
+                        ai_facade = get_unified_ai_facade()
                         
-                        interpretation_prompt = f"""
-                        分析模板占位符并提供智能解释：
+                        # 构建分析结果数据
+                        data_analysis_results = {
+                            "placeholder_name": placeholder['name'],
+                            "placeholder_type": placeholder['type'],
+                            "description": placeholder['description'],
+                            "available_columns": sample_data.columns.tolist() if not sample_data.empty else [],
+                            "data_shape": sample_data.shape if not sample_data.empty else (0, 0)
+                        }
                         
-                        占位符名称: {placeholder['name']}
-                        占位符类型: {placeholder['type']}
-                        描述: {placeholder['description']}
-                        可用列: {sample_data.columns.tolist() if not sample_data.empty else []}
+                        # 使用业务洞察解释服务
+                        interpretation_result = await ai_facade.explain_business_insights(
+                            user_id="system",
+                            data_analysis_results=data_analysis_results,
+                            business_context=f"模板占位符 '{placeholder['name']}' 的业务含义解释",
+                            target_audience="business"
+                        )
                         
-                        请提供：
-                        1. 占位符的业务含义解释
-                        2. 推荐的数据处理方式
-                        3. 可能的数据源字段映射
-                        4. 数据质量和准确性建议
-                        """
-                        
-                        interpretation = await agent.chat(interpretation_prompt, context={
-                            "placeholder": placeholder,
-                            "available_data": sample_data.columns.tolist() if not sample_data.empty else [],
-                            "task_type": "placeholder_interpretation"
-                        })
-                        
-                        analysis["ai_interpretation"] = interpretation
+                        analysis["ai_interpretation"] = interpretation_result.get("result", "") if isinstance(interpretation_result, dict) else str(interpretation_result)
                     except Exception as e:
                         analysis["ai_interpretation"] = f"Error: {str(e)}"
 

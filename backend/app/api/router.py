@@ -24,9 +24,10 @@ from app.api.endpoints import (
     user_llm_preferences,  # 用户LLM偏好管理
     simple_model_selection,  # 简化模型选择
     model_execution,  # 模型执行
-    react_agent_stats,  # React Agent统计
+    # react_agent_stats,  # React Agent统计 (已弃用)
     notifications,  # 通知系统
-    # 基于React Agent系统的功能集成
+    task_execution,  # 任务执行系统
+    # 基于Claude Code架构的功能集成
 )
 
 api_router = APIRouter()
@@ -60,10 +61,11 @@ api_router.include_router(llm_monitor.router, prefix="/v1/llm", tags=["LLM监控
 api_router.include_router(user_llm_preferences.router, prefix="/v1/user-llm-preferences", tags=["用户LLM偏好"])
 api_router.include_router(simple_model_selection.router, prefix="/v1/simple-model-selection", tags=["简化模型选择"])
 api_router.include_router(model_execution.router, prefix="/v1/model-execution", tags=["模型执行"])
-api_router.include_router(react_agent_stats.router, prefix="/v1/react-agent", tags=["React Agent统计"])
+# api_router.include_router(react_agent_stats.router, prefix="/v1/react-agent", tags=["React Agent统计"])  # 已弃用
 api_router.include_router(notifications.router, prefix="/v1/notifications", tags=["通知系统"])
+api_router.include_router(task_execution.router, prefix="/v1/task-execution", tags=["任务执行"])
 
-# React Agent系统集成的智能功能
+# Claude Code架构集成的智能功能
 # - 模板分析通过 /v1/templates/{id}/analyze 端点
-# - 占位符解析通过React Agent工作流编排
-# - 报告生成通过React Agent任务协调
+# - 占位符解析通过ServiceOrchestrator工作流编排
+# - 报告生成通过ServiceOrchestrator任务协调

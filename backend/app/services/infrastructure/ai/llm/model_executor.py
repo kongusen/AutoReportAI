@@ -227,7 +227,7 @@ class ModelExecutor:
         """调用OpenAI兼容API"""
         
         # 实际的HTTP API调用
-        import aiohttp
+        import httpx
         import time
         
         start_time = time.time()
@@ -244,31 +244,56 @@ class ModelExecutor:
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            logger.info(f"调用API: {server.base_url}/chat/completions, 模型: {model.name}")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
                     f"{server.base_url}/chat/completions",
                     json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        response_time = int((time.time() - start_time) * 1000)
+                    headers=headers
+                )
+                
+                logger.info(f"API响应状态码: {response.status_code}")
+                response_time = int((time.time() - start_time) * 1000)
+                
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        
+                        logger.info(f"API调用成功，响应时间: {response_time}ms")
+                        
+                        # 检查响应结构
+                        if "choices" not in data or not data["choices"]:
+                            raise Exception(f"API响应格式错误: 缺少choices字段或为空")
+                        
+                        if "message" not in data["choices"][0]:
+                            raise Exception(f"API响应格式错误: 缺少message字段")
+                        
+                        content = data["choices"][0]["message"]["content"]
+                        logger.info(f"API返回内容长度: {len(content) if content else 0}")
                         
                         return {
                             "success": True,
-                            "result": data["choices"][0]["message"]["content"],
+                            "result": content,
                             "model": model.name,
                             "provider": "openai_compatible",
                             "tokens_used": data.get("usage", {}).get("total_tokens", 0),
                             "response_time_ms": response_time
                         }
-                    else:
-                        error_text = await response.text()
-                        raise Exception(f"API调用失败 (状态码: {response.status}): {error_text}")
+                    except Exception as parse_e:
+                        response_text = response.text
+                        logger.error(f"解析API响应失败: {parse_e}, 原始响应: {response_text[:500]}")
+                        raise Exception(f"解析API响应失败: {parse_e}")
+                else:
+                    error_text = response.text
+                    logger.error(f"API调用失败，状态码: {response.status_code}, 错误信息: {error_text[:500]}")
+                    raise Exception(f"API调用失败 (状态码: {response.status_code}): {error_text}")
                         
+        except httpx.RequestError as e:
+            logger.error(f"网络连接错误: {e}")
+            raise Exception(f"网络连接错误: {e}")
         except Exception as e:
-            logger.error(f"OpenAI兼容API调用失败: {e}")
+            logger.error(f"OpenAI兼容API调用失败: {str(e)}")
             raise
     
     async def _call_anthropic_compatible(
@@ -281,7 +306,7 @@ class ModelExecutor:
         """调用Anthropic兼容API"""
         
         # 实际的Anthropic API调用
-        import aiohttp
+        import httpx
         import time
         
         start_time = time.time()
@@ -298,28 +323,29 @@ class ModelExecutor:
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
                     f"{server.base_url}/messages",
                     json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        response_time = int((time.time() - start_time) * 1000)
-                        
-                        return {
-                            "success": True,
-                            "result": data["content"][0]["text"],
-                            "model": model.name,
-                            "provider": "anthropic_compatible", 
-                            "tokens_used": data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
-                            "response_time_ms": response_time
-                        }
-                    else:
-                        error_text = await response.text()
-                        raise Exception(f"Anthropic API调用失败 (状态码: {response.status}): {error_text}")
+                    headers=headers
+                )
+                
+                response_time = int((time.time() - start_time) * 1000)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    return {
+                        "success": True,
+                        "result": data["content"][0]["text"],
+                        "model": model.name,
+                        "provider": "anthropic_compatible", 
+                        "tokens_used": data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
+                        "response_time_ms": response_time
+                    }
+                else:
+                    error_text = response.text
+                    raise Exception(f"Anthropic API调用失败 (状态码: {response.status_code}): {error_text}")
                         
         except Exception as e:
             logger.error(f"Anthropic兼容API调用失败: {e}")
@@ -335,7 +361,7 @@ class ModelExecutor:
         """调用自定义API"""
         
         # 实际的自定义API调用
-        import aiohttp
+        import httpx
         import time
         
         start_time = time.time()
@@ -353,28 +379,29 @@ class ModelExecutor:
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
                     f"{server.base_url}/generate",
                     json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        response_time = int((time.time() - start_time) * 1000)
-                        
-                        return {
-                            "success": True,
-                            "result": data.get("text", data.get("response", "")),
-                            "model": model.name,
-                            "provider": "custom",
-                            "tokens_used": data.get("tokens_used", len(prompt) // 4),
-                            "response_time_ms": response_time
-                        }
-                    else:
-                        error_text = await response.text()
-                        raise Exception(f"自定义API调用失败 (状态码: {response.status}): {error_text}")
+                    headers=headers
+                )
+                
+                response_time = int((time.time() - start_time) * 1000)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    return {
+                        "success": True,
+                        "result": data.get("text", data.get("response", "")),
+                        "model": model.name,
+                        "provider": "custom",
+                        "tokens_used": data.get("tokens_used", len(prompt) // 4),
+                        "response_time_ms": response_time
+                    }
+                else:
+                    error_text = response.text
+                    raise Exception(f"自定义API调用失败 (状态码: {response.status_code}): {error_text}")
                         
         except Exception as e:
             logger.error(f"自定义API调用失败: {e}")

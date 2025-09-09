@@ -80,8 +80,8 @@ class IntelligentETLExecutor:
     async def _get_react_agent(self):
         """获取用户专属的React Agent"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.agents import create_react_agent
-            self._react_agent = create_react_agent(self.user_id)
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            self._react_agent = get_service_orchestrator()
             await self._react_agent.initialize()
         return self._react_agent
     
@@ -134,7 +134,7 @@ class IntelligentETLExecutor:
                     "data_source_id": data_source_id,
                     "query_type": etl_instruction.get("query_type"),
                     "execution_time": execution_time,
-                    "processing_method": "react_agent_intelligent",
+                    "processing_method": "service_orchestrator_intelligent",
                     "user_id": self.user_id,
                     "executed_at": datetime.utcnow().isoformat()
                 },
@@ -151,7 +151,7 @@ class IntelligentETLExecutor:
                 "metadata": {
                     "data_source_id": data_source_id,
                     "execution_time": execution_time,
-                    "processing_method": "react_agent_intelligent",
+                    "processing_method": "service_orchestrator_intelligent",
                     "user_id": self.user_id,
                     "executed_at": datetime.utcnow().isoformat()
                 },

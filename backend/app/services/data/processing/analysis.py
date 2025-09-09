@@ -249,12 +249,11 @@ class DataAnalysisService:
         except Exception as e:
             raise ChartGenerationError(f"可视化生成失败: {str(e)}", chart_type=chart_type)
     
-    async def _get_react_agent(self):
-        """获取用户专属的React Agent"""
+    async def _get_service_orchestrator(self):
+        """获取ServiceOrchestrator实例"""
         if self.user_id and self._react_agent is None:
-            from app.services.infrastructure.ai.agents import create_react_agent
-            self._react_agent = create_react_agent(self.user_id)
-            await self._react_agent.initialize()
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            self._react_agent = get_service_orchestrator()
         return self._react_agent
     
     async def analyze_with_intelligence(self, data_source_id: int):
@@ -264,25 +263,31 @@ class DataAnalysisService:
             return self.analyze(data_source_id)
         
         try:
-            agent = await self._get_react_agent()
+            orchestrator = await self._get_service_orchestrator()
             
-            analysis_prompt = f"""
-            执行智能数据分析任务:
-            - 数据源ID: {data_source_id}
-            - 用户ID: {self.user_id}
+            analysis_content = f"""
+            智能数据分析任务
+            
+            数据源ID: {data_source_id}
+            用户ID: {self.user_id}
             
             请对数据源进行深度分析，包括数据质量、业务洞察、异常检测等。
             """
             
-            result = await agent.chat(analysis_prompt, context={
-                "data_source_id": data_source_id,
-                "task_type": "data_analysis"
-            })
+            result = await orchestrator.analyze_template_simple(
+                user_id=str(self.user_id),
+                template_id="data_analysis",
+                template_content=analysis_content,
+                data_source_info={
+                    "type": "data_analysis",
+                    "data_source_id": data_source_id
+                }
+            )
             
             return {
-                "analysis_result": result,
+                "analysis_result": str(result),
                 "data_source_id": data_source_id,
-                "analysis_method": "react_agent_intelligent",
+                "analysis_method": "service_orchestrator_intelligent",
                 "user_id": self.user_id,
                 "timestamp": pd.Timestamp.now().isoformat()
             }

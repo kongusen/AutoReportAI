@@ -11,12 +11,8 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
-from app.crud.crud_task import crud_task
-# 使用新的DDD架构Celery配置
+from app.services.application.task_application_service import TaskApplicationService
 from app.services.infrastructure.task_queue.celery_config import celery_app
-
-# 引入统一的占位符处理架构
-from app.services.domain.placeholder import create_batch_router
 
 router = APIRouter()
 
@@ -35,23 +31,24 @@ async def get_tasks(
     if isinstance(user_id, str):
         user_id = UUID(user_id)
     
-    # 使用CRUD层获取任务列表
-    filter_params = {
-        "owner_id": user_id,
-        "is_active": is_active,
-        "search": search
-    }
+    # 构建查询
+    query = db.query(Task).filter(Task.owner_id == user_id)
     
-    tasks = crud_task.get_multi_by_owner(
-        db,
-        owner_id=user_id,
-        skip=skip,
-        limit=limit,
-        is_active=is_active,
-        search=search
-    )
+    # 应用过滤器
+    if is_active is not None:
+        query = query.filter(Task.is_active == is_active)
     
-    total = crud_task.get_count_by_user(db, user_id=user_id)
+    if search:
+        query = query.filter(
+            Task.name.contains(search) |
+            Task.description.contains(search)
+        )
+    
+    # 获取总数
+    total = query.count()
+    
+    # 应用分页并获取结果
+    tasks = query.offset(skip).limit(limit).all()
     
     # 转换为TaskResponse格式，保持向后兼容
     task_dicts = []
@@ -110,10 +107,22 @@ async def create_task(
 ):
     """创建任务"""
     try:
-        user_id = current_user.id
-        if isinstance(user_id, str):
-            user_id = UUID(user_id)
-        task = crud_task.create_with_user(db, obj_in=task_in, user_id=user_id)
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        task = task_service.create_task(
+            db=db,
+            user_id=user_id,
+            name=task_in.name,
+            template_id=str(task_in.template_id),
+            data_source_id=str(task_in.data_source_id),
+            report_period=task_in.report_period,
+            description=task_in.description,
+            schedule=task_in.schedule,
+            recipients=task_in.recipients,
+            is_active=task_in.is_active
+        )
+        
         task_schema = TaskResponse.model_validate(task)
         task_dict = task_schema.model_dump()
         return ApiResponse(
@@ -122,7 +131,6 @@ async def create_task(
             message="任务创建成功"
         )
     except Exception as e:
-        db.rollback()
         return ApiResponse(
             success=False,
             error=str(e),
@@ -138,22 +146,34 @@ async def update_task(
     current_user: User = Depends(get_current_user)
 ):
     """更新任务"""
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    task = crud_task.update(db, db_obj=task, obj_in=task_in)
-    task_schema = TaskResponse.model_validate(task)
-    task_dict = task_schema.model_dump()
-    return ApiResponse(
-        success=True,
-        data=task_dict,
-        message="任务更新成功"
-    )
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        # 获取更新数据
+        update_data = task_in.model_dump(exclude_unset=True)
+        
+        task = task_service.update_task(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+            **update_data
+        )
+        
+        task_schema = TaskResponse.model_validate(task)
+        task_dict = task_schema.model_dump()
+        return ApiResponse(
+            success=True,
+            data=task_dict,
+            message="任务更新成功"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="任务更新失败"
+        )
 
 
 @router.get("/{task_id}", response_model=ApiResponse)
@@ -187,20 +207,28 @@ async def delete_task(
     current_user: User = Depends(get_current_user)
 ):
     """删除任务"""
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    crud_task.remove(db, id=task_id)
-    return ApiResponse(
-        success=True,
-        data={"task_id": task_id},
-        message="任务删除成功"
-    )
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        success = task_service.delete_task(
+            db=db,
+            task_id=task_id,
+            user_id=user_id
+        )
+        
+        return ApiResponse(
+            success=True,
+            data={"task_id": task_id, "deleted": success},
+            message="任务删除成功"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="任务删除失败"
+        )
 
 
 @router.post("/{task_id}/execute", response_model=ApiResponse)
@@ -210,82 +238,34 @@ async def execute_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """执行任务 - 统一使用智能占位符驱动的流水线"""
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
-
-    # 处理执行时间参数
+    """执行任务 - 使用新的TaskApplicationService"""
     try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        # 构建执行上下文
+        execution_context = {}
         if execution_time:
-            parsed_execution_time = datetime.fromisoformat(execution_time.replace('Z', '+00:00'))
-        else:
-            parsed_execution_time = datetime.now()
-            
-        # 从任务设置中获取报告周期
-        report_period = task.report_period.value if task.report_period else "monthly"
+            try:
+                parsed_execution_time = datetime.fromisoformat(execution_time.replace('Z', '+00:00'))
+                execution_context["execution_time"] = parsed_execution_time.isoformat()
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=f"无效的时间格式: {str(e)}")
         
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"无效的时间格式: {str(e)}")
-
-    # 发送一个Celery任务来异步执行智能报告生成
-    try:
-        # 在Redis中保存任务所有者信息以便进度通知
-        from app.core.config import settings
-        import redis.asyncio as redis
-        
-        redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-        import asyncio
-        asyncio.create_task(redis_client.set(f"report_task:{task.id}:owner", str(user_id), ex=3600))
-        
-        # 立即设置初始任务状态
-        initial_status = {
-            "status": "processing", 
-            "progress": "0",
-            "message": "任务已提交，正在初始化...",
-            "current_step": "任务初始化",
-            "user_id": str(user_id),
-            "execution_time": parsed_execution_time.isoformat(),
-            "report_period": report_period,
-            "updated_at": datetime.now().isoformat()
-        }
-        asyncio.create_task(redis_client.hset(f"report_task:{task.id}:status", mapping=initial_status))
-        
-        # 统一使用智能占位符驱动的报告生成流水线
-        execution_context = {
-            "execution_time": parsed_execution_time.isoformat(),
-            "report_period": report_period,
-            "period_start": None,  # 稍后计算
-            "period_end": None     # 稍后计算
-        }
-        
-        # 使用新的DDD Application层工作流任务
-        from app.services.application.tasks.workflow_tasks import generate_report_workflow
-        task_result = generate_report_workflow.delay(
-            str(task.id), 
-            [str(task.data_source_id)] if task.data_source_id else [], 
-            {
-                "user_id": str(user_id),
-                "template_id": str(task.template_id),
-                "output_format": "html",
-                "execution_context": execution_context
-            }
+        # 执行任务
+        result = task_service.execute_task_immediately(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+            execution_context=execution_context
         )
         
         return ApiResponse(
             success=True,
-            data={
-                "task_id": task_id,
-                "celery_task_id": str(task_result.id),
-                "status": "queued",
-                "processing_mode": "intelligent"
-            },
-            message="智能占位符报告生成任务已加入队列"
+            data=result,
+            message="任务执行请求已提交"
         )
+        
     except Exception as e:
         return ApiResponse(
             success=False,
@@ -306,6 +286,106 @@ async def run_task(
     return await execute_task(task_id, execution_time, db, current_user)
 
 
+@router.get("/{task_id}/executions", response_model=ApiResponse)
+async def get_task_executions(
+    task_id: int,
+    limit: int = Query(50, ge=1, le=100, description="返回记录数量限制"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取任务执行历史"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        executions = task_service.get_task_executions(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+            limit=limit
+        )
+        
+        return ApiResponse(
+            success=True,
+            data={
+                "task_id": task_id,
+                "executions": executions
+            },
+            message="获取执行历史成功"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="获取执行历史失败"
+        )
+
+
+@router.post("/{task_id}/validate", response_model=ApiResponse)
+async def validate_task_configuration(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """验证任务配置（包括占位符验证）"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        validation_result = task_service.validate_task_configuration(
+            db=db,
+            task_id=task_id,
+            user_id=user_id
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=validation_result,
+            message="任务配置验证已启动"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="任务配置验证失败"
+        )
+
+
+@router.post("/{task_id}/schedule", response_model=ApiResponse)
+async def schedule_task(
+    task_id: int,
+    schedule: str = Query(..., description="Cron表达式"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """设置任务调度"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        result = task_service.schedule_task(
+            db=db,
+            task_id=task_id,
+            schedule=schedule,
+            user_id=user_id
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="任务调度设置成功"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="任务调度设置失败"
+        )
+
+
 @router.get("/{task_id}/status", response_model=ApiResponse)
 async def get_task_status(
     task_id: int,
@@ -313,251 +393,29 @@ async def get_task_status(
     current_user: User = Depends(get_current_user)
 ):
     """获取任务执行状态"""
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
-    
-    # 从Redis获取任务状态
-    import redis.asyncio as redis
-    from app.core.config import settings
-    
-    redis_client = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
     try:
-        status_data = await redis_client.hgetall(f"report_task:{task_id}:status")
-        if not status_data:
-            status_data = {"status": "not_started", "progress": 0}
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"获取任务状态失败: {e}")
-        status_data = {"status": "unknown", "progress": 0}
-    finally:
-        await redis_client.close()
-    
-    return ApiResponse(
-        success=True,
-        data={
-            "task_id": task_id,
-            "task_name": task.name,
-            **status_data
-        },
-        message="获取任务状态成功"
-    )
-
-
-@router.post("/{task_id}/analyze-placeholders", response_model=ApiResponse)
-async def analyze_task_placeholders(
-    task_id: int,
-    force_reanalyze: bool = Query(False, description="是否强制重新分析"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    使用新架构分析任务模板的占位符
-    
-    这是一个同步操作，会立即返回占位符分析结果
-    """
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    # 获取任务并验证权限
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
-
-    # 检查任务状态
-    if not task.is_active:
-        raise HTTPException(status_code=400, detail="任务未激活，无法分析")
-
-    # 验证模板和数据源
-    if not task.template_id or not task.data_source_id:
-        raise HTTPException(status_code=400, detail="任务缺少模板或数据源配置")
-
-    try:
-        # 使用新架构批量处理模板占位符
-        batch_router = create_batch_router(db, str(current_user.id))
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
         
-        execution_context = {
-            "execution_time": datetime.now().isoformat(),
-            "task_id": str(task_id),
-            "task_name": task.name,
-            "report_period": task.report_period.value if task.report_period else "monthly",
-            "mode": "analysis_only"
-        }
-        
-        result = await batch_router.process_template_placeholders(
-            template_id=str(task.template_id),
-            data_source_id=str(task.data_source_id),
-            user_id=str(current_user.id),
-            force_reanalyze=force_reanalyze,
-            execution_context=execution_context
-        )
-
-        return ApiResponse(
-            success=result["success"],
-            data={
-                "task_id": task_id,
-                "task_name": task.name,
-                "placeholder_analysis": result,
-                "analysis_mode": "new_architecture"
-            },
-            message="占位符分析完成" if result["success"] else "占位符分析失败"
+        status_data = task_service.get_task_status(
+            db=db,
+            task_id=task_id,
+            user_id=user_id
         )
         
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"任务占位符分析失败: {task_id}, 错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
-
-
-@router.post("/{task_id}/dry-run", response_model=ApiResponse)
-async def dry_run_task(
-    task_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    任务试运行 - 使用新架构进行占位符分析，不生成实际报告
-    """
-    user_id = current_user.id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-    
-    # 获取任务并验证权限
-    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在或无权限访问")
-
-    # 验证配置
-    if not task.template_id or not task.data_source_id:
-        raise HTTPException(status_code=400, detail="任务缺少模板或数据源配置")
-
-    try:
-        # 使用新架构进行试运行（只分析，不缓存）
-        batch_router = create_batch_router(db, str(current_user.id))
-        
-        execution_context = {
-            "execution_time": datetime.now().isoformat(),
-            "task_id": str(task_id),
-            "dry_run": True,
-            "metadata": {"mode": "dry_run"}
-        }
-        
-        result = await batch_router.process_template_placeholders(
-            template_id=str(task.template_id),
-            data_source_id=str(task.data_source_id),
-            user_id=str(current_user.id),
-            force_reanalyze=True,  # 试运行总是重新分析
-            execution_context=execution_context
-        )
-
-        # 生成试运行分析报告
-        analysis = _analyze_dry_run_results(result)
-
         return ApiResponse(
             success=True,
-            data={
-                "task_id": task_id,
-                "task_name": task.name,
-                "dry_run_results": result,
-                "analysis": analysis,
-                "recommendations": _generate_dry_run_recommendations(analysis)
-            },
-            message="任务试运行完成"
+            data=status_data,
+            message="获取任务状态成功"
         )
         
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"任务试运行失败: {task_id}, 错误: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"试运行失败: {str(e)}")
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="获取任务状态失败"
+        )
 
 
-# 辅助函数
-
-def _analyze_dry_run_results(result: Dict) -> Dict:
-    """分析试运行结果"""
-    summary = result.get("execution_summary", {})
-    results = result.get("results", {})
-    
-    # 分析各种结果来源
-    source_analysis = {
-        "cache_hit": 0,
-        "agent_success": 0,
-        "rule_fallback": 0,
-        "error_fallback": 0
-    }
-    
-    confidence_scores = []
-    execution_times = []
-    
-    for placeholder_name, placeholder_result in results.items():
-        source = placeholder_result.get("source", "unknown")
-        if source in source_analysis:
-            source_analysis[source] += 1
-        
-        confidence = placeholder_result.get("confidence", 0)
-        if confidence > 0:
-            confidence_scores.append(confidence)
-        
-        exec_time = placeholder_result.get("execution_time_ms", 0)
-        if exec_time > 0:
-            execution_times.append(exec_time)
-    
-    return {
-        "source_distribution": source_analysis,
-        "average_confidence": sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0,
-        "average_execution_time_ms": sum(execution_times) / len(execution_times) if execution_times else 0,
-        "total_placeholders": len(results),
-        "success_rate": summary.get("success_rate", 0),
-        "performance_grade": _calculate_performance_grade(summary, source_analysis)
-    }
 
 
-def _calculate_performance_grade(summary: Dict, source_analysis: Dict) -> str:
-    """计算性能评级"""
-    success_rate = summary.get("success_rate", 0)
-    agent_ratio = source_analysis.get("agent_success", 0) / max(summary.get("total_placeholders", 1), 1)
-    
-    if success_rate >= 95 and agent_ratio >= 0.8:
-        return "A"
-    elif success_rate >= 85 and agent_ratio >= 0.6:
-        return "B"
-    elif success_rate >= 70 and agent_ratio >= 0.4:
-        return "C"
-    elif success_rate >= 50:
-        return "D"
-    else:
-        return "F"
-
-
-def _generate_dry_run_recommendations(analysis: Dict) -> List[str]:
-    """生成试运行优化建议"""
-    recommendations = []
-    
-    success_rate = analysis.get("success_rate", 0)
-    source_dist = analysis.get("source_distribution", {})
-    performance_grade = analysis.get("performance_grade", "F")
-    
-    if success_rate < 80:
-        recommendations.append("成功率较低，建议检查数据源连接和占位符配置")
-    
-    if source_dist.get("rule_fallback", 0) > source_dist.get("agent_success", 0):
-        recommendations.append("Agent分析成功率较低，建议优化占位符命名和数据源schema")
-    
-    if analysis.get("average_execution_time_ms", 0) > 5000:
-        recommendations.append("执行时间较长，建议优化SQL查询和数据源性能")
-    
-    if performance_grade in ["D", "F"]:
-        recommendations.append("整体性能较差，建议全面检查系统配置")
-    
-    if not recommendations:
-        recommendations.append("系统运行良好，无需特殊优化")
-    
-    return recommendations

@@ -7,6 +7,9 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
+from .model_executor import get_model_executor
+from .simple_model_selector import TaskRequirement
+
 logger = logging.getLogger(__name__)
 
 
@@ -189,14 +192,35 @@ async def ask_agent(
     complexity: str = "medium"
 ) -> str:
     """Agent友好的问答接口"""
-    manager = get_pure_llm_manager()
-    
-    # 选择合适的模型
-    model_selection = await manager.select_best_model_for_user(
-        user_id, task_type, complexity
-    )
-    
-    # 这里应该调用实际的LLM API，现在返回模拟响应
-    response = f"基于{model_selection['model']}的回答: {question[:50]}..."
-    
-    return response
+    try:
+        # 获取模型执行器
+        executor = get_model_executor()
+        
+        # 构建任务需求
+        task_requirement = TaskRequirement(
+            requires_thinking=(complexity in ["high", "complex"]),
+            cost_sensitive=(complexity == "low"),
+            speed_priority=(agent_type == "quick_response")
+        )
+        
+        # 构建完整的提示词
+        full_prompt = question
+        if context:
+            full_prompt = f"上下文信息：{context}\n\n问题：{question}"
+        
+        # 执行模型调用
+        result = await executor.execute_with_auto_selection(
+            user_id=user_id,
+            prompt=full_prompt,
+            task_requirement=task_requirement
+        )
+        
+        if result.get("success"):
+            return result.get("result", "")
+        else:
+            logger.error(f"LLM调用失败: {result.get('error', 'Unknown error')}")
+            return ""
+            
+    except Exception as e:
+        logger.error(f"ask_agent调用失败: {e}")
+        return ""

@@ -326,11 +326,10 @@ class StepHandler:
                      inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行步骤 - 基于React Agent的默认实现"""
         try:
-            from app.services.infrastructure.ai.agents import create_react_agent
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
             
             user_id = context.get_context_value("user_id") or "system"
-            agent = create_react_agent(user_id)
-            await agent.initialize()
+            orchestrator = get_service_orchestrator()
             
             # 构建执行提示
             prompt = f"""
@@ -349,7 +348,7 @@ class StepHandler:
                 "success": True,
                 "result": result,
                 "step_name": step_def.name,
-                "handler": "ReactAgentHandler"
+                "handler": "ServiceOrchestratorHandler"
             }
             
         except Exception as e:
@@ -357,7 +356,7 @@ class StepHandler:
                 "success": False,
                 "error": str(e),
                 "step_name": step_def.name,
-                "handler": "ReactAgentHandler"
+                "handler": "ServiceOrchestratorHandler"
             }
 
 
@@ -637,41 +636,47 @@ class WorkflowEngine:
                                       inputs: Dict[str, Any]) -> Dict[str, Any]:
         """使用React Agent执行未知步骤类型"""
         try:
-            from app.services.infrastructure.ai.agents import create_react_agent
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
             
             user_id = context.get_context_value("user_id") or "system"
-            agent = create_react_agent(user_id)
-            await agent.initialize()
+            orchestrator = get_service_orchestrator()
             
-            prompt = f"""
-            执行自定义工作流步骤:
-            - 步骤ID: {step_def.step_id}
-            - 步骤名称: {step_def.name}
-            - 步骤类型: {step_def.step_type}
-            - 参数: {step_def.parameters}
-            - 输入: {inputs}
+            workflow_content = f"""
+            自定义工作流步骤执行
+            
+            步骤ID: {step_def.step_id}
+            步骤名称: {step_def.name}
+            步骤类型: {step_def.step_type}
+            参数: {step_def.parameters}
+            输入: {inputs}
             
             请根据步骤配置执行相应的操作并返回结果。
             """
             
-            result = await agent.chat(prompt, context={
-                "step_definition": step_def.model_dump(),
-                "workflow_context": context.get_all_context()
-            })
+            result = await orchestrator.analyze_template_simple(
+                user_id=str(user_id),
+                template_id="custom_workflow_step",
+                template_content=workflow_content,
+                data_source_info={
+                    "type": "custom_workflow_step",
+                    "step_definition": step_def.model_dump(),
+                    "workflow_context": context.get_all_context()
+                }
+            )
             
             return {
                 "success": True,
-                "result": result,
-                "execution_method": "react_agent",
+                "result": str(result),
+                "execution_method": "service_orchestrator",
                 "step_type": step_def.step_type
             }
             
         except Exception as e:
-            logger.error(f"React Agent step execution failed: {e}")
+            logger.error(f"ServiceOrchestrator step execution failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "execution_method": "react_agent",
+                "execution_method": "service_orchestrator",
                 "step_type": step_def.step_type
             }
     
@@ -681,15 +686,24 @@ class WorkflowEngine:
         """从配置执行任务"""
         task_type = task_config.get('type', 'unknown')
         
-        if task_type == 'react_agent':
-            # 直接使用React Agent
-            from app.services.infrastructure.ai.agents import create_react_agent
+        if task_type == 'react_agent' or task_type == 'service_orchestrator':
+            # 使用新的Claude Code架构
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
             user_id = context.get_context_value("user_id") or "system"
-            agent = create_react_agent(user_id)
-            await agent.initialize()
+            orchestrator = get_service_orchestrator()
             
             prompt = task_config.get('prompt', '')
-            return await agent.chat(prompt, context=inputs)
+            result = await orchestrator.analyze_template_simple(
+                user_id=str(user_id),
+                template_id="workflow_task",
+                template_content=prompt,
+                data_source_info={
+                    "type": "workflow_task",
+                    "task_config": task_config,
+                    "inputs": inputs
+                }
+            )
+            return str(result)
         
         else:
             # 其他任务类型的默认处理

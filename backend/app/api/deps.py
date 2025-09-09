@@ -281,29 +281,29 @@ def get_ai_service(db: Session = Depends(get_db), user = Depends(get_current_use
     return get_react_agent_llm_service(db, user)
 
 
-def get_content_generation_agent(db: Session = Depends(get_db)):
-    """Get content generation agent dependency"""
+def get_content_generation_service():
+    """Get content generation service (using new architecture)"""
     try:
-        from app.services.infrastructure.ai.agents.content_generation_agent import ContentGenerationAgent
-        return ContentGenerationAgent()
+        from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+        return get_service_orchestrator()
     except Exception as e:
-        logger.error(f"Failed to create ContentGenerationAgent: {e}")
+        logger.error(f"Failed to create ContentGenerationService: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Content generation agent unavailable"
+            detail="Content generation service unavailable"
         )
 
 
-def get_visualization_agent(db: Session = Depends(get_db)):
-    """Get visualization agent dependency"""
+def get_visualization_service():
+    """Get visualization service (using new architecture)"""
     try:
-        from app.services.infrastructure.ai.agents.visualization_agent import VisualizationAgent
-        return VisualizationAgent()
+        from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+        return get_service_orchestrator()
     except Exception as e:
-        logger.error(f"Failed to create VisualizationAgent: {e}")
+        logger.error(f"Failed to create VisualizationService: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Visualization agent unavailable"
+            detail="Visualization service unavailable"
         )
 
 

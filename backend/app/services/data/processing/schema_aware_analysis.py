@@ -28,13 +28,12 @@ class SchemaAwareAnalysisService:
         else:
             self.data_analysis_service = None
     
-    async def _get_react_agent(self):
-        """获取用户专属的React Agent"""
-        if self._react_agent is None:
-            from app.services.infrastructure.ai.agents import create_react_agent
-            self._react_agent = create_react_agent(self.user_id)
-            await self._react_agent.initialize()
-        return self._react_agent
+    async def _get_ai_facade(self):
+        """获取统一AI门面实例"""
+        if not hasattr(self, '_ai_facade') or self._ai_facade is None:
+            from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+            self._ai_facade = get_unified_ai_facade()
+        return self._ai_facade
     
     @property
     def schema_query_service(self):
@@ -45,18 +44,26 @@ class SchemaAwareAnalysisService:
         return self._schema_query_service
     
     async def get_schema_analysis_service(self, table_names=None):
-        """获取Schema分析服务 - 基于React Agent实现"""
+        """获取Schema分析服务 - 基于ServiceOrchestrator实现"""
         try:
-            # 使用用户专属React Agent进行Schema分析
-            agent = await self._get_react_agent()
+            # 使用统一AI门面进行Schema分析
+            ai_facade = await self._get_ai_facade()
             
-            # 通过React Agent执行Schema分析
-            analysis_prompt = f"分析数据库Schema: {', '.join(table_names) if table_names else 'all tables'}"
-            return await agent.chat(analysis_prompt, context={
-                "task_type": "schema_analysis",
-                "table_names": table_names,
-                "user_id": self.user_id
-            })
+            # 构建Schema数据
+            schema_data = {
+                "table_names": table_names or [],
+                "analysis_scope": "all" if not table_names else "selected",
+                "user_id": getattr(self, 'user_id', 'system')
+            }
+            
+            # 使用Schema分析服务
+            result = await ai_facade.analyze_schema(
+                user_id=schema_data["user_id"],
+                schema_data=schema_data,
+                analysis_depth="standard"
+            )
+            
+            return result.get("result", "") if isinstance(result, dict) else str(result)
         except Exception as e:
             self.logger.error(f"Schema分析失败: {str(e)}")
             return f"Schema分析暂时不可用: {str(e)}"

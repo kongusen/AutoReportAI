@@ -72,14 +72,13 @@ class UnifiedServiceFacade:
             )
             
             # 2. AI增强分析
-            ai_insights = await ai_service.ask_agent_for_user(
+            ai_insights_result = await ai_service.analyze_template(
                 user_id=self.user_id,
-                question=f"分析以下模板内容的业务逻辑和改进建议：\n{template_content}",
-                agent_type="template_analyst",
-                context="模板分析",
-                task_type="analysis",
-                complexity="medium"
+                template_id="template_analysis",
+                template_content=template_content,
+                data_source_info={"type": "business_logic_analysis"}
             )
+            ai_insights = ai_insights_result.get("result", "") if isinstance(ai_insights_result, dict) else str(ai_insights_result)
             
             # 3. 合并分析结果
             result = {
@@ -134,15 +133,14 @@ class UnifiedServiceFacade:
             4. 使用说明
             """
             
-            # AI生成模板
-            generated_content = await ai_service.ask_agent_for_user(
+            # AI生成模板内容
+            content_result = await ai_service.generate_content(
                 user_id=self.user_id,
-                question=generation_prompt,
-                agent_type="template_generator",
-                context="模板生成",
-                task_type="creative",
-                complexity="medium"
+                template_parts=[{"type": template_type, "requirements": requirements}],
+                data_context={"template_type": template_type},
+                style_requirements={"format": "template", "structure": "professional"}
             )
+            generated_content = content_result.get("result", "") if isinstance(content_result, dict) else str(content_result)
             
             result = {
                 "generated_content": generated_content,
@@ -342,14 +340,13 @@ class UnifiedServiceFacade:
             4. 错误处理逻辑
             """
             
-            ai_generated_logic = await ai_service.ask_agent_for_user(
+            etl_result = await ai_service.plan_etl_workflow(
                 user_id=self.user_id,
-                question=etl_prompt,
-                agent_type="etl_generator",
-                context="ETL作业生成",
-                task_type="coding",
-                complexity="complex"
+                source_schema=source_info,
+                target_schema=target_info,
+                business_requirements=transformation_requirements
             )
+            ai_generated_logic = etl_result.get("result", "") if isinstance(etl_result, dict) else str(etl_result)
             
             # 创建ETL作业
             etl_job_config = {
@@ -390,10 +387,10 @@ class UnifiedServiceFacade:
         return self._placeholder_service
     
     async def _get_ai_service(self):
-        """获取AI服务"""
+        """获取统一AI门面服务"""
         if self._ai_service is None:
-            from app.services.infrastructure.ai.llm import get_llm_manager
-            self._ai_service = await get_llm_manager()
+            from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+            self._ai_service = get_unified_ai_facade()
         return self._ai_service
     
     async def _get_etl_service(self):

@@ -43,11 +43,11 @@ from .application.agents import get_workflow_orchestration_agent
 from .application.agents.task_coordination_agent import get_task_coordination_agent
 from .application.agents.context_aware_agent import get_context_aware_agent
 
-# React Agent基础设施服务
-from .infrastructure.notification.notification_service import ReactAgentNotificationService as NotificationService
+# 通知服务 (已迁移到新架构)
+from .infrastructure.notification.notification_service import NotificationService
 from .infrastructure.storage.file_storage_service import FileStorageService
 
-# React Agent LLM服务
+# LLM服务 (已迁移到新架构)
 from .infrastructure.ai.llm.simple_model_selector import SimpleModelSelector as LLMService
 
 __all__ = [

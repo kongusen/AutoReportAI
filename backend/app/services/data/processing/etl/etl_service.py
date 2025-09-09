@@ -323,12 +323,11 @@ class ETLService:
             # Re-raise the exception so APScheduler can log it as a job failure
             raise
 
-    async def _get_react_agent(self):
-        """获取用户专属的React Agent"""
+    async def _get_service_orchestrator(self):
+        """获取ServiceOrchestrator实例"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.agents import create_react_agent
-            self._react_agent = create_react_agent(self.user_id)
-            await self._react_agent.initialize()
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            self._react_agent = get_service_orchestrator()
         return self._react_agent
 
     async def run_intelligent_etl(
@@ -363,28 +362,35 @@ class ETLService:
                 # 检查是否需要生成图表
                 enable_charts = task_config and task_config.get('enable_chart_generation', False)
                 
-                # 使用React Agent进行智能ETL处理
-                agent = await self._get_react_agent()
+                # 使用新的Claude Code架构进行智能ETL处理
+                orchestrator = await self._get_service_orchestrator()
                 
-                # 构建智能ETL执行提示，包含图表生成需求
-                etl_prompt = f"""
-                执行智能ETL处理任务:
-                - 指令ID: {instructions.instruction_id}
-                - 数据源: {source_db.name} ({source_db.source_type.value})
-                - 查询类型: {instructions.get('query_type', 'unknown')}
-                - 配置: {task_config}
+                # 构建智能ETL执行内容，包含图表生成需求
+                etl_content = f"""
+                智能ETL处理任务
+                
+                指令ID: {instructions.instruction_id}
+                数据源: {source_db.name} ({source_db.source_type.value})
+                查询类型: {instructions.get('query_type', 'unknown')}
+                配置: {task_config}
                 
                 {'如果数据适合可视化，请使用图表生成工具创建专业图表。' if enable_charts else ''}
                 
                 请基于指令执行ETL操作并返回处理结果。
                 """
                 
-                agent_result = await agent.chat(etl_prompt, context={
-                    "instructions": instructions,
-                    "data_source_id": data_source_id,
-                    "task_config": task_config,
-                    "enable_charts": enable_charts
-                })
+                agent_result = await orchestrator.analyze_template_simple(
+                    user_id=str(self.user_id),
+                    template_id="intelligent_etl_processing",
+                    template_content=etl_content,
+                    data_source_info={
+                        "type": "intelligent_etl_processing",
+                        "instructions": instructions,
+                        "data_source_id": data_source_id,
+                        "task_config": task_config,
+                        "enable_charts": enable_charts
+                    }
+                )
                 
                 # 尝试从数据源获取实际数据用于图表生成
                 processed_data = None

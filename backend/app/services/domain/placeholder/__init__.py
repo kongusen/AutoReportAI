@@ -77,50 +77,52 @@ def create_batch_router(db_session=None, user_id=None):
                 }
             
             try:
-                from app.services.infrastructure.ai.agents import create_react_agent
+                from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
                 
-                # 创建React Agent实例
-                agent = create_react_agent(self.user_id)
-                await agent.initialize()
+                # 使用统一AI门面进行批量处理
+                ai_facade = get_unified_ai_facade()
                 
                 results = []
                 processed_count = 0
                 
-                # 构建批处理提示
-                batch_prompt = f"""
-                批量处理模板占位符：
+                # 将占位符转换为标准格式
+                placeholder_data = []
+                for p in placeholders:
+                    if isinstance(p, dict):
+                        placeholder_data.append({
+                            "name": p.get("name", ""),
+                            "text": p.get("text", ""),
+                            "type": p.get("type", "variable")
+                        })
+                    else:
+                        placeholder_data.append({
+                            "name": str(p),
+                            "text": str(p),
+                            "type": "variable"
+                        })
                 
-                模板ID: {template_id}
-                占位符数量: {len(placeholders)}
-                占位符列表: {[p.get('name', str(p)) for p in placeholders]}
+                # 使用批量占位符分析服务
+                batch_result = await ai_facade.batch_analyze_placeholders(
+                    user_id=str(self.user_id),
+                    placeholders=placeholder_data,
+                    template_id=str(template_id),
+                    template_context=context or "",
+                    data_source_info={
+                        "type": "batch_processing",
+                        "context": context
+                    }
+                )
                 
-                上下文信息: {context or '无'}
-                
-                请为每个占位符提供：
-                1. 语义分析和分类
-                2. 数据处理建议
-                3. SQL生成建议（如适用）
-                4. 数据质量要求
-                
-                返回每个占位符的详细分析结果。
-                """
-                
-                # 执行批处理分析
-                batch_result = await agent.chat(batch_prompt, context={
-                    "template_id": template_id,
-                    "placeholders": placeholders,
-                    "batch_context": context,
-                    "task_type": "batch_placeholder_processing"
-                })
-                
-                # 为每个占位符生成结果
-                for placeholder in placeholders:
-                    placeholder_name = placeholder.get('name', str(placeholder))
+                # 整理结果
+                for i, result in enumerate(batch_result):
+                    placeholder_name = placeholder_data[i]["name"]
                     results.append({
                         "placeholder_name": placeholder_name,
                         "status": "processed",
-                        "analysis": batch_result,
-                        "processed_by": "react_agent"
+                        "analysis": result.get("analysis", ""),
+                        "generated_sql": result.get("generated_sql", ""),
+                        "confidence_score": result.get("confidence_score", 0.0),
+                        "processed_by": "unified_ai_facade"
                     })
                     processed_count += 1
                 
@@ -129,7 +131,7 @@ def create_batch_router(db_session=None, user_id=None):
                     "message": f"成功处理 {processed_count} 个占位符",
                     "processed_count": processed_count,
                     "results": results,
-                    "batch_analysis": batch_result
+                    "batch_analysis": "completed"
                 }
                 
             except Exception as e:

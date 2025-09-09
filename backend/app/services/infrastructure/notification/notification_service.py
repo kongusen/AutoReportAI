@@ -19,8 +19,8 @@ from app.schemas.notification import NotificationCreate
 logger = logging.getLogger(__name__)
 
 
-class ReactAgentNotificationService:
-    """基于React Agent架构的现代化通知服务"""
+class NotificationService:
+    """基于Claude Code架构的现代化通知服务"""
     
     def __init__(self):
         self.email_service = EmailService()
@@ -36,11 +36,10 @@ class ReactAgentNotificationService:
         """初始化通知服务"""
         if not self._initialized:
             try:
-                from app.services.infrastructure.ai.agents import create_react_agent
-                self.agent = create_react_agent(user_id="notification_system")
-                await self.agent.initialize()
+                from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+                self.orchestrator = get_service_orchestrator()
                 self._initialized = True
-                logger.info("React Agent通知服务初始化成功")
+                logger.info("ServiceOrchestrator通知服务初始化成功")
             except Exception as e:
                 logger.error(f"通知服务初始化失败: {str(e)}")
                 raise
@@ -82,11 +81,18 @@ class ReactAgentNotificationService:
             请生成一个简洁、专业、友好的通知消息。
             """
             
-            return await self.agent.chat(prompt, context={
-                "task_type": "notification_generation",
-                "event_type": event_type,
-                **context
-            })
+            # 使用ServiceOrchestrator进行智能消息生成
+            result = await self.orchestrator.analyze_template_simple(
+                user_id="system",
+                template_id="notification_generation",
+                template_content=prompt,
+                data_source_info={
+                    "task_type": "notification_generation",
+                    "event_type": event_type,
+                    **context
+                }
+            )
+            return result.get("suggestions", f"{event_type} 事件通知")
         except Exception as e:
             logger.error(f"智能消息生成失败: {str(e)}")
             return f"{event_type} 事件通知"
@@ -435,15 +441,12 @@ class ReactAgentNotificationService:
             }
 
 
-# 全局通知服务实例 - 基于React Agent架构
+# 全局通知服务实例 - 基于Claude Code架构
 _notification_service = None
 
-def get_notification_service() -> ReactAgentNotificationService:
+def get_notification_service() -> NotificationService:
     """获取通知服务实例"""
     global _notification_service
     if _notification_service is None:
-        _notification_service = ReactAgentNotificationService()
+        _notification_service = NotificationService()
     return _notification_service
-
-# React Agent架构的通知服务类型别名
-NotificationService = ReactAgentNotificationService

@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
-import { Tabs, TabPanel, useTabsContext } from '@/components/ui/Tabs'
+import { ExpandablePanel } from '@/components/ui/ExpandablePanel'
 import { Switch } from '@/components/ui/Switch'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { DataSourceUpdate, DataSourceType } from '@/types'
@@ -144,11 +144,6 @@ export default function EditDataSourcePage() {
     }
   }
 
-  const tabItems = [
-    { key: 'basic', label: '基本信息' },
-    { key: 'config', label: '连接配置' },
-    { key: 'status', label: '状态管理' },
-  ]
 
   if (isLoading) {
     return (
@@ -172,16 +167,31 @@ export default function EditDataSourcePage() {
       />
 
       <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
-        <Tabs items={tabItems} defaultActiveKey="basic">
-          <DataSourceTabs 
+        <div className="space-y-6">
+          <BasicInfoCard 
             sourceType={sourceType}
             register={register}
             errors={errors}
             setValue={setValue}
-            getValues={getValues}
             setSelectedType={setSelectedType}
+            getValues={getValues}
           />
-        </Tabs>
+          
+          <ExpandablePanel title="连接配置" defaultExpanded={false}>
+            <ConfigurationContent
+              sourceType={sourceType}
+              register={register}
+              errors={errors}
+            />
+          </ExpandablePanel>
+          
+          <ExpandablePanel title="状态管理" defaultExpanded={false}>
+            <StatusManagement
+              getValues={getValues}
+              setValue={setValue}
+            />
+          </ExpandablePanel>
+        </div>
 
         <div className="mt-8 flex justify-end space-x-4">
           <Button
@@ -200,161 +210,170 @@ export default function EditDataSourcePage() {
   )
 }
 
-interface DataSourceTabsProps {
+interface BasicInfoCardProps {
   sourceType: DataSourceType
   register: any
   errors: any
   setValue: any
-  getValues: any
   setSelectedType: (type: DataSourceType) => void
+  getValues: any
 }
 
-function DataSourceTabs({ sourceType, register, errors, setValue, getValues, setSelectedType }: DataSourceTabsProps) {
-  const { activeKey } = useTabsContext()
-
+function BasicInfoCard({ sourceType, register, errors, setValue, setSelectedType, getValues }: BasicInfoCardProps) {
   return (
-    <>
-      <TabPanel value="basic" activeValue={activeKey}>
-        <Card>
-          <CardHeader>
-            <CardTitle>基本信息</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  数据源名称 *
-                </label>
-                <Input
-                  placeholder="输入数据源名称"
-                  error={!!errors.name}
-                  {...register('name')}
-                />
-                {errors.name && (
-                  <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  显示名称
-                </label>
-                <Input
-                  placeholder="输入显示名称（可选）"
-                  {...register('display_name')}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                数据源类型 *
-              </label>
-              <Select
-                options={dataSourceTypeOptions}
-                value={sourceType}
-                onChange={(value) => {
-                  const newType = value as DataSourceType
-                  setValue('source_type', newType)
-                  setSelectedType(newType)
-                }}
-              />
-              {errors.source_type && (
-                <p className="mt-1 text-sm text-red-600">{errors.source_type.message}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                描述
-              </label>
-              <Textarea
-                placeholder="输入数据源描述（可选）"
-                {...register('description')}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      </TabPanel>
-
-      <TabPanel value="config" activeValue={activeKey}>
-        <Card>
-          <CardHeader>
-            <CardTitle>连接配置</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {sourceType === 'sql' && (
-              <SqlConfiguration register={register} errors={errors} />
+    <Card>
+      <CardHeader>
+        <CardTitle>基本信息</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              数据源名称 *
+            </label>
+            <Input
+              placeholder="输入数据源名称"
+              error={!!errors.name}
+              {...register('name')}
+            />
+            {errors.name && (
+              <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
             )}
-            {sourceType === 'doris' && (
-              <DorisConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'api' && (
-              <ApiConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'push' && (
-              <PushConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'csv' && (
-              <CsvConfiguration register={register} errors={errors} />
-            )}
-          </CardContent>
-        </Card>
-      </TabPanel>
+          </div>
 
-      <TabPanel value="status" activeValue={activeKey}>
-        <Card>
-          <CardHeader>
-            <CardTitle>状态管理</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                数据源状态
-              </label>
-              <Switch
-                checked={getValues('is_active')}
-                onChange={(checked) => setValue('is_active', checked)}
-                label="启用数据源"
-                description="启用后可以在任务中使用此数据源"
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              显示名称
+            </label>
+            <Input
+              placeholder="输入显示名称（可选）"
+              {...register('display_name')}
+            />
+          </div>
+        </div>
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-blue-900 mb-2">状态说明</h4>
-              <div className="text-sm text-blue-800 space-y-1">
-                <p>• 启用状态：数据源可以正常使用，任务可以访问该数据源</p>
-                <p>• 禁用状态：数据源暂停使用，相关任务将无法执行</p>
-                <p>• 修改状态后，正在运行的任务可能需要重新启动才能生效</p>
-              </div>
-            </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            数据源类型 *
+          </label>
+          <Select
+            options={dataSourceTypeOptions}
+            value={sourceType}
+            onChange={(value) => {
+              const newType = value as DataSourceType
+              setValue('source_type', newType)
+              setSelectedType(newType)
+            }}
+          />
+          {errors.source_type && (
+            <p className="mt-1 text-sm text-red-600">{errors.source_type.message}</p>
+          )}
+        </div>
 
-            {/* 连接测试区域 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                连接测试
-              </label>
-              <div className="flex items-center space-x-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    // 这里可以添加连接测试逻辑
-                    console.log('Testing connection...')
-                  }}
-                >
-                  测试连接
-                </Button>
-                <span className="text-sm text-gray-500">
-                  点击测试当前配置的连接是否正常
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </TabPanel>
-    </>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            描述
+          </label>
+          <Textarea
+            placeholder="输入数据源描述（可选）"
+            {...register('description')}
+          />
+        </div>
+
+        <div className="pt-4 border-t border-gray-200">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-gray-700">数据源状态</label>
+            <Switch
+              checked={getValues('is_active')}
+              onChange={(checked) => setValue('is_active', checked)}
+              label="启用"
+              description=""
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface ConfigurationContentProps {
+  sourceType: DataSourceType
+  register: any
+  errors: any
+}
+
+function ConfigurationContent({ sourceType, register, errors }: ConfigurationContentProps) {
+  return (
+    <div className="space-y-6">
+      {sourceType === 'sql' && (
+        <SqlConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'doris' && (
+        <DorisConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'api' && (
+        <ApiConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'push' && (
+        <PushConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'csv' && (
+        <CsvConfiguration register={register} errors={errors} />
+      )}
+    </div>
+  )
+}
+
+interface StatusManagementProps {
+  getValues: any
+  setValue: any
+}
+
+function StatusManagement({ getValues, setValue }: StatusManagementProps) {
+  return (
+    <div className="space-y-6">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          数据源状态
+        </label>
+        <Switch
+          checked={getValues('is_active')}
+          onChange={(checked) => setValue('is_active', checked)}
+          label="启用数据源"
+          description="启用后可以在任务中使用此数据源"
+        />
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="text-sm font-medium text-blue-900 mb-2">状态说明</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          <p>• 启用状态：数据源可以正常使用，任务可以访问该数据源</p>
+          <p>• 禁用状态：数据源暂停使用，相关任务将无法执行</p>
+          <p>• 修改状态后，正在运行的任务可能需要重新启动才能生效</p>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          连接测试
+        </label>
+        <div className="flex items-center space-x-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              console.log('Testing connection...')
+            }}
+          >
+            测试连接
+          </Button>
+          <span className="text-sm text-gray-500">
+            点击测试当前配置的连接是否正常
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }
 

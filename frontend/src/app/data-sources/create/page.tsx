@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
-import { Tabs, TabPanel, useTabsContext } from '@/components/ui/Tabs'
+import { ExpandablePanel } from '@/components/ui/ExpandablePanel'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { DataSourceCreate, DataSourceType } from '@/types'
 
@@ -103,10 +103,6 @@ export default function CreateDataSourcePage() {
     }
   }
 
-  const tabItems = [
-    { key: 'basic', label: '基本信息' },
-    { key: 'config', label: '连接配置' },
-  ]
 
   return (
     <AppLayout>
@@ -120,15 +116,23 @@ export default function CreateDataSourcePage() {
       />
 
       <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
-        <Tabs items={tabItems} defaultActiveKey="basic">
-          <DataSourceTabs 
+        <div className="space-y-6">
+          <BasicInfoCard 
             sourceType={sourceType}
             register={register}
             errors={errors}
             setValue={setValue}
             setSelectedType={setSelectedType}
           />
-        </Tabs>
+          
+          <ExpandablePanel title="连接配置" defaultExpanded={true}>
+            <ConfigurationContent
+              sourceType={sourceType}
+              register={register}
+              errors={errors}
+            />
+          </ExpandablePanel>
+        </div>
 
         <div className="mt-8 flex justify-end space-x-4">
           <Button
@@ -147,7 +151,7 @@ export default function CreateDataSourcePage() {
   )
 }
 
-interface DataSourceTabsProps {
+interface BasicInfoCardProps {
   sourceType: DataSourceType
   register: any
   errors: any
@@ -155,89 +159,87 @@ interface DataSourceTabsProps {
   setSelectedType: (type: DataSourceType) => void
 }
 
-function DataSourceTabs({ sourceType, register, errors, setValue, setSelectedType }: DataSourceTabsProps) {
-  const { activeKey } = useTabsContext()
-
+function BasicInfoCard({ sourceType, register, errors, setValue, setSelectedType }: BasicInfoCardProps) {
   return (
-    <>
-      <TabPanel value="basic" activeValue={activeKey}>
-        <Card>
-          <CardHeader>
-            <CardTitle>基本信息</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  数据源名称 *
-                </label>
-                <Input
-                  placeholder="输入数据源名称"
-                  error={!!errors.name}
-                  {...register('name')}
-                />
-                {errors.name && (
-                  <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
-                )}
-              </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>基本信息</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              数据源名称 *
+            </label>
+            <Input
+              placeholder="输入数据源名称"
+              error={!!errors.name}
+              {...register('name')}
+            />
+            {errors.name && (
+              <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
+            )}
+          </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  显示名称
-                </label>
-                <Input
-                  placeholder="输入显示名称（可选）"
-                  {...register('display_name')}
-                />
-              </div>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              显示名称
+            </label>
+            <Input
+              placeholder="输入显示名称（可选）"
+              {...register('display_name')}
+            />
+          </div>
+        </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                数据源类型 *
-              </label>
-              <Select
-                options={dataSourceTypeOptions}
-                value={sourceType}
-                onChange={(value) => {
-                  const newType = value as DataSourceType
-                  setValue('source_type', newType)
-                  setSelectedType(newType)
-                }}
-              />
-              {errors.source_type && (
-                <p className="mt-1 text-sm text-red-600">{errors.source_type.message}</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </TabPanel>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            数据源类型 *
+          </label>
+          <Select
+            options={dataSourceTypeOptions}
+            value={sourceType}
+            onChange={(value) => {
+              const newType = value as DataSourceType
+              setValue('source_type', newType)
+              setSelectedType(newType)
+            }}
+          />
+          {errors.source_type && (
+            <p className="mt-1 text-sm text-red-600">{errors.source_type.message}</p>
+          )}
+        </div>
 
-      <TabPanel value="config" activeValue={activeKey}>
-        <Card>
-          <CardHeader>
-            <CardTitle>连接配置</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {sourceType === 'sql' && (
-              <SqlConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'doris' && (
-              <DorisConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'api' && (
-              <ApiConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'push' && (
-              <PushConfiguration register={register} errors={errors} />
-            )}
-            {sourceType === 'csv' && (
-              <CsvConfiguration register={register} errors={errors} />
-            )}
-          </CardContent>
-        </Card>
-      </TabPanel>
-    </>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface ConfigurationContentProps {
+  sourceType: DataSourceType
+  register: any
+  errors: any
+}
+
+function ConfigurationContent({ sourceType, register, errors }: ConfigurationContentProps) {
+  return (
+    <div className="space-y-6">
+      {sourceType === 'sql' && (
+        <SqlConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'doris' && (
+        <DorisConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'api' && (
+        <ApiConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'push' && (
+        <PushConfiguration register={register} errors={errors} />
+      )}
+      {sourceType === 'csv' && (
+        <CsvConfiguration register={register} errors={errors} />
+      )}
+    </div>
   )
 }
 

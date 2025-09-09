@@ -119,7 +119,7 @@ services:
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-xfNJzed14NcnhR3P3m_qVxzGRdsRcmLRpE5IAXTGWhE=}
       
       # 初始用户配置
       - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
@@ -270,7 +270,7 @@ services:
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-xfNJzed14NcnhR3P3m_qVxzGRdsRcmLRpE5IAXTGWhE=}
       
       # 初始用户配置
       - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
@@ -367,7 +367,7 @@ services:
       
       # 安全配置
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-React-Agent-Encryption-Key-Dev-Only}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-xfNJzed14NcnhR3P3m_qVxzGRdsRcmLRpE5IAXTGWhE=}
       
       # 初始用户配置
       - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}

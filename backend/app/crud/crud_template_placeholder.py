@@ -32,6 +32,20 @@ class CRUDTemplatePlaceholder(
         
         return query.order_by(TemplatePlaceholder.execution_order).all()
     
+    def get_by_template_and_name(
+        self,
+        db: Session,
+        template_id: str,
+        name: str
+    ) -> Optional[TemplatePlaceholder]:
+        """根据模板ID和占位符名称获取占位符"""
+        return db.query(TemplatePlaceholder).filter(
+            and_(
+                TemplatePlaceholder.template_id == template_id,
+                TemplatePlaceholder.placeholder_name == name
+            )
+        ).first()
+    
     def get_by_content_hash(
         self,
         db: Session,

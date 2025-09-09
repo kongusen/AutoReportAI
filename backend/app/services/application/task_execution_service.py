@@ -1,0 +1,802 @@
+"""
+任务执行服务 - 完整的报告生成流水线
+
+集成所有组件，提供完整的任务执行流程：
+1. 占位符验证和修复
+2. ETL数据处理
+3. 图表生成
+4. Word文档导出
+5. 文件存储和邮件发送
+"""
+
+import logging
+import asyncio
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class TaskStatus(Enum):
+    """任务状态"""
+    PENDING = "pending"
+    VALIDATING = "validating"
+    PROCESSING = "processing"
+    GENERATING = "generating"
+    EXPORTING = "exporting"
+    DELIVERING = "delivering"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class TaskExecutionRequest:
+    """任务执行请求"""
+    task_id: str
+    template_id: str
+    data_source_ids: List[str]
+    user_id: str
+    execution_context: Dict[str, Any]
+    time_context: Optional[Dict[str, Any]] = None
+    output_format: str = "docx"
+    delivery_config: Optional[Dict[str, Any]] = None
+    
+    
+@dataclass
+class TaskExecutionResult:
+    """任务执行结果"""
+    task_id: str
+    status: TaskStatus
+    success: bool
+    message: str
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    execution_time_seconds: float = 0.0
+    artifacts: Optional[Dict[str, str]] = None  # 生成的文件路径
+
+
+class TaskExecutionService:
+    """
+    任务执行服务
+    
+    提供完整的报告生成任务执行流水线，集成：
+    - 占位符验证和修复服务
+    - ETL数据处理服务
+    - 图表生成服务
+    - 文档导出服务
+    - 文件存储和邮件服务
+    """
+    
+    def __init__(self, user_id: str = None):
+        # user_id made optional for compatibility with new architecture
+        self.user_id = user_id
+        self.active_tasks: Dict[str, Dict[str, Any]] = {}
+        # Import TimeContextManager here to avoid circular imports
+        from app.utils.time_context import TimeContextManager
+        self.time_context_manager = TimeContextManager()
+        
+    async def execute_task(self, request: TaskExecutionRequest) -> TaskExecutionResult:
+        """
+        执行完整任务流程
+        
+        Args:
+            request: 任务执行请求
+            
+        Returns:
+            任务执行结果
+        """
+        start_time = datetime.now()
+        task_id = request.task_id
+        
+        logger.info(f"开始执行任务: {task_id}")
+        
+        # 初始化任务状态
+        self.active_tasks[task_id] = {
+            "status": TaskStatus.PENDING,
+            "start_time": start_time,
+            "current_step": "初始化",
+            "progress": 0.0
+        }
+        
+        try:
+            # Step 1: 占位符验证和修复
+            await self._update_task_status(task_id, TaskStatus.VALIDATING, "验证和修复占位符", 10.0)
+            placeholder_results = await self._validate_and_repair_placeholders(request)
+            
+            if not placeholder_results["success"]:
+                return self._create_error_result(request, "占位符验证失败", placeholder_results["error"])
+            
+            # Step 2: ETL数据处理
+            await self._update_task_status(task_id, TaskStatus.PROCESSING, "ETL数据处理", 30.0)
+            etl_results = await self._execute_etl_pipeline(request, placeholder_results["data"])
+            
+            if not etl_results["success"]:
+                return self._create_error_result(request, "ETL处理失败", etl_results["error"])
+            
+            # Step 3: 图表生成
+            await self._update_task_status(task_id, TaskStatus.GENERATING, "生成图表", 50.0)
+            chart_results = await self._generate_charts(request, etl_results["data"])
+            
+            if not chart_results["success"]:
+                return self._create_error_result(request, "图表生成失败", chart_results["error"])
+            
+            # Step 4: 文档导出
+            await self._update_task_status(task_id, TaskStatus.EXPORTING, "导出文档", 70.0)
+            export_results = await self._export_document(request, {
+                "placeholder_data": placeholder_results["data"],
+                "etl_data": etl_results["data"],
+                "chart_data": chart_results["data"]
+            })
+            
+            if not export_results["success"]:
+                return self._create_error_result(request, "文档导出失败", export_results["error"])
+            
+            # Step 5: 文件存储和邮件发送
+            await self._update_task_status(task_id, TaskStatus.DELIVERING, "存储和发送", 90.0)
+            delivery_results = await self._deliver_report(request, export_results["data"])
+            
+            if not delivery_results["success"]:
+                return self._create_error_result(request, "报告投递失败", delivery_results["error"])
+            
+            # 完成任务
+            await self._update_task_status(task_id, TaskStatus.COMPLETED, "任务完成", 100.0)
+            
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            # 清理任务状态
+            if task_id in self.active_tasks:
+                del self.active_tasks[task_id]
+            
+            logger.info(f"任务执行完成: {task_id}, 耗时: {execution_time:.2f}秒")
+            
+            return TaskExecutionResult(
+                task_id=task_id,
+                status=TaskStatus.COMPLETED,
+                success=True,
+                message="任务执行成功",
+                data={
+                    "placeholder_results": placeholder_results["data"],
+                    "etl_results": etl_results["data"],
+                    "chart_results": chart_results["data"],
+                    "export_results": export_results["data"],
+                    "delivery_results": delivery_results["data"]
+                },
+                execution_time_seconds=execution_time,
+                artifacts=export_results["data"].get("artifacts", {})
+            )
+            
+        except Exception as e:
+            logger.error(f"任务执行异常: {task_id}, 错误: {e}")
+            return self._create_error_result(request, "任务执行异常", str(e))
+    
+    async def _validate_and_repair_placeholders(
+        self, 
+        request: TaskExecutionRequest
+    ) -> Dict[str, Any]:
+        """验证和修复占位符"""
+        try:
+            from app.services.domain.placeholder.placeholder_validation_service import (
+                create_placeholder_validation_service
+            )
+            
+            validation_service = create_placeholder_validation_service(self.user_id)
+            
+            # 获取数据源信息
+            data_source_info = await self._get_data_source_info(request.data_source_ids[0])
+            
+            # 批量修复模板占位符
+            repair_result = await validation_service.batch_repair_template_placeholders(
+                template_id=request.template_id,
+                data_source_info=data_source_info,
+                time_context=request.time_context,
+                force_repair=request.execution_context.get("force_repair", False)
+            )
+            
+            if repair_result["status"] == "error":
+                return {
+                    "success": False,
+                    "error": repair_result["error"],
+                    "data": None
+                }
+            
+            return {
+                "success": True,
+                "data": repair_result,
+                "message": f"成功验证和修复 {repair_result['repaired_count']} 个占位符"
+            }
+            
+        except Exception as e:
+            logger.error(f"占位符验证修复异常: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+    
+    async def _execute_etl_pipeline(
+        self, 
+        request: TaskExecutionRequest,
+        placeholder_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """执行ETL数据处理"""
+        try:
+            from app.services.data.processing.etl.etl_service import ETLService
+            
+            etl_service = ETLService(user_id=self.user_id)
+            
+            # 为每个数据源执行ETL
+            etl_results = {}
+            for data_source_id in request.data_source_ids:
+                # 构建查询配置
+                query_config = {
+                    "template_id": request.template_id,
+                    "placeholder_data": placeholder_data,
+                    "time_context": request.time_context,
+                    "execution_context": request.execution_context
+                }
+                
+                # 执行数据提取
+                extract_result = await etl_service.extract_data(
+                    data_source_id=data_source_id,
+                    query_config=query_config
+                )
+                
+                if extract_result.get("success"):
+                    # 数据转换
+                    transform_result = await etl_service.transform_data(
+                        raw_data=extract_result["data"],
+                        transformation_config=request.execution_context.get("transform_config", {})
+                    )
+                    
+                    etl_results[data_source_id] = {
+                        "extract": extract_result,
+                        "transform": transform_result
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"数据提取失败: {extract_result.get('error', '未知错误')}",
+                        "data": None
+                    }
+            
+            return {
+                "success": True,
+                "data": etl_results,
+                "message": f"成功处理 {len(etl_results)} 个数据源的数据"
+            }
+            
+        except Exception as e:
+            logger.error(f"ETL处理异常: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+    
+    async def _generate_charts(
+        self, 
+        request: TaskExecutionRequest,
+        etl_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """生成图表"""
+        try:
+            from app.services.infrastructure.visualization.chart_generation_service import (
+                create_chart_generation_service
+            )
+            
+            chart_service = create_chart_generation_service(self.user_id)
+            
+            # 1. 分析模板中的图表占位符
+            chart_placeholders = await chart_service.analyze_chart_placeholders(
+                template_id=request.template_id,
+                placeholder_data={}
+            )
+            
+            if not chart_placeholders:
+                return {
+                    "success": True,
+                    "data": {"charts_generated": 0, "message": "未找到图表占位符"},
+                    "message": "未找到图表占位符，跳过图表生成"
+                }
+            
+            # 2. 为数据生成图表
+            chart_results = await chart_service.generate_charts_for_data(
+                etl_data=etl_data,
+                chart_placeholders=chart_placeholders
+            )
+            
+            # 3. 整理结果
+            successful_charts = [r for r in chart_results if r.success]
+            failed_charts = [r for r in chart_results if not r.success]
+            
+            chart_data = {
+                "charts_generated": len(successful_charts),
+                "failed_charts": len(failed_charts),
+                "chart_files": [r.file_path for r in successful_charts if r.file_path],
+                "chart_results": chart_results,
+                "chart_placeholders": chart_placeholders
+            }
+            
+            return {
+                "success": len(successful_charts) > 0 or len(chart_placeholders) == 0,
+                "data": chart_data,
+                "message": f"成功生成 {len(successful_charts)} 个图表，失败 {len(failed_charts)} 个"
+            }
+            
+        except Exception as e:
+            logger.error(f"图表生成异常: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+    
+    async def _export_document(
+        self, 
+        request: TaskExecutionRequest,
+        processed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """导出文档"""
+        try:
+            from app.services.infrastructure.document.word_export_service import (
+                create_word_export_service, DocumentConfig, DocumentFormat
+            )
+            
+            word_service = create_word_export_service(self.user_id)
+            
+            # 创建文档配置
+            output_format = DocumentFormat.DOCX
+            if request.output_format.lower() == "pdf":
+                output_format = DocumentFormat.PDF
+            elif request.output_format.lower() == "html":
+                output_format = DocumentFormat.HTML
+                
+            doc_config = DocumentConfig(
+                template_id=request.template_id,
+                output_format=output_format,
+                font_name="宋体",
+                font_size=12,
+                line_spacing=1.5
+            )
+            
+            # 导出文档
+            export_result = await word_service.export_report_document(
+                template_id=request.template_id,
+                placeholder_data=processed_data.get("placeholder_data", {}),
+                etl_data=processed_data.get("etl_data", {}),
+                chart_data=processed_data.get("chart_data", {}),
+                config=doc_config
+            )
+            
+            if export_result.success:
+                export_data = {
+                    "document_path": export_result.document_path,
+                    "format": request.output_format,
+                    "size_bytes": export_result.file_size_bytes,
+                    "page_count": export_result.page_count,
+                    "export_time_seconds": export_result.export_time_seconds,
+                    "artifacts": {
+                        "main_document": export_result.document_path,
+                        "charts": processed_data.get("chart_data", {}).get("chart_files", [])
+                    },
+                    "metadata": export_result.metadata
+                }
+                
+                return {
+                    "success": True,
+                    "data": export_data,
+                    "message": f"成功导出文档: {export_result.document_path}"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": export_result.error,
+                    "data": None
+                }
+            
+        except Exception as e:
+            logger.error(f"文档导出异常: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+    
+    async def _deliver_report(
+        self, 
+        request: TaskExecutionRequest,
+        export_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """投递报告（存储和发送邮件）"""
+        try:
+            from app.services.infrastructure.delivery.delivery_service import (
+                create_delivery_service, DeliveryRequest, DeliveryMethod,
+                StorageConfig, EmailConfig, NotificationConfig
+            )
+            
+            delivery_service = create_delivery_service(self.user_id)
+            
+            # 准备文件列表
+            files_to_deliver = []
+            
+            # 主文档
+            if export_data.get("document_path"):
+                files_to_deliver.append(export_data["document_path"])
+            
+            # 图表文件
+            chart_files = export_data.get("artifacts", {}).get("charts", [])
+            files_to_deliver.extend(chart_files)
+            
+            if not files_to_deliver:
+                return {
+                    "success": False,
+                    "error": "没有文件可投递",
+                    "data": None
+                }
+            
+            # 构建投递配置
+            delivery_config = request.delivery_config or {}
+            
+            # 存储配置
+            storage_config = StorageConfig(
+                bucket_name="reports",
+                path_prefix=f"reports/{request.user_id}/",
+                public_access=False,
+                retention_days=90
+            )
+            
+            # 邮件配置
+            email_config = None
+            if delivery_config.get("send_email", False):
+                recipients = delivery_config.get("email_recipients", [])
+                if recipients:
+                    email_config = EmailConfig(
+                        recipients=recipients,
+                        subject=f"报告生成完成 - {request.template_id}",
+                        body=delivery_config.get("email_body", ""),
+                        attach_files=delivery_config.get("attach_files", True),
+                        cc_recipients=delivery_config.get("cc_recipients"),
+                        bcc_recipients=delivery_config.get("bcc_recipients")
+                    )
+            
+            # 通知配置
+            notification_config = NotificationConfig(
+                channels=["system", "web"],
+                message=f"报告生成完成：{request.template_id}",
+                priority="normal"
+            )
+            
+            # 确定投递方式
+            delivery_method = DeliveryMethod.STORAGE_AND_EMAIL
+            if email_config is None:
+                delivery_method = DeliveryMethod.STORAGE_ONLY
+            
+            # 创建投递请求
+            delivery_request = DeliveryRequest(
+                task_id=request.task_id,
+                user_id=request.user_id,
+                files=files_to_deliver,
+                delivery_method=delivery_method,
+                storage_config=storage_config,
+                email_config=email_config,
+                notification_config=notification_config,
+                metadata={
+                    "template_id": request.template_id,
+                    "execution_context": request.execution_context,
+                    "export_metadata": export_data.get("metadata", {})
+                }
+            )
+            
+            # 执行投递
+            delivery_result = await delivery_service.deliver_report(delivery_request)
+            
+            if delivery_result.success:
+                return {
+                    "success": True,
+                    "data": {
+                        "delivery_id": delivery_result.delivery_id,
+                        "status": delivery_result.status.value,
+                        "storage_result": delivery_result.storage_result,
+                        "email_result": delivery_result.email_result,
+                        "notification_result": delivery_result.notification_result,
+                        "download_urls": delivery_result.download_urls,
+                        "delivery_time_seconds": delivery_result.delivery_time_seconds
+                    },
+                    "message": delivery_result.message
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": delivery_result.error,
+                    "data": {
+                        "delivery_id": delivery_result.delivery_id,
+                        "status": delivery_result.status.value
+                    }
+                }
+            
+        except Exception as e:
+            logger.error(f"报告投递异常: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+    
+    async def _get_data_source_info(self, data_source_id: str) -> Dict[str, Any]:
+        """获取数据源信息"""
+        try:
+            from app.crud import data_source as crud_data_source
+            from app.db.session import SessionLocal
+            
+            db = SessionLocal()
+            try:
+                data_source = crud_data_source.get(db, id=data_source_id)
+                if not data_source:
+                    raise ValueError(f"数据源不存在: {data_source_id}")
+                
+                return {
+                    "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                    "name": data_source.name,
+                    "database": getattr(data_source, 'doris_database', 'unknown'),
+                    "fe_hosts": getattr(data_source, 'doris_fe_hosts', ['localhost']),
+                    "username": getattr(data_source, 'doris_username', 'root'),
+                    "password": getattr(data_source, 'doris_password', ''),
+                    "query_port": getattr(data_source, 'doris_query_port', 9030)
+                }
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"获取数据源信息失败: {e}")
+            return {"type": "unknown", "name": "unknown"}
+    
+    async def _update_task_status(
+        self, 
+        task_id: str, 
+        status: TaskStatus, 
+        step: str, 
+        progress: float
+    ):
+        """更新任务状态"""
+        if task_id in self.active_tasks:
+            self.active_tasks[task_id].update({
+                "status": status,
+                "current_step": step,
+                "progress": progress,
+                "updated_at": datetime.now()
+            })
+        logger.debug(f"任务状态更新: {task_id} -> {status.value} ({progress}%): {step}")
+    
+    def _create_error_result(
+        self, 
+        request: TaskExecutionRequest, 
+        message: str, 
+        error: str
+    ) -> TaskExecutionResult:
+        """创建错误结果"""
+        task_id = request.task_id
+        
+        # 更新任务状态为失败
+        if task_id in self.active_tasks:
+            self.active_tasks[task_id]["status"] = TaskStatus.FAILED
+            
+        logger.error(f"任务执行失败: {task_id}, 错误: {error}")
+        
+        return TaskExecutionResult(
+            task_id=task_id,
+            status=TaskStatus.FAILED,
+            success=False,
+            message=message,
+            error=error
+        )
+    
+    def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取任务状态"""
+        return self.active_tasks.get(task_id)
+    
+    def list_active_tasks(self) -> List[Dict[str, Any]]:
+        """列出活跃任务"""
+        return [
+            {
+                "task_id": task_id,
+                **task_info
+            }
+            for task_id, task_info in self.active_tasks.items()
+        ]
+    
+    async def cancel_task(self, task_id: str) -> bool:
+        """取消任务"""
+        if task_id in self.active_tasks:
+            self.active_tasks[task_id]["status"] = TaskStatus.CANCELLED
+            logger.info(f"任务已取消: {task_id}")
+            return True
+        return False
+    
+    def generate_time_context_for_task(
+        self,
+        execution_params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        为任务生成时间上下文
+        
+        Args:
+            execution_params: 任务执行参数，包含report_period, schedule等
+            
+        Returns:
+            生成的时间上下文
+        """
+        try:
+            report_period = execution_params.get("report_period", "monthly")
+            schedule = execution_params.get("schedule")
+            execution_time = None
+            
+            # 尝试解析执行时间
+            if "execution_time" in execution_params:
+                exec_time_str = execution_params["execution_time"]
+                if isinstance(exec_time_str, str):
+                    try:
+                        execution_time = datetime.fromisoformat(exec_time_str.replace('Z', '+00:00'))
+                    except ValueError:
+                        logger.warning(f"Invalid execution_time format: {exec_time_str}")
+            
+            # 生成时间上下文
+            time_context = self.time_context_manager.generate_time_context(
+                report_period=report_period,
+                execution_time=execution_time,
+                schedule=schedule
+            )
+            
+            logger.info(f"Generated time context for {report_period} period")
+            return time_context
+            
+        except Exception as e:
+            logger.error(f"Failed to generate time context: {e}")
+            # 返回基础的时间上下文
+            return {
+                "execution_time": datetime.now().isoformat(),
+                "report_period": execution_params.get("report_period", "monthly"),
+                "period_start": (datetime.now() - timedelta(days=1)).isoformat(),
+                "period_end": (datetime.now() - timedelta(days=1)).isoformat(),
+                "sql_expressions": {"current_date": "CURDATE()"},
+                "fallback": True
+            }
+    
+    def execute_complete_task_flow(
+        self,
+        execution_params: Dict[str, Any],
+        progress_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """
+        执行完整任务流程 - 新的入口方法
+        
+        Args:
+            execution_params: 执行参数
+            progress_callback: 进度回调函数
+            
+        Returns:
+            执行结果
+        """
+        try:
+            # 1. 生成时间上下文
+            time_context = self.generate_time_context_for_task(execution_params)
+            
+            # 2. 构建TaskExecutionRequest
+            request = TaskExecutionRequest(
+                task_id=execution_params["task_id"],
+                template_id=execution_params["template_id"],
+                data_source_ids=[execution_params["data_source_id"]],
+                user_id=execution_params["user_id"],
+                execution_context=execution_params.get("execution_context", {}),
+                time_context=time_context,
+                output_format="docx",
+                delivery_config={
+                    "send_email": bool(execution_params.get("recipients")),
+                    "email_recipients": execution_params.get("recipients", []),
+                    "storage_path": f"reports/{execution_params['task_id']}"
+                }
+            )
+            
+            # 3. 运行异步执行（这需要在异步上下文中运行）
+            import asyncio
+            
+            # 创建事件循环或使用现有的
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # 如果有进度回调，设置为任务状态更新回调
+            if progress_callback:
+                original_update = self._update_task_status
+                async def wrapped_update(task_id, status, message, progress):
+                    result = await original_update(task_id, status, message, progress)
+                    progress_callback(int(progress), message, status.value if hasattr(status, 'value') else str(status))
+                    return result
+                self._update_task_status = wrapped_update
+            
+            # 执行任务
+            if loop.is_running():
+                # 如果循环已在运行，创建任务
+                future = asyncio.create_task(self.execute_task(request))
+                # 注意：在实际环境中，这需要特殊处理
+                logger.warning("Event loop is running, task execution may need adjustment")
+                result = {"success": False, "error": "Event loop running - task queued"}
+            else:
+                result = loop.run_until_complete(self.execute_task(request))
+            
+            # 转换结果格式
+            if hasattr(result, 'success'):
+                return {
+                    "success": result.success,
+                    "status": result.status.value if hasattr(result.status, 'value') else str(result.status),
+                    "message": result.message,
+                    "data": result.data,
+                    "artifacts": result.artifacts,
+                    "execution_time": result.execution_time_seconds,
+                    "error": result.error
+                }
+            else:
+                return result
+            
+        except Exception as e:
+            logger.error(f"Complete task flow execution failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "status": "failed"
+            }
+    
+    async def validate_all_placeholders(
+        self,
+        template_id: str,
+        data_source_id: str,
+        user_id: str,
+        report_period: str = "monthly"
+    ) -> Dict[str, Any]:
+        """
+        验证所有占位符 - 供外部调用
+        
+        Args:
+            template_id: 模板ID
+            data_source_id: 数据源ID  
+            user_id: 用户ID
+            report_period: 报告周期
+            
+        Returns:
+            验证结果
+        """
+        try:
+            # 生成时间上下文
+            time_context = self.time_context_manager.generate_time_context(report_period)
+            
+            # 构建请求
+            request = TaskExecutionRequest(
+                task_id=f"validation_{datetime.now().timestamp()}",
+                template_id=template_id,
+                data_source_ids=[data_source_id],
+                user_id=user_id,
+                execution_context={"mode": "validation_only"},
+                time_context=time_context
+            )
+            
+            # 仅执行验证步骤
+            validation_result = await self._validate_and_repair_placeholders(request)
+            
+            return validation_result
+            
+        except Exception as e:
+            logger.error(f"Placeholder validation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+
+# 工厂函数
+def create_task_execution_service(user_id: str) -> TaskExecutionService:
+    """创建任务执行服务实例"""
+    return TaskExecutionService(user_id=user_id)

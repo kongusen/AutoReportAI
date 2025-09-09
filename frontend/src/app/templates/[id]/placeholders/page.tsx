@@ -17,6 +17,7 @@ import {
   DocumentDuplicateIcon,
   TrashIcon,
   PencilIcon,
+  ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
@@ -45,8 +46,18 @@ export default function TemplatePlaceholdersPage() {
   const [placeholders, setPlaceholders] = useState<NormalizedPlaceholder[]>([])
   const [analytics, setAnalytics] = useState<PlaceholderAnalytics | null>(null)
   const [dataSources, setDataSources] = useState<DataSource[]>([])
+  const [selectedDataSource, setSelectedDataSource] = useState<string>(() => {
+    // 从localStorage恢复数据源选择
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(`selectedDataSource_${templateId}`) || ''
+    }
+    return ''
+  })
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
+  const [analyzingSingle, setAnalyzingSingle] = useState<{[key: string]: boolean}>({})
+  const [testing, setTesting] = useState<{[key: string]: boolean}>({})
+  const [testResults, setTestResults] = useState<{[key: string]: any}>({})
   
   // 编辑状态
   const [editModalOpen, setEditModalOpen] = useState(false)
@@ -58,7 +69,7 @@ export default function TemplatePlaceholdersPage() {
     cache_ttl_hours: 24,
     is_active: true,
     generated_sql: '',
-    agent_config: '{}'
+    description: ''
   })
 
   useEffect(() => {
@@ -67,24 +78,53 @@ export default function TemplatePlaceholdersPage() {
     }
   }, [templateId])
 
+
   const loadData = async () => {
     try {
       setLoading(true)
       
       // 并行加载数据
-      const [templateResult, placeholdersResult, dataSourcesResult] = await Promise.allSettled([
+      const [templateResult, placeholdersResult, savedPlaceholdersResult, dataSourcesResult] = await Promise.allSettled([
         getTemplate(templateId),
         api.get(`/templates/${templateId}/preview`), // 使用预览API获取占位符
+        api.get(`/placeholders/?template_id=${templateId}`), // 获取已保存的占位符配置
         api.get('/data-sources')
       ])
 
-      // 处理占位符数据 - 从预览API获取并规范化
+      // 处理占位符数据 - 合并预览API和已保存的配置
       if (placeholdersResult.status === 'fulfilled') {
         const placeholderData = placeholdersResult.value.data?.data || placeholdersResult.value.data || {}
         const rawPlaceholders = placeholderData.placeholders || []
         
         // 使用工具函数规范化占位符数据
-        const normalizedPlaceholdersData = normalizePlaceholders(rawPlaceholders)
+        let normalizedPlaceholdersData = normalizePlaceholders(rawPlaceholders)
+        
+        // 合并已保存的占位符配置
+        if (savedPlaceholdersResult.status === 'fulfilled') {
+          const savedData = savedPlaceholdersResult.value.data?.data || []
+          const savedPlaceholdersMap = new Map(
+            savedData.map((p: any) => [p.placeholder_name || p.name, p])
+          )
+          
+          // 将保存的分析结果合并到规范化数据中
+          normalizedPlaceholdersData = normalizedPlaceholdersData.map(placeholder => {
+            const savedPlaceholder = savedPlaceholdersMap.get(placeholder.name) as any
+            if (savedPlaceholder) {
+              return {
+                ...placeholder,
+                generated_sql: savedPlaceholder.generated_sql || '',
+                suggested_sql: savedPlaceholder.generated_sql || '',
+                analysis: savedPlaceholder.description || savedPlaceholder.analysis || '',
+                confidence_score: savedPlaceholder.confidence_score || 0,
+                sql_validated: savedPlaceholder.sql_validated || false,
+                agent_analyzed: true,
+                status: 'analyzed'
+              } as any
+            }
+            return placeholder
+          })
+        }
+        
         setPlaceholders(normalizedPlaceholdersData)
         
         // 计算统计信息
@@ -141,6 +181,147 @@ export default function TemplatePlaceholdersPage() {
       toast.error(error.response?.data?.detail || '占位符重新解析失败')
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  // 单个占位符分析
+  const handleAnalyzeSinglePlaceholder = async (placeholder: NormalizedPlaceholder) => {
+    if (!selectedDataSource) {
+      toast.error('请先选择数据源')
+      return
+    }
+
+    const placeholderKey = placeholder.name
+    try {
+      setAnalyzingSingle(prev => ({ ...prev, [placeholderKey]: true }))
+      toast.loading('正在分析占位符...', { duration: 1000 })
+      
+      const response = await api.post('/placeholders/analyze-single', {
+        placeholder_name: placeholder.name,
+        placeholder_text: placeholder.text,
+        template_id: templateId,
+        data_source_id: selectedDataSource,
+        template_context: currentTemplate?.content || ''
+      })
+      
+      // 检查响应结构，API可能直接返回数据而不是包装的格式
+      const result = response.data?.data || response.data
+      const isSuccess = response.data?.success !== undefined ? response.data.success : (result && result.generated_sql)
+      
+      if (isSuccess && result) {
+        // 使用callback形式的setState来确保获取最新状态
+        setPlaceholders(currentPlaceholders => {
+          // 寻找匹配的占位符
+          let targetIndex = -1
+          let matchedPlaceholder = null
+          
+          for (let i = 0; i < currentPlaceholders.length; i++) {
+            const p = currentPlaceholders[i]
+            if (p.name === placeholder.name && p.text === placeholder.text) {
+              targetIndex = i
+              matchedPlaceholder = p
+              break
+            }
+          }
+          
+          if (targetIndex === -1) {
+            return currentPlaceholders
+          }
+          
+          // 创建新的数组，更新指定索引的占位符
+          const updatedPlaceholders = [...currentPlaceholders]
+          updatedPlaceholders[targetIndex] = {
+            ...matchedPlaceholder,
+            generated_sql: result.generated_sql,
+            suggested_sql: result.generated_sql,
+            analysis: result.analysis,
+            agent_analyzed: true,
+            sql_validated: result.sql_validated,
+            confidence_score: result.confidence_score,
+            status: 'analyzed'
+          } as any
+          
+          return updatedPlaceholders
+        })
+        
+        toast.success('占位符分析完成')
+      } else {
+        toast.error(response.data?.message || '分析失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to analyze placeholder:', error)
+      toast.error(error.response?.data?.detail || '分析失败')
+    } finally {
+      setAnalyzingSingle(prev => ({ ...prev, [placeholderKey]: false }))
+    }
+  }
+
+  // SQL测试
+  const handleTestSQL = async (placeholder: NormalizedPlaceholder) => {
+    const sql = (placeholder as any).generated_sql
+    if (!sql) {
+      toast.error('请先分析占位符生成SQL')
+      return
+    }
+
+    // 检查SQL是否包含占位符
+    if (sql.includes('{{') && sql.includes('}}')) {
+      toast.error('SQL包含占位符，无法直接测试。请先在模板中提供具体参数值。')
+      return
+    }
+
+    if (!selectedDataSource) {
+      toast.error('请先选择数据源')
+      return
+    }
+
+    const testKey = placeholder.name
+    try {
+      setTesting(prev => ({ ...prev, [testKey]: true }))
+      toast.loading('正在测试SQL...', { duration: 1000 })
+      
+      const response = await api.post('/placeholders/test-sql', {
+        sql: sql,
+        data_source_id: selectedDataSource,
+        placeholder_name: placeholder.name
+      })
+      
+      if (response.data?.success) {
+        const testResult = response.data.data.test_result
+        setTestResults(prev => ({ ...prev, [testKey]: testResult }))
+        
+        // 更新占位符状态
+        setPlaceholders(prev => 
+          prev.map(p => 
+            p.name === placeholder.name 
+              ? { 
+                  ...p, 
+                  last_test_result: testResult,
+                  status: testResult.success ? 'tested' : 'error'
+                } as any
+              : p
+          )
+        )
+        
+        toast.success('SQL测试完成')
+      } else {
+        toast.error(response.data?.message || 'SQL测试失败')
+      }
+    } catch (error: any) {
+      console.error('Failed to test SQL:', error)
+      toast.error(error.response?.data?.detail || 'SQL测试失败')
+    } finally {
+      setTesting(prev => ({ ...prev, [testKey]: false }))
+    }
+  }
+
+  // 复制SQL到剪贴板
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success('SQL已复制到剪贴板')
+    } catch (error) {
+      toast.error('复制失败')
     }
   }
 
@@ -206,8 +387,8 @@ export default function TemplatePlaceholdersPage() {
       execution_order: 0, // 规范化的占位符没有execution_order，使用默认值
       cache_ttl_hours: 24,
       is_active: true,
-      generated_sql: '',
-      agent_config: '{}'
+      generated_sql: (placeholder as any).generated_sql || '',
+      description: placeholder.description || ''
     })
     setEditModalOpen(true)
   }
@@ -236,17 +417,28 @@ export default function TemplatePlaceholdersPage() {
 
   // 获取占位符状态颜色
   const getPlaceholderStatusBadge = (placeholder: NormalizedPlaceholder) => {
-    // 检查是否已经通过Agent分析
-    const isAnalyzed = analytics && analytics.analyzed_placeholders > 0
-    const hasSql = (placeholder as any).suggested_sql
+    const hasGeneratedSql = (placeholder as any).generated_sql
+    const hasSuggestedSql = (placeholder as any).suggested_sql
     const hasWorkflowData = (placeholder as any).workflow_data
+    const status = (placeholder as any).status
+    const testResult = testResults[placeholder.name]
     
-    if (isAnalyzed) {
-      return <Badge variant="success">Agent已分析</Badge>
-    } else if (hasSql || hasWorkflowData) {
+    // 检查SQL测试状态
+    if (testResult) {
+      if (testResult.success) {
+        return <Badge variant="success">已测试</Badge>
+      } else {
+        return <Badge variant="destructive">测试失败</Badge>
+      }
+    }
+    
+    // 检查是否有SQL生成
+    if (hasGeneratedSql || hasSuggestedSql) {
+      return <Badge variant="success">已解析</Badge>
+    } else if (hasWorkflowData) {
       return <Badge variant="warning">部分分析</Badge>
     } else {
-      return <Badge variant="info">已解析</Badge>
+      return <Badge variant="secondary">未解析</Badge>
     }
   }
 
@@ -302,7 +494,7 @@ export default function TemplatePlaceholdersPage() {
             占位符管理
           </div>
         }
-        description={`模板"${currentTemplate?.name}"的占位符配置和ETL脚本管理`}
+        description={`模板"${currentTemplate?.name}"的占位符配置，生成和测试SQL查询`}
         actions={
           <div className="flex space-x-2">
             <Button
@@ -313,21 +505,60 @@ export default function TemplatePlaceholdersPage() {
               <BeakerIcon className="w-4 h-4 mr-2" />
               {analyzing ? '解析中...' : '重新解析'}
             </Button>
-            {dataSources.length > 0 && (
-              <Select
-                options={dataSources.map(ds => ({
-                  label: `Agent分析 - ${ds.name}`,
-                  value: ds.id
-                }))}
-                placeholder="使用Agent分析"
-                disabled={analyzing}
-                onChange={(value) => handleAgentAnalysis(value as string)}
-                className="min-w-[200px]"
-              />
-            )}
           </div>
         }
       />
+
+      {/* 数据源选择区域 */}
+      <Card className="mb-6">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">数据源配置</h3>
+              <p className="text-sm text-gray-600">选择数据源用于占位符分析和SQL测试</p>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="min-w-[300px]">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  选择数据源:
+                </label>
+                <Select
+                  options={dataSources.map(ds => ({
+                    label: `${ds.name} (${ds.source_type})`,
+                    value: ds.id
+                  }))}
+                  placeholder="请选择数据源..."
+                  value={selectedDataSource}
+                  onChange={(value) => {
+                    setSelectedDataSource(value as string)
+                    // 保存到localStorage
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem(`selectedDataSource_${templateId}`, value as string)
+                    }
+                  }}
+                  className="w-full"
+                />
+              </div>
+              {selectedDataSource && (
+                <div className="flex flex-col items-center">
+                  <div className="text-xs text-green-600 mb-1">✅ 已选择</div>
+                  <div className="text-xs text-gray-500">
+                    {dataSources.find(ds => ds.id === selectedDataSource)?.name}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {selectedDataSource && (
+            <div className="mt-4 p-3 bg-blue-50 rounded-md">
+              <p className="text-sm text-blue-800">
+                💡 现在可以对占位符进行分析和SQL测试了
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 统计概览 */}
       {analytics && (
@@ -412,282 +643,190 @@ export default function TemplatePlaceholdersPage() {
             </CardContent>
           </Card>
         ) : (
-          placeholders.map((placeholder, index) => (
-            <Card key={`${placeholder.name}-${index}`} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
-                    <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
-                      <span className="text-sm font-medium text-gray-600">
-                        {index + 1}
-                      </span>
-                    </div>
+          placeholders.map((placeholder, index) => {
+            const hasGeneratedSql = (placeholder as any).generated_sql || (placeholder as any).suggested_sql
+            const testResult = testResults[placeholder.name]
+            const isTestingThis = testing[placeholder.name]
+            const isAnalyzingThis = analyzingSingle[placeholder.name]
+            
+            
+            return (
+              <Card key={`${placeholder.name}-${index}`} className="hover:shadow-md transition-shadow">
+                {/* 优化的卡片布局 */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6 relative">
+                  {/* 左半部分：基本信息+配置 */}
+                  <div className="space-y-4">
                     <div>
-                      <div className="flex items-center space-x-2 mb-1">
+                      <div className="flex items-center space-x-2 mb-3">
                         <h3 className="text-lg font-medium text-gray-900">
                           {placeholder.name}
                         </h3>
                         <Badge variant={getTypeBadgeVariant(placeholder.type || '变量')}>
                           {placeholder.type || '变量'}
                         </Badge>
+                        {getPlaceholderStatusBadge(placeholder)}
                       </div>
-                      <p className="text-sm text-gray-500">
-                        位置: {placeholder.start} - {placeholder.end}
-                      </p>
-                      <p className={`text-xs px-2 py-1 rounded mt-1 ${
-                        analytics && analytics.analyzed_placeholders > 0 
-                          ? 'text-green-600 bg-green-50' 
-                          : 'text-blue-600 bg-blue-50'
-                      }`}>
-                        {analytics && analytics.analyzed_placeholders > 0 
-                          ? '🤖 Agent分析完成' 
-                          : '✓ 已从模板解析'
-                        }
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {getPlaceholderStatusBadge(placeholder)}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleEditPlaceholder(placeholder)}
-                    >
-                      <PencilIcon className="w-3 h-3 mr-1" />
-                      配置
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              
-              <CardContent className="pt-0">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* 基本信息 */}
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-sm font-medium text-gray-600">占位符文本</label>
-                      <div className="mt-1 p-2 bg-gray-50 rounded-md">
-                        <code className="text-sm text-gray-800">
-                          {placeholder.text}
-                        </code>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">类型</label>
-                        <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.type || '变量'}
-                        </p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">描述</label>
-                        <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.description || placeholder.name}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">起始位置</label>
-                        <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.start}
-                        </p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">结束位置</label>
-                        <p className="text-sm text-gray-900 mt-1">
-                          {placeholder.end}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-gray-600">状态</label>
-                      <div className="mt-1">
-                        {analytics && analytics.analyzed_placeholders > 0 ? (
-                          <Badge variant="success">已分析</Badge>
-                        ) : (
-                          <Badge variant="info">待配置</Badge>
+                      
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">格式</span>
+                          <code className="text-gray-800 bg-gray-100 px-2 py-1 rounded text-xs">
+                            {placeholder.text}
+                          </code>
+                        </div>
+                        {(placeholder as any).confidence_score && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">置信度</span>
+                            <span className="text-sm font-medium">{Math.round((placeholder as any).confidence_score * 100)}%</span>
+                          </div>
                         )}
                       </div>
                     </div>
-                  </div>
-
-                  {/* 配置信息 */}
-                  <div className="space-y-3">
-                    {/* 显示生成的SQL（如果有的话） */}
-                    {(placeholder as any).suggested_sql && (
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">生成的SQL查询</label>
-                        <div className="mt-1 p-3 bg-gray-900 rounded-md overflow-x-auto">
-                          <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
-                            {(placeholder as any).suggested_sql}
-                          </pre>
-                        </div>
-                        <div className="flex items-center mt-2 space-x-2">
-                          <span className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded">
-                            {(placeholder as any).analysis_status || 'AI生成'}
-                          </span>
-                          {(placeholder as any).confidence_score && (
-                            <span className="text-xs text-gray-600">
-                              置信度: {Math.round((placeholder as any).confidence_score * 100)}%
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 显示工作流分析结果 */}
-                    {(placeholder as any).workflow_data && (
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">数据分析结果</label>
-                        <div className="mt-1 p-3 bg-blue-50 rounded-md">
-                          <div className="text-xs text-blue-800">
-                            {(placeholder as any).workflow_data.success ? (
-                              <div className="space-y-1">
-                                <div>✅ 数据连接成功</div>
-                                <div>📊 数据行数: {(placeholder as any).workflow_data.row_count || 0}</div>
-                                {(placeholder as any).workflow_data.query && (
-                                  <div>🔍 执行查询: {(placeholder as any).workflow_data.query}</div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-red-700">
-                                ❌ 数据连接失败: {(placeholder as any).workflow_data.error || '未知错误'}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 显示处理注释 */}
-                    {(placeholder as any).processing_notes && (
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">分析说明</label>
-                        <div className="mt-1 p-2 bg-yellow-50 rounded-md">
-                          <p className="text-xs text-yellow-800">
-                            {(placeholder as any).processing_notes}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 显示分析结果或配置说明 */}
-                    {!(placeholder as any).suggested_sql && !(placeholder as any).workflow_data && (
-                      <div className="p-4 bg-blue-50 rounded-md">
-                        <h4 className="text-sm font-medium text-blue-800 mb-2">配置说明</h4>
-                        <p className="text-xs text-blue-700">
-                          此占位符已从模板中解析出来。要启用SQL查询和数据绑定功能，请：
-                        </p>
-                        <ul className="text-xs text-blue-700 mt-2 space-y-1">
-                          <li>• 点击"配置"按钮设置占位符参数</li>
-                          <li>• 使用"Agent分析"功能自动生成SQL</li>
-                          <li>• 配置数据源连接和查询逻辑</li>
-                        </ul>
-                      </div>
-                    )}
                     
-                    {/* 显示Agent分析结果摘要 */}
-                    {analytics && analytics.analyzed_placeholders > 0 && (
-                      <div className="p-4 bg-green-50 rounded-md">
-                        <h4 className="text-sm font-medium text-green-800 mb-2">Agent分析结果</h4>
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                          <div>
-                            <span className="text-green-700 font-medium">分析方法:</span>
-                            <span className="ml-1 text-green-600">工作流编排</span>
-                          </div>
-                          <div>
-                            <span className="text-green-700 font-medium">置信度:</span>
-                            <span className="ml-1 text-green-600">
-                              {(analytics.average_confidence_score * 100).toFixed(1)}%
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-green-700 font-medium">执行时间:</span>
-                            <span className="ml-1 text-green-600">
-                              {analytics.execution_stats.average_execution_time_ms}ms
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-green-700 font-medium">分析状态:</span>
-                            <span className="ml-1 text-green-600">✅ 完成</span>
-                          </div>
-                        </div>
-                        
-                        {/* 显示数据收集结果 */}
-                        <div className="mt-3 pt-3 border-t border-green-200">
-                          <div className="text-xs text-green-700">
-                            <div className="font-medium mb-1">💾 数据收集状态:</div>
-                            <div className="ml-2 space-y-1">
-                              <div>✅ 数据源连接成功</div>
-                              <div>📊 可用表数量: 0 (数据源中没有可用表)</div>
-                              <div>⚠️ 建议: 请检查数据源配置并确保表已创建</div>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* 显示模板处理结果 */}
-                        <div className="mt-3 pt-3 border-t border-green-200">
-                          <div className="text-xs text-green-700">
-                            <div className="font-medium mb-1">📝 模板处理状态:</div>
-                            <div className="ml-2 space-y-1">
-                              <div>✅ 模板解析完成</div>
-                              <div>🔄 报告状态: 待生成</div>
-                              <div>📈 进度: 0%</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div>
-                      <label className="text-sm font-medium text-gray-600">推荐操作</label>
-                      <div className="mt-2 space-y-2">
-                        <div className="flex items-center space-x-2">
-                          <CogIcon className="w-4 h-4 text-gray-500" />
-                          <span className="text-sm text-gray-600">配置占位符属性</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <BeakerIcon className="w-4 h-4 text-gray-500" />
-                          <span className="text-sm text-gray-600">使用Agent分析生成SQL</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <TableCellsIcon className="w-4 h-4 text-gray-500" />
-                          <span className="text-sm text-gray-600">绑定数据源和表</span>
-                        </div>
-                      </div>
+                    {/* 操作按钮 */}
+                    <div className="pt-4">
+                      {!hasGeneratedSql ? (
+                        <Button
+                          className="w-full"
+                          onClick={() => handleAnalyzeSinglePlaceholder(placeholder)}
+                          disabled={isAnalyzingThis || !selectedDataSource}
+                        >
+                          <BeakerIcon className="w-4 h-4 mr-2" />
+                          {isAnalyzingThis ? '分析中...' : '分析占位符'}
+                        </Button>
+                      ) : (
+                        <Button
+                          className="w-full"
+                          onClick={() => handleTestSQL(placeholder)}
+                          disabled={isTestingThis || !selectedDataSource}
+                        >
+                          <PlayIcon className="w-4 h-4 mr-2" />
+                          {isTestingThis ? '测试中...' : '测试SQL'}
+                        </Button>
+                      )}
                     </div>
                   </div>
-                </div>
-
-                {/* 占位符操作 */}
-                <div className="mt-6 flex space-x-3">
+                  
+                  {/* 右半部分：SQL+测试结果 */}
+                  <div className="space-y-4">
+                    {/* 上半部分：SQL */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium text-gray-700">生成的SQL</h4>
+                        {hasGeneratedSql && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => copyToClipboard(hasGeneratedSql)}
+                          >
+                            <ClipboardDocumentIcon className="w-3 h-3 mr-1" />
+                            复制
+                          </Button>
+                        )}
+                      </div>
+                      
+                      {hasGeneratedSql ? (
+                        <div className="bg-gray-900 rounded-md p-3 max-h-40 overflow-y-auto">
+                          <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
+                            {hasGeneratedSql}
+                          </pre>
+                        </div>
+                      ) : (
+                        <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-md p-4 text-center">
+                          <p className="text-sm text-gray-500">请先分析占位符生成SQL</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* 下半部分：测试结果 */}
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">测试结果</h4>
+                      
+                      {testResult ? (
+                        <div className={`p-3 rounded-md ${testResult.success ? 'bg-green-50' : 'bg-red-50'}`}>
+                          {testResult.success ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center text-green-800">
+                                <CheckCircleIcon className="w-4 h-4 mr-2" />
+                                <span className="text-sm font-medium">
+                                  执行成功 ({testResult.execution_time_ms}ms)
+                                </span>
+                              </div>
+                              <p className="text-xs text-green-700">
+                                返回 {testResult.row_count} 行数据
+                              </p>
+                              
+                              {testResult.data && testResult.data.length > 0 && (
+                                <div className="mt-2">
+                                  <div className="bg-white rounded border overflow-hidden">
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-gray-50">
+                                        <tr>
+                                          {testResult.columns?.slice(0, 3).map((col: string) => (
+                                            <th key={col} className="px-2 py-1 text-left font-medium text-gray-700">
+                                              {col}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {testResult.data.slice(0, 2).map((row: any, i: number) => (
+                                          <tr key={i} className="border-t">
+                                            {Object.values(row).slice(0, 3).map((val: any, j: number) => (
+                                              <td key={j} className="px-2 py-1 text-gray-900">
+                                                {String(val).substring(0, 20)}
+                                                {String(val).length > 20 ? '...' : ''}
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  {testResult.data.length > 2 && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ... 还有 {testResult.data.length - 2} 行数据
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <div className="flex items-center text-red-800">
+                                <ExclamationTriangleIcon className="w-4 h-4 mr-2" />
+                                <span className="text-sm font-medium">执行失败</span>
+                              </div>
+                              <p className="text-xs text-red-700 bg-red-100 p-2 rounded">
+                                {testResult.error}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-gray-50 border border-gray-200 rounded-md p-3 text-center">
+                          <p className="text-sm text-gray-500">尚未测试</p>
+                          {hasGeneratedSql && selectedDataSource && (
+                            <p className="text-xs text-blue-600 mt-1">点击测试SQL按钮</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 右上角编辑按钮 */}
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => handleEditPlaceholder(placeholder)}
+                    className="absolute top-4 right-4"
                   >
-                    <CogIcon className="w-4 h-4 mr-2" />
-                    配置占位符
+                    <PencilIcon className="w-3 h-3" />
                   </Button>
-                  {dataSources.length > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleAgentAnalysis(dataSources[0].id)}
-                      disabled={analyzing}
-                    >
-                      <BeakerIcon className="w-4 h-4 mr-2" />
-                      Agent分析
-                    </Button>
-                  )}
                 </div>
-              </CardContent>
-            </Card>
-          ))
+              </Card>
+            )
+          })
         )}
       </div>
 
@@ -756,18 +895,6 @@ export default function TemplatePlaceholdersPage() {
             <Textarea
               value={editForm.generated_sql}
               onChange={(e) => setEditForm({...editForm, generated_sql: e.target.value})}
-              rows={4}
-              className="font-mono text-sm"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Agent配置 (JSON)
-            </label>
-            <Textarea
-              value={editForm.agent_config}
-              onChange={(e) => setEditForm({...editForm, agent_config: e.target.value})}
               rows={4}
               className="font-mono text-sm"
             />

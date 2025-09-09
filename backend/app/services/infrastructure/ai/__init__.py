@@ -42,47 +42,35 @@ _ai_service_instances: Dict[str, Any] = {}
 # 核心AutoReportAI Agent服务
 # ===========================================
 
-async def get_autoreport_ai_agent():
-    """获取AutoReportAI Agent主编排器"""
-    if 'autoreport_ai_agent' not in _ai_service_instances:
-        from .agents.autoreport_ai_agent import AutoReportAIAgent
-        _ai_service_instances['autoreport_ai_agent'] = AutoReportAIAgent()
-    return _ai_service_instances['autoreport_ai_agent']
+def get_autoreport_ai_agent(user_id: str = None):
+    """获取AI服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
-async def get_placeholder_to_sql_agent():
-    """获取占位符→SQL转换Agent"""
-    if 'placeholder_to_sql_agent' not in _ai_service_instances:
-        from .agents.placeholder_to_sql_agent import PlaceholderToSQLAgent
-        _ai_service_instances['placeholder_to_sql_agent'] = PlaceholderToSQLAgent()
-    return _ai_service_instances['placeholder_to_sql_agent']
+def get_placeholder_to_sql_agent():
+    """获取SQL生成服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
-async def get_task_supplement_agent():
-    """获取任务补充Agent"""
-    if 'task_supplement_agent' not in _ai_service_instances:
-        from .agents.task_supplement_agent import TaskSupplementAgent
-        _ai_service_instances['task_supplement_agent'] = TaskSupplementAgent()
-    return _ai_service_instances['task_supplement_agent']
+def get_task_supplement_agent():
+    """获取任务补充服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
-async def get_multi_context_integrator():
-    """获取多上下文集成器"""
-    if 'multi_context_integrator' not in _ai_service_instances:
-        from .agents.multi_context_integrator import MultiContextIntegrator
-        _ai_service_instances['multi_context_integrator'] = MultiContextIntegrator()
-    return _ai_service_instances['multi_context_integrator']
+def get_multi_context_integrator():
+    """获取上下文集成服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
-async def get_sql_testing_validator():
-    """获取SQL测试验证器"""
-    if 'sql_testing_validator' not in _ai_service_instances:
-        from .agents.sql_testing_validator import SQLTestingValidator
-        _ai_service_instances['sql_testing_validator'] = SQLTestingValidator()
-    return _ai_service_instances['sql_testing_validator']
+def get_sql_testing_validator():
+    """获取SQL验证服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
-async def get_tool_based_agent():
-    """获取基于工具的Agent"""
-    if 'tool_based_agent' not in _ai_service_instances:
-        from .agents.tool_based_agent import ToolBasedAgent
-        _ai_service_instances['tool_based_agent'] = ToolBasedAgent()
-    return _ai_service_instances['tool_based_agent']
+def get_tool_based_agent():
+    """获取工具集成服务(已迁移到ServiceOrchestrator)"""
+    from .service_orchestrator import get_service_orchestrator
+    return get_service_orchestrator()
 
 # ===========================================
 # LLM管理服务
@@ -185,7 +173,7 @@ async def execute_placeholder_with_context(
     """
     try:
         # 获取AutoReportAI Agent主编排器
-        ai_agent = await get_autoreport_ai_agent()
+        ai_agent = await get_autoreport_ai_agent(user_id)
         
         # 执行占位符处理工作流
         result = await ai_agent.process_placeholder_task(

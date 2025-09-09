@@ -30,9 +30,9 @@ class TemplatePlaceholderBase(BaseModel):
     is_required: bool = True
     is_active: bool = True
     
-    # Agent配置
+    # Agent配置 (已简化，不再需要复杂配置)
     agent_workflow_id: Optional[str] = Field(None, max_length=100)
-    agent_config: Optional[Dict[str, Any]] = None
+    # agent_config 字段已移除，现在使用统一的分析流程
     
     # 元数据
     description: Optional[str] = None
@@ -63,6 +63,7 @@ class TemplatePlaceholderUpdate(BaseModel):
     required_fields: Optional[Dict[str, Any]] = None
     generated_sql: Optional[str] = None
     sql_validated: Optional[bool] = None
+    analysis: Optional[str] = None
     
     # 执行配置
     execution_order: Optional[int] = Field(None, ge=1)
@@ -70,9 +71,9 @@ class TemplatePlaceholderUpdate(BaseModel):
     is_required: Optional[bool] = None
     is_active: Optional[bool] = None
     
-    # Agent配置
+    # Agent配置 (已简化，不再需要复杂配置)
     agent_workflow_id: Optional[str] = Field(None, max_length=100)
-    agent_config: Optional[Dict[str, Any]] = None
+    # agent_config 字段已移除，现在使用统一的分析流程
     
     # 元数据
     description: Optional[str] = None
@@ -102,6 +103,43 @@ class TemplatePlaceholderInDBBase(TemplatePlaceholderBase):
 class TemplatePlaceholder(TemplatePlaceholderInDBBase):
     """返回给客户端的模板占位符Schema"""
     pass
+
+
+class TemplatePlaceholderDisplay(BaseModel):
+    """占位符卡片显示Schema - 优化前端显示"""
+    id: str
+    placeholder_name: str = Field(..., description="占位符名称")
+    placeholder_text: str = Field(..., description="占位符文本")
+    placeholder_type: str = Field(..., description="占位符类型")
+    
+    # 核心配置
+    execution_order: int = Field(default=1, description="执行顺序")
+    cache_ttl_hours: int = Field(default=24, description="缓存时间(小时)")
+    is_required: bool = Field(default=True, description="是否必需")
+    is_active: bool = Field(default=True, description="是否启用")
+    
+    # 分析结果
+    generated_sql: Optional[str] = Field(None, description="生成的SQL")
+    analysis: Optional[str] = Field(None, description="分析结果")
+    agent_analyzed: bool = Field(default=False, description="是否已分析")
+    sql_validated: bool = Field(default=False, description="SQL是否验证")
+    confidence_score: float = Field(default=0.0, description="置信度")
+    
+    # 数据库信息
+    target_database: Optional[str] = Field(None, description="目标数据库")
+    target_table: Optional[str] = Field(None, description="目标表")
+    
+    # 时间信息
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    analyzed_at: Optional[datetime] = None
+    
+    # 显示状态
+    status: str = Field(default="pending", description="状态: pending/analyzed/tested/error")
+    last_test_result: Optional[Dict[str, Any]] = Field(None, description="最后测试结果")
+    
+    class Config:
+        from_attributes = True
 
 
 class TemplatePlaceholderInDB(TemplatePlaceholderInDBBase):

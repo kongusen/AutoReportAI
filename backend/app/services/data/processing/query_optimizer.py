@@ -58,12 +58,11 @@ class QueryOptimizer:
         self.query_cache = {}  # 简单内存缓存，生产环境应使用Redis
         self._react_agent = None
         
-    async def _get_react_agent(self):
-        """获取用户专属的React Agent"""
+    async def _get_service_orchestrator(self):
+        """获取ServiceOrchestrator实例"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.agents import create_react_agent
-            self._react_agent = create_react_agent(self.user_id)
-            await self._react_agent.initialize()
+            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            self._react_agent = get_service_orchestrator()
         return self._react_agent
     
     async def optimize_with_react_agent(
@@ -88,31 +87,37 @@ class QueryOptimizer:
         start_time = asyncio.get_event_loop().time()
         
         try:
-            # 使用React Agent进行智能查询优化
-            agent = await self._get_react_agent()
+            # 使用新的Claude Code架构进行智能查询优化
+            orchestrator = await self._get_service_orchestrator()
             
-            optimization_prompt = f"""
-            智能查询优化任务:
-            - 数据源类型: {data_source.source_type.value}
-            - 原始查询: {base_query}
-            - 过滤条件: {filters}
-            - 聚合操作: {aggregations}
-            - 用户ID: {self.user_id}
+            optimization_content = f"""
+            智能查询优化任务
+            
+            数据源类型: {data_source.source_type.value}
+            原始查询: {base_query}
+            过滤条件: {filters}
+            聚合操作: {aggregations}
+            用户ID: {self.user_id}
             
             请分析查询并提供优化建议，考虑数据源特性、索引优化、分区裁剪等策略。
             """
             
-            optimization_result = await agent.chat(optimization_prompt, context={
-                "data_source": data_source.id,
-                "base_query": base_query,
-                "filters": filters,
-                "aggregations": aggregations,
-                "task_type": "query_optimization"
-            })
+            optimization_result = await orchestrator.analyze_template_simple(
+                user_id=str(self.user_id),
+                template_id="query_optimization",
+                template_content=optimization_content,
+                data_source_info={
+                    "type": "query_optimization",
+                    "data_source": str(data_source.id),
+                    "base_query": base_query,
+                    "filters": filters,
+                    "aggregations": aggregations
+                }
+            )
             
             # 模拟查询执行结果（实际中应该执行优化后的查询）
             result_data = pd.DataFrame([{
-                "optimization_result": optimization_result,
+                "optimization_result": str(optimization_result),
                 "query_optimized": True,
                 "user_id": self.user_id
             }])

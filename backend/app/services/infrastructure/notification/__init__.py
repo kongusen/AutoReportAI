@@ -9,15 +9,11 @@ __version__ = "1.0.0"
 
 # 导入核心组件
 from .email_service import EmailService
-from .notification_service import ReactAgentNotificationService, get_notification_service
-
-# 向后兼容
-NotificationService = ReactAgentNotificationService
+from .notification_service import NotificationService, get_notification_service
 
 # 模块导出
 __all__ = [
     "EmailService",
-    "ReactAgentNotificationService",
     "NotificationService",
     "get_notification_service"
 ]

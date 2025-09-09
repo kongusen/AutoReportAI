@@ -14,6 +14,7 @@ from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema, TemplatePreview
 from app.crud import template as crud_template
 from app.services.domain.template.services.template_domain_service import TemplateParser
+from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
 import re
 import logging
 import json
@@ -28,405 +29,7 @@ template_parser = TemplateParser()
 router = APIRouter()
 
 
-async def get_unified_api_adapter(request: Request, db_session: Session, integration_mode: str = "react_agent"):
-    """
-    获取统一API适配器 - 使用简化的React Agent
-    """
-    logger.info("使用简化的React Agent进行模板分析")
-    
-    # 使用简化的React Agent分析系统
-    class ReactAgentAnalysisAdapter:
-        def __init__(self, db: Session, mode: str):
-            self.db = db
-            self.integration_mode = mode
-            logger.info(f"React Agent分析适配器初始化完成: {mode}")
-        
-        async def analyze_with_agent_enhanced(
-            self,
-            template_id: str,
-            data_source_id: str,
-            user_id: str,
-            force_reanalyze: bool = False,
-            optimization_level: str = "enhanced",
-            target_expectations: Optional[Dict] = None
-        ):
-            """使用简化的React Agent进行模板分析"""
-            try:
-                logger.info(f"开始React Agent分析模板 {template_id}")
-                
-                # 验证模板存在性
-                from app.crud import template as crud_template
-                template = crud_template.get(self.db, id=template_id)
-                if not template:
-                    return {
-                        'success': False,
-                        'error': '模板不存在',
-                        'message': '分析失败: 模板不存在'
-                    }
-                
-                # 使用修复后的React Agent进行分析
-                try:
-                    from app.services.infrastructure.ai.agents.fixed_react_agent import create_fixed_react_agent
-                    
-                    # 创建修复后的React Agent
-                    react_agent = await create_fixed_react_agent(user_id=user_id)
-                    
-                    # 构建分析提示
-                    analysis_prompt = f"""
-                    请分析以下模板并提取其占位符信息：
-                    
-                    模板内容：
-                    {template.content}
-                    
-                    模板名称：{template.name}
-                    模板描述：{template.description or '无描述'}
-                    数据源ID：{data_source_id}
-                    
-                    请提供：
-                    1. 识别出的所有占位符及其含义
-                    2. 每个占位符的数据类型建议
-                    3. 可能的SQL查询建议（如果适用）
-                    4. 占位符复杂度评估
-                    5. 数据处理建议
-                    
-                    请以结构化的方式返回分析结果。
-                    """
-                    
-                    # 使用修复后的React Agent进行分析
-                    agent_result = await react_agent.achat(
-                        message=analysis_prompt
-                    )
-                    
-                    # 设置默认结果（模拟工作流结果）
-                    result = {
-                        'success': True,
-                        'results': {
-                            'workflow_result': {
-                                'data_collection': {
-                                    'success': True,
-                                    'message': 'React Agent分析完成'
-                                },
-                                'template_processing': {
-                                    'success': True,
-                                    'agent_analysis': agent_result
-                                }
-                            },
-                            'placeholder_analysis': {
-                                'placeholders': []  # 将在后续处理中填充
-                            }
-                        }
-                    }
-                    
-                except Exception as agent_error:
-                    logger.error(f"React Agent分析失败: {agent_error}")
-                    # 降级到简单模板解析
-                    result = {
-                        'success': True,
-                        'results': {
-                            'workflow_result': {
-                                'data_collection': {
-                                    'success': False,
-                                    'error': f'React Agent失败: {str(agent_error)}'
-                                },
-                                'template_processing': {
-                                    'success': False,
-                                    'error': '降级到基础模板解析'
-                                }
-                            },
-                            'placeholder_analysis': {
-                                'placeholders': []
-                            }
-                        }
-                    }
-                
-                if result.get('success'):
-                    # 成功的工作流结果
-                    workflow_results = result.get('results', {})
-                    placeholder_analysis = workflow_results.get('placeholder_analysis', {})
-                    workflow_result_data = workflow_results.get('workflow_result', {})
-                    
-                    # 从工作流结果中提取数据
-                    data_collection_result = None
-                    template_processing_result = None
-                    
-                    # 检查工作流步骤结果
-                    if isinstance(workflow_result_data, dict):
-                        data_collection_result = workflow_result_data.get('data_collection')
-                        template_processing_result = workflow_result_data.get('template_processing')
-                    
-                    # 构建占位符分析结果
-                    workflow_placeholders = placeholder_analysis.get('placeholders', [])
-                    
-                    # 总是从模板解析并增强占位符
-                    from app.services.domain.template.services.template_domain_service import TemplateParser
-                    parser = TemplateParser()
-                    structure = parser.parse_template_structure(template.content or "")
-                    raw_placeholders = structure.get('placeholders', [])
-                    
-                    # 优先使用工作流返回的占位符，否则使用模板解析结果
-                    source_placeholders = workflow_placeholders if workflow_placeholders else raw_placeholders
-                    logger.info(f"增强占位符处理: 工作流占位符={len(workflow_placeholders)}, 模板占位符={len(raw_placeholders)}, 使用={len(source_placeholders)}个")
-                    
-                    enhanced_placeholders = []
-                    
-                    # 增强占位符信息 - 总是生成SQL和其他增强字段
-                    for i, placeholder in enumerate(source_placeholders):
-                        # 兼容两种数据结构
-                        placeholder_name = placeholder.get('name', '') if isinstance(placeholder, dict) else ''
-                        placeholder_text = placeholder.get('text', '') if isinstance(placeholder, dict) else ''
-                        
-                        enhanced_placeholder = {
-                            'id': f"wf_ph_{i}",
-                            'name': placeholder_name,
-                            'text': placeholder_text,
-                            'type': self._infer_placeholder_type(placeholder_name),
-                            'position': {
-                                'start': placeholder.get('start', 0) if isinstance(placeholder, dict) else 0, 
-                                'end': placeholder.get('end', 0) if isinstance(placeholder, dict) else 0
-                            },
-                            'confidence_score': 0.9,
-                            'suggested_sql': self._generate_enhanced_sql(placeholder_name, data_source_id),
-                            'data_source_id': data_source_id,
-                            'analysis_status': 'workflow_analyzed',
-                            'workflow_data': data_collection_result,
-                            'processing_notes': self._generate_processing_notes(placeholder_name, data_collection_result)
-                        }
-                        enhanced_placeholders.append(enhanced_placeholder)
-                        logger.debug(f"增强占位符 {i}: {placeholder_name} -> SQL已生成")
-                    
-                    placeholders = enhanced_placeholders
-                    
-                    return {
-                        'success': True,
-                        'data': {
-                            'template_id': template_id,
-                            'placeholders': placeholders,
-                            'analysis_summary': {
-                                'total_placeholders': len(placeholders),
-                                'analyzed_placeholders': len(placeholders),
-                                'confidence_average': 0.9,
-                                'analysis_method': 'workflow_orchestration',
-                                'workflow_id': result.get('workflow_id'),
-                                'execution_time': workflow_results.get('execution_time', 0)
-                            },
-                            'workflow_details': {
-                                'data_collection': data_collection_result,
-                                'template_processing': template_processing_result,
-                                'data_source_id': data_source_id,
-                                'analysis_timestamp': datetime.utcnow().isoformat()
-                            }
-                        },
-                        'message': f"工作流分析完成，解析到 {len(placeholders)} 个占位符，并生成了相应的SQL查询"
-                    }
-                else:
-                    # 工作流执行失败，回退到基本解析
-                    logger.warning(f"工作流分析失败，回退到基本解析: {result.get('error')}")
-                    return await self._fallback_basic_analysis(template_id, data_source_id, template)
-                
-            except Exception as e:
-                logger.error(f"工作流分析失败: {e}")
-                # 工作流出现异常，回退到基本解析
-                try:
-                    template = crud_template.get(self.db, id=template_id)
-                    if template:
-                        return await self._fallback_basic_analysis(template_id, data_source_id, template)
-                except:
-                    pass
-                
-                return {
-                    'success': False,
-                    'error': str(e),
-                    'message': f"Agent分析失败: {str(e)}"
-                }
-        
-        async def _fallback_basic_analysis(self, template_id: str, data_source_id: str, template):
-            """基本分析回退方法"""
-            try:
-                # 解析占位符
-                from app.services.domain.template.services.template_domain_service import TemplateParser
-                parser = TemplateParser()
-                structure = parser.parse_template_structure(template.content or "")
-                
-                placeholders = structure.get('placeholders', [])
-                logger.info(f"回退分析解析到 {len(placeholders)} 个占位符")
-                
-                # 构建基本分析结果
-                analyzed_placeholders = []
-                for i, placeholder in enumerate(placeholders):
-                    analyzed_placeholder = {
-                        'id': f"ph_{i}",
-                        'name': placeholder['name'],
-                        'text': placeholder['text'],
-                        'type': self._infer_placeholder_type(placeholder['name']),
-                        'position': {'start': placeholder['start'], 'end': placeholder['end']},
-                        'confidence_score': 0.7,
-                        'suggested_sql': self._generate_mock_sql(placeholder['name']),
-                        'data_source_id': data_source_id,
-                        'analysis_status': 'basic_analysis'
-                    }
-                    analyzed_placeholders.append(analyzed_placeholder)
-                
-                return {
-                    'success': True,
-                    'data': {
-                        'template_id': template_id,
-                        'placeholders': analyzed_placeholders,
-                        'analysis_summary': {
-                            'total_placeholders': len(placeholders),
-                            'analyzed_placeholders': len(analyzed_placeholders),
-                            'confidence_average': 0.7,
-                            'analysis_method': 'fallback_basic'
-                        }
-                    },
-                    'message': f"基本分析完成，解析到 {len(placeholders)} 个占位符"
-                }
-                
-            except Exception as e:
-                logger.error(f"基本分析也失败: {e}")
-                return {
-                    'success': False,
-                    'error': str(e),
-                    'message': f"基本分析失败: {str(e)}"
-                }
-        
-        def _infer_placeholder_type(self, name: str) -> str:
-            """推断占位符类型"""
-            name_lower = name.lower()
-            if any(word in name_lower for word in ['sum', 'count', 'avg', '总', '平均', '累计']):
-                return '统计'
-            elif any(word in name_lower for word in ['chart', '图', 'trend', '趋势']):
-                return '图表'
-            elif any(word in name_lower for word in ['analysis', '分析', '洞察', '建议']):
-                return '分析'
-            elif any(word in name_lower for word in ['date', 'time', '日期', '时间']):
-                return '日期时间'
-            elif any(word in name_lower for word in ['title', '标题']):
-                return '标题'
-            else:
-                return '变量'
-        
-        def _generate_mock_sql(self, placeholder_name: str) -> str:
-            """生成模拟的SQL查询"""
-            name_lower = placeholder_name.lower()
-            
-            if 'count' in name_lower or '数量' in name_lower:
-                return "SELECT COUNT(*) as count_value FROM your_table WHERE conditions;"
-            elif 'sum' in name_lower or '总' in name_lower:
-                return "SELECT SUM(amount) as sum_value FROM your_table WHERE conditions;"
-            elif 'avg' in name_lower or '平均' in name_lower:
-                return "SELECT AVG(value) as avg_value FROM your_table WHERE conditions;"
-            elif 'top' in name_lower or '最' in name_lower:
-                return "SELECT column_name FROM your_table ORDER BY sort_column DESC LIMIT 1;"
-            else:
-                return "SELECT data_column FROM your_table WHERE conditions LIMIT 1;"
-        
-        def _generate_enhanced_sql(self, placeholder_name: str, data_source_id: str) -> str:
-            """生成增强的SQL查询，基于实际数据源"""
-            name_lower = placeholder_name.lower()
-            
-            # 基于占位符名称生成更智能的SQL
-            if 'count' in name_lower or '数量' in name_lower or '件数' in name_lower:
-                return f"""-- 基于数据源 {data_source_id} 生成的统计查询
-SELECT COUNT(*) as total_count 
-FROM main_table 
-WHERE date_column >= DATE_SUB(NOW(), INTERVAL 30 DAY)
--- 可根据实际需求调整时间范围和过滤条件"""
-            elif 'sum' in name_lower or '总' in name_lower or '合计' in name_lower:
-                return f"""-- 基于数据源 {data_source_id} 生成的汇总查询
-SELECT SUM(amount_column) as total_amount 
-FROM main_table 
-WHERE status = 'active' 
-  AND date_column >= DATE_SUB(NOW(), INTERVAL 30 DAY)
--- 可根据实际字段名和业务逻辑调整"""
-            elif 'avg' in name_lower or '平均' in name_lower:
-                return f"""-- 基于数据源 {data_source_id} 生成的平均值查询
-SELECT AVG(value_column) as avg_value 
-FROM main_table 
-WHERE date_column >= DATE_SUB(NOW(), INTERVAL 30 DAY)
--- 建议添加适当的数据过滤条件"""
-            elif 'top' in name_lower or '最' in name_lower or 'max' in name_lower:
-                return f"""-- 基于数据源 {data_source_id} 生成的最值查询
-SELECT column_name, MAX(sort_column) as max_value
-FROM main_table 
-GROUP BY column_name
-ORDER BY max_value DESC 
-LIMIT 10
--- 可调整排序字段和返回数量"""
-            elif 'trend' in name_lower or '趋势' in name_lower:
-                return f"""-- 基于数据源 {data_source_id} 生成的趋势分析查询
-SELECT 
-    DATE(date_column) as analysis_date,
-    COUNT(*) as daily_count,
-    SUM(amount_column) as daily_sum
-FROM main_table 
-WHERE date_column >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-GROUP BY DATE(date_column)
-ORDER BY analysis_date
--- 生成30天趋势数据，可用于图表展示"""
-            else:
-                return f"""-- 基于数据源 {data_source_id} 生成的通用查询
-SELECT 
-    id,
-    name,
-    value,
-    created_time
-FROM main_table 
-WHERE status = 'active'
-ORDER BY created_time DESC
-LIMIT 100
--- 请根据实际表结构和业务需求调整字段名"""
-        
-        def _generate_processing_notes(self, placeholder_name: str, data_collection_result: Any) -> str:
-            """生成处理注释"""
-            notes = [f"占位符 '{placeholder_name}' 已通过工作流系统分析"]
-            
-            if data_collection_result:
-                if isinstance(data_collection_result, dict):
-                    if data_collection_result.get('success'):
-                        row_count = data_collection_result.get('row_count', 0)
-                        if row_count > 0:
-                            notes.append(f"✅ 数据收集成功，获取到 {row_count} 行数据")
-                        else:
-                            notes.append("✅ 数据源连接成功，但暂无可用数据")
-                        
-                        if data_collection_result.get('query'):
-                            notes.append(f"🔍 执行查询: {data_collection_result.get('query')}")
-                        
-                        if data_collection_result.get('warning'):
-                            notes.append(f"⚠️ 注意: {data_collection_result.get('warning')}")
-                    else:
-                        error_msg = data_collection_result.get('error', '未知错误')
-                        if 'Unknown database' in error_msg:
-                            notes.append("⚠️ 数据库配置需要调整，请检查数据库名称")
-                        else:
-                            notes.append(f"❌ 数据收集遇到问题: {error_msg}")
-                        
-                        # 仍然显示消息，如果有的话
-                        if data_collection_result.get('message'):
-                            notes.append(f"💡 {data_collection_result.get('message')}")
-                else:
-                    notes.append("✅ 数据收集步骤已执行")
-            else:
-                notes.append("⏳ 待连接到实际数据源进行数据收集")
-            
-            # 基于占位符类型添加建议
-            name_lower = placeholder_name.lower() if placeholder_name else ''
-            if 'chart' in name_lower or '图表' in name_lower:
-                notes.append("💡 建议: 此占位符适合生成可视化图表")
-            elif 'count' in name_lower or '数量' in name_lower:
-                notes.append("💡 建议: 这是一个数值统计占位符，可用于仪表板显示")
-            elif 'trend' in name_lower or '趋势' in name_lower:
-                notes.append("💡 建议: 适合生成时间序列图表展示趋势变化")
-            elif 'sum' in name_lower or '总' in name_lower:
-                notes.append("💡 建议: 用于金额或数量汇总统计")
-            elif 'avg' in name_lower or '平均' in name_lower:
-                notes.append("💡 建议: 用于平均值计算和趋势分析")
-            
-            return " | ".join(notes)
-    
-    return ReactAgentAnalysisAdapter(db_session, integration_mode)
-
-
+# 旧的get_unified_api_adapter函数已被移除，使用新的Claude Code架构
 @router.get("", response_model=PaginatedResponse[TemplateSchema])
 async def list_templates(
     request: Request,
@@ -625,7 +228,6 @@ async def delete_template(
 
 @router.post("/{template_id}/analyze", response_model=ApiResponse[Dict])
 async def analyze_template_placeholders(
-    request: Request,
     template_id: str,
     data_source_id: str = Query(..., description="数据源ID"),
     force_reanalyze: bool = Query(False, description="强制重新分析"),
@@ -633,7 +235,7 @@ async def analyze_template_placeholders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """分析模板占位符 - 使用React Agent系统"""
+    """分析模板占位符 - 使用新的Claude Code架构"""
     try:
         # 验证模板存在性
         template = crud_template.get_by_id_and_user(
@@ -648,42 +250,112 @@ async def analyze_template_placeholders(
                 detail="模板不存在"
             )
         
-        # 获取API适配器
-        api_adapter = await get_unified_api_adapter(
-            request=request,
-            db_session=db,
-            integration_mode="react_agent"
-        )
+        # 获取数据源信息
+        from app.crud import data_source as crud_data_source
+        data_source_info = None
+        if data_source_id:
+            data_source = crud_data_source.get(db, id=data_source_id)
+            if data_source:
+                data_source_info = {
+                    "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                    "database": getattr(data_source, 'doris_database', 'unknown'),
+                    "name": data_source.name
+                }
         
-        # 执行分析
-        result = await api_adapter.analyze_with_agent_enhanced(
-            template_id=template_id,
-            data_source_id=data_source_id,
+        # 使用新的服务编排器 - Claude Code架构
+        orchestrator = get_service_orchestrator()
+        
+        result = await orchestrator.analyze_template_simple(
             user_id=str(current_user.id),
-            force_reanalyze=force_reanalyze,
-            optimization_level=optimization_level
+            template_id=template_id,
+            template_content=template.content,
+            data_source_info=data_source_info
         )
         
-        if result.get("success"):
-            return ApiResponse(
-                success=True,
-                data=result.get("data", {}),
-                message=result.get("message", "分析完成")
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("message", "分析失败")
-            )
-            
+        logger.info(f"用户 {current_user.id} 使用Claude Code架构分析了模板 {template_id}")
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="模板分析完成"
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"模板占位符分析失败: {e}")
+        logger.error(f"Claude Code架构模板分析失败: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="模板分析失败"
+            detail=f"分析失败: {str(e)}"
         )
+
+
+@router.get("/{template_id}/analyze/stream")
+async def analyze_template_streaming(
+    template_id: str,
+    data_source_id: str = Query(..., description="数据源ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """流式分析模板 - 实时进度反馈"""
+    from fastapi.responses import StreamingResponse
+    import json
+    
+    async def generate():
+        try:
+            # 验证模板存在性
+            template = crud_template.get_by_id_and_user(
+                db=db,
+                id=template_id,
+                user_id=current_user.id
+            )
+            
+            if not template:
+                yield f"data: {json.dumps({'type': 'error', 'error': {'error_message': '模板不存在', 'error_type': 'not_found'}})}\n\n"
+                return
+            
+            # 获取数据源信息
+            from app.crud import data_source as crud_data_source
+            data_source_info = None
+            if data_source_id:
+                data_source = crud_data_source.get(db, id=data_source_id)
+                if data_source:
+                    data_source_info = {
+                        "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                        "database": getattr(data_source, 'doris_database', 'unknown'),
+                        "name": data_source.name
+                    }
+            
+            # 使用新的服务编排器进行流式分析
+            orchestrator = get_service_orchestrator()
+            
+            # 发送开始事件
+            yield f"data: {json.dumps({'type': 'start', 'template_id': template_id, 'user_id': str(current_user.id)})}\n\n"
+            
+            async for message in orchestrator.analyze_template_streaming(
+                user_id=str(current_user.id),
+                template_id=template_id,
+                template_content=template.content,
+                data_source_info=data_source_info
+            ):
+                yield f"data: {json.dumps(message)}\n\n"
+            
+            # 发送完成事件
+            yield f"data: {json.dumps({'type': 'complete', 'message': '分析完成'})}\n\n"
+                
+        except Exception as e:
+            logger.error(f"流式分析失败: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': {'error_message': str(e), 'error_type': 'streaming_error'}})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache", 
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream"
+        }
+    )
 
 
 @router.get("/{template_id}/preview", response_model=ApiResponse[TemplatePreview])
@@ -1026,7 +698,6 @@ async def reparse_template_placeholders(
 
 @router.post("/{template_id}/analyze-with-agent", response_model=ApiResponse[Dict])
 async def analyze_with_agent(
-    request: Request,
     template_id: str,
     data_source_id: str = Query(..., description="数据源ID"),
     force_reanalyze: bool = Query(False, description="强制重新分析"),
@@ -1034,7 +705,7 @@ async def analyze_with_agent(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """使用AI Agent分析模板"""
+    """使用AI Agent分析模板 - 已升级到Claude Code架构"""
     try:
         # 验证模板存在性
         template = crud_template.get_by_id_and_user(
@@ -1049,35 +720,35 @@ async def analyze_with_agent(
                 detail="模板不存在"
             )
         
-        # 获取API适配器
-        api_adapter = await get_unified_api_adapter(
-            request=request,
-            db_session=db,
-            integration_mode="react_agent"
-        )
+        # 获取数据源信息
+        from app.crud import data_source as crud_data_source
+        data_source_info = None
+        if data_source_id:
+            data_source = crud_data_source.get(db, id=data_source_id)
+            if data_source:
+                data_source_info = {
+                    "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                    "database": getattr(data_source, 'doris_database', 'unknown'),
+                    "name": data_source.name
+                }
         
-        # 执行分析
-        result = await api_adapter.analyze_with_agent_enhanced(
-            template_id=template_id,
-            data_source_id=data_source_id,
+        # 使用新的服务编排器 - Claude Code架构
+        orchestrator = get_service_orchestrator()
+        
+        result = await orchestrator.analyze_template_simple(
             user_id=str(current_user.id),
-            force_reanalyze=force_reanalyze,
-            optimization_level=optimization_level
+            template_id=template_id,
+            template_content=template.content,
+            data_source_info=data_source_info
         )
         
-        logger.info(f"用户 {current_user.id} 使用Agent分析了模板 {template_id}")
+        logger.info(f"用户 {current_user.id} 使用Claude Code架构分析了模板 {template_id}")
         
-        if result.get("success"):
-            return ApiResponse(
-                success=True,
-                data=result.get("data", {}),
-                message=result.get("message", "Agent分析完成")
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.get("message", "Agent分析失败")
-            )
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="Agent分析完成"
+        )
             
     except HTTPException:
         raise
@@ -1087,3 +758,123 @@ async def analyze_with_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Agent分析失败"
         )
+
+
+@router.post("/{template_id}/analyze-v2", response_model=ApiResponse[Dict])
+async def analyze_template_with_claude_code_architecture(
+    template_id: str,
+    data_source_id: str = Query(..., description="数据源ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """使用新的Claude Code架构分析模板"""
+    try:
+        # 验证模板存在性
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+        
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+        
+        # 获取数据源信息
+        from app.crud import data_source as crud_data_source
+        data_source_info = None
+        if data_source_id:
+            data_source = crud_data_source.get(db, id=data_source_id)
+            if data_source:
+                data_source_info = {
+                    "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                    "database": getattr(data_source, 'doris_database', 'unknown'),
+                    "name": data_source.name
+                }
+        
+        # 使用新的服务编排器
+        orchestrator = get_service_orchestrator()
+        
+        result = await orchestrator.analyze_template_simple(
+            user_id=str(current_user.id),
+            template_id=template_id,
+            template_content=template.content,
+            data_source_info=data_source_info
+        )
+        
+        logger.info(f"用户 {current_user.id} 使用新架构分析了模板 {template_id}")
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="使用Claude Code架构分析完成"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"新架构模板分析失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"新架构分析失败: {str(e)}"
+        )
+
+
+@router.get("/{template_id}/analyze-v2/stream")
+async def analyze_template_streaming_with_claude_code_architecture(
+    template_id: str,
+    data_source_id: str = Query(..., description="数据源ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """流式分析模板 - 使用新架构"""
+    from fastapi.responses import StreamingResponse
+    import json
+    
+    async def generate():
+        try:
+            # 验证模板存在性
+            template = crud_template.get_by_id_and_user(
+                db=db,
+                id=template_id,
+                user_id=current_user.id
+            )
+            
+            if not template:
+                yield f"data: {json.dumps({'error': '模板不存在'})}\n\n"
+                return
+            
+            # 获取数据源信息
+            from app.crud import data_source as crud_data_source
+            data_source_info = None
+            if data_source_id:
+                data_source = crud_data_source.get(db, id=data_source_id)
+                if data_source:
+                    data_source_info = {
+                        "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                        "database": getattr(data_source, 'doris_database', 'unknown'),
+                        "name": data_source.name
+                    }
+            
+            # 使用新的服务编排器进行流式分析
+            orchestrator = get_service_orchestrator()
+            
+            async for message in orchestrator.analyze_template_streaming(
+                user_id=str(current_user.id),
+                template_id=template_id,
+                template_content=template.content,
+                data_source_info=data_source_info
+            ):
+                yield f"data: {json.dumps(message)}\n\n"
+                
+        except Exception as e:
+            logger.error(f"流式分析失败: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+    )

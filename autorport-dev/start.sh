@@ -106,15 +106,21 @@ setup_env() {
     if [ "$local_ip" != "localhost" ]; then
         echo -e "${YELLOW}更新环境配置中的IP地址...${NC}"
         
-        # 替换前端API地址
-        sed -i.bak "s|NEXT_PUBLIC_API_URL=http://.*:8000/api/v1|NEXT_PUBLIC_API_URL=http://$local_ip:8000/api/v1|g" .env
-        sed -i.bak "s|NEXT_PUBLIC_WS_URL=ws://.*:8000/ws|NEXT_PUBLIC_WS_URL=ws://$local_ip:8000/ws|g" .env
-        
-        # 更新SERVER_IP
+        # 替换SERVER_IP
         sed -i.bak "s|SERVER_IP=.*|SERVER_IP=$local_ip|g" .env
         
-        # 更新CORS配置
-        local cors_origins="http://localhost:3000,http://127.0.0.1:3000,http://$local_ip:3000"
+        # 处理不同的前端API地址格式
+        if grep -q "NEXT_PUBLIC_API_URL=http://\${SERVER_IP}" .env; then
+            # 如果使用变量格式，直接进行变量替换
+            sed -i.bak "s|\${SERVER_IP}|$local_ip|g" .env
+        else
+            # 如果使用固定格式，替换为实际IP
+            sed -i.bak "s|NEXT_PUBLIC_API_URL=http://.*:8000/api/v1|NEXT_PUBLIC_API_URL=http://$local_ip:8000/api/v1|g" .env
+            sed -i.bak "s|NEXT_PUBLIC_WS_URL=ws://.*:8000/ws|NEXT_PUBLIC_WS_URL=ws://$local_ip:8000/ws|g" .env
+        fi
+        
+        # 更新CORS配置，支持局域网访问
+        local cors_origins="http://localhost:3000,http://127.0.0.1:3000,http://$local_ip:3000,http://0.0.0.0:3000"
         sed -i.bak "s|ALLOWED_ORIGINS=.*|ALLOWED_ORIGINS=$cors_origins|g" .env
         
         # 删除备份文件

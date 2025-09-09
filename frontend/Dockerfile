@@ -4,10 +4,26 @@
 # 支持React Agent智能UI和实时WebSocket通信
 # ==========================================
 
+# 代理构建参数声明
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG NO_PROXY
+ARG no_proxy
+
 # ==========================================
 # 基础Node.js镜像
 # ==========================================
 FROM node:18-alpine AS base
+
+# 设置代理环境变量
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${http_proxy} \
+    https_proxy=${https_proxy} \
+    NO_PROXY=${NO_PROXY} \
+    no_proxy=${no_proxy}
 
 # 安装系统依赖
 RUN apk add --no-cache \

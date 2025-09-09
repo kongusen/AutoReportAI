@@ -78,15 +78,79 @@ get_local_ip() {
     echo "$ip"
 }
 
+# 交互式环境配置
+configure_env_interactive() {
+    local detected_ip=$1
+    echo -e "${CYAN}${GEAR} 交互式环境配置${NC}"
+    echo ""
+    
+    # IP地址配置
+    echo -e "${YELLOW}1. 服务器IP配置${NC}"
+    echo -e "自动检测到的IP: ${GREEN}$detected_ip${NC}"
+    read -p "是否使用此IP？(Y/n): " use_detected_ip
+    
+    local server_ip="$detected_ip"
+    if [[ "$use_detected_ip" =~ ^[Nn]$ ]]; then
+        read -p "请输入服务器IP地址: " server_ip
+        if [ -z "$server_ip" ]; then
+            server_ip="$detected_ip"
+        fi
+    fi
+    
+    # 数据库配置
+    echo ""
+    echo -e "${YELLOW}2. 数据库配置${NC}"
+    read -p "数据库密码 (默认: postgres123): " db_password
+    db_password=${db_password:-postgres123}
+    
+    # 管理员配置
+    echo ""
+    echo -e "${YELLOW}3. 管理员账户配置${NC}"
+    read -p "管理员用户名 (默认: admin): " admin_user
+    admin_user=${admin_user:-admin}
+    
+    read -p "管理员邮箱 (默认: admin@autoreportai.com): " admin_email
+    admin_email=${admin_email:-admin@autoreportai.com}
+    
+    read -p "管理员密码 (默认: password): " admin_password
+    admin_password=${admin_password:-password}
+    
+    # 应用配置到.env文件
+    echo ""
+    echo -e "${YELLOW}应用配置...${NC}"
+    
+    # 更新IP配置
+    if [ "$server_ip" != "localhost" ]; then
+        sed -i.bak "s|SERVER_IP=.*|SERVER_IP=$server_ip|g" .env
+        rm -f .env.bak
+    fi
+    
+    # 更新数据库密码
+    sed -i.bak "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$db_password|g" .env
+    sed -i.bak "s|postgres123|$db_password|g" .env
+    rm -f .env.bak
+    
+    # 更新管理员配置
+    sed -i.bak "s|FIRST_SUPERUSER=.*|FIRST_SUPERUSER=$admin_user|g" .env
+    sed -i.bak "s|FIRST_SUPERUSER_EMAIL=.*|FIRST_SUPERUSER_EMAIL=$admin_email|g" .env
+    sed -i.bak "s|FIRST_SUPERUSER_PASSWORD=.*|FIRST_SUPERUSER_PASSWORD=$admin_password|g" .env
+    rm -f .env.bak
+    
+    echo -e "${GREEN}${CHECKMARK} 配置已应用${NC}"
+    echo ""
+}
+
 # 自动配置环境文件
 setup_env() {
     local env_mode=$1
+    local interactive=${2:-false}
     local compose_file=""
     local env_example=""
     local local_ip=$(get_local_ip)
     
     echo -e "${YELLOW}${GEAR} 配置环境 ($env_mode)${NC}"
     echo -e "检测到本机IP: ${GREEN}$local_ip${NC}"
+    echo ""
     
     case $env_mode in
         "deployment")
@@ -109,9 +173,29 @@ setup_env() {
         return 1
     fi
     
+    # 检查是否已存在.env文件
+    if [ -f ".env" ]; then
+        echo -e "${YELLOW}发现现有的 .env 文件${NC}"
+        if [ "$interactive" = "true" ]; then
+            read -p "是否覆盖现有的 .env 文件？(y/N): " overwrite_env
+            if [[ ! "$overwrite_env" =~ ^[Yy]$ ]]; then
+                echo -e "${CYAN}使用现有的 .env 文件${NC}"
+                export COMPOSE_FILE="$compose_file"
+                return 0
+            fi
+        else
+            echo -e "${YELLOW}覆盖现有的 .env 文件...${NC}"
+        fi
+    fi
+    
     # 创建.env文件
     echo -e "${YELLOW}基于 $env_example 创建 .env 文件...${NC}"
     cp "$env_example" .env
+    
+    # 交互式配置（如果启用）
+    if [ "$interactive" = "true" ]; then
+        configure_env_interactive "$local_ip"
+    fi
     
     # 自动替换IP地址相关配置
     if [ "$local_ip" != "localhost" ]; then
@@ -150,12 +234,23 @@ setup_env() {
     # 配置代理模式特定设置
     if [ "$env_mode" = "proxy" ]; then
         echo -e "${YELLOW}检测代理设置...${NC}"
-        if [ -n "$http_proxy" ] || [ -n "$HTTP_PROXY" ]; then
-            proxy_url="${http_proxy:-$HTTP_PROXY}"
-            echo -e "${GREEN}检测到代理: $proxy_url${NC}"
-            sed -i.bak "s|BUILD_HTTP_PROXY=.*|BUILD_HTTP_PROXY=$proxy_url|g" .env
-            sed -i.bak "s|BUILD_HTTPS_PROXY=.*|BUILD_HTTPS_PROXY=$proxy_url|g" .env
+        local http_proxy_url="${http_proxy:-$HTTP_PROXY}"
+        local https_proxy_url="${https_proxy:-$HTTPS_PROXY:-$http_proxy_url}"
+        
+        if [ -n "$http_proxy_url" ]; then
+            echo -e "${GREEN}检测到HTTP代理: $http_proxy_url${NC}"
+            sed -i.bak "s|BUILD_HTTP_PROXY=.*|BUILD_HTTP_PROXY=$http_proxy_url|g" .env
             rm -f .env.bak
+        fi
+        
+        if [ -n "$https_proxy_url" ]; then
+            echo -e "${GREEN}检测到HTTPS代理: $https_proxy_url${NC}"
+            sed -i.bak "s|BUILD_HTTPS_PROXY=.*|BUILD_HTTPS_PROXY=$https_proxy_url|g" .env
+            rm -f .env.bak
+        fi
+        
+        if [ -z "$http_proxy_url" ] && [ -z "$https_proxy_url" ]; then
+            echo -e "${YELLOW}未检测到代理设置，将使用配置文件中的默认值${NC}"
         fi
     fi
     
@@ -181,6 +276,11 @@ show_menu() {
     echo -e "${PACKAGE} 部署环境:"
     echo -e "  ${GREEN}11)${NC} ${ROCKET} 部署环境启动 (自动配置IP)"
     echo -e "  ${GREEN}12)${NC} ${ROCKET} 代理环境启动 (企业网络)"
+    echo -e "  ${GREEN}14)${NC} ${GEAR} 交互式配置启动 (自定义配置)"
+    echo ""
+    echo -e "${PACKAGE} 配置管理:"
+    echo -e "  ${GREEN}15)${NC} ${GEAR} 配置环境文件 (.env)"
+    echo -e "  ${GREEN}16)${NC} ${GEAR} 查看当前配置"
     echo ""
     echo -e "${PACKAGE} 管理操作:"
     echo -e "  ${GREEN}6)${NC} ${PACKAGE} 查看服务状态"
@@ -246,12 +346,142 @@ start_deployment() {
     echo ""
 }
 
+# 交互式配置启动
+start_interactive() {
+    echo -e "${GREEN}${GEAR} 交互式配置启动${NC}"
+    echo ""
+    
+    # 选择环境模式
+    echo -e "${CYAN}选择环境模式:${NC}"
+    echo "1) 标准部署环境"
+    echo "2) 代理环境 (企业网络)"
+    echo ""
+    read -p "请选择 (1-2): " env_mode_choice
+    
+    local env_mode=""
+    case $env_mode_choice in
+        1) env_mode="deployment" ;;
+        2) env_mode="proxy" ;;
+        *) 
+            echo -e "${RED}无效选择${NC}"
+            return 1
+            ;;
+    esac
+    
+    # 检查代理环境（如果选择了代理模式）
+    if [ "$env_mode" = "proxy" ]; then
+        if [ -z "$http_proxy" ] && [ -z "$HTTP_PROXY" ]; then
+            echo -e "${YELLOW}⚠️  未检测到代理设置${NC}"
+            echo -e "${CYAN}如果需要代理，请先设置环境变量：${NC}"
+            echo -e "  export http_proxy=http://your-proxy:port"
+            echo -e "  export https_proxy=http://your-proxy:port"
+            echo ""
+        fi
+    fi
+    
+    # 交互式环境配置
+    setup_env "$env_mode" "true"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}${CROSS} 环境配置失败${NC}"
+        return 1
+    fi
+    
+    # 确保目录存在
+    ensure_directories
+    
+    # 启动服务
+    echo -e "${GREEN}启动所有服务...${NC}"
+    local compose_cmd=$(get_docker_compose_cmd)
+    if [ -z "$compose_cmd" ]; then
+        echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
+        return 1
+    fi
+    
+    if [ "$env_mode" = "proxy" ]; then
+        eval "$compose_cmd -f docker-compose.proxy.yml up -d"
+    else
+        eval "$compose_cmd up -d"
+    fi
+    
+    # 显示状态
+    show_services_status
+    
+    echo -e "${CYAN}交互式配置启动完成！${NC}"
+}
+
+# 配置环境文件
+configure_env_only() {
+    echo -e "${GREEN}${GEAR} 配置环境文件${NC}"
+    echo ""
+    
+    # 选择环境模式
+    echo -e "${CYAN}选择环境模式:${NC}"
+    echo "1) 标准部署环境 (.env.example)"
+    echo "2) 代理环境 (.env.proxy.example)"
+    echo ""
+    read -p "请选择 (1-2): " env_mode_choice
+    
+    local env_mode=""
+    case $env_mode_choice in
+        1) env_mode="deployment" ;;
+        2) env_mode="proxy" ;;
+        *) 
+            echo -e "${RED}无效选择${NC}"
+            return 1
+            ;;
+    esac
+    
+    # 只进行环境配置，不启动服务
+    setup_env "$env_mode" "true"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}${CHECKMARK} 环境配置完成，可以运行启动命令启动服务${NC}"
+    fi
+}
+
+# 查看当前配置
+show_current_config() {
+    echo -e "${CYAN}${GEAR} 当前环境配置${NC}"
+    echo ""
+    
+    if [ ! -f ".env" ]; then
+        echo -e "${RED}未找到 .env 文件${NC}"
+        echo -e "${YELLOW}请先运行配置选项创建环境文件${NC}"
+        return 1
+    fi
+    
+    echo -e "${YELLOW}基础配置:${NC}"
+    echo -e "  • 项目名: $(grep "PROJECT_NAME=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 环境模式: $(grep "NODE_ENV=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 服务器IP: $(grep "SERVER_IP=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 前端端口: $(grep "FRONTEND_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 后端端口: $(grep "PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo ""
+    
+    echo -e "${YELLOW}数据库配置:${NC}"
+    echo -e "  • 数据库名: $(grep "POSTGRES_DB=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 数据库用户: $(grep "POSTGRES_USER=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo ""
+    
+    echo -e "${YELLOW}管理员配置:${NC}"
+    echo -e "  • 用户名: $(grep "FIRST_SUPERUSER=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo -e "  • 邮箱: $(grep "FIRST_SUPERUSER_EMAIL=" .env 2>/dev/null | cut -d'=' -f2 || echo "N/A")"
+    echo ""
+}
+
 # 代理环境启动 (企业网络)
 start_proxy() {
     echo -e "${GREEN}${ROCKET} 代理环境启动 (企业网络)...${NC}"
     
     # 检查代理环境
-    if [ -z "$http_proxy" ] && [ -z "$HTTP_PROXY" ]; then
+    local has_proxy=false
+    if [ -n "$http_proxy" ] || [ -n "$HTTP_PROXY" ] || [ -n "$https_proxy" ] || [ -n "$HTTPS_PROXY" ]; then
+        has_proxy=true
+        echo -e "${GREEN}检测到代理配置:${NC}"
+        [ -n "$http_proxy" ] && echo -e "  • http_proxy: $http_proxy"
+        [ -n "$HTTP_PROXY" ] && echo -e "  • HTTP_PROXY: $HTTP_PROXY"
+        [ -n "$https_proxy" ] && echo -e "  • https_proxy: $https_proxy"
+        [ -n "$HTTPS_PROXY" ] && echo -e "  • HTTPS_PROXY: $HTTPS_PROXY"
+    else
         echo -e "${YELLOW}⚠️  未检测到代理设置${NC}"
         echo -e "${CYAN}如果需要代理，请先设置环境变量：${NC}"
         echo -e "  export http_proxy=http://your-proxy:port"
@@ -627,7 +857,7 @@ main() {
     if [ $# -eq 0 ]; then
         while true; do
             show_menu
-            read -p "请选择 (0-13): " choice
+            read -p "请选择 (0-16): " choice
             echo ""
             
             case $choice in
@@ -673,6 +903,15 @@ main() {
                 13)
                     clean_environment
                     ;;
+                14)
+                    start_interactive
+                    ;;
+                15)
+                    configure_env_only
+                    ;;
+                16)
+                    show_current_config
+                    ;;
                 0)
                     echo -e "${GREEN}再见！${NC}"
                     exit 0
@@ -712,6 +951,15 @@ main() {
                 ;;
             "proxy")
                 start_proxy
+                ;;
+            "interactive"|"config")
+                start_interactive
+                ;;
+            "configure"|"setup")
+                configure_env_only
+                ;;
+            "show-config"|"info")
+                show_current_config
                 ;;
             "status")
                 show_services_status
@@ -756,23 +1004,28 @@ main() {
                 echo "用法: $0 [选项]"
                 echo ""
                 echo "基础选项:"
-                echo "  full, all       - 启动完整开发环境"
-                echo "  basic, base     - 启动基础服务"
-                echo "  backend, api    - 启动后端服务"
-                echo "  frontend, ui    - 启动前端服务"
-                echo "  tools          - 启动开发工具"
+                echo "  full, all         - 启动完整开发环境"
+                echo "  basic, base       - 启动基础服务"
+                echo "  backend, api      - 启动后端服务"
+                echo "  frontend, ui      - 启动前端服务"
+                echo "  tools            - 启动开发工具"
                 echo ""
                 echo "部署选项:"
                 echo "  deployment, deploy - 部署环境启动 (自动配置IP)"
                 echo "  proxy             - 代理环境启动 (企业网络)"
+                echo "  interactive, config - 交互式配置启动"
+                echo ""
+                echo "配置选项:"
+                echo "  configure, setup  - 仅配置环境文件 (.env)"
+                echo "  show-config, info - 查看当前配置"
                 echo ""
                 echo "管理选项:"
-                echo "  status         - 查看服务状态"
-                echo "  stop           - 停止所有服务"
-                echo "  logs           - 查看服务日志"
-                echo "  restart        - 重启服务"
-                echo "  rebuild        - 重建并重启"
-                echo "  clean          - 清理环境数据"
+                echo "  status           - 查看服务状态"
+                echo "  stop             - 停止所有服务"
+                echo "  logs             - 查看服务日志"
+                echo "  restart          - 重启服务"
+                echo "  rebuild          - 重建并重启"
+                echo "  clean            - 清理环境数据"
                 echo ""
                 echo "或运行不带参数进入交互模式"
                 ;;

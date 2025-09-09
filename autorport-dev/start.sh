@@ -40,7 +40,6 @@ check_requirements() {
         echo -e "${RED}${CROSS} Docker Compose 未安装${NC}"
         exit 1
     fi
-    fi
     
     echo -e "${GREEN}${CHECKMARK} 系统要求检查通过${NC}"
     echo ""

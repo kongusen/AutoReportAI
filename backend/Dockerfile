@@ -127,11 +127,15 @@ FROM dependencies AS development
 # 复制应用代码
 COPY --chown=appuser:appuser . .
 
-# 创建React Agent架构必要目录
+# 创建React Agent架构必要目录并设置权限
 RUN mkdir -p logs cache storage temp uploads && \
     mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
     mkdir -p storage/templates storage/reports storage/exports && \
-    chown -R appuser:appuser logs cache storage temp uploads
+    # 设置目录权限，确保appuser有完全访问权限
+    chown -R appuser:appuser logs cache storage temp uploads && \
+    chmod -R 755 logs cache storage temp uploads && \
+    # 为关键目录设置更宽松的权限以避免容器权限问题
+    chmod -R 777 logs cache storage || echo "权限设置警告: 某些目录权限设置可能失败"
 
 # 复制启动脚本
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/
@@ -164,10 +168,12 @@ FROM dependencies AS worker
 # 复制应用代码
 COPY --chown=appuser:appuser . .
 
-# 创建必要目录
+# 创建必要目录并设置权限
 RUN mkdir -p logs cache storage temp uploads && \
     mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
-    chown -R appuser:appuser logs cache storage temp uploads
+    chown -R appuser:appuser logs cache storage temp uploads && \
+    chmod -R 755 logs cache storage temp uploads && \
+    chmod -R 777 logs cache storage || echo "Worker权限设置警告"
 
 # 复制健康检查脚本
 COPY --chown=appuser:appuser healthcheck_worker.sh /usr/local/bin/
@@ -197,9 +203,11 @@ FROM dependencies AS beat
 # 复制应用代码
 COPY --chown=appuser:appuser . .
 
-# 创建必要目录
+# 创建必要目录并设置权限
 RUN mkdir -p logs cache storage temp uploads /tmp/celerybeat && \
-    chown -R appuser:appuser logs cache storage temp uploads /tmp/celerybeat
+    chown -R appuser:appuser logs cache storage temp uploads /tmp/celerybeat && \
+    chmod -R 755 logs cache storage temp uploads && \
+    chmod -R 777 /tmp/celerybeat logs cache storage || echo "Beat权限设置警告"
 
 # 切换到应用用户
 USER appuser
@@ -227,7 +235,9 @@ COPY --chown=appuser:appuser healthcheck.sh /usr/local/bin/
 RUN mkdir -p logs cache storage temp uploads && \
     mkdir -p cache/llamaindex cache/react_agent cache/embeddings && \
     mkdir -p storage/templates storage/reports storage/exports && \
-    chown -R appuser:appuser logs cache storage temp uploads
+    chown -R appuser:appuser logs cache storage temp uploads && \
+    chmod -R 755 logs cache storage temp uploads && \
+    chmod -R 777 logs cache storage || echo "Production权限设置警告"
 
 # 设置脚本权限
 RUN chmod +x /usr/local/bin/entrypoint.sh && \

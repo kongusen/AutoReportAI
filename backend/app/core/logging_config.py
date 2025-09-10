@@ -114,14 +114,27 @@ def log_startup_config():
     logger.info("=" * 80)
 
 
-def setup_logging(log_level: str = "INFO", enable_file_logging: bool = True):
+def setup_logging(log_level: str = "INFO", enable_file_logging: bool = None):
     """
     Configures structured logging for the application with modular support.
     
     Args:
-        log_level: Default log level for the application
-        enable_file_logging: Whether to enable file logging
+        log_level: 日志级别 (DEBUG, INFO, WARNING, ERROR)
+        enable_file_logging: 是否启用文件日志，None表示自动检测
     """
+    
+    # 自动检测是否启用文件日志
+    if enable_file_logging is None:
+        import os
+        
+        # 检测Docker环境并读取环境变量
+        if os.path.exists("/.dockerenv"):
+            # 在Docker环境中，优先使用entrypoint设置的环境变量
+            enable_file_logging = os.getenv('ENABLE_FILE_LOGGING', 'false').lower() == 'true'
+        else:
+            # 本地环境默认启用文件日志
+            enable_file_logging = os.getenv('ENABLE_FILE_LOGGING', 'true').lower() == 'true'
+    
     # Configure basic logging
     logging.basicConfig(
         level=log_level,
@@ -132,19 +145,49 @@ def setup_logging(log_level: str = "INFO", enable_file_logging: bool = True):
     # Setup file handlers if enabled
     handlers = {}
     if enable_file_logging:
-        # Main application log file
-        file_handler = logging.FileHandler('logs/app.log')
-        file_handler.setLevel(logging.INFO)
-        handlers['file'] = file_handler
-        
-        # Performance-specific log file
-        perf_handler = logging.FileHandler('logs/performance.log')
-        perf_handler.setLevel(logging.INFO)
-        handlers['performance_file'] = perf_handler
-        
-        # Create logs directory if it doesn't exist
+        # Create logs directory if it doesn't exist and check permissions
         import os
-        os.makedirs('logs', exist_ok=True)
+        
+        try:
+            # 检测环境并选择合适的日志目录
+            if os.path.exists("/.dockerenv"):
+                # Docker环境，根据entrypoint的权限检查结果决定
+                log_to_file = os.getenv('ENABLE_FILE_LOGGING', 'false').lower() == 'true'
+                if log_to_file:
+                    print("🐳 Docker环境检测到，已启用文件日志")
+                    os.makedirs('logs', exist_ok=True)
+                else:
+                    print("🐳 Docker环境检测到，使用标准输出流（权限限制）")
+            else:
+                # 本地环境，尝试创建logs目录
+                os.makedirs('logs', exist_ok=True)
+                log_to_file = True
+                print("💻 本地环境，启用文件日志")
+        except (PermissionError, OSError) as e:
+            # 权限问题或其他IO错误，回退到标准输出
+            log_to_file = False
+            print(f"⚠️ 日志目录创建失败 ({e})，日志将输出到标准输出流")
+        
+        if log_to_file:
+            try:
+                # Main application log file
+                file_handler = logging.FileHandler('logs/app.log')
+                file_handler.setLevel(logging.INFO)
+                handlers['file'] = file_handler
+                
+                # Performance-specific log file
+                perf_handler = logging.FileHandler('logs/performance.log')
+                perf_handler.setLevel(logging.INFO)
+                handlers['performance_file'] = perf_handler
+                
+                print("📝 日志文件已启用: logs/app.log, logs/performance.log")
+            except (PermissionError, OSError) as e:
+                print(f"⚠️ 无法创建日志文件 ({e})，使用标准输出")
+                # 权限受限时强制关闭文件日志，防止后续错误
+                log_to_file = False
+                handlers = {k: v for k, v in handlers.items() if not k.endswith('_file')}
+        else:
+            print("📺 使用标准输出进行日志记录（适合容器环境）")
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)

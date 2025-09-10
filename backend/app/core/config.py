@@ -235,10 +235,13 @@ class Settings(BaseSettings):
     CACHE_DEFAULT_EXPIRE: int = int(os.getenv("CACHE_DEFAULT_EXPIRE", 3600))  # 1小时
     CACHE_AI_RESPONSE_EXPIRE: int = int(os.getenv("CACHE_AI_RESPONSE_EXPIRE", 3600))  # 1小时
     
-    # 文件存储配置
+    # 文件存储配置 - MinIO优先策略
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     REPORT_OUTPUT_DIR: str = os.getenv("REPORT_OUTPUT_DIR", "./reports")
     MAX_UPLOAD_SIZE: int = int(os.getenv("MAX_UPLOAD_SIZE", 100 * 1024 * 1024))  # 100MB
+    
+    # 存储策略配置 - 默认优先MinIO
+    STORAGE_STRATEGY: str = os.getenv("STORAGE_STRATEGY", "minio_first")  # minio_first, local_first, minio_only, local_only
     
     # MinIO配置 - 智能环境检测
     @property
@@ -260,9 +263,12 @@ class Settings(BaseSettings):
     MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport-prod")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     
-    # 本地存储配置
+    # 本地存储配置 - 仅作为MinIO的备选方案
     LOCAL_STORAGE_PATH: str = os.getenv("LOCAL_STORAGE_PATH", "./storage")
     FORCE_LOCAL_STORAGE: bool = os.getenv("FORCE_LOCAL_STORAGE", "false").lower() == "true"
+    
+    # MinIO优先配置 - 默认启用
+    PREFER_MINIO_STORAGE: bool = os.getenv("PREFER_MINIO_STORAGE", "true").lower() == "true"
     
     # API基础URL配置
     API_BASE_URL: str = os.getenv("API_BASE_URL", "http://localhost:8000")

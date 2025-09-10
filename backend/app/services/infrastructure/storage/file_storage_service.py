@@ -18,36 +18,87 @@ class FileStorageService:
     
     def __init__(self, base_path: str = "storage"):
         self.base_path = base_path
+        
+        # 🎯 优先MinIO策略：首先尝试使用MinIO
         self.use_minio = self._should_use_minio()
         
-        # 只在需要本地存储时创建目录
+        logger.info(f"📦 文件存储服务初始化: {'MinIO存储' if self.use_minio else '本地存储'}")
+        
+        # 只在回退到本地存储时才创建本地目录
         if not self.use_minio:
+            logger.info("🏠 启用本地存储，创建必要目录...")
             self.ensure_directories()
+        else:
+            logger.info("☁️ 使用MinIO对象存储，跳过本地目录创建")
     
     def _should_use_minio(self) -> bool:
-        """判断是否应该使用MinIO存储"""
+        """判断是否应该使用MinIO存储 - 优先MinIO策略"""
         from app.core.config import settings
         
-        # 如果强制使用本地存储，则不使用MinIO
-        if hasattr(settings, 'FORCE_LOCAL_STORAGE') and settings.FORCE_LOCAL_STORAGE:
+        # 🎯 MinIO优先策略：默认优先使用MinIO存储
+        
+        # 1. 检查存储策略配置
+        storage_strategy = getattr(settings, 'STORAGE_STRATEGY', 'minio_first')
+        prefer_minio = getattr(settings, 'PREFER_MINIO_STORAGE', True)
+        
+        logger.info(f"📋 存储策略: {storage_strategy}, MinIO优先: {prefer_minio}")
+        
+        # 2. 处理强制策略
+        if storage_strategy == 'minio_only':
+            logger.info("☁️ 强制仅使用MinIO存储")
+            return True
+        elif storage_strategy == 'local_only':
+            logger.info("🏠 强制仅使用本地存储")
+            return False
+        elif hasattr(settings, 'FORCE_LOCAL_STORAGE') and settings.FORCE_LOCAL_STORAGE:
+            logger.info("🏠 强制使用本地存储（FORCE_LOCAL_STORAGE=true）")
             return False
         
-        # 在Docker环境中默认使用MinIO
-        if hasattr(settings, 'ENVIRONMENT_TYPE') and settings.ENVIRONMENT_TYPE == "docker":
-            return True
-        
-        # 检查MinIO配置是否完整
+        # 3. 优先检查MinIO配置完整性
+        minio_available = False
         try:
             minio_endpoint = settings.MINIO_ENDPOINT
             minio_access_key = settings.MINIO_ACCESS_KEY
             minio_secret_key = settings.MINIO_SECRET_KEY
             
+            # MinIO配置完整检查
             if minio_endpoint and minio_access_key and minio_secret_key:
-                return True
-        except AttributeError:
-            logger.warning("MinIO配置不完整，回退到本地存储")
+                logger.info(f"✅ MinIO配置完整 (endpoint: {minio_endpoint})")
+                minio_available = True
+            else:
+                logger.warning("⚠️ MinIO配置不完整，缺少必要参数")
+                logger.warning(f"   endpoint: {minio_endpoint if minio_endpoint else '未配置'}")
+                logger.warning(f"   access_key: {'已配置' if minio_access_key else '未配置'}")
+                logger.warning(f"   secret_key: {'已配置' if minio_secret_key else '未配置'}")
+                
+        except AttributeError as e:
+            logger.warning(f"⚠️ MinIO配置读取失败: {e}")
         
-        return False
+        # 4. 根据策略和环境决定存储方式
+        if storage_strategy in ['minio_first', 'minio_only'] or prefer_minio:
+            if minio_available:
+                logger.info("✅ MinIO配置可用，优先使用MinIO存储")
+                return True
+            
+            # Docker环境中，即使配置不完整也优先尝试MinIO（可能运行时注入）
+            if (hasattr(settings, 'ENVIRONMENT_TYPE') and settings.ENVIRONMENT_TYPE == "docker") or os.path.exists("/.dockerenv"):
+                logger.info("🐳 Docker环境中优先尝试MinIO存储（可能有运行时配置）")
+                return True
+            
+            logger.warning("⚠️ MinIO配置不可用，根据策略回退到本地存储")
+        
+        # 5. local_first策略或MinIO不可用时的处理
+        if storage_strategy == 'local_first':
+            logger.info("🏠 local_first策略，优先尝试本地存储")
+            return False
+        
+        # 6. 最终回退判断
+        if minio_available:
+            logger.info("✅ 回退到MinIO存储（配置可用）")
+            return True
+        else:
+            logger.info("🏠 回退到本地文件存储（MinIO不可用）")
+            return False
     
     def ensure_directories(self):
         """确保必要的目录存在（仅在本地存储时使用）"""
@@ -63,18 +114,62 @@ class FileStorageService:
             os.path.join(self.base_path, "exports")
         ]
         
+        # 权限检查计数器
+        failed_directories = []
+        
         for directory in directories:
             try:
                 os.makedirs(directory, exist_ok=True)
-                logger.debug(f"确保目录存在: {directory}")
-            except PermissionError as e:
-                logger.error(f"无法创建目录 {directory}: {e}")
+                
+                # 测试写入权限
+                test_file = os.path.join(directory, '.write_test')
+                try:
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                    logger.debug(f"✅ 目录权限正常: {directory}")
+                except (PermissionError, OSError) as write_error:
+                    logger.warning(f"⚠️ 目录写入权限受限: {directory} - {write_error}")
+                    failed_directories.append(directory)
+                    
+            except (PermissionError, OSError) as e:
+                logger.error(f"❌ 无法创建目录 {directory}: {e}")
+                failed_directories.append(directory)
+                
                 # 在Docker环境中，如果无法创建本地目录，自动切换到MinIO
                 if os.path.exists("/.dockerenv"):
-                    logger.info("检测到Docker环境且无本地存储权限，自动切换到MinIO存储")
+                    logger.info("🐳 检测到Docker环境且存储权限受限，自动切换到MinIO存储")
                     self.use_minio = True
                     return
-                raise
+        
+        # 如果有失败的目录，根据MinIO优先策略处理
+        if failed_directories:
+            logger.warning(f"⚠️ 存储目录权限受限: {failed_directories}")
+            
+            # 🎯 MinIO优先策略：任何本地存储问题都优先切换到MinIO
+            from app.core.config import settings
+            
+            # 检查是否可以切换到MinIO
+            can_switch_to_minio = False
+            try:
+                if (hasattr(settings, 'MINIO_ENDPOINT') and 
+                    hasattr(settings, 'MINIO_ACCESS_KEY') and 
+                    hasattr(settings, 'MINIO_SECRET_KEY')):
+                    can_switch_to_minio = True
+            except:
+                pass
+            
+            if can_switch_to_minio or os.path.exists("/.dockerenv"):
+                logger.info("🔄 自动切换到MinIO存储（优先策略）")
+                self.use_minio = True
+            else:
+                logger.warning("💡 本地存储权限受限，建议配置MinIO存储")
+                if not os.path.exists("/.dockerenv"):
+                    logger.warning("⚠️ 在本地环境中继续使用受限的本地存储")
+                else:
+                    # Docker环境中强制切换到MinIO
+                    logger.info("🐳 Docker环境中强制切换到MinIO存储")
+                    self.use_minio = True
     
     async def store_file(
         self,

@@ -22,6 +22,7 @@ from app.core.security_utils import decrypt_data
 from app.core.data_source_utils import DataSourcePasswordManager
 from app.models.data_source import DataSource
 from .base_connector import BaseConnector, ConnectorConfig, QueryResult
+from .resilience_manager import get_resilience_manager, CircuitBreakerConfig, RetryConfig
 
 
 @dataclass
@@ -129,6 +130,41 @@ class DorisConnector(BaseConnector):
         self.config = config
         self.logger = logging.getLogger(__name__)
         
+        # 韧性管理器
+        self.resilience_manager = get_resilience_manager()
+        
+        # 断路器配置
+        self.connection_circuit_config = CircuitBreakerConfig(
+            failure_threshold=3,      # 连接失败3次后开路
+            recovery_timeout=30,      # 30秒后尝试恢复
+            success_threshold=2,      # 成功2次后关闭断路器
+            monitor_window=300        # 5分钟监控窗口
+        )
+        
+        self.query_circuit_config = CircuitBreakerConfig(
+            failure_threshold=5,      # 查询失败5次后开路
+            recovery_timeout=60,      # 60秒后尝试恢复
+            success_threshold=3,      # 成功3次后关闭断路器
+            monitor_window=600        # 10分钟监控窗口
+        )
+        
+        # 重试配置
+        self.connection_retry_config = RetryConfig(
+            max_attempts=3,
+            base_delay=1.0,
+            max_delay=10.0,
+            exponential_factor=2.0,
+            jitter=True
+        )
+        
+        self.query_retry_config = RetryConfig(
+            max_attempts=2,
+            base_delay=0.5,
+            max_delay=5.0,
+            exponential_factor=1.5,
+            jitter=True
+        )
+        
         # MySQL连接
         self.mysql_connection = None
         
@@ -143,29 +179,42 @@ class DorisConnector(BaseConnector):
         )
         
     async def connect(self) -> None:
-        """建立连接"""
-        mysql_connected = False
+        """建立连接 - 使用韧性管理器保护"""
         
-        if self.config.use_mysql_protocol:
-            try:
-                await self._connect_mysql()
-                mysql_connected = True
-            except Exception as e:
-                self.logger.warning(f"MySQL协议连接失败，将仅使用HTTP API: {e}")
-                # 禁用MySQL协议，回退到HTTP API
-                self.config.use_mysql_protocol = False
+        connection_name = f"doris_connect_{self.config.mysql_host}_{self.config.mysql_port}"
         
-        # 建立HTTP会话用于管理操作（或作为主要连接方式）
+        async with self.resilience_manager.resilient_operation(
+            operation_name=connection_name,
+            circuit_breaker_config=self.connection_circuit_config,
+            retry_config=self.connection_retry_config
+        ) as circuit_breaker:
+            
+            mysql_connected = False
+            
+            if self.config.use_mysql_protocol:
+                try:
+                    await circuit_breaker.async_call(self._connect_mysql)
+                    mysql_connected = True
+                except Exception as e:
+                    self.logger.warning(f"MySQL协议连接失败，将仅使用HTTP API: {e}")
+                    # 禁用MySQL协议，回退到HTTP API
+                    self.config.use_mysql_protocol = False
+            
+            # 建立HTTP会话用于管理操作（或作为主要连接方式）
+            await circuit_breaker.async_call(self._setup_http_session)
+            self._connected = True
+            
+            if mysql_connected:
+                self.logger.info("✅ 已建立MySQL协议连接和HTTP API会话")
+            else:
+                self.logger.info("✅ 已建立HTTP API会话（MySQL协议不可用）")
+    
+    async def _setup_http_session(self):
+        """设置HTTP会话"""
         self.session = aiohttp.ClientSession(
             connector=self.connector,
             timeout=self.timeout
         )
-        self._connected = True
-        
-        if mysql_connected:
-            self.logger.info("✅ 已建立MySQL协议连接和HTTP API会话")
-        else:
-            self.logger.info("✅ 已建立HTTP API会话（MySQL协议不可用）")
         
     async def _connect_mysql(self) -> None:
         """建立MySQL协议连接，支持重试"""
@@ -475,13 +524,78 @@ class DorisConnector(BaseConnector):
                 "error": f"Connection failed: {str(e)}"
             }
     
+    async def get_resilience_health_status(self) -> Dict[str, Any]:
+        """获取连接器的韧性健康状态"""
+        try:
+            health_report = self.resilience_manager.get_health_report()
+            
+            # 获取与此连接器相关的指标
+            connection_name = f"doris_connect_{self.config.mysql_host}_{self.config.mysql_port}"
+            connection_metrics = health_report.get("connection_metrics", {}).get(connection_name, {})
+            
+            # 获取断路器状态
+            circuit_breakers = health_report.get("circuit_breakers", {})
+            relevant_breakers = {
+                name: status for name, status in circuit_breakers.items()
+                if self.config.mysql_host in name or "doris" in name.lower()
+            }
+            
+            # 基础连接状态
+            basic_status = await self.test_connection()
+            
+            return {
+                "connector_type": "DorisConnector",
+                "host": self.config.mysql_host,
+                "port": self.config.mysql_port,
+                "database": self.config.mysql_database,
+                "basic_connection": basic_status,
+                "resilience_metrics": {
+                    "connection_metrics": connection_metrics,
+                    "circuit_breakers": relevant_breakers,
+                    "overall_health": health_report.get("overall_health", "unknown")
+                },
+                "connection_config": {
+                    "use_mysql_protocol": self.config.use_mysql_protocol,
+                    "has_mysql_connection": self.mysql_connection is not None,
+                    "has_http_session": self.session is not None and not self.session.closed,
+                    "timeout": self.config.timeout
+                },
+                "resilience_config": {
+                    "connection_circuit": {
+                        "failure_threshold": self.connection_circuit_config.failure_threshold,
+                        "recovery_timeout": self.connection_circuit_config.recovery_timeout
+                    },
+                    "query_circuit": {
+                        "failure_threshold": self.query_circuit_config.failure_threshold,
+                        "recovery_timeout": self.query_circuit_config.recovery_timeout
+                    },
+                    "connection_retry": {
+                        "max_attempts": self.connection_retry_config.max_attempts,
+                        "base_delay": self.connection_retry_config.base_delay
+                    },
+                    "query_retry": {
+                        "max_attempts": self.query_retry_config.max_attempts,
+                        "base_delay": self.query_retry_config.base_delay
+                    }
+                },
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "connector_type": "DorisConnector",
+                "host": self.config.mysql_host,
+                "error": f"Failed to get resilience health status: {str(e)}",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+    
     async def execute_query(
         self, 
         sql: str, 
         parameters: Optional[Dict[str, Any]] = None
     ) -> QueryResult:
         """
-        执行SQL查询 - 优先使用MySQL协议，回退到HTTP API
+        执行SQL查询 - 优先使用MySQL协议，回退到HTTP API，带韧性保护
         
         Args:
             sql: SQL查询语句
@@ -490,54 +604,66 @@ class DorisConnector(BaseConnector):
         Returns:
             查询结果
         """
-        start_time = asyncio.get_event_loop().time()
+        query_name = f"doris_query_{self.config.mysql_host}_{hash(sql) % 10000}"
         
-        # 优先使用MySQL协议
-        if self.config.use_mysql_protocol and self.mysql_connection:
-            try:
-                # 转换参数格式（从字典到元组）
-                params_tuple = None
-                if parameters:
-                    # 对于MySQL协议，需要将字典参数转换为位置参数
-                    formatted_sql = sql
-                    for key, value in parameters.items():
-                        formatted_sql = formatted_sql.replace(f"${key}", "%s")
-                        if params_tuple is None:
-                            params_tuple = (value,)
-                        else:
-                            params_tuple += (value,)
-                    sql = formatted_sql
-                
-                df = await self.execute_mysql_query(sql, params_tuple)
-                execution_time = asyncio.get_event_loop().time() - start_time
-                
-                if df is not None:
-                    return DorisQueryResult(
-                        data=df,
-                        execution_time=execution_time,
-                        rows_scanned=len(df),
-                        bytes_scanned=len(df.to_string()) if hasattr(df, 'to_string') else 0,
-                        is_cached=False,
-                        query_id=f"mysql_query_{int(start_time)}",
-                        fe_host=self.config.fe_hosts[self.current_fe_index]
+        async with self.resilience_manager.resilient_operation(
+            operation_name=query_name,
+            circuit_breaker_config=self.query_circuit_config,
+            retry_config=self.query_retry_config
+        ) as circuit_breaker:
+            
+            start_time = asyncio.get_event_loop().time()
+            
+            # 优先使用MySQL协议
+            if self.config.use_mysql_protocol and self.mysql_connection:
+                try:
+                    # 转换参数格式（从字典到元组）
+                    params_tuple = None
+                    if parameters:
+                        # 对于MySQL协议，需要将字典参数转换为位置参数
+                        formatted_sql = sql
+                        for key, value in parameters.items():
+                            formatted_sql = formatted_sql.replace(f"${key}", "%s")
+                            if params_tuple is None:
+                                params_tuple = (value,)
+                            else:
+                                params_tuple += (value,)
+                        sql = formatted_sql
+                    
+                    df = await circuit_breaker.async_call(
+                        self.execute_mysql_query, sql, params_tuple
                     )
-            except Exception as e:
-                self.logger.error(f"MySQL协议查询失败: {e}")
+                    execution_time = asyncio.get_event_loop().time() - start_time
+                    
+                    if df is not None:
+                        return DorisQueryResult(
+                            data=df,
+                            execution_time=execution_time,
+                            rows_scanned=len(df),
+                            bytes_scanned=len(df.to_string()) if hasattr(df, 'to_string') else 0,
+                            is_cached=False,
+                            query_id=f"mysql_query_{int(start_time)}",
+                            fe_host=self.config.fe_hosts[self.current_fe_index]
+                        )
+                except Exception as e:
+                    self.logger.error(f"MySQL协议查询失败: {e}")
+                    execution_time = asyncio.get_event_loop().time() - start_time
+                    raise Exception(f"MySQL query failed: {str(e)}")
+            
+            # 如果没有MySQL连接，尝试HTTP API fallback
+            self.logger.warning("MySQL connection not available, attempting HTTP API fallback")
+            try:
+                # 清理SQL用于HTTP API
+                cleaned_sql = self._clean_sql(sql)
+                fe_host = await self._get_available_fe_host()
+                result = await circuit_breaker.async_call(
+                    self._execute_http_query, fe_host, start_time, cleaned_sql, parameters
+                )
+                return result
+            except Exception as http_error:
                 execution_time = asyncio.get_event_loop().time() - start_time
-                raise Exception(f"MySQL query failed: {str(e)}")
-        
-        # 如果没有MySQL连接，尝试HTTP API fallback
-        self.logger.warning("MySQL connection not available, attempting HTTP API fallback")
-        try:
-            # 清理SQL用于HTTP API
-            cleaned_sql = self._clean_sql(sql)
-            fe_host = await self._get_available_fe_host()
-            result = await self._execute_http_query(fe_host, start_time, cleaned_sql, parameters)
-            return result
-        except Exception as http_error:
-            execution_time = asyncio.get_event_loop().time() - start_time
-            self.logger.error(f"HTTP API fallback也失败: {http_error}")
-            raise Exception(f"Both MySQL and HTTP API failed. MySQL: not available, HTTP: {str(http_error)}")
+                self.logger.error(f"HTTP API fallback也失败: {http_error}")
+                raise Exception(f"Both MySQL and HTTP API failed. MySQL: not available, HTTP: {str(http_error)}")
     
     async def _get_databases(self, fe_host: str, start_time: float) -> QueryResult:
         """通过管理API获取数据库列表"""

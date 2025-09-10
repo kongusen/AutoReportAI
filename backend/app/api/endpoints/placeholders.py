@@ -261,6 +261,53 @@ async def analyze_single_placeholder(
                     "database": getattr(data_source, 'doris_database', 'unknown'),
                     "name": data_source.name
                 }
+                
+                # 获取表结构信息
+                try:
+                    from app.services.data.schemas.schema_query_service import SchemaQueryService
+                    schema_service = SchemaQueryService(db)
+                    table_schemas = schema_service.get_table_schemas(data_source_id)
+                    
+                    if table_schemas:
+                        # 添加表名列表
+                        data_source_info["tables"] = [schema.table_name for schema in table_schemas]
+                        
+                        # 添加详细表结构信息
+                        data_source_info["table_details"] = []
+                        for schema in table_schemas:
+                            table_detail = {
+                                "name": schema.table_name,
+                                "business_category": schema.business_category or "未分类",
+                                "columns_count": len(schema.columns_info) if schema.columns_info else 0,
+                                "estimated_rows": schema.estimated_row_count or 0
+                            }
+                            
+                            # 提供完整的列信息，让AI自主理解字段含义
+                            if schema.columns_info:
+                                detailed_columns = []
+                                for col in schema.columns_info:
+                                    col_name = col.get("name", "")
+                                    col_type = col.get("type", "")
+                                    if col_name and col_type:
+                                        # 直接提供字段名和类型，让AI自主理解语义
+                                        detailed_columns.append(f"{col_name}({col_type})")
+                                
+                                table_detail["all_columns"] = detailed_columns
+                                # 保留关键列用于简化显示
+                                table_detail["key_columns"] = detailed_columns[:10]
+                            
+                            data_source_info["table_details"].append(table_detail)
+                        
+                        logger.info(f"成功获取表结构信息: {len(table_schemas)} 个表")
+                    else:
+                        logger.warning(f"数据源 {data_source_id} 没有找到表结构信息")
+                        data_source_info["tables"] = []
+                        data_source_info["table_details"] = []
+                        
+                except Exception as e:
+                    logger.error(f"获取表结构信息失败: {e}")
+                    data_source_info["tables"] = []
+                    data_source_info["table_details"] = []
         
         # 处理执行时间
         exec_time = None

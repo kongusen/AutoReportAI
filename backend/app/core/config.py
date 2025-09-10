@@ -52,6 +52,38 @@ def get_database_url():
     return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
 
+def get_database_pool_config():
+    """获取数据库连接池配置"""
+    env = detect_environment()
+    
+    if env == "docker":
+        # 生产/容器环境：更保守的连接池设置
+        return {
+            "pool_size": int(os.getenv("DB_POOL_SIZE", "20")),           # 基础连接池大小
+            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "30")),     # 最大溢出连接
+            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),     # 获取连接超时时间
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "3600")),   # 连接回收时间(1小时)
+            "pool_pre_ping": True,                                       # 连接前ping测试
+            "connect_args": {
+                "connect_timeout": 10,                                   # 连接超时
+                "application_name": "AutoReportAI"
+            }
+        }
+    else:
+        # 开发环境：较小的连接池设置
+        return {
+            "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
+            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
+            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "20")),
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "1800")),   # 30分钟
+            "pool_pre_ping": True,
+            "connect_args": {
+                "connect_timeout": 5,
+                "application_name": "AutoReportAI-Dev"
+            }
+        }
+
+
 def get_redis_url():
     """根据环境获取Redis连接URL"""
     # 优先使用环境变量中的完整URL
@@ -76,14 +108,15 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "AutoReportAI"
     API_V1_STR: str = "/api/v1"
 
+    # 环境信息和调试设置
+    ENVIRONMENT_TYPE: str = detect_environment()
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    
     # Database configuration - 智能环境检测
     DATABASE_URL: str = get_database_url()
 
     # Redis configuration - 智能环境检测  
     REDIS_URL: str = get_redis_url()
-    
-    # 环境信息
-    ENVIRONMENT_TYPE: str = detect_environment()
 
     # 时区设置
     TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Shanghai")

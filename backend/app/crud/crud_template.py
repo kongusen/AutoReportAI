@@ -95,12 +95,35 @@ class CRUDTemplate:
 
     def remove(self, db: Session, id: str) -> Template:
         """删除模板（硬删除，会级联删除相关占位符）"""
-        db_obj = db.query(Template).filter(Template.id == id).first()
-        if db_obj:
-            # 硬删除，会触发级联删除占位符和占位符值
-            db.delete(db_obj)
-            db.commit()
-        return db_obj
+        try:
+            db_obj = db.query(Template).filter(Template.id == id).first()
+            if db_obj:
+                # 先手动删除关联的占位符值，避免外键约束问题
+                from app.models.template_placeholder import TemplatePlaceholder, PlaceholderValue
+                
+                # 获取所有相关的占位符ID
+                placeholder_ids = db.query(TemplatePlaceholder.id).filter(
+                    TemplatePlaceholder.template_id == id
+                ).all()
+                
+                # 删除所有占位符值
+                for (placeholder_id,) in placeholder_ids:
+                    db.query(PlaceholderValue).filter(
+                        PlaceholderValue.placeholder_id == placeholder_id
+                    ).delete()
+                
+                # 删除所有占位符
+                db.query(TemplatePlaceholder).filter(
+                    TemplatePlaceholder.template_id == id
+                ).delete()
+                
+                # 最后删除模板
+                db.delete(db_obj)
+                db.commit()
+            return db_obj
+        except Exception as e:
+            db.rollback()
+            raise e
     
     def soft_remove(self, db: Session, id: str) -> Template:
         """软删除模板（仅标记为非活跃）"""

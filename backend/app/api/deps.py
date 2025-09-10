@@ -24,37 +24,86 @@ reusable_oauth2 = OAuth2PasswordBearer(
 
 def get_db() -> Generator:
     """
-    Optimized database dependency with connection health check and error handling
+    优化的数据库依赖，带连接重试机制和健康检查
     """
+    import time
+    from sqlalchemy import text
+    from sqlalchemy.exc import DisconnectionError, TimeoutError as SQLTimeoutError
+    
     db = None
-    try:
-        db = SessionLocal()
-        # Test connection health using proper SQLAlchemy syntax
-        from sqlalchemy import text
-        db.execute(text("SELECT 1"))
-        yield db
-    except SQLAlchemyError as e:
-        logger.error(f"Database connection error: {e}")
-        if db:
-            db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection failed"
-        )
-    except HTTPException:
-        # Re-raise HTTP exceptions (like authentication errors) without modification
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected database error: {e}")
-        if db:
-            db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database operation failed"
-        )
-    finally:
-        if db:
-            db.close()
+    max_retries = 3
+    retry_delay = 1.0  # 重试延迟(秒)
+    
+    for attempt in range(max_retries):
+        try:
+            db = SessionLocal()
+            
+            # 连接健康检查，使用快速查询
+            db.execute(text("SELECT 1"))
+            
+            logger.debug(f"数据库连接成功 (尝试 {attempt + 1}/{max_retries})")
+            yield db
+            break  # 成功后退出重试循环
+            
+        except (DisconnectionError, SQLTimeoutError) as e:
+            # 连接或超时错误，可以重试
+            logger.warning(f"数据库连接失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+            
+            if db:
+                try:
+                    db.rollback()
+                    db.close()
+                except:
+                    pass
+                db = None
+            
+            if attempt < max_retries - 1:
+                logger.info(f"等待 {retry_delay} 秒后重试...")
+                time.sleep(retry_delay)
+                retry_delay *= 1.5  # 指数退避
+                continue
+            else:
+                # 最后一次尝试失败
+                logger.error(f"数据库连接在 {max_retries} 次尝试后仍然失败")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database connection failed after retries"
+                )
+                
+        except SQLAlchemyError as e:
+            # 其他SQL错误，通常不需要重试
+            logger.error(f"数据库SQL错误: {e}")
+            if db:
+                try:
+                    db.rollback()
+                except:
+                    pass
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database operation failed"
+            )
+            
+        except HTTPException:
+            # 重新抛出HTTP异常（如认证错误）
+            raise
+            
+        except Exception as e:
+            logger.error(f"意外的数据库错误: {e}")
+            if db:
+                try:
+                    db.rollback()
+                except:
+                    pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unexpected database error"
+            )
+        finally:
+            if db:
+                try:
+                    db.close()
+                except:
+                    pass
 
 
 def get_current_user(

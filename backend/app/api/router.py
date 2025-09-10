@@ -27,6 +27,7 @@ from app.api.endpoints import (
     # react_agent_stats,  # React Agent统计 (已弃用)
     notifications,  # 通知系统
     task_execution,  # 任务执行系统
+    system_health,  # 系统韧性健康监控
     # 基于Claude Code架构的功能集成
 )
 
@@ -64,6 +65,7 @@ api_router.include_router(model_execution.router, prefix="/v1/model-execution", 
 # api_router.include_router(react_agent_stats.router, prefix="/v1/react-agent", tags=["React Agent统计"])  # 已弃用
 api_router.include_router(notifications.router, prefix="/v1/notifications", tags=["通知系统"])
 api_router.include_router(task_execution.router, prefix="/v1/task-execution", tags=["任务执行"])
+api_router.include_router(system_health.router, prefix="/v1/system-health", tags=["系统韧性健康监控"])
 
 # Claude Code架构集成的智能功能
 # - 模板分析通过 /v1/templates/{id}/analyze 端点

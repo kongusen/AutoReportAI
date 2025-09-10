@@ -19,20 +19,54 @@ from app.core.performance_middleware import PerformanceMiddleware, RateLimitMidd
 setup_logging()
 
 def print_startup_config():
-    """启动时打印简化的配置信息"""
+    """启动时打印简化的配置信息 - 支持局域网访问"""
+    import os
+    
     print("🚀 AutoReportAI 启动成功")
     print("-" * 50)
     
-    # 获取前端地址
-    cors_origins = get_cors_origins()
-    frontend_url = cors_origins[0].strip() if cors_origins else "http://localhost:3000"
+    # 获取服务器IP配置
+    server_ip = os.getenv('SERVER_IP', 'localhost')
+    server_port = getattr(settings, 'PORT', 8000)
+    ws_port = getattr(settings, 'WS_PORT', 8000)
+    frontend_port = os.getenv('FRONTEND_PORT', '3000')
     
-    # 打印前后端地址
-    print(f"📱 前端地址: {frontend_url}")
-    print(f"🔗 后端API: {settings.API_BASE_URL}{settings.API_V1_STR}")
-    print(f"🌐 WebSocket: ws://localhost:{getattr(settings, 'WS_PORT', 8000)}/ws")
-    print(f"📋 API文档: {settings.API_BASE_URL}/docs")
+    # 检测环境
+    is_docker = os.path.exists("/.dockerenv") or os.getenv('DOCKER_ENV') == 'true'
+    environment_type = getattr(settings, 'ENVIRONMENT_TYPE', 'unknown')
+    
+    # 优先显示局域网访问地址
+    if server_ip != 'localhost' and server_ip != '127.0.0.1':
+        # 局域网访问模式
+        frontend_url = f"http://{server_ip}:{frontend_port}"
+        backend_url = f"http://{server_ip}:{server_port}"
+        websocket_url = f"ws://{server_ip}:{ws_port}/ws"
+        docs_url = f"http://{server_ip}:{server_port}/docs"
+        
+        print(f"🌐 局域网访问模式 (IP: {server_ip})")
+        print(f"📱 前端地址: {frontend_url}")
+        print(f"🔗 后端API: {backend_url}{settings.API_V1_STR}")
+        print(f"🌐 WebSocket: {websocket_url}")
+        print(f"📋 API文档: {docs_url}")
+        
+        # 同时显示本地访问地址
+        print(f"💻 本地访问: http://localhost:{frontend_port}")
+    else:
+        # 本地访问模式
+        cors_origins = get_cors_origins()
+        frontend_url = cors_origins[0].strip() if cors_origins else f"http://localhost:{frontend_port}"
+        
+        print(f"💻 本地访问模式")
+        print(f"📱 前端地址: {frontend_url}")
+        print(f"🔗 后端API: {settings.API_BASE_URL}{settings.API_V1_STR}")
+        print(f"🌐 WebSocket: ws://localhost:{ws_port}/ws")
+        print(f"📋 API文档: {settings.API_BASE_URL}/docs")
+    
+    # 环境信息
     print(f"🔧 运行环境: {settings.ENVIRONMENT}")
+    if is_docker:
+        print(f"🐳 容器环境: {environment_type}")
+    
     print("-" * 50)
 
 def print_all_settings_values():

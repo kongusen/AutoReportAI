@@ -81,13 +81,16 @@ RUN mkdir -p /app/.next && \
     chown -R nextjs:nodejs /app && \
     chmod 755 /app/.next
 
-# React Agent开发环境配置
+# React Agent开发环境配置 - 局域网访问优化
 ENV NODE_ENV=development \
     NEXT_TELEMETRY_DISABLED=1 \
     CHOKIDAR_USEPOLLING=true \
     WATCHPACK_POLLING=true \
     FORCE_COLOR=1 \
-    NODE_OPTIONS="--max-old-space-size=4096"
+    NODE_OPTIONS="--max-old-space-size=4096" \
+    HOSTNAME="0.0.0.0" \
+    # 局域网访问默认配置
+    NEXT_PUBLIC_ENABLE_LAN_ACCESS=true
 
 # 切换用户  
 USER nextjs

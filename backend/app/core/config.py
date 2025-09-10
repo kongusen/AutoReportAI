@@ -284,12 +284,12 @@ class Settings(BaseSettings):
     # API限流配置
     API_RATE_LIMIT: str = os.getenv("API_RATE_LIMIT", "100/minute")
     
-    # CORS配置
-    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000")
+    # CORS配置 - 使用ALLOWED_ORIGINS以保持与部署脚本一致
+    CORS_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000"))
     CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
     CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
-    CORS_ALLOW_METHODS: List[str] = os.getenv("CORS_ALLOW_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH").split(",")
-    CORS_ALLOW_HEADERS: List[str] = os.getenv("CORS_ALLOW_HEADERS", "*").split(",")
+    CORS_ALLOW_METHODS: List[str] = os.getenv("ALLOWED_METHODS", os.getenv("CORS_ALLOW_METHODS", "GET,POST,PUT,DELETE,OPTIONS,PATCH")).split(",")
+    CORS_ALLOW_HEADERS: List[str] = os.getenv("ALLOWED_HEADERS", os.getenv("CORS_ALLOW_HEADERS", "*")).split(",")
     
     def get_cors_origins(self) -> List[str]:
         """获取CORS允许的来源列表"""

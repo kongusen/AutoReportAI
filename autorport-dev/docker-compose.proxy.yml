@@ -505,10 +505,6 @@ networks:
   autoreport_network:
     name: autoreport_dev_network
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1
 
 # ==========================================
 # 注意: 现在使用直接的bind mount，不需要定义volumes

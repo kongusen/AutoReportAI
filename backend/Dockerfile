@@ -111,18 +111,18 @@ RUN pip install --upgrade pip setuptools wheel && \
 FROM dependencies AS development
 
 # 安装开发依赖
-RUN pip install --no-cache-dir \
-    watchdog \
-    debugpy \
-    ipython \
-    jupyter \
-    pytest \
-    pytest-asyncio \
-    pytest-cov \
-    black \
-    isort \
-    flake8 \
-    mypy
+# RUN pip install --no-cache-dir \
+#     watchdog \
+#     debugpy \
+#     ipython \
+#     jupyter \
+#     pytest \
+#     pytest-asyncio \
+#     pytest-cov \
+#     black \
+#     isort \
+#     flake8 \
+#     mypy
 
 # 复制应用代码
 COPY --chown=appuser:appuser . .

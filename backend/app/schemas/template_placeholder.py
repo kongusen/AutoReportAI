@@ -4,6 +4,7 @@ Template Placeholder Schemas
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -41,7 +42,7 @@ class TemplatePlaceholderBase(BaseModel):
 
 class TemplatePlaceholderCreate(TemplatePlaceholderBase):
     """创建模板占位符Schema"""
-    template_id: str = Field(..., description="模板ID")
+    template_id: UUID = Field(..., description="模板ID")
     content_hash: Optional[str] = Field(None, max_length=16, description="内容哈希，用于去重")
     
     # 解析元数据
@@ -82,8 +83,8 @@ class TemplatePlaceholderUpdate(BaseModel):
 
 class TemplatePlaceholderInDBBase(TemplatePlaceholderBase):
     """数据库模板占位符基础Schema"""
-    id: str
-    template_id: str
+    id: UUID
+    template_id: UUID
     content_hash: Optional[str] = None
     
     # 解析元数据
@@ -107,7 +108,7 @@ class TemplatePlaceholder(TemplatePlaceholderInDBBase):
 
 class TemplatePlaceholderDisplay(BaseModel):
     """占位符卡片显示Schema - 优化前端显示"""
-    id: str
+    id: UUID
     placeholder_name: str = Field(..., description="占位符名称")
     placeholder_text: str = Field(..., description="占位符文本")
     placeholder_type: str = Field(..., description="占位符类型")
@@ -150,14 +151,14 @@ class TemplatePlaceholderInDB(TemplatePlaceholderInDBBase):
 # 分析相关schemas
 class PlaceholderAnalysisRequest(BaseModel):
     """占位符分析请求Schema"""
-    data_source_id: str = Field(..., description="数据源ID")
+    data_source_id: UUID = Field(..., description="数据源ID")
     force_reanalyze: bool = Field(default=False, description="是否强制重新分析")
-    target_placeholders: Optional[List[str]] = Field(None, description="指定要分析的占位符ID列表")
+    target_placeholders: Optional[List[UUID]] = Field(None, description="指定要分析的占位符ID列表")
 
 
 class PlaceholderAnalysisResult(BaseModel):
     """占位符分析结果Schema"""
-    placeholder_id: str
+    placeholder_id: UUID
     success: bool
     target_database: Optional[str] = None
     target_table: Optional[str] = None

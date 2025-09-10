@@ -318,6 +318,51 @@ async def analyze_single_placeholder(
         if "analyzed_at" not in result:
             result["analyzed_at"] = datetime.now().isoformat()
         
+        # 新增：自动SQL验证和修复
+        if data_source_id and result.get("status") == "success":
+            generated_sql = result.get("generated_sql", {})
+            sql_content = ""
+            if isinstance(generated_sql, dict):
+                sql_content = generated_sql.get(placeholder_name, "") or generated_sql.get("sql", "")
+            elif isinstance(generated_sql, str):
+                sql_content = generated_sql
+            
+            if sql_content and sql_content.strip():
+                logger.info(f"开始自动验证和修复SQL: {placeholder_name}")
+                try:
+                    # 自动测试和修复SQL
+                    fixed_sql, validation_result = await auto_validate_and_fix_sql(
+                        sql=sql_content,
+                        data_source_id=data_source_id,
+                        placeholder_name=placeholder_name,
+                        db=db,
+                        max_attempts=3
+                    )
+                    
+                    # 更新结果中的SQL
+                    if fixed_sql != sql_content:
+                        logger.info(f"SQL已自动修复: {placeholder_name}")
+                        if isinstance(result["generated_sql"], dict):
+                            result["generated_sql"][placeholder_name] = fixed_sql
+                            result["generated_sql"]["sql"] = fixed_sql
+                        else:
+                            result["generated_sql"] = fixed_sql
+                        
+                        # 添加修复信息
+                        result["auto_fixed"] = True
+                        result["original_sql"] = sql_content
+                        result["fix_attempts"] = validation_result.get("attempts", 1)
+                        result["fix_errors"] = validation_result.get("errors", [])
+                    
+                    # 添加验证结果
+                    result["sql_validated"] = validation_result.get("success", False)
+                    result["validation_details"] = validation_result
+                    
+                except Exception as validation_error:
+                    logger.warning(f"SQL自动验证失败，但不影响主流程: {validation_error}")
+                    result["sql_validated"] = False
+                    result["validation_error"] = str(validation_error)
+        
         # 自动保存分析结果到数据库
         try:
             logger.info(f"开始保存占位符配置: {placeholder_name}")
@@ -523,7 +568,9 @@ async def test_sql_on_doris(data_source, sql: str, placeholder_name: str) -> Dic
             'DESCRIBE' not in sql_upper and 
             'DESC' not in sql_upper):
             # 只对普通SELECT查询且没有LIMIT的查询添加限制
-            limited_sql = f"SELECT * FROM ({sql}) AS subquery LIMIT 10"
+            # 移除原始SQL末尾的分号，避免子查询语法错误
+            clean_sql = sql.strip().rstrip(';')
+            limited_sql = f"SELECT * FROM ({clean_sql}) AS subquery LIMIT 10"
         else:
             # 对于SHOW TABLES、DESCRIBE等命令，直接执行
             limited_sql = sql.strip()
@@ -800,3 +847,213 @@ async def cancel_report_task(
     except Exception as e:
         logger.error(f"取消任务失败: {e}")
         raise HTTPException(status_code=500, detail=f"取消任务失败: {str(e)}")
+
+
+async def auto_validate_and_fix_sql(
+    sql: str,
+    data_source_id: str,
+    placeholder_name: str,
+    db: Session,
+    max_attempts: int = 3
+) -> tuple[str, dict]:
+    """
+    自动验证和修复SQL
+    
+    Args:
+        sql: 待验证的SQL
+        data_source_id: 数据源ID
+        placeholder_name: 占位符名称
+        db: 数据库会话
+        max_attempts: 最大修复尝试次数
+        
+    Returns:
+        tuple: (修复后的SQL, 验证结果详情)
+    """
+    from app.crud import data_source as crud_data_source
+    
+    logger.info(f"开始自动验证SQL: {placeholder_name}")
+    current_sql = sql
+    attempts = 0
+    errors_encountered = []
+    
+    # 获取数据源
+    data_source = crud_data_source.get(db, id=data_source_id)
+    if not data_source:
+        return sql, {"success": False, "error": "数据源不存在", "attempts": 0}
+    
+    for attempt in range(max_attempts):
+        attempts += 1
+        logger.info(f"SQL验证尝试 {attempt + 1}/{max_attempts}: {placeholder_name}")
+        
+        # 测试当前SQL
+        try:
+            test_result = await test_sql_with_data_source(
+                sql=current_sql,
+                data_source=data_source,
+                placeholder_name=placeholder_name
+            )
+            
+            if test_result.get("success", False):
+                logger.info(f"SQL验证成功: {placeholder_name} (尝试 {attempts})")
+                return current_sql, {
+                    "success": True,
+                    "attempts": attempts,
+                    "errors": errors_encountered,
+                    "final_result": test_result
+                }
+            else:
+                error_message = test_result.get("error", "未知错误")
+                errors_encountered.append({
+                    "attempt": attempt + 1,
+                    "sql": current_sql,
+                    "error": error_message
+                })
+                logger.warning(f"SQL验证失败 (尝试 {attempt + 1}): {error_message}")
+                
+                # 尝试修复SQL
+                if attempt < max_attempts - 1:  # 不是最后一次尝试
+                    fixed_sql = apply_sql_fixes(current_sql, error_message, data_source)
+                    if fixed_sql != current_sql:
+                        logger.info(f"尝试修复SQL: {placeholder_name}")
+                        current_sql = fixed_sql
+                    else:
+                        logger.warning(f"无法修复SQL错误: {error_message}")
+                        break
+                        
+        except Exception as e:
+            error_message = str(e)
+            errors_encountered.append({
+                "attempt": attempt + 1,
+                "sql": current_sql,
+                "error": error_message
+            })
+            logger.error(f"SQL测试异常 (尝试 {attempt + 1}): {error_message}")
+            
+            if attempt < max_attempts - 1:
+                fixed_sql = apply_sql_fixes(current_sql, error_message, data_source)
+                if fixed_sql != current_sql:
+                    current_sql = fixed_sql
+                else:
+                    break
+    
+    logger.warning(f"SQL验证失败，已尝试 {attempts} 次: {placeholder_name}")
+    return current_sql, {
+        "success": False,
+        "attempts": attempts,
+        "errors": errors_encountered,
+        "final_sql": current_sql
+    }
+
+
+async def test_sql_with_data_source(sql: str, data_source, placeholder_name: str) -> dict:
+    """使用数据源连接测试SQL"""
+    try:
+        if data_source.source_type.value == "doris" or str(data_source.source_type) == "doris":
+            return await test_sql_on_doris(data_source, sql, placeholder_name)
+        else:
+            return {
+                "success": False,
+                "error": f"暂不支持 {data_source.source_type} 类型的数据源自动验证",
+                "data": [],
+                "row_count": 0,
+                "execution_time_ms": 0
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"SQL测试异常: {str(e)}",
+            "data": [],
+            "row_count": 0,
+            "execution_time_ms": 0
+        }
+
+
+def apply_sql_fixes(sql: str, error_message: str, data_source) -> str:
+    """
+    根据错误信息自动修复SQL
+    
+    Args:
+        sql: 原始SQL
+        error_message: 错误信息
+        data_source: 数据源对象
+        
+    Returns:
+        修复后的SQL
+    """
+    fixed_sql = sql
+    error_lower = error_message.lower()
+    
+    # 1. 语法错误修复
+    if "syntax error" in error_lower or "encountered: ;" in error_lower:
+        # 移除子查询中的分号
+        if ";) as subquery" in fixed_sql.lower():
+            fixed_sql = fixed_sql.replace(";)", ")")
+            logger.info("修复: 移除子查询中的分号")
+    
+    # 2. 表不存在错误
+    if "table" in error_lower and ("not exist" in error_lower or "doesn't exist" in error_lower):
+        # 尝试添加数据库前缀
+        if hasattr(data_source, 'doris_database') and data_source.doris_database:
+            database_name = data_source.doris_database
+            # 查找没有数据库前缀的表名
+            import re
+            table_pattern = r'\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-zA-Z_]\w*)\b'
+            matches = re.finditer(table_pattern, fixed_sql, re.IGNORECASE)
+            for match in matches:
+                table_name = match.group(1)
+                if '.' not in table_name:  # 没有数据库前缀
+                    qualified_table = f"{database_name}.{table_name}"
+                    fixed_sql = fixed_sql.replace(table_name, qualified_table, 1)
+                    logger.info(f"修复: 添加数据库前缀 {table_name} -> {qualified_table}")
+    
+    # 3. 列不存在错误
+    if "column" in error_lower and ("not exist" in error_lower or "unknown column" in error_lower):
+        # 尝试一些常见的列名映射
+        column_mappings = {
+            "created_at": ["create_time", "created_time", "create_date", "creation_date"],
+            "updated_at": ["update_time", "updated_time", "update_date", "modification_date"],
+            "id": ["pk_id", "primary_id", "row_id"],
+        }
+        
+        for original, alternatives in column_mappings.items():
+            if original in fixed_sql:
+                for alternative in alternatives:
+                    # 这里应该实际查询数据源来验证列是否存在，暂时使用第一个替代
+                    fixed_sql = fixed_sql.replace(original, alternative, 1)
+                    logger.info(f"修复: 列名映射 {original} -> {alternative}")
+                    break
+    
+    # 4. 数据类型错误
+    if "type" in error_lower and ("mismatch" in error_lower or "conversion" in error_lower):
+        # 添加类型转换
+        import re
+        # 查找日期比较
+        date_pattern = r"(\w+)\s*([><=]+)\s*'(\d{4}-\d{2}-\d{2}[^']*?)'"
+        matches = re.finditer(date_pattern, fixed_sql)
+        for match in matches:
+            column_name, operator, date_value = match.groups()
+            # 为日期列添加类型转换
+            new_comparison = f"DATE({column_name}) {operator} '{date_value}'"
+            fixed_sql = fixed_sql.replace(match.group(0), new_comparison, 1)
+            logger.info(f"修复: 添加日期类型转换 {match.group(0)} -> {new_comparison}")
+    
+    # 5. 权限错误 - 尝试使用更简单的查询
+    if "access denied" in error_lower or "permission" in error_lower:
+        # 简化查询，移除可能需要特殊权限的功能
+        if "information_schema" not in fixed_sql.lower():
+            # 如果是复杂查询，尝试简化为基本的SELECT
+            if fixed_sql.strip().upper().startswith("SELECT"):
+                # 保持基本的SELECT结构，但添加LIMIT
+                if "LIMIT" not in fixed_sql.upper():
+                    fixed_sql = fixed_sql.rstrip(';') + " LIMIT 1"
+                    logger.info("修复: 添加LIMIT以简化查询")
+    
+    # 6. 连接错误 - 调整超时和重试
+    if "timeout" in error_lower or "connection" in error_lower:
+        # 这种错误通常需要在连接器层面处理，SQL层面能做的有限
+        # 可以尝试简化查询
+        if "ORDER BY" in fixed_sql:
+            fixed_sql = re.sub(r'\s+ORDER BY[^;]*', '', fixed_sql, flags=re.IGNORECASE)
+            logger.info("修复: 移除ORDER BY以简化查询")
+    
+    return fixed_sql

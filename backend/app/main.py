@@ -1,6 +1,6 @@
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, Request
-# from fastapi.middleware.cors import CORSMiddleware  # 已禁用CORS以解决跨域问题
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -250,10 +250,15 @@ def create_application() -> FastAPI:
         # 正则表达式优先级更高，移除具体的origins列表
         cors_config.pop("allow_origins", None)
 
-    # 🌍 CORS 已禁用 - 无跨域限制（开发环境）
-    
-    # app.add_middleware(CORSMiddleware, ...)  # 已禁用CORS以解决跨域问题
-    print("🌍 CORS中间件已禁用 - 无跨域限制")
+    # 🌍 CORS 配置 - 允许所有来源（开发环境）
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 允许所有来源
+        allow_credentials=False,  # 不允许携带cookie（与allow_origins=["*"]兼容）
+        allow_methods=["*"],  # 允许所有HTTP方法（包括OPTIONS）
+        allow_headers=["*"],  # 允许所有请求头
+    )
+    print("🌍 CORS中间件已启用 - 允许所有来源和方法")
 
     # 自定义OpenAPI schema
     def custom_openapi():

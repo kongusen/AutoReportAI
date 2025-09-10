@@ -927,110 +927,117 @@ class SQLGenerationTool(BaseTool):
         import time
         
         try:
-            # 导入现有的连接器
-            from app.services.data.connectors.doris_connector import DorisConnector, DorisConfig
-            from app.core.data_source_utils import DataSourcePasswordManager
-            
-            # 构建配置（从data_source_info中提取）
-            doris_config = DorisConfig(
-                source_type='doris',
-                name=data_source_info.get('name', 'ReAct测试'),
-                description='ReAct SQL测试连接',
-                fe_hosts=['192.168.61.30'],  # 从现有配置推断
-                mysql_host='192.168.61.30',
-                mysql_port=9030,
-                query_port=9030,
-                username='root',
-                password='yjg@123456',  # 从现有日志推断
-                database=data_source_info.get('database', 'yjg'),
-                mysql_username='root',
-                mysql_password='yjg@123456',
-                mysql_database=data_source_info.get('database', 'yjg'),
-                http_port=8030,
-                use_mysql_protocol=False  # 使用HTTP API
-            )
-            
-            connector = DorisConnector(config=doris_config)
-            start_time = time.time()
-            
-            # 检查SQL是否包含占位符
-            if '{{' in sql and '}}' in sql:
+            # 获取数据源ID（支持多种格式）
+            data_source_id = data_source_info.get('data_source_id') or data_source_info.get('id')
+            if not data_source_id:
                 return {
                     "success": False,
-                    "error": "SQL包含未替换的占位符",
-                    "execution_time_ms": 0,
-                    "row_count": 0,
-                    "placeholders_detected": True
+                    "error": "data_source_info中缺少数据源ID，需要提供'data_source_id'或'id'字段",
+                    "execution_time_ms": 0
                 }
             
-            # 为测试添加LIMIT（如果没有的话）
-            test_sql = self._prepare_sql_for_test(sql)
+            # 使用标准的数据源服务获取数据源配置
+            from app.db.session import get_db_session
+            from app import crud
+            from app.services.data.connectors import create_connector
             
-            # 执行查询
-            try:
-                result = await connector.execute_query(test_sql)
-                execution_time = (time.time() - start_time) * 1000
-                
-                if hasattr(result, 'to_dict'):
-                    result_dict = result.to_dict()
-                else:
-                    result_dict = result
-                
-                if result_dict.get("success", True):
-                    return {
-                        "success": True,
-                        "message": "ReAct SQL测试通过",
-                        "execution_time_ms": round(execution_time, 2),
-                        "row_count": result_dict.get("row_count", 0),
-                        "columns": result_dict.get("columns", []),
-                        "sample_data": result_dict.get("data", [])[:5]  # 只返回前5行作为样本
-                    }
-                else:
-                    error_msg = result_dict.get("error_message", "查询执行失败")
+            with get_db_session() as db:
+                data_source = crud.data_source.get(db, id=data_source_id)
+                if not data_source:
                     return {
                         "success": False,
-                        "error": error_msg,
-                        "execution_time_ms": round(execution_time, 2),
-                        "row_count": 0
+                        "error": f"未找到数据源ID: {data_source_id}",
+                        "execution_time_ms": 0
                     }
+                
+                # 使用连接器工厂创建正确的连接器实例
+                connector = create_connector(data_source)
+                start_time = time.time()
+                
+                # 检查SQL是否包含占位符
+                if '{{' in sql and '}}' in sql:
+                    return {
+                        "success": False,
+                        "error": "SQL包含未替换的占位符",
+                        "execution_time_ms": 0,
+                        "row_count": 0,
+                        "placeholders_detected": True
+                    }
+                
+                # 为测试添加LIMIT（如果没有的话）
+                test_sql = self._prepare_sql_for_test(sql)
+                
+                # 执行查询
+                try:
+                    # 使用连接器的上下文管理器
+                    async with connector:
+                        result = await connector.execute_query(test_sql)
+                        execution_time = (time.time() - start_time) * 1000
+                        
+                        if hasattr(result, 'to_dict'):
+                            result_dict = result.to_dict()
+                        else:
+                            result_dict = result
+                        
+                        if result_dict.get("success", True):
+                            return {
+                                "success": True,
+                                "message": "ReAct SQL测试通过",
+                                "execution_time_ms": round(execution_time, 2),
+                                "row_count": result_dict.get("row_count", 0),
+                                "columns": result_dict.get("columns", []),
+                                "sample_data": result_dict.get("data", [])[:5]  # 只返回前5行作为样本
+                            }
+                        else:
+                            error_msg = result_dict.get("error_message", "查询执行失败")
+                            return {
+                                "success": False,
+                                "error": error_msg,
+                                "execution_time_ms": round(execution_time, 2),
+                                "row_count": 0
+                            }
+                            
+                except Exception as query_error:
+                    execution_time = (time.time() - start_time) * 1000
+                    error_message = str(query_error)
                     
-            finally:
-                # 确保连接清理
-                if hasattr(connector, 'close'):
-                    await connector.close()
+                    # 解析常见错误类型
+                    if "Unknown table" in error_message:
+                        return {
+                            "success": False,
+                            "error": f"表不存在: {error_message}",
+                            "error_type": "table_not_found",
+                            "execution_time_ms": round(execution_time, 2)
+                        }
+                    elif "Unknown column" in error_message:
+                        return {
+                            "success": False,
+                            "error": f"字段不存在: {error_message}",
+                            "error_type": "column_not_found", 
+                            "execution_time_ms": round(execution_time, 2)
+                        }
+                    elif "syntax" in error_message.lower():
+                        return {
+                            "success": False,
+                            "error": f"SQL语法错误: {error_message}",
+                            "error_type": "syntax_error",
+                            "execution_time_ms": round(execution_time, 2)
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"ReAct测试失败: {error_message}",
+                            "error_type": "execution_error",
+                            "execution_time_ms": round(execution_time, 2)
+                        }
                     
         except Exception as e:
-            error_message = str(e)
-            
-            # 解析常见错误类型
-            if "Unknown table" in error_message:
-                return {
-                    "success": False,
-                    "error": f"表不存在: {error_message}",
-                    "error_type": "table_not_found",
-                    "execution_time_ms": 0
-                }
-            elif "Unknown column" in error_message:
-                return {
-                    "success": False,
-                    "error": f"字段不存在: {error_message}",
-                    "error_type": "column_not_found", 
-                    "execution_time_ms": 0
-                }
-            elif "syntax" in error_message.lower():
-                return {
-                    "success": False,
-                    "error": f"SQL语法错误: {error_message}",
-                    "error_type": "syntax_error",
-                    "execution_time_ms": 0
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": f"ReAct测试失败: {error_message}",
-                    "error_type": "execution_error",
-                    "execution_time_ms": 0
-                }
+            return {
+                "success": False,
+                "error": f"数据源连接或配置错误: {str(e)}",
+                "error_type": "connection_error",
+                "execution_time_ms": 0
+            }
     
     def _prepare_sql_for_test(self, sql: str) -> str:
         """为测试准备SQL（添加LIMIT等）"""

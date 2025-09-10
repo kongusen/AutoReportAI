@@ -1,6 +1,6 @@
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+# from fastapi.middleware.cors import CORSMiddleware  # 已禁用CORS以解决跨域问题
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -9,7 +9,7 @@ from fastapi_limiter import FastAPILimiter
 
 from app.api.router import api_router
 from app.api.versioning import APIVersionMiddleware, create_version_info_router
-from app.core.config import settings, get_cors_origins
+from app.core.config import settings
 from app.core.logging_config import setup_logging, RequestLoggingMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.websocket.router import router as websocket_router
@@ -53,8 +53,7 @@ def print_startup_config():
         print(f"💻 本地访问: http://localhost:{frontend_port}")
     else:
         # 本地访问模式
-        cors_origins = get_cors_origins()
-        frontend_url = cors_origins[0].strip() if cors_origins else f"http://localhost:{frontend_port}"
+        frontend_url = f"http://localhost:{frontend_port}"
         
         print(f"💻 本地访问模式")
         print(f"📱 前端地址: {frontend_url}")
@@ -232,17 +231,13 @@ def create_application() -> FastAPI:
     # Add request logging middleware (before CORS)
     app.add_middleware(RequestLoggingMiddleware)
 
-    # CORS 配置 - 从环境变量动态配置
-    origins = get_cors_origins()
-
-    # 调试信息：打印CORS配置
-    print(f"CORS Origins: {origins}")
+    # 🌍 CORS 已禁用 - 无跨域限制（开发环境）
     print(f"Allow Credentials: {settings.CORS_ALLOW_CREDENTIALS}")
     print(f"Allow Methods: {settings.CORS_ALLOW_METHODS}")
     print(f"Allow Headers: {settings.CORS_ALLOW_HEADERS}")
     
     cors_config = {
-        "allow_origins": origins,
+        "allow_origins": ["*"],
         "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
         "allow_methods": settings.CORS_ALLOW_METHODS,
         "allow_headers": settings.CORS_ALLOW_HEADERS,
@@ -255,7 +250,10 @@ def create_application() -> FastAPI:
         # 正则表达式优先级更高，移除具体的origins列表
         cors_config.pop("allow_origins", None)
 
-    app.add_middleware(CORSMiddleware, **cors_config)
+    # 🌍 CORS 已禁用 - 无跨域限制（开发环境）
+    
+    # app.add_middleware(CORSMiddleware, ...)  # 已禁用CORS以解决跨域问题
+    print("🌍 CORS中间件已禁用 - 无跨域限制")
 
     # 自定义OpenAPI schema
     def custom_openapi():

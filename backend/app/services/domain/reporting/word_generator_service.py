@@ -241,7 +241,6 @@ class WordGeneratorService:
 
     def _get_default_placeholder_value(self, key: str) -> str:
         """为常见占位符提供默认值"""
-        from datetime import datetime
         current_time = datetime.now()
         
         # 时间相关占位符

@@ -209,6 +209,13 @@ export default function TemplatePlaceholdersPage() {
       const isSuccess = response.data?.success !== undefined ? response.data.success : (result && result.generated_sql)
       
       if (isSuccess && result) {
+        // 清除该占位符的测试结果，因为SQL可能已经改变
+        setTestResults(prev => {
+          const updated = { ...prev }
+          delete updated[placeholderKey]
+          return updated
+        })
+        
         // 使用callback形式的setState来确保获取最新状态
         setPlaceholders(currentPlaceholders => {
           // 寻找匹配的占位符
@@ -238,13 +245,15 @@ export default function TemplatePlaceholdersPage() {
             agent_analyzed: true,
             sql_validated: result.sql_validated,
             confidence_score: result.confidence_score,
-            status: 'analyzed'
+            status: 'analyzed',
+            // 清除旧的测试结果
+            last_test_result: undefined
           } as any
           
           return updatedPlaceholders
         })
         
-        toast.success('占位符分析完成')
+        toast.success('占位符重新分析完成')
       } else {
         toast.error(response.data?.message || '分析失败')
       }
@@ -684,7 +693,7 @@ export default function TemplatePlaceholdersPage() {
                     </div>
                     
                     {/* 操作按钮 */}
-                    <div className="pt-4">
+                    <div className="pt-4 space-y-2">
                       {!hasGeneratedSql ? (
                         <Button
                           className="w-full"
@@ -695,14 +704,25 @@ export default function TemplatePlaceholdersPage() {
                           {isAnalyzingThis ? '分析中...' : '分析占位符'}
                         </Button>
                       ) : (
-                        <Button
-                          className="w-full"
-                          onClick={() => handleTestSQL(placeholder)}
-                          disabled={isTestingThis || !selectedDataSource}
-                        >
-                          <PlayIcon className="w-4 h-4 mr-2" />
-                          {isTestingThis ? '测试中...' : '测试SQL'}
-                        </Button>
+                        <div className="space-y-2">
+                          <Button
+                            className="w-full"
+                            onClick={() => handleTestSQL(placeholder)}
+                            disabled={isTestingThis || !selectedDataSource}
+                          >
+                            <PlayIcon className="w-4 h-4 mr-2" />
+                            {isTestingThis ? '测试中...' : '测试SQL'}
+                          </Button>
+                          <Button
+                            className="w-full"
+                            variant="outline"
+                            onClick={() => handleAnalyzeSinglePlaceholder(placeholder)}
+                            disabled={isAnalyzingThis || !selectedDataSource}
+                          >
+                            <BeakerIcon className="w-4 h-4 mr-2" />
+                            {isAnalyzingThis ? '重新分析中...' : '重新分析'}
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>

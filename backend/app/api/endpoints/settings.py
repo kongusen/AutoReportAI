@@ -1,5 +1,6 @@
 """用户设置管理API端点"""
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -477,8 +478,6 @@ async def test_llm_connection(
         # 实际测试连接
         try:
             # 使用React Agent系统的LLM服务适配器
-            from datetime import datetime
-            
             # 使用React Agent LLM选择器测试连接
             from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
             llm_service = SimpleModelSelector()

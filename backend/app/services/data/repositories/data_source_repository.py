@@ -5,6 +5,7 @@ Data Source Repository
 """
 
 import logging
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -101,8 +102,6 @@ class DataSourceRepository(TransactionalRepository[DataSource]):
     async def update_last_used(self, data_source_id: str) -> bool:
         """更新最后使用时间"""
         try:
-            from datetime import datetime
-            
             data_source = await self.get_by_id(data_source_id)
             if not data_source:
                 return False

@@ -5,7 +5,6 @@ import { useRouter, useParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -147,66 +146,64 @@ export default function EditDataSourcePage() {
 
   if (isLoading) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-lg">加载中...</div>
-        </div>
-      </AppLayout>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg">加载中...</div>
+      </div>
     )
   }
 
   return (
-    <AppLayout>
-      <PageHeader
-        title="编辑数据源"
-        description="修改数据源连接配置"
-        breadcrumbs={[
-          { label: '数据源', href: '/data-sources' },
-          { label: '编辑数据源' },
-        ]}
-      />
+    <>
+    <PageHeader
+      title="编辑数据源"
+      description="修改数据源连接配置"
+      breadcrumbs={[
+        { label: '数据源', href: '/data-sources' },
+        { label: '编辑数据源' },
+      ]}
+    />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
-        <div className="space-y-6">
-          <BasicInfoCard 
+    <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
+      <div className="space-y-6">
+        <BasicInfoCard 
+          sourceType={sourceType}
+          register={register}
+          errors={errors}
+          setValue={setValue}
+          setSelectedType={setSelectedType}
+          getValues={getValues}
+        />
+        
+        <ExpandablePanel title="连接配置" defaultExpanded={false}>
+          <ConfigurationContent
             sourceType={sourceType}
             register={register}
             errors={errors}
-            setValue={setValue}
-            setSelectedType={setSelectedType}
-            getValues={getValues}
           />
-          
-          <ExpandablePanel title="连接配置" defaultExpanded={false}>
-            <ConfigurationContent
-              sourceType={sourceType}
-              register={register}
-              errors={errors}
-            />
-          </ExpandablePanel>
-          
-          <ExpandablePanel title="状态管理" defaultExpanded={false}>
-            <StatusManagement
-              getValues={getValues}
-              setValue={setValue}
-            />
-          </ExpandablePanel>
-        </div>
+        </ExpandablePanel>
+        
+        <ExpandablePanel title="状态管理" defaultExpanded={false}>
+          <StatusManagement
+            getValues={getValues}
+            setValue={setValue}
+          />
+        </ExpandablePanel>
+      </div>
 
-        <div className="mt-8 flex justify-end space-x-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.back()}
-          >
-            取消
-          </Button>
-          <Button type="submit" loading={saving}>
-            保存更改
-          </Button>
-        </div>
-      </form>
-    </AppLayout>
+      <div className="mt-8 flex justify-end space-x-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.back()}
+        >
+          取消
+        </Button>
+        <Button type="submit" loading={saving}>
+          保存更改
+        </Button>
+      </div>
+    </form>
+    </>
   )
 }
 

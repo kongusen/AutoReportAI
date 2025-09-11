@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -105,49 +104,49 @@ export default function CreateDataSourcePage() {
 
 
   return (
-    <AppLayout>
-      <PageHeader
-        title="添加数据源"
-        description="配置新的数据源连接"
-        breadcrumbs={[
-          { label: '数据源', href: '/data-sources' },
-          { label: '添加数据源' },
-        ]}
-      />
+    <>
+    <PageHeader
+      title="添加数据源"
+      description="配置新的数据源连接"
+      breadcrumbs={[
+        { label: '数据源', href: '/data-sources' },
+        { label: '添加数据源' },
+      ]}
+    />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
-        <div className="space-y-6">
-          <BasicInfoCard 
+    <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
+      <div className="space-y-6">
+        <BasicInfoCard 
+          sourceType={sourceType}
+          register={register}
+          errors={errors}
+          setValue={setValue}
+          setSelectedType={setSelectedType}
+        />
+        
+        <ExpandablePanel title="连接配置" defaultExpanded={true}>
+          <ConfigurationContent
             sourceType={sourceType}
             register={register}
             errors={errors}
-            setValue={setValue}
-            setSelectedType={setSelectedType}
           />
-          
-          <ExpandablePanel title="连接配置" defaultExpanded={true}>
-            <ConfigurationContent
-              sourceType={sourceType}
-              register={register}
-              errors={errors}
-            />
-          </ExpandablePanel>
-        </div>
+        </ExpandablePanel>
+      </div>
 
-        <div className="mt-8 flex justify-end space-x-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.back()}
-          >
-            取消
-          </Button>
-          <Button type="submit" loading={loading}>
-            创建数据源
-          </Button>
-        </div>
-      </form>
-    </AppLayout>
+      <div className="mt-8 flex justify-end space-x-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.back()}
+        >
+          取消
+        </Button>
+        <Button type="submit" loading={loading}>
+          创建数据源
+        </Button>
+      </div>
+    </form>
+    </>
   )
 }
 

@@ -122,25 +122,23 @@ async def ask_agent(
 # ===========================================
 
 async def get_ai_tools_registry():
-    """获取AI工具注册表"""
+    """获取AI工具注册表 - 已迁移到新架构"""
     if 'tools_registry' not in _ai_service_instances:
-        from .tools.registry import AIToolsRegistry
-        _ai_service_instances['tools_registry'] = AIToolsRegistry()
+        from .core.tools import ToolChain
+        _ai_service_instances['tools_registry'] = ToolChain()
     return _ai_service_instances['tools_registry']
 
 async def get_tools_factory():
-    """获取工具工厂"""
+    """获取工具工厂 - 已迁移到新架构"""
     if 'tools_factory' not in _ai_service_instances:
-        from .tools.factory import AIToolsFactory
-        _ai_service_instances['tools_factory'] = AIToolsFactory()
+        from .core.tools import ToolChain
+        _ai_service_instances['tools_factory'] = ToolChain()
     return _ai_service_instances['tools_factory']
 
 async def get_chart_generator_tool():
-    """获取图表生成工具"""
-    if 'chart_generator_tool' not in _ai_service_instances:
-        from .tools.chart_generator_tool import ChartGeneratorTool
-        _ai_service_instances['chart_generator_tool'] = ChartGeneratorTool()
-    return _ai_service_instances['chart_generator_tool']
+    """获取图表生成工具 - 暂时返回None"""
+    # TODO: 实现新的图表生成工具
+    return None
 
 # ===========================================
 # 核心工作流接口（向后兼容）
@@ -270,12 +268,12 @@ from .llm import (
     get_service_info
 )
 
-# 工具系统导入
-from .tools import (
-    AIToolsRegistry,
-    AIToolsFactory,
-    ToolsMonitor
-)
+# 工具系统导入 - 暂时注释不存在的模块
+# from .tools import (
+#     AIToolsRegistry,
+#     AIToolsFactory,
+#     ToolsMonitor
+# )
 
 # ===========================================
 # 导出接口
@@ -304,11 +302,8 @@ __all__ = [
     
     # 工具系统服务
     'get_ai_tools_registry',
-    'get_tools_factory',
+    'get_tools_factory', 
     'get_chart_generator_tool',
-    'AIToolsRegistry',
-    'AIToolsFactory',
-    'ToolsMonitor',
     
     # 核心工作流接口
     'execute_placeholder_with_context',

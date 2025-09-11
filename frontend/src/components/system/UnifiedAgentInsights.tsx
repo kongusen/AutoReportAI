@@ -51,14 +51,15 @@ interface AgentArchitectureStatus {
 
 interface SystemHealth {
   overall_status: string
-  components: {
-    unified_facade: string
-    service_orchestrator: string
-    agent_controller: string
-    llm_services: string
-    tool_chain: string
+  component_health: {
+    [key: string]: string
   }
-  last_checked: string
+  health_checks: Array<{
+    component: string
+    status: string
+    response_time: number
+    last_check: string
+  }>
 }
 
 interface PerformanceMetrics {
@@ -248,7 +249,7 @@ export default function UnifiedAgentInsights() {
           {systemHealth ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Object.entries(systemHealth.components).map(([component, status]) => (
+                {systemHealth.component_health && Object.entries(systemHealth.component_health).map(([component, status]) => (
                   <div key={component} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -265,9 +266,11 @@ export default function UnifiedAgentInsights() {
                 ))}
               </div>
               
-              <div className="text-xs text-gray-500 text-right">
-                最后检查: {formatDateTime(systemHealth.last_checked)}
-              </div>
+              {systemHealth.health_checks && systemHealth.health_checks.length > 0 && (
+                <div className="text-xs text-gray-500 text-right">
+                  最后检查: {formatDateTime(systemHealth.health_checks[0].last_check)}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-8 text-gray-500">

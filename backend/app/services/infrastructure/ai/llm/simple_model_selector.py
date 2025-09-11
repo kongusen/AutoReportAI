@@ -89,9 +89,17 @@ class SimpleModelSelector:
     def _get_user_available_models(self, db: Session, user_id: str) -> List[Tuple[LLMModel, LLMServer]]:
         """获取用户配置的可用模型"""
         
+        # 将字符串用户ID转换为UUID（数据库字段类型）
+        import uuid
+        try:
+            user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        except ValueError:
+            logger.error(f"无效的用户ID格式: {user_id}")
+            return []
+        
         # 获取用户的活跃且健康的服务器
         servers = crud_llm_server.get_multi_by_filter(
-            db, user_id=user_id, is_active=True, is_healthy=True
+            db, user_id=user_uuid, is_active=True, is_healthy=True
         )
         
         if not servers:

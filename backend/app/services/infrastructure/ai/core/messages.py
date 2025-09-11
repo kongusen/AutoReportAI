@@ -167,3 +167,19 @@ class AgentMessage:
             }
         
         return result
+
+    def to_api_message(self) -> "APIMessage":
+        """转换为面向LLM的精简格式 - 基于Claude Code理念"""
+        from .api_messages import APIMessage
+        return APIMessage.from_agent_message(self)
+    
+    def get_display_text(self) -> str:
+        """获取用于显示的文本内容"""
+        if self.type == MessageType.PROGRESS and self.progress:
+            return f"[进度] {self.progress.current_step}"
+        elif self.type == MessageType.ERROR and self.error:
+            return f"[错误] {self.error.error_message}"
+        elif self.type == MessageType.RESULT and self.content:
+            return f"[结果] {str(self.content)[:100]}..."
+        else:
+            return f"[{self.type.value}] {str(self.content) if self.content else ''}"

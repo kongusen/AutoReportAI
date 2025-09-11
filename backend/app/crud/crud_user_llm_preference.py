@@ -2,6 +2,7 @@
 用户LLM偏好CRUD操作
 """
 
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -111,8 +112,6 @@ class CRUDUserLLMUsageQuota(CRUDBase[UserLLMUsageQuota, None, None]):
         period: str = "monthly"
     ) -> Optional[UserLLMUsageQuota]:
         """获取用户当前周期的配额"""
-        from datetime import datetime
-        
         now = datetime.utcnow()
         return db.query(self.model).filter(
             and_(

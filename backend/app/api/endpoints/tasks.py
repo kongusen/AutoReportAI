@@ -120,7 +120,11 @@ async def create_task(
             description=task_in.description,
             schedule=task_in.schedule,
             recipients=task_in.recipients,
-            is_active=task_in.is_active
+            is_active=task_in.is_active,
+            processing_mode=task_in.processing_mode,
+            workflow_type=task_in.workflow_type,
+            max_context_tokens=task_in.max_context_tokens,
+            enable_compression=task_in.enable_compression
         )
         
         task_schema = TaskResponse.model_validate(task)

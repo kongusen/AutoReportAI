@@ -1,5 +1,6 @@
 """认证相关API端点 - v2版本"""
 
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -143,7 +144,6 @@ async def forgot_password(
     try:
         import secrets
         import hashlib
-        from datetime import datetime, timedelta
         
         # 生成重置令牌
         reset_token = secrets.token_urlsafe(32)
@@ -184,7 +184,6 @@ async def reset_password(
     # 验证重置令牌
     try:
         import hashlib
-        from datetime import datetime
         
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         

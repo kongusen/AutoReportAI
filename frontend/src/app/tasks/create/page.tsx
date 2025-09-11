@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -161,65 +160,65 @@ export default function CreateTaskPage() {
 
 
   return (
-    <AppLayout>
-      <PageHeader
-        title="创建任务"
-        description="创建新的定时任务"
-        breadcrumbs={[
-          { label: '任务管理', href: '/tasks' },
-          { label: '创建任务' },
-        ]}
-      />
+    <>
+    <PageHeader
+      title="创建任务"
+      description="创建新的定时任务"
+      breadcrumbs={[
+        { label: '任务管理', href: '/tasks' },
+        { label: '创建任务' },
+      ]}
+    />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
-        <div className="space-y-6">
-          <BasicInfoCard
-            register={register}
-            errors={errors}
+    <form onSubmit={handleSubmit(onSubmit)} className="max-w-4xl mx-auto">
+      <div className="space-y-6">
+        <BasicInfoCard
+          register={register}
+          errors={errors}
+          setValue={setValue}
+          getValues={getValues}
+          dataSourceOptions={dataSourceOptions}
+          templateOptions={templateOptions}
+        />
+        
+        <ExpandablePanel title="调度设置" defaultExpanded={false}>
+          <ScheduleConfiguration
+            watchedSchedule={watchedSchedule}
             setValue={setValue}
-            getValues={getValues}
-            dataSourceOptions={dataSourceOptions}
-            templateOptions={templateOptions}
+            errors={errors}
+            isDirty={isDirty}
+            lastAutoSave={lastAutoSave}
+            setIsDirty={setIsDirty}
           />
-          
-          <ExpandablePanel title="调度设置" defaultExpanded={false}>
-            <ScheduleConfiguration
-              watchedSchedule={watchedSchedule}
-              setValue={setValue}
-              errors={errors}
-              isDirty={isDirty}
-              lastAutoSave={lastAutoSave}
-              setIsDirty={setIsDirty}
-            />
-          </ExpandablePanel>
+        </ExpandablePanel>
 
-          <ExpandablePanel title="通知配置" defaultExpanded={false}>
-            <NotificationConfiguration
-              watchedRecipients={watchedRecipients}
-              recipientInput={recipientInput}
-              setRecipientInput={setRecipientInput}
-              addRecipient={addRecipient}
-              removeRecipient={removeRecipient}
-              handleRecipientKeyDown={handleRecipientKeyDown}
-              errors={errors}
-            />
-          </ExpandablePanel>
-        </div>
+        <ExpandablePanel title="通知配置" defaultExpanded={false}>
+          <NotificationConfiguration
+            watchedRecipients={watchedRecipients}
+            recipientInput={recipientInput}
+            setRecipientInput={setRecipientInput}
+            addRecipient={addRecipient}
+            removeRecipient={removeRecipient}
+            handleRecipientKeyDown={handleRecipientKeyDown}
+            errors={errors}
+          />
+        </ExpandablePanel>
+      </div>
 
-        <div className="mt-8 flex justify-end space-x-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => router.back()}
-          >
-            取消
-          </Button>
-          <Button type="submit" loading={loading}>
-            创建任务
-          </Button>
-        </div>
-      </form>
-    </AppLayout>
+      <div className="mt-8 flex justify-end space-x-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.back()}
+        >
+          取消
+        </Button>
+        <Button type="submit" loading={loading}>
+          创建任务
+        </Button>
+      </div>
+    </form>
+    </>
   )
 }
 
@@ -362,6 +361,15 @@ function ScheduleConfiguration({
 }: ScheduleConfigurationProps) {
   return (
     <div className="space-y-6">
+      <div className="bg-blue-50 border border-blue-200 rounded-md p-4 mb-4">
+        <h4 className="text-sm font-medium text-blue-900 mb-2">调度与报告周期关系说明</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          <p>• <strong>报告周期</strong>：设置报告数据的时间范围（如月报、周报），用于SQL时间参数生成</p>
+          <p>• <strong>调度设置</strong>：设置任务执行的时间频率，可以与报告周期不同</p>
+          <p>• <strong>示例</strong>：可以设置"月报"数据但"每周"执行一次，获取最新的月度数据</p>
+        </div>
+      </div>
+      
       <CronEditor
         value={watchedSchedule}
         onChange={(cron) => {

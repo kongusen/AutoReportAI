@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from celery.result import AsyncResult
 
-from app.models.task import Task, TaskExecution, TaskStatus, ReportPeriod
+from app.models.task import Task, TaskExecution, TaskStatus, ReportPeriod, ProcessingMode, AgentWorkflowType
 from app.models.user import User
 from app.models.data_source import DataSource  
 from app.models.template import Template
@@ -40,7 +40,11 @@ class TaskApplicationService:
         description: Optional[str] = None,
         schedule: Optional[str] = None,
         recipients: Optional[List[str]] = None,
-        is_active: bool = True
+        is_active: bool = True,
+        processing_mode: ProcessingMode = ProcessingMode.INTELLIGENT,
+        workflow_type: AgentWorkflowType = AgentWorkflowType.SIMPLE_REPORT,
+        max_context_tokens: int = 32000,
+        enable_compression: bool = True
     ) -> Task:
         """
         创建新任务
@@ -56,6 +60,10 @@ class TaskApplicationService:
             schedule: 调度表达式
             recipients: 通知邮箱列表
             is_active: 是否启用
+            processing_mode: 处理模式
+            workflow_type: Agent工作流类型
+            max_context_tokens: 最大上下文令牌数
+            enable_compression: 是否启用压缩
             
         Returns:
             Task: 创建的任务对象
@@ -96,7 +104,11 @@ class TaskApplicationService:
                 schedule=schedule,
                 recipients=recipients or [],
                 is_active=is_active,
-                status=TaskStatus.PENDING
+                status=TaskStatus.PENDING,
+                processing_mode=processing_mode,
+                workflow_type=workflow_type,
+                max_context_tokens=max_context_tokens,
+                enable_compression=enable_compression
             )
             
             db.add(task)

@@ -1,8 +1,8 @@
 """
-增强的工具基础架构 v3.0 - 核心工具系统
+增强的工具基础架构 v3.0
 ===============================================
 
-替换原有的BaseTool架构，提供更强大的功能：
+基于现有BaseTool架构的全面优化：
 - 更强大的错误处理和恢复机制
 - 智能流式处理和进度管理
 - 工具间依赖管理和协调能力
@@ -20,6 +20,9 @@ from typing import Dict, Any, List, Optional, AsyncGenerator, Union, Callable, S
 from enum import Enum
 import json
 
+from .prompts import prompt_manager, PromptComplexity
+from ..llm import ask_agent_for_user
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +37,6 @@ class ToolResultType(Enum):
     DEPENDENCY = "dependency"       # 依赖状态
     RECOVERY = "recovery"           # 错误恢复
     OPTIMIZATION = "optimization"   # 优化建议
-    STATUS = "status"               # 保持向后兼容
 
 
 class ToolPriority(Enum):
@@ -75,21 +77,16 @@ class ToolMetrics:
     success_rate: float = 0.0
     error_count: int = 0
     retry_count: int = 0
+    complexity_level: Optional[PromptComplexity] = None
 
 
 @dataclass
-class ToolContext:
-    """增强的工具执行上下文 - 保持接口兼容性"""
-    # 基础信息 - 保持原有接口
+class EnhancedToolContext:
+    """增强的工具执行上下文"""
+    # 基础信息
     user_id: str
     task_id: str
     session_id: str
-    
-    # 原有字段保持兼容
-    context_data: Dict[str, Any] = field(default_factory=dict)
-    tool_config: Optional[Dict[str, Any]] = None
-    
-    # 新增扩展字段
     timestamp: datetime = field(default_factory=datetime.utcnow)
     
     # 数据源信息
@@ -104,6 +101,7 @@ class ToolContext:
     placeholders: List[Dict[str, Any]] = field(default_factory=list)
     
     # 执行配置
+    complexity: PromptComplexity = PromptComplexity.MEDIUM
     max_iterations: int = 5
     max_retries: int = 3
     timeout: Optional[int] = 300
@@ -126,7 +124,8 @@ class ToolContext:
     child_tools: List[str] = field(default_factory=list)
     tool_chain_id: Optional[str] = None
     
-    # 环境信息
+    # 额外上下文
+    context_data: Dict[str, Any] = field(default_factory=dict)
     environment: Dict[str, Any] = field(default_factory=dict)
     
     def add_insight(self, insight: str):
@@ -150,18 +149,13 @@ class ToolContext:
 
 
 @dataclass
-class ToolResult:
-    """增强的工具执行结果 - 保持接口兼容性"""
+class EnhancedToolResult:
+    """增强的工具执行结果"""
     type: ToolResultType
     data: Any
+    tool_name: str
     
-    # 原有字段保持兼容
-    progress_info: Optional[Dict[str, Any]] = None
-    error_info: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    
-    # 新增扩展字段
-    tool_name: Optional[str] = None
+    # 执行信息
     iteration: Optional[int] = None
     step_name: Optional[str] = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
@@ -185,7 +179,8 @@ class ToolResult:
     dependencies_met: List[str] = field(default_factory=list)
     dependencies_missing: List[str] = field(default_factory=list)
     
-    # 执行指标
+    # 元数据
+    metadata: Dict[str, Any] = field(default_factory=dict)
     metrics: Optional[ToolMetrics] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -200,8 +195,6 @@ class ToolResult:
             "confidence": self.confidence,
             "validation_passed": self.validation_passed,
             "quality_score": self.quality_score,
-            "progress_info": self.progress_info,
-            "error_info": self.error_info,
             "error_details": self.error_details,
             "recovery_suggestions": self.recovery_suggestions,
             "retry_count": self.retry_count,
@@ -215,8 +208,8 @@ class ToolResult:
         }
 
 
-class BaseTool(ABC):
-    """增强的基础工具类 - 保持接口兼容性"""
+class EnhancedBaseTool(ABC):
+    """增强的基础工具类 - v3.0"""
     
     def __init__(
         self,
@@ -259,13 +252,12 @@ class BaseTool(ABC):
         except Exception as e:
             self.status = ToolStatus.FAILED
             self.logger.error(f"工具 {self.tool_name} 初始化失败: {e}")
-            # 不抛出异常，允许工具继续工作
+            raise
     
     def _load_configuration(self):
         """加载工具配置"""
+        # 从prompt_manager获取工具相关配置
         try:
-            # 尝试从prompt_manager获取工具相关配置
-            from .prompts import prompt_manager
             self.config = prompt_manager.get_tool_config(self.tool_name)
         except Exception:
             self.config = {}  # 使用默认配置
@@ -273,7 +265,6 @@ class BaseTool(ABC):
     def _load_prompt_templates(self):
         """加载提示词模板"""
         try:
-            from .prompts import prompt_manager
             self.prompt_templates = prompt_manager.get_tool_prompts(self.tool_name)
         except Exception:
             self.prompt_templates = {}  # 使用默认模板
@@ -282,25 +273,25 @@ class BaseTool(ABC):
     async def execute(
         self,
         input_data: Dict[str, Any],
-        context: ToolContext
-    ) -> AsyncGenerator[ToolResult, None]:
+        context: EnhancedToolContext
+    ) -> AsyncGenerator[EnhancedToolResult, None]:
         """
-        执行工具逻辑 - 保持原有接口
+        执行工具逻辑 - 抽象方法
         
         Args:
             input_data: 输入数据
-            context: 执行上下文
+            context: 增强的执行上下文
             
         Yields:
-            ToolResult: 可能是进度更新或最终结果
+            EnhancedToolResult: 可能是进度更新或最终结果
         """
         pass
     
     async def execute_with_retry(
         self,
         input_data: Dict[str, Any],
-        context: ToolContext
-    ) -> AsyncGenerator[ToolResult, None]:
+        context: EnhancedToolContext
+    ) -> AsyncGenerator[EnhancedToolResult, None]:
         """带重试机制的执行"""
         retry_count = 0
         last_error = None
@@ -319,7 +310,6 @@ class BaseTool(ABC):
                 # 执行主逻辑
                 async for result in self.execute(input_data, context):
                     result.retry_count = retry_count
-                    result.tool_name = self.tool_name
                     yield result
                     
                     # 如果是最终结果且成功，更新指标并返回
@@ -358,7 +348,7 @@ class BaseTool(ABC):
             recoverable=False
         )
     
-    async def _check_dependencies(self, context: ToolContext) -> Dict[str, Any]:
+    async def _check_dependencies(self, context: EnhancedToolContext) -> Dict[str, Any]:
         """检查工具依赖"""
         deps_status = {
             "all_met": True,
@@ -413,16 +403,8 @@ class BaseTool(ABC):
         self.metrics.error_count += 1
         self.metrics.success_rate = max(0.0, self.metrics.success_rate - 0.1)
     
-    async def validate_input(self, input_data: Dict[str, Any]) -> bool:
-        """验证输入数据 - 保持原有接口兼容"""
-        try:
-            validation_result = await self.validate_input_enhanced(input_data)
-            return validation_result.get("valid", True)
-        except Exception:
-            return True  # 默认通过验证
-    
-    async def validate_input_enhanced(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """增强的验证输入数据"""
+    async def validate_input(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """验证输入数据 - 增强版"""
         validation_result = {
             "valid": True,
             "errors": [],
@@ -460,19 +442,16 @@ class BaseTool(ABC):
         self,
         message: str,
         step: Optional[str] = None,
-        percentage: Optional[float] = None
-    ) -> ToolResult:
-        """创建进度结果 - 保持原有接口"""
-        return ToolResult(
+        percentage: Optional[float] = None,
+        insights: List[str] = None
+    ) -> EnhancedToolResult:
+        """创建进度结果"""
+        return EnhancedToolResult(
             type=ToolResultType.PROGRESS,
             data=message,
             tool_name=self.tool_name,
             step_name=step,
-            progress_info={
-                "step": step,
-                "percentage": percentage,
-                "timestamp": self._get_timestamp()
-            },
+            insights=insights or [],
             metadata={
                 "percentage": percentage,
                 "status": self.status.value
@@ -482,47 +461,47 @@ class BaseTool(ABC):
     def create_success_result(
         self,
         data: Any,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> ToolResult:
-        """创建成功结果 - 保持原有接口"""
-        return ToolResult(
+        confidence: Optional[float] = None,
+        insights: List[str] = None,
+        optimization_suggestions: List[str] = None
+    ) -> EnhancedToolResult:
+        """创建成功结果"""
+        return EnhancedToolResult(
             type=ToolResultType.RESULT,
             data=data,
             tool_name=self.tool_name,
+            confidence=confidence,
             validation_passed=True,
-            metadata=metadata or {},
+            insights=insights or [],
+            optimization_suggestions=optimization_suggestions or [],
             metrics=self.metrics
         )
     
     def create_error_result(
         self,
         error_message: str,
-        error_type: str = "tool_error",
-        recoverable: bool = True
-    ) -> ToolResult:
-        """创建错误结果 - 保持原有接口"""
-        return ToolResult(
+        error_type: str = "execution_error",
+        recoverable: bool = True,
+        recovery_suggestions: List[str] = None
+    ) -> EnhancedToolResult:
+        """创建错误结果"""
+        return EnhancedToolResult(
             type=ToolResultType.ERROR,
-            data=None,
+            data=error_message,
             tool_name=self.tool_name,
             validation_passed=False,
-            error_info={
-                "error_type": error_type,
-                "error_message": error_message,
-                "recoverable": recoverable,
-                "tool_name": self.tool_name
-            },
             error_details={
                 "type": error_type,
                 "message": error_message,
                 "recoverable": recoverable
             },
+            recovery_suggestions=recovery_suggestions or [],
             metrics=self.metrics
         )
     
-    def create_dependency_result(self, deps_check: Dict[str, Any]) -> ToolResult:
+    def create_dependency_result(self, deps_check: Dict[str, Any]) -> EnhancedToolResult:
         """创建依赖检查结果"""
-        return ToolResult(
+        return EnhancedToolResult(
             type=ToolResultType.DEPENDENCY,
             data="依赖检查结果",
             tool_name=self.tool_name,
@@ -532,127 +511,75 @@ class BaseTool(ABC):
             metadata=deps_check["details"]
         )
     
-    def create_recovery_result(self, message: str) -> ToolResult:
+    def create_recovery_result(self, message: str) -> EnhancedToolResult:
         """创建恢复结果"""
-        return ToolResult(
+        return EnhancedToolResult(
             type=ToolResultType.RECOVERY,
             data=message,
             tool_name=self.tool_name,
             metadata={"status": self.status.value}
         )
     
-    def _get_timestamp(self) -> str:
-        """获取当前时间戳 - 保持原有接口"""
-        return datetime.utcnow().isoformat()
-
-
-class ToolChain:
-    """增强的工具链管理器 - 保持接口兼容性"""
-    
-    def __init__(self):
-        self.tools: Dict[str, BaseTool] = {}
-        self.tool_dependencies: Dict[str, List[str]] = {}
-        self.execution_history: List[Dict[str, Any]] = []
-        self.logger = logging.getLogger(f"{__name__}.ToolChain")
-    
-    def register_tool(self, tool: BaseTool):
-        """注册工具 - 保持原有接口"""
-        self.tools[tool.tool_name] = tool
-        
-        # 注册依赖关系
-        if tool.dependencies:
-            deps = [dep.tool_name for dep in tool.dependencies]
-            self.tool_dependencies[tool.tool_name] = deps
-        
-        self.logger.info(f"工具已注册: {tool.tool_name}")
-    
-    def get_tool(self, tool_name: str) -> Optional[BaseTool]:
-        """获取工具 - 保持原有接口"""
-        return self.tools.get(tool_name)
-    
-    def list_tools(self) -> list:
-        """列出所有已注册的工具 - 保持原有接口"""
-        return list(self.tools.keys())
-    
-    async def execute_tool(
+    def get_optimized_prompt(
         self,
-        tool_name: str,
-        input_data: Dict[str, Any],
-        context: ToolContext
-    ) -> AsyncGenerator[ToolResult, None]:
-        """执行指定工具 - 保持原有接口，增加功能"""
-        tool = self.get_tool(tool_name)
-        if not tool:
-            yield ToolResult(
-                type=ToolResultType.ERROR,
-                data=None,
-                tool_name=tool_name,
-                error_info={
-                    "error_type": "tool_not_found",
-                    "error_message": f"工具未找到: {tool_name}",
-                    "recoverable": False
-                }
+        prompt_type: str,
+        context: EnhancedToolContext,
+        **kwargs
+    ) -> str:
+        """获取优化的提示词"""
+        try:
+            return prompt_manager.get_prompt(
+                category=self.tool_category,
+                prompt_type=prompt_type,
+                context={
+                    "tool_name": self.tool_name,
+                    "complexity": context.complexity,
+                    "learned_insights": context.learned_insights,
+                    "error_history": context.get_recent_errors(),
+                    **kwargs
+                },
+                complexity=context.complexity
             )
+        except Exception as e:
+            self.logger.error(f"获取提示词失败: {e}")
+            return self._get_fallback_prompt(prompt_type, **kwargs)
+    
+    def _get_fallback_prompt(self, prompt_type: str, **kwargs) -> str:
+        """获取回退提示词"""
+        return f"请执行 {self.tool_name} 的 {prompt_type} 任务。输入参数: {kwargs}"
+    
+    async def learn_from_execution(
+        self,
+        result: EnhancedToolResult,
+        context: EnhancedToolContext
+    ):
+        """从执行结果中学习"""
+        if not context.enable_learning:
             return
         
         try:
-            # 验证输入
-            if not await tool.validate_input(input_data):
-                yield tool.create_error_result(
-                    f"输入数据验证失败: {tool_name}",
-                    "input_validation_error"
-                )
-                return
+            # 基于结果质量生成学习洞察
+            if result.confidence and result.confidence > 0.8:
+                context.add_insight(f"高质量结果策略：{result.step_name}")
             
-            # 记录执行开始
-            execution_record = {
-                "tool_name": tool_name,
-                "start_time": datetime.utcnow(),
-                "input_data_size": len(str(input_data)),
-                "context_id": context.task_id
-            }
+            # 基于错误生成学习洞察
+            if result.type == ToolResultType.ERROR and result.recovery_suggestions:
+                for suggestion in result.recovery_suggestions:
+                    context.add_insight(f"错误恢复策略：{suggestion}")
             
-            # 执行工具（使用增强的重试机制）
-            async for result in tool.execute_with_retry(input_data, context):
-                yield result
+            # 记录性能洞察
+            if result.metrics and result.metrics.execution_duration:
+                if result.metrics.execution_duration < 10:  # 快速执行
+                    context.add_insight("快速执行路径已验证")
+                elif result.metrics.execution_duration > 60:  # 慢速执行
+                    context.add_insight("需要优化执行效率")
             
-            # 记录执行完成
-            execution_record["end_time"] = datetime.utcnow()
-            execution_record["duration"] = (
-                execution_record["end_time"] - execution_record["start_time"]
-            ).total_seconds()
-            self.execution_history.append(execution_record)
-                
         except Exception as e:
-            self.logger.error(f"工具执行失败: {tool_name} - {e}")
-            yield ToolResult(
-                type=ToolResultType.ERROR,
-                data=None,
-                tool_name=tool_name,
-                error_info={
-                    "error_type": "tool_execution_error",
-                    "error_message": str(e),
-                    "recoverable": True,
-                    "tool_name": tool_name
-                }
-            )
-    
-    def get_tool_dependency_graph(self) -> Dict[str, List[str]]:
-        """获取工具依赖图"""
-        return self.tool_dependencies.copy()
-    
-    def get_execution_history(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """获取执行历史"""
-        return self.execution_history[-limit:] if self.execution_history else []
-    
-    def get_tool_metrics(self, tool_name: str) -> Optional[ToolMetrics]:
-        """获取工具指标"""
-        tool = self.get_tool(tool_name)
-        return tool.metrics if tool else None
+            self.logger.error(f"学习过程出错: {e}")
 
 
-class IterativeTool(BaseTool):
-    """支持迭代执行的工具 - 保持向后兼容"""
+class IterativeEnhancedTool(EnhancedBaseTool):
+    """支持迭代执行的增强工具"""
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -661,8 +588,8 @@ class IterativeTool(BaseTool):
     async def execute(
         self,
         input_data: Dict[str, Any],
-        context: ToolContext
-    ) -> AsyncGenerator[ToolResult, None]:
+        context: EnhancedToolContext
+    ) -> AsyncGenerator[EnhancedToolResult, None]:
         """迭代执行框架"""
         
         iteration = 0
@@ -686,7 +613,7 @@ class IterativeTool(BaseTool):
                     result.iteration = iteration
                     
                     # 收集洞察
-                    if hasattr(result, 'insights') and result.insights:
+                    if result.insights:
                         accumulated_insights.extend(result.insights)
                     
                     yield result
@@ -695,8 +622,7 @@ class IterativeTool(BaseTool):
                     if result.type == ToolResultType.RESULT:
                         if await self.should_stop_iteration(result, context):
                             # 添加所有累积的洞察
-                            if hasattr(result, 'insights'):
-                                result.insights = list(set(accumulated_insights))
+                            result.insights = list(set(accumulated_insights))
                             return
                         else:
                             # 准备下一次迭代的数据
@@ -723,30 +649,28 @@ class IterativeTool(BaseTool):
     async def execute_single_iteration(
         self,
         input_data: Dict[str, Any],
-        context: ToolContext,
+        context: EnhancedToolContext,
         iteration: int
-    ) -> AsyncGenerator[ToolResult, None]:
+    ) -> AsyncGenerator[EnhancedToolResult, None]:
         """执行单次迭代 - 子类必须实现"""
         pass
     
     async def should_stop_iteration(
         self,
-        result: ToolResult,
-        context: ToolContext
+        result: EnhancedToolResult,
+        context: EnhancedToolContext
     ) -> bool:
         """判断是否应该停止迭代"""
         # 默认停止条件
         return (
-            hasattr(result, 'confidence') and 
-            result.confidence and 
-            result.confidence >= context.confidence_threshold
+            result.confidence and result.confidence >= context.confidence_threshold
         ) or result.validation_passed
     
     async def prepare_next_iteration(
         self,
-        result: ToolResult,
+        result: EnhancedToolResult,
         current_data: Dict[str, Any],
-        context: ToolContext
+        context: EnhancedToolContext
     ) -> Dict[str, Any]:
         """准备下一次迭代的数据"""
         # 默认保持原数据，子类可以重写

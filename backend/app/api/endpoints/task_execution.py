@@ -1,11 +1,11 @@
 """
-任务执行API路由
+任务执行API路由 - 增强架构v3.0
 
-提供完整的报告生成任务执行API，包括：
-1. 启动任务执行
-2. 查询任务状态
-3. 取消任务
-4. 获取任务历史
+提供完整的报告生成任务执行API，集成增强架构v3.0：
+1. 智能任务执行（使用工具链）
+2. 实时状态查询（性能监控）
+3. 流式进度反馈
+4. 增强错误处理和重试
 """
 
 import logging
@@ -19,19 +19,31 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.base import APIResponse
+from app import crud
+
+# 导入增强架构v3.0组件
+from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
+from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
+from app.services.infrastructure.ai.core.prompt_monitor import get_prompt_monitor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class TaskExecutionRequestSchema(BaseModel):
-    """任务执行请求模型"""
+    """增强任务执行请求模型"""
     template_id: str = Field(..., description="模板ID")
     data_source_ids: List[str] = Field(..., description="数据源ID列表")
     execution_context: Dict[str, Any] = Field(default_factory=dict, description="执行上下文")
     time_context: Optional[Dict[str, Any]] = Field(None, description="时间上下文")
     output_format: str = Field("docx", description="输出格式")
     delivery_config: Optional[Dict[str, Any]] = Field(None, description="投递配置")
+    
+    # 增强架构v3.0新增字段
+    use_enhanced_execution: bool = Field(True, description="使用增强执行引擎")
+    max_iterations: int = Field(5, ge=1, le=10, description="最大迭代次数")
+    include_reasoning: bool = Field(True, description="包含推理过程")
+    performance_optimization: bool = Field(True, description="性能优化")
     
     class Config:
         schema_extra = {
@@ -58,7 +70,7 @@ class TaskExecutionRequestSchema(BaseModel):
 
 
 class TaskStatusResponse(BaseModel):
-    """任务状态响应模型"""
+    """增强任务状态响应模型"""
     task_id: str
     status: str
     current_step: str
@@ -66,63 +78,188 @@ class TaskStatusResponse(BaseModel):
     start_time: datetime
     updated_at: Optional[datetime] = None
     error: Optional[str] = None
+    
+    # 增强架构v3.0新增字段
+    session_id: Optional[str] = None
+    tools_used: List[str] = Field(default_factory=list, description="使用的工具列表")
+    performance_metrics: Optional[Dict[str, Any]] = None
+    confidence_score: Optional[float] = None
+    reasoning_steps: Optional[List[str]] = None
 
 
 @router.post("/execute", response_model=APIResponse[Dict[str, Any]])
 async def execute_task(
     request: TaskExecutionRequestSchema,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ) -> APIResponse[Dict[str, Any]]:
-    """启动任务执行"""
+    """启动增强任务执行 - 集成增强架构v3.0"""
+    
+    import uuid
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+    session_id = f"session_{uuid.uuid4().hex[:8]}"
+    
     try:
-        logger.info(f"启动任务执行: user_id={current_user.id}, template_id={request.template_id}")
+        logger.info(f"启动增强任务执行: user_id={current_user.id}, task_id={task_id}, template_id={request.template_id}")
         
-        from app.services.application.tasks.task_execution_service import (
-            create_task_execution_service, TaskExecutionRequest
+        # 检查是否使用增强执行
+        if not request.use_enhanced_execution:
+            # 回退到原有实现（保持兼容性）
+            from app.services.application.tasks.task_execution_service import (
+                create_task_execution_service, TaskExecutionRequest
+            )
+            
+            task_service = create_task_execution_service(str(current_user.id))
+            execution_request = TaskExecutionRequest(
+                task_id=task_id,
+                template_id=request.template_id,
+                data_source_ids=request.data_source_ids,
+                user_id=str(current_user.id),
+                execution_context=request.execution_context,
+                time_context=request.time_context,
+                output_format=request.output_format,
+                delivery_config=request.delivery_config
+            )
+            
+            import asyncio
+            asyncio.create_task(task_service.execute_task(execution_request))
+            
+            return APIResponse(
+                success=True,
+                data={
+                    "task_id": task_id,
+                    "status": "started",
+                    "message": "任务已启动（传统模式）",
+                    "enhanced_execution": False,
+                    "started_at": datetime.now().isoformat()
+                },
+                message="任务执行已启动"
+            )
+        
+        # === 增强架构v3.0执行路径 ===
+        
+        # 1. 获取模板和占位符信息
+        template = crud.template.get(db, id=request.template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        
+        placeholders = crud.template_placeholder.get_by_template(
+            db, template_id=request.template_id
         )
         
-        # 创建任务执行服务
-        task_service = create_task_execution_service(str(current_user.id))
+        # 2. 获取数据源信息
+        data_sources_info = []
+        for ds_id in request.data_source_ids:
+            ds = crud.data_source.get(db, id=ds_id)
+            if ds:
+                try:
+                    from app.services.data.repositories.data_source_repository import DataSourceRepository
+                    ds_repo = DataSourceRepository()
+                    tables_info = await ds_repo.get_tables_info(ds_id)
+                    data_sources_info.append({
+                        "id": ds_id,
+                        "name": ds.name,
+                        "type": ds.source_type,
+                        "tables": [t.get("name", "") for t in tables_info],
+                        "table_details": tables_info
+                    })
+                except Exception as e:
+                    logger.warning(f"获取数据源{ds_id}表信息失败: {e}")
+                    data_sources_info.append({
+                        "id": ds_id,
+                        "name": ds.name,
+                        "type": ds.source_type,
+                        "tables": [],
+                        "table_details": []
+                    })
         
-        # 生成任务ID
-        import uuid
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        # 3. 初始化增强工具链
+        tool_chain = ToolChain()
+        sql_generator = AdvancedSQLGenerator()
+        tool_chain.register_tool(sql_generator)
         
-        # 构建任务执行请求
-        execution_request = TaskExecutionRequest(
-            task_id=task_id,
-            template_id=request.template_id,
-            data_source_ids=request.data_source_ids,
+        # 4. 创建执行上下文
+        context = ToolContext(
             user_id=str(current_user.id),
-            execution_context=request.execution_context,
-            time_context=request.time_context,
-            output_format=request.output_format,
-            delivery_config=request.delivery_config
+            task_id=task_id,
+            session_id=session_id,
+            data_source_info={
+                "tables": [t for ds in data_sources_info for t in ds.get("tables", [])],
+                "table_details": [t for ds in data_sources_info for t in ds.get("table_details", [])],
+                "data_sources": data_sources_info
+            }
         )
         
-        # 异步执行任务
-        import asyncio
-        task_future = asyncio.create_task(task_service.execute_task(execution_request))
+        # 5. 准备输入数据
+        placeholder_data = [
+            {
+                "name": p.placeholder_name,
+                "text": p.description or p.placeholder_name,
+                "type": "chart"
+            }
+            for p in placeholders
+        ]
         
-        # 立即返回任务ID，不等待执行完成
+        input_data = {
+            "placeholders": placeholder_data,
+            "requirements": {
+                "max_iterations": request.max_iterations,
+                "include_reasoning": request.include_reasoning,
+                "performance_optimization": request.performance_optimization
+            }
+        }
+        
+        # 6. 启动增强执行
+        monitor = get_prompt_monitor()
+        monitor.start_session(session_id)
+        
+        # 异步执行增强任务
+        async def execute_enhanced_task():
+            try:
+                results = []
+                async for result in sql_generator.execute(input_data, context):
+                    results.append({
+                        "type": result.type,
+                        "content": result.content,
+                        "data": result.data,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                return results
+            except Exception as e:
+                logger.error(f"增强任务执行失败: {e}")
+                return [{"type": "error", "content": str(e)}]
+        
+        import asyncio
+        asyncio.create_task(execute_enhanced_task())
+        
         return APIResponse(
             success=True,
             data={
                 "task_id": task_id,
+                "session_id": session_id,
                 "status": "started",
-                "message": "任务已启动，正在后台执行",
+                "message": "增强任务已启动，支持智能执行",
                 "template_id": request.template_id,
-                "data_source_ids": request.data_source_ids,
+                "placeholders_count": len(placeholder_data),
+                "tools_registered": tool_chain.list_tools(),
+                "enhanced_features": {
+                    "intelligent_retry": True,
+                    "performance_monitoring": True,
+                    "reasoning_included": request.include_reasoning,
+                    "max_iterations": request.max_iterations
+                },
                 "started_at": datetime.now().isoformat()
             },
-            message="任务执行已启动"
+            message="增强任务执行已启动"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"启动任务执行失败: {e}")
+        logger.error(f"启动增强任务执行失败: {e}")
         raise HTTPException(
-            status_code=500, 
-            detail=f"启动任务执行失败: {str(e)}"
+            status_code=500,
+            detail=f"启动增强任务执行失败: {str(e)}"
         )
 
 

@@ -14,6 +14,8 @@ from enum import Enum
 
 from .service_orchestrator import get_service_orchestrator
 from .core import TaskType
+from .core.prompts import prompt_manager, PromptComplexity
+from .tools.sql_generator import AdvancedSQLGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,9 @@ class UnifiedAIFacade:
     
     def __init__(self):
         self.orchestrator = get_service_orchestrator()
-        logger.info("统一AI门面服务初始化完成")
+        self.prompt_manager = prompt_manager
+        self.enhanced_sql_tool = AdvancedSQLGenerator()
+        logger.info("统一AI门面服务初始化完成 - 已集成企业级提示词系统")
     
     # === 模板相关AI服务 ===
     
@@ -196,6 +200,80 @@ class UnifiedAIFacade:
                 "status": "completed",
                 "generated_sql": {},
                 "placeholders": placeholders
+            }
+    
+    async def generate_sql_enhanced(
+        self,
+        user_id: str,
+        placeholders: List[Dict[str, Any]],
+        data_source_info: Optional[Dict[str, Any]] = None,
+        template_context: Optional[str] = None,
+        use_enterprise_prompts: bool = True
+    ) -> Dict[str, Any]:
+        """增强的SQL生成 - 使用企业级提示词系统"""
+        
+        try:
+            if use_enterprise_prompts and self.enhanced_sql_tool:
+                self.logger.info(f"🚀 使用企业级提示词系统生成SQL: {len(placeholders)} 个占位符")
+                
+                # 构建工具上下文
+                from ..core.context import ToolContext
+                
+                tool_context = ToolContext(
+                    user_id=user_id,
+                    task_id=str(uuid.uuid4()),
+                    session_id=str(uuid.uuid4()),
+                    timestamp=datetime.now()
+                )
+                
+                # 准备输入数据
+                input_data = {
+                    "placeholders": placeholders,
+                    "data_source_info": data_source_info or {},
+                    "template_context": template_context or ""
+                }
+                
+                # 执行增强的SQL生成
+                results = []
+                async for result in self.enhanced_sql_tool.execute(input_data, tool_context):
+                    if result.result_type == "success":
+                        return {
+                            "status": "success",
+                            "data": result.data,
+                            "message": "使用企业级提示词系统成功生成SQL",
+                            "enhanced": True,
+                            "tool_version": "enhanced_v2.0"
+                        }
+                    elif result.result_type == "error":
+                        self.logger.error(f"增强SQL生成失败: {result.error_message}")
+                        # 回退到标准方法
+                        break
+                    else:
+                        # 进度结果
+                        results.append({
+                            "type": "progress", 
+                            "message": result.message,
+                            "progress": result.progress
+                        })
+                
+                # 如果增强方法失败，回退到标准方法
+                self.logger.warning("增强SQL生成失败，回退到标准方法")
+            
+            # 使用标准方法作为回退
+            return await self.generate_sql(
+                user_id=user_id,
+                placeholders=placeholders,
+                data_source_info=data_source_info,
+                template_context=template_context,
+                streaming=False
+            )
+            
+        except Exception as e:
+            self.logger.error(f"SQL生成失败: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "fallback_attempted": True
             }
     
     async def optimize_query(
@@ -599,6 +677,74 @@ class UnifiedAIFacade:
     def get_supported_categories(self) -> List[str]:
         """获取支持的AI任务分类"""
         return [category.value for category in AITaskCategory]
+
+
+    # === 企业级提示词管理 ===
+    
+    def get_optimized_prompt(
+        self,
+        category: str,
+        prompt_type: str,
+        context: Dict[str, Any],
+        complexity: Optional[PromptComplexity] = None
+    ) -> str:
+        """获取优化的提示词"""
+        try:
+            return self.prompt_manager.get_prompt(
+                category=category,
+                prompt_type=prompt_type,
+                context=context,
+                complexity=complexity
+            )
+        except Exception as e:
+            self.logger.error(f"获取提示词失败: {category}.{prompt_type} - {e}")
+            raise
+    
+    def assess_prompt_complexity(self, context: Dict[str, Any]) -> PromptComplexity:
+        """评估提示词复杂度需求"""
+        return self.prompt_manager._assess_complexity(context)
+    
+    async def analyze_prompt_performance(
+        self,
+        category: str,
+        prompt_type: str,
+        usage_stats: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """分析提示词性能表现"""
+        
+        try:
+            # 基于使用统计分析提示词效果
+            performance_metrics = {
+                "success_rate": usage_stats.get("success_count", 0) / max(usage_stats.get("total_count", 1), 1),
+                "average_complexity": usage_stats.get("avg_complexity", "medium"),
+                "error_patterns": usage_stats.get("common_errors", []),
+                "optimization_suggestions": []
+            }
+            
+            # 生成优化建议
+            if performance_metrics["success_rate"] < 0.8:
+                performance_metrics["optimization_suggestions"].append(
+                    "建议增加提示词复杂度或添加更多约束"
+                )
+            
+            if len(performance_metrics["error_patterns"]) > 3:
+                performance_metrics["optimization_suggestions"].append(
+                    "建议分析错误模式，优化错误恢复机制"
+                )
+            
+            return {
+                "status": "success",
+                "performance_metrics": performance_metrics,
+                "category": category,
+                "prompt_type": prompt_type
+            }
+            
+        except Exception as e:
+            self.logger.error(f"提示词性能分析失败: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
 
 
 # === 全局实例管理 ===

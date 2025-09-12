@@ -21,13 +21,9 @@ from app.models.user import User
 from app.schemas.base import APIResponse
 from app import crud
 
-# 导入增强架构v3.0组件
-# AI core components migrated to agents
-from app.services.infrastructure.agents.core import *
-# AI tools migrated to agents
+# 导入增强架构v3.0组件 - 已迁移到agents系统
+from app.services.infrastructure.agents import execute_agent_task
 from app.services.infrastructure.agents.tools import get_tool_registry
-# AI core components migrated to agents
-from app.services.infrastructure.agents.core import *
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -176,63 +172,50 @@ async def execute_task(
                         "table_details": []
                     })
         
-        # 3. 初始化增强工具链
-        tool_chain = ToolChain()
-        sql_generator = AdvancedSQLGenerator()
-        tool_chain.register_tool(sql_generator)
-        
-        # 4. 创建执行上下文
-        context = ToolContext(
-            user_id=str(current_user.id),
-            task_id=task_id,
-            session_id=session_id,
-            data_source_info={
+        # 3. 准备agents系统执行上下文
+        context_data = {
+            "user_id": str(current_user.id),
+            "session_id": session_id,
+            "template_id": request.template_id,
+            "data_source_info": {
                 "tables": [t for ds in data_sources_info for t in ds.get("tables", [])],
                 "table_details": [t for ds in data_sources_info for t in ds.get("table_details", [])],
                 "data_sources": data_sources_info
-            }
-        )
-        
-        # 5. 准备输入数据
-        placeholder_data = [
-            {
-                "name": p.placeholder_name,
-                "text": p.description or p.placeholder_name,
-                "type": "chart"
-            }
-            for p in placeholders
-        ]
-        
-        input_data = {
-            "placeholders": placeholder_data,
-            "requirements": {
-                "max_iterations": request.max_iterations,
-                "include_reasoning": request.include_reasoning,
-                "performance_optimization": request.performance_optimization
+            },
+            "placeholders": {
+                p.placeholder_name: {
+                    "name": p.placeholder_name,
+                    "text": p.description or p.placeholder_name,
+                    "type": "chart"
+                }
+                for p in placeholders
             }
         }
         
-        # 6. 启动增强执行
-        monitor = get_prompt_monitor()
-        monitor.start_session(session_id)
+        # 4. 使用agents系统执行增强任务
+        logger.info(f"启动agents系统执行任务: {task_id}")
         
         # 异步执行增强任务
         async def execute_enhanced_task():
             try:
-                results = []
-                async for result in sql_generator.execute(input_data, context):
-                    results.append({
-                        "type": result.type,
-                        "content": result.content,
-                        "data": result.data,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                return results
+                # 使用agents系统执行任务
+                result = await execute_agent_task(
+                    task_name=f"enhanced_report_generation_{task_id}",
+                    task_description=f"增强报告生成任务: {request.template_id}",
+                    context_data=context_data,
+                    target_agent="report_generation_agent",
+                    timeout_seconds=600
+                )
+                
+                logger.info(f"增强任务执行完成: {task_id}")
+                return result
+                
             except Exception as e:
                 logger.error(f"增强任务执行失败: {e}")
-                return [{"type": "error", "content": str(e)}]
+                return {"success": False, "error": str(e)}
         
         import asyncio
+        # 启动异步任务但不等待完成
         asyncio.create_task(execute_enhanced_task())
         
         return APIResponse(
@@ -243,8 +226,8 @@ async def execute_task(
                 "status": "started",
                 "message": "增强任务已启动，支持智能执行",
                 "template_id": request.template_id,
-                "placeholders_count": len(placeholder_data),
-                "tools_registered": tool_chain.list_tools(),
+                "placeholders_count": len(placeholders),
+                "agent_system": "v3.0",
                 "enhanced_features": {
                     "intelligent_retry": True,
                     "performance_monitoring": True,

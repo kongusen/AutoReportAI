@@ -269,10 +269,13 @@ async def intelligent_placeholder_analysis(
         
         logger.info(f"启动智能占位符分析: user_id={current_user.id}, session_id={session_id}")
         
-        # 1. 初始化增强工具链
-        tool_chain = ToolChain()
-        sql_generator = AdvancedSQLGenerator()
-        tool_chain.register_tool(sql_generator)
+        # 1. 初始化增强工具链 - 已迁移到agents系统
+        # tool_chain = ToolChain()
+        # sql_generator = AdvancedSQLGenerator()
+        # tool_chain.register_tool(sql_generator)
+        
+        # 使用新的agents系统
+        from app.services.infrastructure.agents import execute_agent_task
         
         # 2. 获取数据源信息（如果提供）
         data_source_info = None
@@ -290,45 +293,57 @@ async def intelligent_placeholder_analysis(
             except Exception as e:
                 logger.warning(f"获取数据源信息失败: {e}")
         
-        # 3. 创建执行上下文
-        context = ToolContext(
-            user_id=str(current_user.id),
-            task_id=f"placeholder_intel_{session_id}",
-            session_id=session_id,
-            data_source_info=data_source_info
-        )
+        # 3. 创建执行上下文 - 已迁移到agents系统
+        # context = ToolContext(
+        #     user_id=str(current_user.id),
+        #     task_id=f"placeholder_intel_{session_id}",
+        #     session_id=session_id,
+        #     data_source_info=data_source_info
+        # )
         
         # 4. 准备智能分析输入
-        analysis_input = {
-            "placeholders": [
-                {
+        context_data = {
+            "user_id": str(current_user.id),
+            "session_id": session_id,
+            "placeholder_text": placeholder_text,
+            "data_source_info": data_source_info,
+            "template_id": template_id,
+            "placeholders": {
+                "analysis_target": {
                     "name": "智能分析目标",
                     "text": placeholder_text,
                     "type": "analysis"
                 }
-            ],
-            "requirements": {
-                "include_reasoning": True,
-                "generate_preview": True,
-                "optimization_suggestions": True
             }
         }
         
-        # 5. 执行智能分析
+        # 5. 执行智能分析 - 使用agents系统
+        agent_result = await execute_agent_task(
+            task_name="intelligent_placeholder_analysis",
+            task_description=f"智能分析占位符: {placeholder_text}",
+            context_data=context_data,
+            target_agent="sql_generation_agent",
+            timeout_seconds=120
+        )
+        
+        # 从agent结果中提取信息
         analysis_results = []
         sql_preview = None
-        confidence_score = 0.0
+        confidence_score = 0.8
         
-        async for result in sql_generator.execute(analysis_input, context):
+        if agent_result.get("success", False):
+            result_data = agent_result.get("result", {})
+            if "sql" in result_data:
+                sql_preview = result_data["sql"]
+            elif "generated_sql" in result_data:
+                sql_preview = result_data["generated_sql"]
+            
+            # 添加分析结果
             analysis_results.append({
-                "type": result.type,
-                "content": result.content,
+                "type": "ai_analysis",
+                "content": f"AI智能分析完成: {placeholder_text}",
                 "timestamp": datetime.now().isoformat()
             })
-            
-            if result.type == "success" and result.data:
-                sql_preview = result.data.get("sql", "")
-                confidence_score = getattr(result, 'confidence', 0.8)
         
         # 6. 生成智能洞察
         intelligence_report = {

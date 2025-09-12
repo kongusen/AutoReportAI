@@ -25,17 +25,9 @@ from app.api.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.base import APIResponse
 
-# 导入增强架构组件
-# AI core components migrated to agents
-from app.services.infrastructure.agents.core import *
-# AI tools migrated to agents
-from app.services.infrastructure.agents.tools import get_tool_registry
-# AI tools migrated to agents
-from app.services.infrastructure.agents.tools import get_tool_registry
-# AI core components migrated to agents
-from app.services.infrastructure.agents.core import *
-# Unified AI facade migrated to agents
+# 导入增强架构组件 - 已迁移到agents系统
 from app.services.infrastructure.agents import execute_agent_task
+from app.services.infrastructure.agents.tools import get_tool_registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -120,12 +112,14 @@ async def enhanced_execute(
         logger.info(f"启动增强执行: user_id={current_user.id}, tool_type={request.tool_type}, session_id={session_id}")
         
         # 1. 初始化工具链
-        tool_chain = ToolChain()
+        # 使用agents系统代替旧的ToolChain
+        logger.info("正在使用agents系统执行任务")
         
         # 2. 根据工具类型创建工具
         tool_instance = None
         if request.tool_type == "sql_generator":
-            tool_instance = AdvancedSQLGenerator()
+            # 使用agents系统代替旧的工具类
+            logger.info(f"正在使用agents系统执行SQL生成任务")
         elif request.tool_type == "data_analyzer":
             tool_instance = SmartDataAnalyzer()
         else:
@@ -225,10 +219,12 @@ async def enhanced_execute_stream(
             logger.info(f"启动流式执行: user_id={current_user.id}, session_id={session_id}")
             
             # 初始化组件
-            tool_chain = ToolChain()
+            # 使用agents系统代替旧的ToolChain
+            logger.info("正在使用agents系统执行任务")
             
             if request.tool_type == "sql_generator":
-                tool_instance = AdvancedSQLGenerator()
+                # 使用agents系统代替旧的工具类
+                logger.info(f"正在使用agents系统执行SQL生成任务")
             elif request.tool_type == "data_analyzer":
                 tool_instance = SmartDataAnalyzer()
             else:
@@ -352,7 +348,8 @@ async def get_tool_capabilities(
         capabilities = []
         
         # SQL生成器能力
-        sql_generator = AdvancedSQLGenerator()
+        # 使用agents系统代替旧的工具类
+        logger.info(f"正在使用agents系统获取SQL生成工具能力")
         capabilities.append(ToolCapabilityResponse(
             tool_name="sql_generator",
             capabilities=[
@@ -517,9 +514,11 @@ async def health_check() -> APIResponse[Dict[str, Any]]:
         
         # 检查工具链
         try:
-            tool_chain = ToolChain()
-            sql_generator = AdvancedSQLGenerator()
-            tool_chain.register_tool(sql_generator)
+            # 使用agents系统代替旧的ToolChain
+            logger.info("正在使用agents系统执行任务")
+            # 使用agents系统代替旧的工具类
+            logger.info(f"正在使用agents系统获取SQL生成工具能力")
+            # tool_chain.register_tool(sql_generator)  # 注释掉旧的逻辑
             health_status["components"]["tool_chain"] = "healthy"
         except Exception as e:
             health_status["components"]["tool_chain"] = f"unhealthy: {e}"

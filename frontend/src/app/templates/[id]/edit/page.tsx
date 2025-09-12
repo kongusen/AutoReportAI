@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AppLayout } from '@/components/layout/AppLayout'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -174,29 +173,27 @@ export default function EditTemplatePage({ params }: EditTemplatePageProps) {
 
   if (loading || !currentTemplate) {
     return (
-      <AppLayout>
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-gray-200 rounded w-48"></div>
-          <div className="space-y-4">
-            <div className="bg-white p-6 rounded-lg shadow space-y-4">
-              <div className="h-6 bg-gray-200 rounded w-32"></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="h-10 bg-gray-200 rounded"></div>
-                <div className="h-10 bg-gray-200 rounded"></div>
-              </div>
-              <div className="h-20 bg-gray-200 rounded"></div>
+      <div className="animate-pulse space-y-6">
+        <div className="h-8 bg-gray-200 rounded w-48"></div>
+        <div className="space-y-4">
+          <div className="bg-white p-6 rounded-lg shadow space-y-4">
+            <div className="h-6 bg-gray-200 rounded w-32"></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="h-10 bg-gray-200 rounded"></div>
+              <div className="h-10 bg-gray-200 rounded"></div>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow">
-              <div className="h-96 bg-gray-200 rounded"></div>
-            </div>
+            <div className="h-20 bg-gray-200 rounded"></div>
+          </div>
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="h-96 bg-gray-200 rounded"></div>
           </div>
         </div>
-      </AppLayout>
+      </div>
     )
   }
 
   return (
-    <AppLayout>
+    <>
       <PageHeader
         title="编辑模板"
         description={`编辑模板: ${currentTemplate.name}`}
@@ -355,6 +352,6 @@ export default function EditTemplatePage({ params }: EditTemplatePageProps) {
           </div>
         </div>
       </form>
-    </AppLayout>
+    </>
   )
 }

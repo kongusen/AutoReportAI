@@ -556,9 +556,18 @@ class AgentContextBuilder:
         # 从数据库架构中提取查询上下文
         for schema in context.database_schemas:
             query_context["available_tables"].append(schema.table_name)
-            query_context["available_columns"][schema.table_name] = [
-                col["name"] for col in schema.columns
-            ]
+            # 处理不同类型的列数据格式
+            if schema.columns and isinstance(schema.columns[0], dict):
+                # 字典格式的列信息
+                query_context["available_columns"][schema.table_name] = [
+                    col.get("name", f"column_{i}") for i, col in enumerate(schema.columns)
+                ]
+            elif schema.columns and isinstance(schema.columns[0], str):
+                # 字符串格式的列名
+                query_context["available_columns"][schema.table_name] = schema.columns
+            else:
+                # 其他格式或空列
+                query_context["available_columns"][schema.table_name] = []
             query_context["relationships"].extend(schema.relationships)
         
         # 根据占位符添加查询提示

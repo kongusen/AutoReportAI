@@ -306,13 +306,44 @@ async def execute_agent_task(
         enable_streaming=True
     )
     
-    return {
+    # 标准化输出格式，确保result字段统一
+    standardized_result = {
         "success": result.get("success", False),
-        "result": result,
         "context": context.to_dict(),
         "message_id": message.message_id,
-        "target_agent": target_agent
+        "target_agent": target_agent,
+        "task_name": task_name
     }
+    
+    # 处理不同格式的result字段
+    if result.get("success", False):
+        result_data = result.get("result", {})
+        
+        # 标准化成功结果格式
+        if isinstance(result_data, dict):
+            # 确保包含必要的字段
+            standardized_result["result"] = {
+                "sql_query": result_data.get("sql_query", ""),
+                "generated_sql": result_data.get("generated_sql", ""),
+                "explanation": result_data.get("explanation", ""),
+                "confidence": result_data.get("confidence", 0.8),
+                "raw_result": result_data  # 保留原始结果用于调试
+            }
+        else:
+            # 非字典结果，包装为标准格式
+            standardized_result["result"] = {
+                "raw_result": result_data,
+                "explanation": f"Raw result from {target_agent or 'agent'}"
+            }
+    else:
+        # 错误结果标准化
+        error_data = result.get("result", {})
+        if isinstance(error_data, dict):
+            standardized_result["error"] = error_data.get("error", "Unknown error")
+        else:
+            standardized_result["error"] = str(error_data)
+    
+    return standardized_result
 
 async def shutdown_agents():
     """关闭agents系统"""

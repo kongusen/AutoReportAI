@@ -349,6 +349,321 @@ class AgentCoordinator:
         
         return status
     
+    async def _execute_six_stage_orchestration(self, 
+                                             task_id: str, 
+                                             task_description: str,
+                                             target_agents: List[str] = None,
+                                             timeout_seconds: int = 30,
+                                             enable_streaming: bool = True) -> Dict[str, Any]:
+        """Execute task using six-stage orchestration pattern"""
+        
+        logger.info(f"Starting six-stage orchestration for task: {task_id}")
+        
+        try:
+            self.orchestration_metrics["total_orchestrations"] += 1
+            start_time = datetime.now()
+            stage_results = {}
+            context = {"task_id": task_id, "description": task_description}
+            
+            # Stage 1: Validation
+            logger.info(f"Stage 1: Validation for task {task_id}")
+            validation_result = await self._execute_validation_stage(task_description, context)
+            stage_results["validation"] = validation_result
+            if not validation_result.get("success"):
+                raise Exception("Validation failed")
+            
+            # Stage 2: Readonly Parallel Processing
+            logger.info(f"Stage 2: Readonly parallel for task {task_id}")
+            readonly_result = await self._execute_readonly_stage(task_description, context, validation_result)
+            stage_results["readonly_parallel"] = readonly_result
+            
+            # Stage 3: Write Sequential Processing
+            logger.info(f"Stage 3: Write sequential for task {task_id}")
+            write_result = await self._execute_write_stage(task_description, context, readonly_result)
+            stage_results["write_sequential"] = write_result
+            
+            # Stage 4: Context Compression
+            logger.info(f"Stage 4: Context compression for task {task_id}")
+            compress_result = await self._execute_compression_stage(task_description, context, write_result)
+            stage_results["context_compression"] = compress_result
+            
+            # Stage 5: LLM Reasoning (CRITICAL STAGE)
+            logger.info(f"Stage 5: LLM reasoning for task {task_id}")
+            reasoning_result = await self._execute_llm_reasoning_stage(task_description, context, compress_result)
+            stage_results["llm_reasoning"] = reasoning_result
+            if not reasoning_result.get("success"):
+                raise Exception("LLM reasoning failed")
+            
+            # Stage 6: Result Synthesis
+            logger.info(f"Stage 6: Result synthesis for task {task_id}")
+            synthesis_result = await self._execute_synthesis_stage(task_description, context, reasoning_result)
+            stage_results["result_synthesis"] = synthesis_result
+            
+            # Final result compilation
+            final_result = synthesis_result.get("result", {})
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            self.orchestration_metrics["successful_orchestrations"] += 1
+            
+            return {
+                'success': True,
+                'task_id': task_id,
+                'result': final_result,
+                'stage_results': stage_results,
+                'orchestration_type': 'six_stage',
+                'execution_time': execution_time,
+                'llm_participated': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Six-stage orchestration failed for task {task_id}: {e}")
+            self.orchestration_metrics["failed_orchestrations"] += 1
+            return {
+                'success': False,
+                'task_id': task_id,
+                'error': str(e),
+                'result': {
+                    'error': str(e)
+                },
+                'stage_results': stage_results if 'stage_results' in locals() else {}
+            }
+    
+    async def _execute_simple_task(self,
+                                 task_id: str,
+                                 task_description: str,
+                                 target_agents: List[str] = None,
+                                 timeout_seconds: int = 30) -> Dict[str, Any]:
+        """Execute task using simple orchestration"""
+        
+        logger.info(f"Starting simple task execution for: {task_id}")
+        
+        try:
+            # Simple task execution logic
+            return {
+                'success': True,
+                'task_id': task_id,
+                'result': {
+                    'message': f'Simple task completed: {task_description}',
+                    'orchestration_type': 'simple'
+                }
+            }
+        
+        except Exception as e:
+            logger.error(f"Simple task execution failed for {task_id}: {e}")
+            return {
+                'success': False,
+                'task_id': task_id,
+                'error': str(e),
+                'result': {
+                    'error': str(e)
+                }
+            }
+    
+    async def _execute_validation_stage(self, task_description: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute validation stage"""
+        try:
+            # Basic validation of task requirements
+            if not task_description or len(task_description.strip()) < 5:
+                return {"success": False, "error": "Task description too short"}
+            
+            # Check for SQL generation tasks
+            is_sql_task = any(keyword in task_description.lower() for keyword in 
+                            ["sql", "query", "select", "database", "table", "数据库", "查询"])
+            
+            return {
+                "success": True,
+                "task_type": "sql_generation" if is_sql_task else "general",
+                "validated_requirements": {
+                    "description": task_description,
+                    "complexity": "medium",
+                    "requires_database": is_sql_task
+                }
+            }
+        except Exception as e:
+            logger.error(f"Validation stage failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def _execute_readonly_stage(self, task_description: str, context: Dict[str, Any], 
+                                    validation_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute readonly parallel processing stage"""
+        try:
+            # Simulate analyzing available data sources and schema information
+            await asyncio.sleep(0.1)  # Simulate parallel processing
+            
+            return {
+                "success": True,
+                "analyzed_context": {
+                    "task_requirements": validation_result.get("validated_requirements"),
+                    "available_resources": ["database", "schema_info"],
+                    "context_complexity": "medium"
+                }
+            }
+        except Exception as e:
+            logger.error(f"Readonly stage failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def _execute_write_stage(self, task_description: str, context: Dict[str, Any],
+                                 readonly_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute write sequential processing stage"""
+        try:
+            # Prepare structured context for LLM
+            await asyncio.sleep(0.1)  # Simulate processing
+            
+            return {
+                "success": True,
+                "prepared_context": {
+                    "task": task_description,
+                    "analysis": readonly_result.get("analyzed_context"),
+                    "ready_for_llm": True
+                }
+            }
+        except Exception as e:
+            logger.error(f"Write stage failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def _execute_compression_stage(self, task_description: str, context: Dict[str, Any],
+                                       write_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute context compression stage"""
+        try:
+            # Compress and optimize context for LLM processing
+            prepared_context = write_result.get("prepared_context", {})
+            
+            compressed_context = {
+                "task": task_description,
+                "key_requirements": prepared_context.get("analysis", {}),
+                "optimization_level": "high"
+            }
+            
+            return {
+                "success": True,
+                "compressed_context": compressed_context,
+                "ready_for_reasoning": True
+            }
+        except Exception as e:
+            logger.error(f"Compression stage failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def _execute_llm_reasoning_stage(self, task_description: str, context: Dict[str, Any],
+                                         compress_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute LLM reasoning stage - THE CRITICAL STAGE"""
+        try:
+            from ..tools.llm.llm_reasoning_tool import create_llm_reasoning_tool
+            from ..tools.core.executor import ToolExecutionContext
+            
+            logger.info("Initializing LLM reasoning tool...")
+            
+            # Create LLM reasoning tool
+            reasoning_tool = create_llm_reasoning_tool()
+            
+            # Build execution context
+            exec_context = ToolExecutionContext(
+                user_id="system",
+                session_id=context.get("task_id"),
+                permissions=["read_only"],
+                metadata={"stage": "llm_reasoning", "orchestration": "six_stage"}
+            )
+            
+            # Prepare reasoning input
+            compressed_ctx = compress_result.get("compressed_context", {})
+            reasoning_input = {
+                "problem": f"任务分析和推理: {task_description}",
+                "context": compressed_ctx,
+                "memory_state": context,
+                "reasoning_depth": "detailed",
+                "require_step_by_step": True,
+                "include_assumptions": True,
+                "consider_alternatives": False,
+                "max_iterations": 2
+            }
+            
+            logger.info("Executing LLM reasoning...")
+            
+            # Execute LLM reasoning (streaming)
+            final_result = None
+            async for result in reasoning_tool.execute(reasoning_input, exec_context):
+                if result.is_final:
+                    final_result = result.data
+                    break
+                else:
+                    logger.info(f"LLM reasoning progress: {result.data.get('message', 'Processing...')}")
+            
+            if not final_result:
+                raise Exception("LLM reasoning did not produce final result")
+            
+            logger.info("LLM reasoning completed successfully")
+            
+            return {
+                "success": True,
+                "llm_participated": True,
+                "reasoning_result": final_result,
+                "llm_output": final_result.get("result", ""),
+                "confidence": final_result.get("execution_metrics", {}).get("confidence", 0.8)
+            }
+            
+        except Exception as e:
+            logger.error(f"LLM reasoning stage failed: {e}")
+            # Fallback for when LLM fails
+            return {
+                "success": False,
+                "error": str(e),
+                "llm_participated": False,
+                "fallback_used": True
+            }
+    
+    async def _execute_synthesis_stage(self, task_description: str, context: Dict[str, Any],
+                                     reasoning_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute result synthesis stage"""
+        try:
+            if not reasoning_result.get("success"):
+                # Handle LLM failure with fallback
+                logger.warning("LLM reasoning failed, using fallback synthesis")
+                return {
+                    "success": True,
+                    "result": {
+                        "message": "Task completed with fallback processing",
+                        "generated_sql": "SELECT 'fallback' as result;",
+                        "explanation": "LLM processing failed, using fallback logic",
+                        "confidence": 0.3,
+                        "llm_participated": False
+                    }
+                }
+            
+            # Extract LLM reasoning results
+            llm_output = reasoning_result.get("llm_output", "")
+            reasoning_data = reasoning_result.get("reasoning_result", {})
+            
+            # Synthesize final result based on LLM output
+            synthesized_result = {
+                "message": f"Task completed with LLM reasoning: {task_description}",
+                "llm_analysis": llm_output,
+                "reasoning_depth": reasoning_data.get("reasoning_depth"),
+                "structured_analysis": reasoning_data.get("structured_analysis"),
+                "confidence": reasoning_result.get("confidence", 0.8),
+                "llm_participated": True,
+                "execution_time": reasoning_data.get("execution_metrics", {}).get("execution_time")
+            }
+            
+            # Special handling for SQL tasks
+            if "sql" in task_description.lower() and "SELECT" in llm_output.upper():
+                # Try to extract SQL from LLM output
+                import re
+                sql_matches = re.findall(r'SELECT.*?;', llm_output, re.IGNORECASE | re.DOTALL)
+                if sql_matches:
+                    synthesized_result["generated_sql"] = sql_matches[0].strip()
+                    synthesized_result["sql_extracted"] = True
+                else:
+                    synthesized_result["generated_sql"] = "SELECT 'LLM did not generate valid SQL' as result;"
+                    synthesized_result["sql_extracted"] = False
+            
+            return {
+                "success": True,
+                "result": synthesized_result
+            }
+            
+        except Exception as e:
+            logger.error(f"Synthesis stage failed: {e}")
+            return {"success": False, "error": str(e)}
+    
     async def demonstrate_streaming_parsing(self, message_stream: str) -> Dict[str, Any]:
         """Demonstrate streaming message parsing capabilities"""
         

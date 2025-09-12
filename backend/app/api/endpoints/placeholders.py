@@ -527,7 +527,8 @@ async def analyze_single_placeholder(
         task_params = request.get("task_params", {})
         
         # 获取服务编排器
-        orchestrator = get_service_orchestrator()
+        from app.services.application.factories import create_service_orchestrator
+        orchestrator = create_service_orchestrator(user_id=str(current_user.id))
         
         # 使用新架构进行单个占位符分析，包含时间上下文
         result = await orchestrator.analyze_single_placeholder_simple(

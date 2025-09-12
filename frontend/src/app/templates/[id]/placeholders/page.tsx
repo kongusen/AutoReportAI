@@ -239,8 +239,8 @@ export default function TemplatePlaceholdersPage() {
           const updatedPlaceholders = [...currentPlaceholders]
           updatedPlaceholders[targetIndex] = {
             ...matchedPlaceholder,
-            generated_sql: result.generated_sql,
-            suggested_sql: result.generated_sql,
+            generated_sql: typeof result.generated_sql === 'object' ? result.generated_sql.sql || result.generated_sql[placeholder.name] : result.generated_sql,
+            suggested_sql: typeof result.generated_sql === 'object' ? result.generated_sql.sql || result.generated_sql[placeholder.name] : result.generated_sql,
             analysis: result.analysis,
             agent_analyzed: true,
             sql_validated: result.sql_validated,
@@ -267,7 +267,9 @@ export default function TemplatePlaceholdersPage() {
 
   // SQL测试
   const handleTestSQL = async (placeholder: NormalizedPlaceholder) => {
-    const sql = (placeholder as any).generated_sql
+    const sql = typeof (placeholder as any).generated_sql === 'object' ? 
+      (placeholder as any).generated_sql.sql || (placeholder as any).generated_sql[(placeholder as any).name] : 
+      (placeholder as any).generated_sql
     if (!sql) {
       toast.error('请先分析占位符生成SQL')
       return
@@ -653,7 +655,9 @@ export default function TemplatePlaceholdersPage() {
           </Card>
         ) : (
           placeholders.map((placeholder, index) => {
-            const hasGeneratedSql = (placeholder as any).generated_sql || (placeholder as any).suggested_sql
+            const hasGeneratedSql = typeof (placeholder as any).generated_sql === 'object' ? 
+              (placeholder as any).generated_sql.sql || (placeholder as any).generated_sql[(placeholder as any).name] : 
+              (placeholder as any).generated_sql || (placeholder as any).suggested_sql
             const testResult = testResults[placeholder.name]
             const isTestingThis = testing[placeholder.name]
             const isAnalyzingThis = analyzingSingle[placeholder.name]
@@ -737,7 +741,11 @@ export default function TemplatePlaceholdersPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => copyToClipboard(hasGeneratedSql)}
+                            onClick={() => copyToClipboard(
+                              typeof hasGeneratedSql === 'object' ? 
+                                hasGeneratedSql.sql || hasGeneratedSql[placeholder.name] : 
+                                hasGeneratedSql
+                            )}
                           >
                             <ClipboardDocumentIcon className="w-3 h-3 mr-1" />
                             复制
@@ -748,7 +756,9 @@ export default function TemplatePlaceholdersPage() {
                       {hasGeneratedSql ? (
                         <div className="bg-gray-900 rounded-md p-3 max-h-40 overflow-y-auto">
                           <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
-                            {hasGeneratedSql}
+                            {typeof hasGeneratedSql === 'object' ? 
+                              hasGeneratedSql.sql || hasGeneratedSql[placeholder.name] : 
+                              hasGeneratedSql}
                           </pre>
                         </div>
                       ) : (

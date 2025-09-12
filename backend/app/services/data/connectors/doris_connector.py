@@ -460,19 +460,23 @@ class DorisConnector(BaseConnector):
         """使用MySQL协议获取表结构"""
         try:
             with self._get_mysql_cursor() as cursor:
-                cursor.execute(f"DESCRIBE {table_name}")
+                # 使用SHOW FULL COLUMNS获取完整的表结构信息（包括注释）
+                cursor.execute(f"SHOW FULL COLUMNS FROM {table_name}")
                 columns = cursor.fetchall()
                 schema = []
                 for col in columns:
                     schema.append({
                         'field': col[0],
                         'type': col[1],
-                        'null': col[2],
-                        'key': col[3],
-                        'default': col[4],
-                        'extra': col[5]
+                        'collation': col[2],
+                        'null': col[3],
+                        'key': col[4],
+                        'default': col[5],
+                        'extra': col[6],
+                        'privileges': col[7],
+                        'comment': col[8] if len(col) > 8 else ''  # 注释字段
                     })
-                self.logger.info(f"✅ MySQL协议获取表 {table_name} 结构: {len(schema)} 个字段")
+                self.logger.info(f"✅ MySQL协议获取表 {table_name} 完整结构: {len(schema)} 个字段（含注释）")
                 return schema
         except Exception as e:
             self.logger.error(f"❌ MySQL协议获取表结构失败: {e}")
@@ -815,9 +819,10 @@ class DorisConnector(BaseConnector):
         return sql
     
     async def get_table_schema(self, table_name: str) -> Dict[str, Any]:
-        """获取表结构"""
+        """获取表结构（包含注释信息）"""
         
-        sql = f"DESCRIBE {table_name}"
+        # 优先使用SHOW FULL COLUMNS FROM获取完整信息
+        sql = f"SHOW FULL COLUMNS FROM {table_name}"
         
         try:
             result = await self.execute_query(sql)
@@ -832,18 +837,48 @@ class DorisConnector(BaseConnector):
                 column_info = {
                     "name": row.get("Field", ""),
                     "type": row.get("Type", ""),
+                    "collation": row.get("Collation", ""),
                     "nullable": row.get("Null", "") == "YES",
                     "key": row.get("Key", ""),
                     "default": row.get("Default", ""),
-                    "extra": row.get("Extra", "")
+                    "extra": row.get("Extra", ""),
+                    "privileges": row.get("Privileges", ""),
+                    "comment": row.get("Comment", "")  # 新增注释字段
                 }
                 schema_info["columns"].append(column_info)
             
             return schema_info
             
         except Exception as e:
-            self.logger.error(f"Failed to get table schema: {e}")
-            return {"error": str(e)}
+            # 如果SHOW FULL COLUMNS失败，回退到基本的DESCRIBE
+            self.logger.warning(f"SHOW FULL COLUMNS失败，回退到DESCRIBE: {e}")
+            try:
+                sql = f"DESCRIBE {table_name}"
+                result = await self.execute_query(sql)
+                
+                schema_info = {
+                    "table_name": table_name,
+                    "columns": [],
+                    "total_columns": len(result.data)
+                }
+                
+                for _, row in result.data.iterrows():
+                    column_info = {
+                        "name": row.get("Field", ""),
+                        "type": row.get("Type", ""),
+                        "nullable": row.get("Null", "") == "YES",
+                        "key": row.get("Key", ""),
+                        "default": row.get("Default", ""),
+                        "extra": row.get("Extra", ""),
+                        "comment": ""  # DESCRIBE命令没有注释信息
+                    }
+                    schema_info["columns"].append(column_info)
+                
+                return schema_info
+                
+            except Exception as fallback_error:
+                self.logger.error(f"Failed to get table schema: {fallback_error}")
+                return {"error": str(fallback_error)}
     
     async def get_all_tables(self) -> List[str]:
         """获取所有表名"""

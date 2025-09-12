@@ -169,9 +169,10 @@ class ChartGenerationService:
         """分析单个图表占位符"""
         try:
             # 使用统一AI门面进行图表类型分析
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
             
-            orchestrator = get_service_orchestrator()
+            orchestrator = execute_agent_task
             
             # 构建图表分析请求
             analysis_result = await orchestrator.analyze_single_placeholder_simple(

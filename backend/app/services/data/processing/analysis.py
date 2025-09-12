@@ -252,8 +252,9 @@ class DataAnalysisService:
     async def _get_service_orchestrator(self):
         """获取ServiceOrchestrator实例"""
         if self.user_id and self._react_agent is None:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-            self._react_agent = get_service_orchestrator()
+            # Service orchestrator migrated to agents
+            from app.services.infrastructure.agents import execute_agent_task
+            self._react_agent = execute_agent_task
         return self._react_agent
     
     async def analyze_with_intelligence(self, data_source_id: int):
@@ -263,7 +264,7 @@ class DataAnalysisService:
             return self.analyze(data_source_id)
         
         try:
-            orchestrator = await self._get_service_orchestrator()
+            orchestrator = await self._execute_agent_task
             
             analysis_content = f"""
             智能数据分析任务

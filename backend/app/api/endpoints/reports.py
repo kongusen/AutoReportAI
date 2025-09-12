@@ -827,11 +827,47 @@ async def generate_agent_based_intelligent_report_task(
             template = db.query(Template).filter(Template.id == UUID(template_id)).first()
             data_source = db.query(DataSource).filter(DataSource.id == UUID(data_source_id)).first()
         
-        # 使用新的Claude Code架构生成智能报告内容
+        # 使用新的agents系统生成智能报告内容
         try:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            from app.api.utils.agent_context_helpers import create_report_generation_context
+            from app.services.infrastructure.agents import execute_agent_task
             
-            orchestrator = get_service_orchestrator()
+            # 创建报告生成上下文
+            data_source_info = {
+                "name": data_source.name if data_source else '未知数据源',
+                "type": data_source.source_type.value if data_source and hasattr(data_source.source_type, 'value') else 'unknown',
+                "schema": {
+                    "table_name": getattr(data_source, 'doris_database', 'main_table') if data_source else 'main_table',
+                    "columns": [],  # Could be populated from actual schema
+                    "relationships": []
+                }
+            }
+            
+            user_requirements = {
+                "optimization_level": optimization_level,
+                "batch_size": batch_size,
+                "enable_intelligent_etl": enable_intelligent_etl,
+                "report_sections": [
+                    "执行摘要", "数据概览", "关键指标", "趋势分析", "洞察建议", "结论"
+                ]
+            }
+            
+            template_info = {
+                "id": template_id,
+                "name": template.name if template else '未知模板',
+                "content": template.content if template else "",
+                "metadata": {
+                    "template_type": template.template_type if template else 'docx',
+                    "original_filename": getattr(template, 'original_filename', None)
+                }
+            } if template else None
+            
+            context = create_report_generation_context(
+                report_type="business_intelligence",
+                data_source_info=data_source_info,
+                user_requirements=user_requirements,
+                template_info=template_info
+            )
             
             # 构建报告生成内容
             report_content = f"""
@@ -868,17 +904,20 @@ async def generate_agent_based_intelligent_report_task(
             生成时间: {datetime.utcnow().isoformat()}
             """
             
-            agent_result = await orchestrator.analyze_template_simple(
-                user_id=user_id,
-                template_id=template_id,
-                template_content=report_content,
-                data_source_info={
-                    "type": data_source.source_type.value if data_source and hasattr(data_source.source_type, 'value') else 'unknown',
-                    "database": getattr(data_source, 'doris_database', 'unknown') if data_source else 'unknown',
-                    "name": data_source.name if data_source else 'unknown',
-                    "optimization_level": optimization_level,
-                    "task_type": "report_generation",
-                    "data_source_id": data_source_id
+            agent_result = await execute_agent_task(
+                task_name="intelligent_report_generation",
+                task_description=f"生成基于模板 {template.name if template else '未知'} 的智能业务分析报告",
+                context_data=context,
+                additional_data={
+                    "template_content": report_content,
+                    "data_source_info": {
+                        "type": data_source.source_type.value if data_source and hasattr(data_source.source_type, 'value') else 'unknown',
+                        "database": getattr(data_source, 'doris_database', 'unknown') if data_source else 'unknown',
+                        "name": data_source.name if data_source else 'unknown',
+                        "optimization_level": optimization_level,
+                        "task_type": "report_generation",
+                        "data_source_id": data_source_id
+                    }
                 }
             )
             
@@ -930,16 +969,23 @@ async def generate_agent_based_intelligent_report_task(
             格式：JSON配置 + 图表说明
             """
             
-            # Generate chart descriptions using the same orchestrator
-            chart_result = await orchestrator.analyze_template_simple(
-                user_id=user_id,
-                template_id=f"{template_id}_charts",
-                template_content=chart_prompt,
-                data_source_info={
-                    "type": "chart_generation",
+            # 使用agents系统生成图表描述
+            from app.api.utils.agent_context_helpers import create_data_analysis_context
+            
+            chart_context = create_data_analysis_context(
+                analysis_type="chart_generation",
+                data_info=data_source_info,
+                analysis_parameters={
                     "chart_types": ["bar", "line", "pie", "area"],
-                    "optimization_level": optimization_level
+                    "optimization_level": optimization_level,
+                    "report_content": report_content[:1000]  # First 1000 chars for context
                 }
+            )
+            
+            chart_result = await execute_agent_task(
+                task_name="chart_generation",
+                task_description="为报告生成相应的图表配置和数据描述",
+                context_data=chart_context
             )
             
             # 提取图表响应内容

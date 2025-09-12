@@ -489,8 +489,9 @@ class WorkflowOrchestrationAgent:
             logger.debug(f"调用服务: {service_name}.{method_name}")
             
             if service_name == "ai_execution_engine":
-                from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-                engine = get_service_orchestrator()
+                # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
+                engine = execute_agent_task
                 
                 if method_name == "execute_placeholder_task":
                     # 执行占位符处理任务

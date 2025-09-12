@@ -479,7 +479,7 @@ async def test_llm_connection(
         try:
             # 使用React Agent系统的LLM服务适配器
             # 使用React Agent LLM选择器测试连接
-            from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
+            from app.services.infrastructure.llm.simple_model_selector import SimpleModelSelector
             llm_service = SimpleModelSelector()
             
             # 执行健康检查

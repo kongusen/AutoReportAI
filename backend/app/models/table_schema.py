@@ -335,6 +335,7 @@ class ColumnSchema(Base):
     business_name = Column(String, nullable=True)  # 业务名称（中文）
     business_description = Column(Text, nullable=True)  # 业务描述
     semantic_category = Column(String, nullable=True)  # 语义分类（如：ID、名称、时间、金额等）
+    comment = Column(Text, nullable=True)  # 数据库字段注释
     
     # 数据质量信息
     null_count = Column(BigInteger, nullable=True)  # NULL值数量

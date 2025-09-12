@@ -14,7 +14,7 @@ from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema, TemplatePreview
 from app.crud import template as crud_template
 from app.services.domain.template.services.template_domain_service import TemplateParser
-from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+from app.api import deps
 import re
 import logging
 import json
@@ -262,17 +262,27 @@ async def analyze_template_placeholders(
                     "name": data_source.name
                 }
         
-        # 使用新的服务编排器 - Claude Code架构
-        orchestrator = get_service_orchestrator()
+        # 使用新的agents系统
+        from app.api.utils.agent_context_helpers import create_template_analysis_context
+        from app.services.infrastructure.agents import execute_agent_task
         
-        result = await orchestrator.analyze_template_simple(
-            user_id=str(current_user.id),
+        # 创建模板分析上下文
+        context = create_template_analysis_context(
             template_id=template_id,
+            template_name=template.name,
             template_content=template.content,
-            data_source_info=data_source_info
+            template_type=template.template_type or "report",
+            data_source_info=data_source_info,
+            optimization_level=optimization_level
         )
         
-        logger.info(f"用户 {current_user.id} 使用Claude Code架构分析了模板 {template_id}")
+        result = await execute_agent_task(
+            task_name="template_placeholder_analysis",
+            task_description=f"分析模板 {template.name} 的占位符，识别数据字段映射关系",
+            context_data=context
+        )
+        
+        logger.info(f"用户 {current_user.id} 使用agents系统分析了模板 {template_id}")
         
         return ApiResponse(
             success=True,
@@ -326,19 +336,44 @@ async def analyze_template_streaming(
                         "name": data_source.name
                     }
             
-            # 使用新的服务编排器进行流式分析
-            orchestrator = get_service_orchestrator()
+            # 使用新的agents系统进行流式分析
+            from app.api.utils.agent_context_helpers import create_template_analysis_context
+            from app.services.infrastructure.agents import execute_agent_task
             
             # 发送开始事件
             yield f"data: {json.dumps({'type': 'start', 'template_id': template_id, 'user_id': str(current_user.id)})}\n\n"
             
-            async for message in orchestrator.analyze_template_streaming(
-                user_id=str(current_user.id),
+            # 创建模板分析上下文
+            context = create_template_analysis_context(
                 template_id=template_id,
+                template_name=template.name,
                 template_content=template.content,
+                template_type=template.template_type or "report",
                 data_source_info=data_source_info
-            ):
-                yield f"data: {json.dumps(message)}\n\n"
+            )
+            
+            # 执行流式分析（模拟流式输出）
+            try:
+                result = await execute_agent_task(
+                    task_name="template_streaming_analysis",
+                    task_description=f"流式分析模板 {template.name} 的占位符",
+                    context_data=context
+                )
+                
+                # 模拟进度更新
+                progress_steps = [
+                    {'type': 'progress', 'progress': 20, 'message': '解析模板结构...'},
+                    {'type': 'progress', 'progress': 40, 'message': '识别占位符...'},
+                    {'type': 'progress', 'progress': 60, 'message': '匹配数据源字段...'},
+                    {'type': 'progress', 'progress': 80, 'message': '生成分析报告...'},
+                    {'type': 'result', 'progress': 100, 'data': result}
+                ]
+                
+                for step in progress_steps:
+                    yield f"data: {json.dumps(step)}\n\n"
+                    
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
             
             # 发送完成事件
             yield f"data: {json.dumps({'type': 'complete', 'message': '分析完成'})}\n\n"
@@ -732,17 +767,27 @@ async def analyze_with_agent(
                     "name": data_source.name
                 }
         
-        # 使用新的服务编排器 - Claude Code架构
-        orchestrator = get_service_orchestrator()
+        # 使用新的agents系统
+        from app.api.utils.agent_context_helpers import create_template_analysis_context
+        from app.services.infrastructure.agents import execute_agent_task
         
-        result = await orchestrator.analyze_template_simple(
-            user_id=str(current_user.id),
+        # 创建模板分析上下文
+        context = create_template_analysis_context(
             template_id=template_id,
+            template_name=template.name,
             template_content=template.content,
-            data_source_info=data_source_info
+            template_type=template.template_type or "report",
+            data_source_info=data_source_info,
+            optimization_level=optimization_level
         )
         
-        logger.info(f"用户 {current_user.id} 使用Claude Code架构分析了模板 {template_id}")
+        result = await execute_agent_task(
+            task_name="agent_template_analysis",
+            task_description=f"使用AI Agent分析模板 {template.name} 的占位符和数据映射",
+            context_data=context
+        )
+        
+        logger.info(f"用户 {current_user.id} 使用agents系统分析了模板 {template_id}")
         
         return ApiResponse(
             success=True,
@@ -794,17 +839,26 @@ async def analyze_template_with_claude_code_architecture(
                     "name": data_source.name
                 }
         
-        # 使用新的服务编排器
-        orchestrator = get_service_orchestrator()
+        # 使用新的agents系统
+        from app.api.utils.agent_context_helpers import create_template_analysis_context
+        from app.services.infrastructure.agents import execute_agent_task
         
-        result = await orchestrator.analyze_template_simple(
-            user_id=str(current_user.id),
+        # 创建模板分析上下文
+        context = create_template_analysis_context(
             template_id=template_id,
+            template_name=template.name,
             template_content=template.content,
+            template_type=template.template_type or "report",
             data_source_info=data_source_info
         )
         
-        logger.info(f"用户 {current_user.id} 使用新架构分析了模板 {template_id}")
+        result = await execute_agent_task(
+            task_name="claude_code_template_analysis",
+            task_description=f"使用Claude Code架构分析模板 {template.name} 的占位符",
+            context_data=context
+        )
+        
+        logger.info(f"用户 {current_user.id} 使用新agents架构分析了模板 {template_id}")
         
         return ApiResponse(
             success=True,
@@ -858,16 +912,40 @@ async def analyze_template_streaming_with_claude_code_architecture(
                         "name": data_source.name
                     }
             
-            # 使用新的服务编排器进行流式分析
-            orchestrator = get_service_orchestrator()
+            # 使用新的agents系统进行流式分析
+            from app.api.utils.agent_context_helpers import create_template_analysis_context
+            from app.services.infrastructure.agents import execute_agent_task
             
-            async for message in orchestrator.analyze_template_streaming(
-                user_id=str(current_user.id),
+            # 创建模板分析上下文
+            context = create_template_analysis_context(
                 template_id=template_id,
+                template_name=template.name,
                 template_content=template.content,
+                template_type=template.template_type or "report",
                 data_source_info=data_source_info
-            ):
-                yield f"data: {json.dumps(message)}\n\n"
+            )
+            
+            # 执行流式分析（模拟流式输出）
+            try:
+                result = await execute_agent_task(
+                    task_name="claude_code_streaming_analysis",
+                    task_description=f"使用Claude Code架构流式分析模板 {template.name}",
+                    context_data=context
+                )
+                
+                # 模拟进度更新
+                progress_steps = [
+                    {'type': 'progress', 'progress': 25, 'message': '初始化Claude Code架构...'},
+                    {'type': 'progress', 'progress': 50, 'message': '解析模板占位符...'},
+                    {'type': 'progress', 'progress': 75, 'message': '匹配数据源映射...'},
+                    {'type': 'result', 'progress': 100, 'data': result, 'message': '分析完成'}
+                ]
+                
+                for step in progress_steps:
+                    yield f"data: {json.dumps(step)}\n\n"
+                    
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
                 
         except Exception as e:
             logger.error(f"流式分析失败: {e}")

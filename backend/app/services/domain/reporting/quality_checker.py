@@ -21,7 +21,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 # 使用统一AI门面
-from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+from app.services.infrastructure.agents import execute_agent_task
 
 logger = logging.getLogger(__name__)
 

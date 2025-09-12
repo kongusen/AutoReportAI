@@ -326,8 +326,9 @@ class ETLService:
     async def _get_service_orchestrator(self):
         """获取ServiceOrchestrator实例"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-            self._react_agent = get_service_orchestrator()
+            # Service orchestrator migrated to agents
+            from app.services.infrastructure.agents import execute_agent_task
+            self._react_agent = execute_agent_task
         return self._react_agent
 
     async def run_intelligent_etl(
@@ -363,7 +364,7 @@ class ETLService:
                 enable_charts = task_config and task_config.get('enable_chart_generation', False)
                 
                 # 使用新的Claude Code架构进行智能ETL处理
-                orchestrator = await self._get_service_orchestrator()
+                orchestrator = await self._execute_agent_task
                 
                 # 构建智能ETL执行内容，包含图表生成需求
                 etl_content = f"""

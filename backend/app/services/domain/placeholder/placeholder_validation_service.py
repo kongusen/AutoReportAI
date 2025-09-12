@@ -355,9 +355,10 @@ class PlaceholderValidationService:
     ) -> Optional[str]:
         """使用AI修复SQL"""
         try:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
             
-            orchestrator = get_service_orchestrator()
+            orchestrator = execute_agent_task
             
             # 构建增强的时间上下文提示
             time_context_prompt = self._build_time_context_prompt(repair_context.time_context)
@@ -446,7 +447,8 @@ class PlaceholderValidationService:
         
         if cron_expr:
             # 解析cron表达式
-            from app.services.infrastructure.ai.core.time_context import TimeContextManager
+            # AI core components migrated to agents
+from app.services.infrastructure.agents.core import *
             try:
                 time_manager = TimeContextManager()
                 context = time_manager.build_task_time_context(cron_expr, execution_time)

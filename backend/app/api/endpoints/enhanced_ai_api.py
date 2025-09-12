@@ -26,11 +26,16 @@ from app.models.user import User
 from app.schemas.base import APIResponse
 
 # 导入增强架构组件
-from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
-from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
-from app.services.infrastructure.ai.tools.data_analyzer import SmartDataAnalyzer
-from app.services.infrastructure.ai.core.prompt_monitor import get_prompt_monitor
-from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+# AI core components migrated to agents
+from app.services.infrastructure.agents.core import *
+# AI tools migrated to agents
+from app.services.infrastructure.agents.tools import get_tool_registry
+# AI tools migrated to agents
+from app.services.infrastructure.agents.tools import get_tool_registry
+# AI core components migrated to agents
+from app.services.infrastructure.agents.core import *
+# Unified AI facade migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -528,7 +533,7 @@ async def health_check() -> APIResponse[Dict[str, Any]]:
         
         # 检查统一门面
         try:
-            facade = get_unified_ai_facade()
+            facade = execute_agent_task
             health_status["components"]["ai_facade"] = "healthy"
         except Exception as e:
             health_status["components"]["ai_facade"] = f"unhealthy: {e}"

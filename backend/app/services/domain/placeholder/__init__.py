@@ -77,10 +77,11 @@ def create_batch_router(db_session=None, user_id=None):
                 }
             
             try:
-                from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+                # Unified AI facade migrated to agents
+                from app.services.infrastructure.agents import execute_agent_task
                 
-                # 使用统一AI门面进行批量处理
-                ai_facade = get_unified_ai_facade()
+                # 使用agents系统进行批量处理
+                ai_facade = None  # Use agents system directly
                 
                 results = []
                 processed_count = 0
@@ -101,15 +102,19 @@ def create_batch_router(db_session=None, user_id=None):
                             "type": "variable"
                         })
                 
-                # 使用批量占位符分析服务
-                batch_result = await ai_facade.batch_analyze_placeholders(
-                    user_id=str(self.user_id),
-                    placeholders=placeholder_data,
-                    template_id=str(template_id),
-                    template_context=context or "",
-                    data_source_info={
-                        "type": "batch_processing",
-                        "context": context
+                # 使用agents系统进行批量占位符分析
+                batch_result = await execute_agent_task(
+                    task_name="batch_placeholder_analysis",
+                    task_description="批量分析占位符",
+                    context_data={
+                        "user_id": str(self.user_id),
+                        "placeholders": placeholder_data,
+                        "template_id": str(template_id),
+                        "template_context": context or "",
+                        "data_source_info": {
+                            "type": "batch_processing",
+                            "context": context
+                        }
                     }
                 )
                 

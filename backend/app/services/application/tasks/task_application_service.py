@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.data_source import DataSource  
 from app.models.template import Template
 from app.services.application.tasks.task_execution_service import TaskExecutionService
+from app.services.infrastructure.agents import execute_agent_task
 from app.services.infrastructure.task_queue.tasks import execute_report_task, validate_placeholders_task, scheduled_task_runner
 from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.core.exceptions import ValidationError, NotFoundError
@@ -512,4 +513,243 @@ class TaskApplicationService:
             logger.error(f"Failed to validate task {task_id}: {str(e)}")
             raise
 
-logger.info("✅ Task Application Service loaded")
+    async def execute_task_with_claude_code(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: str,
+        execution_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        使用新的Claude Code架构执行任务
+        
+        Args:
+            db: 数据库会话
+            task_id: 任务ID
+            user_id: 用户ID
+            execution_context: 执行上下文
+            
+        Returns:
+            Dict: 执行结果
+        """
+        try:
+            # 验证任务存在和权限
+            task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+            if not task:
+                raise NotFoundError(f"Task {task_id} not found or access denied")
+            
+            # 获取任务相关信息
+            template = db.query(Template).filter(Template.id == task.template_id).first()
+            data_source = db.query(DataSource).filter(DataSource.id == task.data_source_id).first()
+            
+            if not template or not data_source:
+                raise NotFoundError("Template or DataSource not found")
+            
+            # 使用新的agents系统
+            from app.api.utils.agent_context_helpers import create_task_execution_context
+            
+            # 准备任务数据
+            task_data = {
+                "task_id": task_id,
+                "task_name": task.name,
+                "template_id": str(task.template_id),
+                "data_source_id": str(task.data_source_id),
+                "report_period": task.report_period.value,
+                "processing_mode": task.processing_mode.value,
+                "workflow_type": task.workflow_type.value,
+                "template_info": {
+                    "name": template.name if hasattr(template, 'name') else 'Unknown Template',
+                    "content": template.content if hasattr(template, 'content') else "",
+                    "type": getattr(template, 'template_type', 'report')
+                },
+                "data_source_config": {
+                    "name": data_source.name,
+                    "source_type": str(data_source.source_type),
+                    "database": getattr(data_source, 'doris_database', 'unknown')
+                }
+            }
+            
+            execution_options = {
+                "processing_mode": task.processing_mode.value,
+                "max_tokens": getattr(task, 'max_context_tokens', 32000),
+                "enable_compression": getattr(task, 'enable_compression', True)
+            }
+            
+            # 创建任务执行上下文
+            context = create_task_execution_context(
+                task_name=task.name,
+                task_description=f"执行任务: {task.name} - {task.workflow_type.value}报告生成",
+                task_data=task_data,
+                execution_options=execution_options
+            )
+            
+            # 执行agents任务
+            agent_result = await execute_agent_task(
+                task_name="task_execution",
+                task_description=f"执行任务: {task.name} - {task.workflow_type.value}报告生成",
+                context_data=context,
+                additional_data={
+                    "task_id": task_id,
+                    "task_name": task.name,
+                    "template_id": str(task.template_id),
+                    "data_source_id": str(task.data_source_id),
+                    "data_source_config": {
+                        "name": data_source.name,
+                        "source_type": str(data_source.source_type)
+                    },
+                    "report_period": task.report_period.value,
+                    "processing_mode": task.processing_mode.value,
+                    "workflow_type": task.workflow_type.value,
+                    "execution_context": execution_context or {}
+                }
+            )
+            
+            logger.info(f"Agents system task execution completed for task {task_id}")
+            
+            return {
+                "task_id": task_id,
+                "execution_id": f"task_{task_id}_{datetime.now().timestamp()}",
+                "status": "completed",
+                "results": agent_result,
+                "architecture": "agents_v2"
+            }
+            
+        except Exception as e:
+            logger.error(f"Claude Code task execution failed for task {task_id}: {str(e)}")
+            raise
+    
+    async def generate_sql_with_claude_code(
+        self,
+        user_id: str,
+        query_description: str,
+        table_info: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        使用Claude Code架构生成SQL
+        
+        Args:
+            user_id: 用户ID
+            query_description: 查询描述
+            table_info: 表信息
+            
+        Returns:
+            Dict: 生成结果
+        """
+        try:
+            # 使用新的agents系统
+            from app.api.utils.agent_context_helpers import create_sql_generation_context
+            
+            # 准备表结构信息
+            table_schemas = []
+            if table_info:
+                for table_name, table_data in table_info.items():
+                    schema_dict = {
+                        "table_name": table_name,
+                        "columns": table_data.get("columns", []),
+                        "relationships": table_data.get("relationships", []),
+                        "indexes": table_data.get("indexes", []),
+                        "constraints": table_data.get("constraints", []),
+                        "statistics": table_data.get("statistics", {}),
+                        "sample_data": table_data.get("sample_data", [])
+                    }
+                    table_schemas.append(schema_dict)
+            
+            # 创建SQL生成上下文
+            context = create_sql_generation_context(
+                query_description=query_description,
+                table_schemas=table_schemas,
+                query_parameters={"user_id": user_id}
+            )
+            
+            # 执行SQL生成任务
+            agent_result = await execute_agent_task(
+                task_name="sql_generation",
+                task_description=f"生成SQL查询: {query_description}",
+                context_data=context,
+                additional_data={
+                    "table_info": table_info,
+                    "user_id": user_id
+                }
+            )
+            
+            return {
+                "query_description": query_description,
+                "results": agent_result,
+                "architecture": "agents_v2"
+            }
+            
+        except Exception as e:
+            logger.error(f"Claude Code SQL generation failed: {str(e)}")
+            raise
+    
+    async def analyze_data_with_claude_code(
+        self,
+        user_id: str,
+        dataset: Dict[str, Any],
+        analysis_type: str = "exploratory"
+    ) -> Dict[str, Any]:
+        """
+        使用Claude Code架构分析数据
+        
+        Args:
+            user_id: 用户ID
+            dataset: 数据集
+            analysis_type: 分析类型
+            
+        Returns:
+            Dict: 分析结果
+        """
+        try:
+            # 使用新的agents系统
+            from app.api.utils.agent_context_helpers import create_data_analysis_context
+            
+            # 准备数据信息
+            data_info = {
+                "source": "user_dataset",
+                "schema": {
+                    "table_name": "analysis_data",
+                    "columns": dataset.get("columns", []),
+                    "sample_data": dataset.get("sample_data", [])
+                },
+                "statistics": dataset.get("statistics", {}),
+                "sample_data": dataset.get("sample_data", [])
+            }
+            
+            analysis_parameters = {
+                "user_id": user_id,
+                "dataset_size": len(dataset.get("data", [])) if "data" in dataset else 0,
+                "columns_count": len(dataset.get("columns", [])) if "columns" in dataset else 0
+            }
+            
+            # 创建数据分析上下文
+            context = create_data_analysis_context(
+                analysis_type=analysis_type,
+                data_info=data_info,
+                analysis_parameters=analysis_parameters
+            )
+            
+            # 执行数据分析任务
+            agent_result = await execute_agent_task(
+                task_name="data_analysis",
+                task_description=f"执行{analysis_type}数据分析",
+                context_data=context,
+                additional_data={
+                    "dataset": dataset,
+                    "analysis_type": analysis_type,
+                    "user_id": user_id
+                }
+            )
+            
+            return {
+                "dataset_info": dataset,
+                "analysis_type": analysis_type,
+                "results": agent_result,
+                "architecture": "agents_v2"
+            }
+            
+        except Exception as e:
+            logger.error(f"Claude Code data analysis failed: {str(e)}")
+            raise
+
+
+logger.info("✅ Task Application Service loaded with Claude Code integration")

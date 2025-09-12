@@ -25,7 +25,7 @@ from .weight.weight_calculator import WeightCalculator
 from .parsers.parser_factory import ParserFactory
 from .cache.cache_manager import CacheManager
 # 导入Infrastructure层AI系统（迁移后）
-from ...infrastructure.ai import execute_placeholder_with_context
+from ...infrastructure.agents import execute_agent_task
 
 logger = logging.getLogger(__name__)
 
@@ -295,12 +295,16 @@ class IntelligentPlaceholderService:
             for placeholder_spec in placeholder_specs:
                 try:
                     # 调用agents DAG系统处理单个占位符
-                    dag_result = execute_placeholder_with_context(
-                        placeholder_text=placeholder_spec.raw_text,
-                        statistical_type=placeholder_spec.statistical_type.value,
-                        description=placeholder_spec.description,
-                        context_engine=context_engine_data,  # 传递上下文工程
-                        user_id=template_metadata.get("user_id", "system")
+                    dag_result = await execute_agent_task(
+                        task_name="占位符处理",
+                        task_description="处理智能占位符",
+                        context_data={
+                            "placeholder_text": placeholder_spec.raw_text,
+                            "statistical_type": placeholder_spec.statistical_type.value,
+                            "description": placeholder_spec.description,
+                            "context_engine": context_engine_data,  # 传递上下文工程
+                            "user_id": template_metadata.get("user_id", "system")
+                        }
                     )
                     
                     # 将DAG结果转换为PlaceholderAnalysisResult
@@ -758,12 +762,16 @@ class IntelligentPlaceholderService:
             )
             
             # 3. 调用agents DAG系统处理
-            dag_result = execute_placeholder_with_context(
-                placeholder_text=placeholder_text,
-                statistical_type=placeholder_spec.statistical_type.value,
-                description=placeholder_spec.description,
-                context_engine=context_engine_data,  # 传递上下文工程
-                user_id=context_data.get("user_id", "system") if context_data else "system"
+            dag_result = await execute_agent_task(
+                task_name="占位符处理",
+                task_description="处理智能占位符",
+                context_data={
+                    "placeholder_text": placeholder_text,
+                    "statistical_type": placeholder_spec.statistical_type.value,
+                    "description": placeholder_spec.description,
+                    "context_engine": context_engine_data,  # 传递上下文工程
+                    "user_id": context_data.get("user_id", "system") if context_data else "system"
+                }
             )
             
             # 4. 转换DAG结果为分析结果
@@ -1188,12 +1196,16 @@ class IntelligentPlaceholderService:
             for placeholder_spec in placeholder_specs:
                 try:
                     # 调用agents DAG系统处理单个占位符
-                    dag_result = execute_placeholder_with_context(
-                        placeholder_text=placeholder_spec.raw_text,
-                        statistical_type=placeholder_spec.statistical_type.value,
-                        description=placeholder_spec.description,
-                        context_engine=context_engine_data,  # 传递包含控制参数的上下文工程
-                        user_id=template_metadata.get("user_id", "system")
+                    dag_result = await execute_agent_task(
+                        task_name="占位符处理",
+                        task_description="处理智能占位符",
+                        context_data={
+                            "placeholder_text": placeholder_spec.raw_text,
+                            "statistical_type": placeholder_spec.statistical_type.value,
+                            "description": placeholder_spec.description,
+                            "context_engine": context_engine_data,  # 传递包含控制参数的上下文工程
+                            "user_id": template_metadata.get("user_id", "system")
+                        }
                     )
                     
                     # 将DAG结果转换为PlaceholderAnalysisResult
@@ -1259,12 +1271,16 @@ class IntelligentPlaceholderService:
             placeholder_spec = await parser.parse(placeholder_text)
             
             # 2. 调用agents DAG系统处理
-            dag_result = execute_placeholder_with_context(
-                placeholder_text=placeholder_text,
-                statistical_type=placeholder_spec.statistical_type.value,
-                description=placeholder_spec.description,
-                context_engine=context_engine_data,  # 传递包含控制参数的上下文工程
-                user_id=user_id
+            dag_result = await execute_agent_task(
+                task_name="占位符处理",
+                task_description="处理智能占位符",
+                context_data={
+                    "placeholder_text": placeholder_text,
+                    "statistical_type": placeholder_spec.statistical_type.value,
+                    "description": placeholder_spec.description,
+                    "context_engine": context_engine_data,  # 传递包含控制参数的上下文工程
+                    "user_id": user_id
+                }
             )
             
             # 3. 将DAG结果转换为PlaceholderAnalysisResult

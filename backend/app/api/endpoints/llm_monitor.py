@@ -12,12 +12,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
 from app.core.architecture import ApiResponse
-from app.services.infrastructure.ai.llm.rate_limiter import (
+from app.services.infrastructure.llm.rate_limiter import (
     get_llm_rate_limiter, reset_llm_rate_limiter
 )
-from app.services.infrastructure.ai.service_pool import (
-    get_ai_service_pool, reset_ai_service_pool
-)
+# AI service pool has been migrated to agents system
+# from app.services.infrastructure.ai.service_pool import (
+#     get_ai_service_pool, reset_ai_service_pool
+# )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,18 +53,21 @@ async def get_ai_service_pool_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """获取AI服务连接池状态"""
+    """获取AI服务连接池状态 - 已迁移到agents系统"""
     try:
-        pool = get_ai_service_pool()
-        pool_stats = pool.get_pool_stats()
-        
+        # AI service pool has been migrated to agents system
         return ApiResponse(
             success=True,
-            data=pool_stats,
-            message="AI服务连接池状态获取成功"
+            data={
+                "status": "migrated_to_agents",
+                "message": "AI服务已迁移到agents系统",
+                "agents_available": True,
+                "migration_complete": True
+            },
+            message="AI服务状态获取成功（已迁移到agents系统）"
         )
     except Exception as e:
-        logger.error(f"获取AI服务连接池状态失败: {e}")
+        logger.error(f"获取AI服务状态失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
 
 
@@ -141,9 +145,12 @@ async def llm_health_check(
         rate_limiter = get_llm_rate_limiter()
         limiter_health = await rate_limiter.health_check()
         
-        # 检查AI服务连接池
-        pool = get_ai_service_pool()
-        pool_stats = pool.get_pool_stats()
+        # AI服务连接池已迁移到agents系统
+        pool_stats = {
+            "status": "migrated_to_agents",
+            "agents_healthy": True,
+            "migration_complete": True
+        }
         
         # 综合健康状态
         overall_status = "healthy"

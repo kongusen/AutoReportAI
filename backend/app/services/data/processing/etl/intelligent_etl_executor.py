@@ -80,8 +80,9 @@ class IntelligentETLExecutor:
     async def _get_react_agent(self):
         """获取用户专属的React Agent"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-            self._react_agent = get_service_orchestrator()
+            # Service orchestrator migrated to agents
+            from app.services.infrastructure.agents import execute_agent_task
+            self._react_agent = execute_agent_task
             await self._react_agent.initialize()
         return self._react_agent
     

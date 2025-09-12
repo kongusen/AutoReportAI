@@ -18,7 +18,7 @@ from app.models.user import User
 # React Agent系统导入
 from .services.template_domain_service import TemplateDomainService, TemplateParser
 from .template_cache_service import TemplateCacheService
-from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
+from app.services.infrastructure.llm.simple_model_selector import SimpleModelSelector
 
 logger = logging.getLogger(__name__)
 
@@ -333,19 +333,23 @@ class TemplateService:
             enhanced_placeholders = []
             if self.user_id:
                 try:
-                    from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+                    from app.services.infrastructure.agents import execute_agent_task
                     
-                    ai_facade = get_unified_ai_facade()
+                    # Using agents system instead of AI facade
                     
                     # 使用统一的模板分析服务
-                    analysis_result = await ai_facade.analyze_template(
-                        user_id=str(self.user_id),
-                        template_id=str(template_id),
-                        template_content=content,
-                        data_source_info={
-                            "type": "placeholder_analysis",
-                            "placeholders_count": len(placeholders),
-                            "discovered_placeholders": [p['name'] for p in placeholders]
+                    analysis_result = await execute_agent_task(
+                        task_name="数据分析",
+                        task_description="分析请求",
+                        context_data={
+                            "user_id": str(self.user_id),
+                            "template_id": str(template_id),
+                            "template_content": content,
+                            "data_source_info": {
+                                "type": "placeholder_analysis",
+                                "placeholders_count": len(placeholders),
+                                "discovered_placeholders": [p['name'] for p in placeholders]
+                            }
                         }
                     )
                     
@@ -459,9 +463,9 @@ class TemplateService:
         """
         try:
             if self.user_id:
-                from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+                from app.services.infrastructure.agents import execute_agent_task
                 
-                ai_facade = get_unified_ai_facade()
+                # Using agents system instead of AI facade
                 
                 # 获取模板的占位符信息
                 from app.crud import template_placeholder as crud_placeholder
@@ -476,11 +480,15 @@ class TemplateService:
                 ]
                 
                 # 使用统一的SQL生成服务
-                sql_result = await ai_facade.generate_sql(
-                    user_id=str(user_id),
-                    placeholders=placeholder_data,
-                    data_source_info={"data_source_id": str(data_source_id)},
-                    template_context=f"Template ID: {template_id}"
+                sql_result = await execute_agent_task(
+                    task_name="内容生成",
+                    task_description="生成请求",
+                    context_data={
+                        "user_id": str(user_id),
+                        "placeholders": placeholder_data,
+                        "data_source_info": {"data_source_id": str(data_source_id)},
+                        "template_context": f"Template ID: {template_id}"
+                    }
                 )
                 
                 return {

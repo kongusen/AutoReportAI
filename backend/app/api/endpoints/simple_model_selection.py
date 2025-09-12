@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.api import deps
 from app.core.architecture import ApiResponse
-from app.services.infrastructure.ai.llm.simple_model_selector import (
+from app.services.infrastructure.llm.simple_model_selector import (
     get_simple_model_selector,
     TaskRequirement,
     ModelSelection

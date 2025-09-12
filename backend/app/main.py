@@ -151,7 +151,7 @@ async def startup():
 
     # 启动LLM监控服务
     try:
-        from app.services.infrastructure.ai.llm.monitor_integration import start_llm_monitoring
+        from app.services.infrastructure.llm.monitor_integration import start_llm_monitoring
         from app.db.session import get_db
         
         await start_llm_monitoring(get_db)
@@ -169,7 +169,7 @@ async def shutdown():
     """应用关闭处理"""
     # 停止LLM监控服务
     try:
-        from app.services.infrastructure.ai.llm.monitor_integration import stop_llm_monitoring
+        from app.services.infrastructure.llm.monitor_integration import stop_llm_monitoring
         await stop_llm_monitoring()
         print("🤖 LLM监控服务已停止")
     except Exception as e:

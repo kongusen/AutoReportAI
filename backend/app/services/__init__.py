@@ -48,7 +48,7 @@ from .infrastructure.notification.notification_service import NotificationServic
 from .infrastructure.storage.file_storage_service import FileStorageService
 
 # LLM服务 (已迁移到新架构)
-from .infrastructure.ai.llm.simple_model_selector import SimpleModelSelector as LLMService
+from .infrastructure.llm.simple_model_selector import SimpleModelSelector as LLMService
 
 __all__ = [
     # =========================================================================

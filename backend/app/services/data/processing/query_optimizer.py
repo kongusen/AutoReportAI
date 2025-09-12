@@ -61,8 +61,9 @@ class QueryOptimizer:
     async def _get_service_orchestrator(self):
         """获取ServiceOrchestrator实例"""
         if self._react_agent is None:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-            self._react_agent = get_service_orchestrator()
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
+            self._react_agent = execute_agent_task
         return self._react_agent
     
     async def optimize_with_react_agent(
@@ -88,7 +89,7 @@ class QueryOptimizer:
         
         try:
             # 使用新的Claude Code架构进行智能查询优化
-            orchestrator = await self._get_service_orchestrator()
+            orchestrator = await self._execute_agent_task
             
             optimization_content = f"""
             智能查询优化任务

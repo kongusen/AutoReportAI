@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
-from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade, AITaskCategory
+from app.services.infrastructure.agents import (
+    get_agent_coordinator, 
+    execute_agent_task,
+    create_data_analysis_context
+)
 from app.core.exceptions import (
     ValidationError, 
     NotFoundError, 
@@ -237,14 +241,21 @@ class SchemaAnalysisService:
         analysis_prompt = self._build_relationship_analysis_prompt(schema_data)
         
         try:
-            # 使用统一AI门面进行Schema分析
-            ai_facade = get_unified_ai_facade()
-            result = await ai_facade.analyze_schema(
-                user_id=self.user_id,
-                schema_data=schema_data,
-                analysis_depth="standard"
+            # 使用agents系统进行Schema分析
+            result = await execute_agent_task(
+                task_name="表关系分析",
+                task_description="分析数据库表结构和关系",
+                context_data={
+                    "placeholders": {
+                        "schema_data": schema_data,
+                        "analysis_type": "relationship_analysis",
+                        "user_id": self.user_id
+                    },
+                    "database_schemas": [{"table_name": "schema_analysis", "columns": [], "relationships": []}]
+                },
+                target_agent="data_analysis_agent"
             )
-            response = result.get("result", "") if isinstance(result, dict) else str(result)
+            response = result.get("result", {}).get("analysis_result", "") if result.get("success") else ""
             
             # 完整解析AI响应
             parsed_result = self._parse_relationship_analysis_response(response, schema_data)
@@ -266,12 +277,18 @@ class SchemaAnalysisService:
         semantic_prompt = self._build_semantic_analysis_prompt(schema_data)
         
         try:
-            # 使用统一AI门面进行数据质量分析
-            ai_facade = get_unified_ai_facade()
-            result = await ai_facade.analyze_data_quality(
-                user_id=self.user_id,
-                data_sample={"schema_data": schema_data},
-                quality_metrics=["semantic_clarity", "business_relevance"]
+            # 使用agents系统进行语义分析
+            result = await execute_agent_task(
+                task_name="语义分析",
+                task_description="分析表结构的业务语义和数据质量",
+                context_data={
+                    "placeholders": {
+                        "schema_data": schema_data,
+                        "analysis_type": "semantic_analysis",
+                        "user_id": self.user_id
+                    }
+                },
+                target_agent="data_analysis_agent"
             )
             response = result.get("result", "") if isinstance(result, dict) else str(result)
             
@@ -296,12 +313,19 @@ class SchemaAnalysisService:
         quality_prompt = self._build_quality_analysis_prompt(schema_data)
         
         try:
-            # 使用统一AI门面进行数据质量分析
-            ai_facade = get_unified_ai_facade()
-            result = await ai_facade.analyze_data_quality(
-                user_id=self.user_id,
-                data_sample={"schema_data": schema_data},
-                quality_metrics=["data_completeness", "data_consistency", "data_accuracy"]
+            # 使用agents系统进行数据质量分析
+            result = await execute_agent_task(
+                task_name="数据质量分析",
+                task_description="分析表结构的数据质量和完整性",
+                context_data={
+                    "placeholders": {
+                        "schema_data": schema_data,
+                        "analysis_type": "data_quality_analysis",
+                        "user_id": self.user_id,
+                        "quality_metrics": ["data_completeness", "data_consistency", "data_accuracy"]
+                    }
+                },
+                target_agent="data_analysis_agent"
             )
             response = result.get("result", "") if isinstance(result, dict) else str(result)
             

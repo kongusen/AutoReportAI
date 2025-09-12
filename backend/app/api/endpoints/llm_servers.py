@@ -29,7 +29,7 @@ from app.schemas.llm_server import (
 )
 # from app.services.infrastructure.ai.llm.intelligent_selector import IntelligentLLMSelector  # 已删除
 from app.services.infrastructure.notification.notification_service import get_notification_service
-from app.services.infrastructure.ai.llm.health_service import get_model_health_service
+from app.services.infrastructure.llm.health_service import get_model_health_service
 
 router = APIRouter()
 

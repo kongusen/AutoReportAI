@@ -18,7 +18,8 @@ from app.models.data_source import DataSource
 from app.models.template import Template
 from app.models.report_history import ReportHistory
 from app.services.data.connectors.connector_factory import create_connector
-from app.services.infrastructure.ai.tools.chart_generator_tool import generate_chart
+# AI tools migrated to agents
+from app.services.infrastructure.agents.tools import get_tool_registry
 
 logger = logging.getLogger(__name__)
 

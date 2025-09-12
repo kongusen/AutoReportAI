@@ -31,8 +31,9 @@ class SchemaAwareAnalysisService:
     async def _get_ai_facade(self):
         """获取统一AI门面实例"""
         if not hasattr(self, '_ai_facade') or self._ai_facade is None:
-            from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
-            self._ai_facade = get_unified_ai_facade()
+            # Unified AI facade migrated to agents
+            from app.services.infrastructure.agents import execute_agent_task
+            self._ai_facade = execute_agent_task
         return self._ai_facade
     
     @property

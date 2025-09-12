@@ -28,8 +28,11 @@ from app.schemas.template_placeholder import (
 )
 
 # 导入增强架构v3.0组件
-from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
-from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
+# AI core tools have been migrated to agents system
+# from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
+# from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
+from app.services.infrastructure.agents.tools import get_tool_registry
+from app.services.infrastructure.agents.tools.data.sql_tool import SQLGeneratorTool
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -506,7 +509,8 @@ async def analyze_single_placeholder(
                 logger.warning(f"解析执行时间失败: {execution_time}, 错误: {e}")
         
         # 使用ServiceOrchestrator进行单个占位符分析
-        from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+        # Service orchestrator has been migrated to agents system
+        from app.services.infrastructure.agents import execute_agent_task
         
         # 记录分析开始
         logger.info(f"开始单个占位符分析: {placeholder_name}")

@@ -289,7 +289,8 @@ class SchemaDiscoveryService:
                 "default_value": col_info.get("default"),
                 "column_size": self.type_normalizer.extract_column_size(col_info.get("type", "")),
                 "precision": self.type_normalizer.extract_precision(col_info.get("type", "")),
-                "scale": self.type_normalizer.extract_scale(col_info.get("type", ""))
+                "scale": self.type_normalizer.extract_scale(col_info.get("type", "")),
+                "comment": col_info.get("comment", "")  # 新增注释字段存储
             }
             
             if existing_column:
@@ -805,7 +806,8 @@ class SchemaDiscoveryService:
                 "default_value": col_info.get("default"),
                 "column_size": self.type_normalizer.extract_column_size(col_info.get("type", "")),
                 "precision": self.type_normalizer.extract_precision(col_info.get("type", "")),
-                "scale": self.type_normalizer.extract_scale(col_info.get("type", ""))
+                "scale": self.type_normalizer.extract_scale(col_info.get("type", "")),
+                "comment": col_info.get("comment", "")  # 新增注释字段存储
             }
             
             if existing_column:

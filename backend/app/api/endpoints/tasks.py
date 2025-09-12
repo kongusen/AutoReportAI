@@ -421,5 +421,101 @@ async def get_task_status(
         )
 
 
+@router.post("/{task_id}/execute-claude-code", response_model=ApiResponse)
+async def execute_task_with_claude_code(
+    task_id: int,
+    execution_context: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """使用Claude Code架构执行任务"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        # 使用新的Claude Code架构执行任务
+        result = await task_service.execute_task_with_claude_code(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+            execution_context=execution_context or {}
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="Claude Code任务执行完成"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="Claude Code任务执行失败"
+        )
+
+
+@router.post("/sql/generate", response_model=ApiResponse)
+async def generate_sql_with_claude_code(
+    query_description: str,
+    table_info: Optional[Dict[str, Any]] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """使用Claude Code架构生成SQL"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        result = await task_service.generate_sql_with_claude_code(
+            user_id=user_id,
+            query_description=query_description,
+            table_info=table_info or {}
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="SQL生成完成"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="SQL生成失败"
+        )
+
+
+@router.post("/data/analyze", response_model=ApiResponse)
+async def analyze_data_with_claude_code(
+    dataset: Dict[str, Any],
+    analysis_type: str = "exploratory",
+    current_user: User = Depends(get_current_user)
+):
+    """使用Claude Code架构分析数据"""
+    try:
+        task_service = TaskApplicationService()
+        user_id = str(current_user.id)
+        
+        result = await task_service.analyze_data_with_claude_code(
+            user_id=user_id,
+            dataset=dataset,
+            analysis_type=analysis_type
+        )
+        
+        return ApiResponse(
+            success=True,
+            data=result,
+            message="数据分析完成"
+        )
+        
+    except Exception as e:
+        return ApiResponse(
+            success=False,
+            error=str(e),
+            message="数据分析失败"
+        )
+
+
 
 

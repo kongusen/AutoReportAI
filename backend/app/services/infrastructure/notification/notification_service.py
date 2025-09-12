@@ -36,8 +36,9 @@ class NotificationService:
         """初始化通知服务"""
         if not self._initialized:
             try:
-                from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-                self.orchestrator = get_service_orchestrator()
+                # Service orchestrator migrated to agents
+                from app.services.infrastructure.agents import execute_agent_task
+                self.orchestrator = execute_agent_task
                 self._initialized = True
                 logger.info("ServiceOrchestrator通知服务初始化成功")
             except Exception as e:

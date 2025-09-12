@@ -33,8 +33,26 @@ def create_enhanced_template_parser(db: Session, user_id: str):
         raise ValueError("user_id is required for Enhanced Template Parser")
     
     # 使用新的Claude Code架构模板解析服务
-    from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-    return get_service_orchestrator()
+    # Service orchestrator has been migrated to agents system
+    from app.services.infrastructure.agents import execute_agent_task
+    
+    # Return a compatibility wrapper for agents system
+    class AgentsTemplateParserWrapper:
+        def __init__(self, user_id: str):
+            self.user_id = user_id
+        
+        async def parse_template_structure(self, template_content: str):
+            # Use agents system for template parsing
+            return await execute_agent_task(
+                task_name="template_parsing",
+                task_description="Parse template structure",
+                context_data={
+                    "template_content": template_content,
+                    "user_id": self.user_id
+                }
+            )
+    
+    return AgentsTemplateParserWrapper(user_id)
 
 
 def create_intelligent_placeholder_workflow(user_id: str, config=None):
@@ -85,10 +103,24 @@ def create_pure_database_schema_analysis_service(db: Session, user_id: str):
 
 
 def create_service_orchestrator(user_id: str = None):
-    """创建新的Claude Code架构ServiceOrchestrator实例"""
-    # user_id只用于向后兼容，ServiceOrchestrator不需要用户ID在初始化时
-    from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-    return get_service_orchestrator()
+    """创建新的Claude Code架构ServiceOrchestrator实例 - 已迁移到agents系统"""
+    # Service orchestrator has been migrated to agents system
+    from app.services.infrastructure.agents import execute_agent_task
+    
+    # Return a compatibility wrapper for agents system
+    class AgentsServiceOrchestratorWrapper:
+        def __init__(self, user_id: str = None):
+            self.user_id = user_id
+        
+        async def orchestrate_task(self, task_name: str, task_description: str, context_data: dict):
+            # Use agents system for orchestration
+            return await execute_agent_task(
+                task_name=task_name,
+                task_description=task_description,
+                context_data=context_data
+            )
+    
+    return AgentsServiceOrchestratorWrapper(user_id)
 
 
 def create_user_etl_service(user_id: str):
@@ -138,8 +170,19 @@ def create_ai_tools_integration_service(user_id: str):
     if not user_id:
         raise ValueError("user_id is required for AI Tools Integration Service")
     
-    from app.services.infrastructure.ai.tools.integration_service import create_ai_tools_integration_service as create_integration_impl
-    return create_integration_impl(user_id)
+    # AI tools integration has been migrated to agents system
+    from app.services.infrastructure.agents.tools import get_tool_registry
+    
+    # Return a compatibility wrapper for the migrated system
+    class AgentsToolsIntegration:
+        def __init__(self, user_id: str):
+            self.user_id = user_id
+            self.tool_registry = get_tool_registry()
+        
+        def get_available_tools(self):
+            return self.tool_registry.get_all_tools()
+    
+    return AgentsToolsIntegration(user_id)
 
 
 # === 任务服务工厂 ===

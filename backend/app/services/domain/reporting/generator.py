@@ -108,9 +108,7 @@ class ReportGenerationService:
                     
                     # 使用统一AI门面处理占位符内容生成
                     try:
-                        from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
-                        
-                        ai_facade = get_unified_ai_facade()
+                        from app.services.infrastructure.agents import execute_agent_task
                         
                         # 构建内容生成的数据上下文
                         template_parts = [{
@@ -125,15 +123,24 @@ class ReportGenerationService:
                             "template_id": template_id
                         }
                         
-                        # 使用统一的内容生成服务
-                        content_result = await ai_facade.generate_content(
-                            user_id="system",  # 系统级任务
-                            template_parts=template_parts,
-                            data_context=data_context,
-                            style_requirements={"target": "report", "format": "professional"}
+                        # 使用agents系统生成内容
+                        content_result = await execute_agent_task(
+                            task_name="内容生成",
+                            task_description=f"为占位符 {placeholder_name} 生成报告内容",
+                            context_data={
+                                "placeholders": {
+                                    "placeholder_name": placeholder_name,
+                                    "placeholder_type": placeholder_type,
+                                    "placeholder_description": placeholder_description,
+                                    "data_source_id": str(data_source_id),
+                                    "task_id": str(task_id),
+                                    "template_id": str(template_id)
+                                }
+                            },
+                            target_agent="report_generation_agent"
                         )
                         
-                        result = content_result.get("result", "") if isinstance(content_result, dict) else str(content_result)
+                        result = content_result.get("result", {}).get("generated_content", "") if content_result.get("success") else f"[生成失败: {placeholder_name}]"
                         
                     except Exception as e:
                         logger.warning(f"React Agent处理占位符失败: {str(e)}")
@@ -295,10 +302,8 @@ class ReportGenerationService:
                 # Get AI interpretation if description is provided
                 if placeholder.get("description"):
                     try:
-                        # 使用统一AI门面进行业务洞察解释
-                        from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
-                        
-                        ai_facade = get_unified_ai_facade()
+                        # 使用agents系统进行业务洞察解释
+                        from app.services.infrastructure.agents import execute_agent_task
                         
                         # 构建分析结果数据
                         data_analysis_results = {
@@ -309,15 +314,23 @@ class ReportGenerationService:
                             "data_shape": sample_data.shape if not sample_data.empty else (0, 0)
                         }
                         
-                        # 使用业务洞察解释服务
-                        interpretation_result = await ai_facade.explain_business_insights(
-                            user_id="system",
-                            data_analysis_results=data_analysis_results,
-                            business_context=f"模板占位符 '{placeholder['name']}' 的业务含义解释",
-                            target_audience="business"
+                        # 使用agents系统进行业务洞察解释
+                        interpretation_result = await execute_agent_task(
+                            task_name="业务洞察解释",
+                            task_description=f"解释模板占位符 '{placeholder['name']}' 的业务含义",
+                            context_data={
+                                "placeholders": {
+                                    "placeholder_name": placeholder['name'],
+                                    "placeholder_type": placeholder['type'], 
+                                    "placeholder_description": placeholder['description'],
+                                    "analysis_results": data_analysis_results,
+                                    "target_audience": "business"
+                                }
+                            },
+                            target_agent="business_intelligence_agent"
                         )
                         
-                        analysis["ai_interpretation"] = interpretation_result.get("result", "") if isinstance(interpretation_result, dict) else str(interpretation_result)
+                        analysis["ai_interpretation"] = interpretation_result.get("result", {}).get("interpretation", "") if interpretation_result.get("success") else f"解释生成失败: {placeholder['name']}"
                     except Exception as e:
                         analysis["ai_interpretation"] = f"Error: {str(e)}"
 
@@ -432,7 +445,7 @@ class ReportGenerationService:
             # Check React Agent系统 availability
             try:
                 # React Agent系统健康检查 - 简化版本，避免async调用
-                from app.services.infrastructure.ai.llm import get_pure_llm_manager
+                from app.services.infrastructure.llm import get_pure_llm_manager
                 
                 llm_manager = get_pure_llm_manager()
                 # 简单检查manager是否可用

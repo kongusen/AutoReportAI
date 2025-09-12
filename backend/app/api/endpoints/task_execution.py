@@ -22,9 +22,12 @@ from app.schemas.base import APIResponse
 from app import crud
 
 # 导入增强架构v3.0组件
-from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
-from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
-from app.services.infrastructure.ai.core.prompt_monitor import get_prompt_monitor
+# AI core components migrated to agents
+from app.services.infrastructure.agents.core import *
+# AI tools migrated to agents
+from app.services.infrastructure.agents.tools import get_tool_registry
+# AI core components migrated to agents
+from app.services.infrastructure.agents.core import *
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

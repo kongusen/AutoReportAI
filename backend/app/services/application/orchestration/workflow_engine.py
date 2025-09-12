@@ -326,10 +326,11 @@ class StepHandler:
                      inputs: Dict[str, Any]) -> Dict[str, Any]:
         """执行步骤 - 基于React Agent的默认实现"""
         try:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
             
             user_id = context.get_context_value("user_id") or "system"
-            orchestrator = get_service_orchestrator()
+            orchestrator = execute_agent_task
             
             # 构建执行提示
             prompt = f"""
@@ -636,10 +637,11 @@ class WorkflowEngine:
                                       inputs: Dict[str, Any]) -> Dict[str, Any]:
         """使用React Agent执行未知步骤类型"""
         try:
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
             
             user_id = context.get_context_value("user_id") or "system"
-            orchestrator = get_service_orchestrator()
+            orchestrator = execute_agent_task
             
             workflow_content = f"""
             自定义工作流步骤执行
@@ -688,9 +690,10 @@ class WorkflowEngine:
         
         if task_type == 'react_agent' or task_type == 'service_orchestrator':
             # 使用新的Claude Code架构
-            from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
+            # Service orchestrator migrated to agents
+from app.services.infrastructure.agents import execute_agent_task
             user_id = context.get_context_value("user_id") or "system"
-            orchestrator = get_service_orchestrator()
+            orchestrator = execute_agent_task
             
             prompt = task_config.get('prompt', '')
             result = await orchestrator.analyze_template_simple(

@@ -300,7 +300,7 @@ def get_intelligent_etl_executor(db: Session = Depends(get_db)):
 def get_react_agent_llm_service(db: Session = Depends(get_db), user = Depends(get_current_user)):
     """获取React Agent LLM服务依赖"""
     try:
-        from app.services.infrastructure.ai.llm.simple_model_selector import SimpleModelSelector
+        from app.services.infrastructure.llm.simple_model_selector import SimpleModelSelector
         user_id = str(user.id) if user else None
         return SimpleModelSelector()
     except Exception as e:
@@ -330,11 +330,37 @@ def get_ai_service(db: Session = Depends(get_db), user = Depends(get_current_use
     return get_react_agent_llm_service(db, user)
 
 
+def get_agents_executor():
+    """Get new agents system executor dependency"""
+    try:
+        from app.services.infrastructure.agents import execute_agent_task
+        return execute_agent_task
+    except Exception as e:
+        logger.error(f"Failed to create AgentsExecutor: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agents executor service unavailable"
+        )
+
+
+def get_context_builder():
+    """Get agents context builder dependency"""
+    try:
+        from app.services.infrastructure.agents.context import AgentContextBuilder
+        return AgentContextBuilder()
+    except Exception as e:
+        logger.error(f"Failed to create ContextBuilder: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Context builder service unavailable"
+        )
+
+
 def get_content_generation_service():
     """Get content generation service (using new architecture)"""
     try:
-        from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-        return get_service_orchestrator()
+        from app.services.infrastructure.agents import execute_agent_task
+        return execute_agent_task
     except Exception as e:
         logger.error(f"Failed to create ContentGenerationService: {e}")
         raise HTTPException(
@@ -346,8 +372,8 @@ def get_content_generation_service():
 def get_visualization_service():
     """Get visualization service (using new architecture)"""
     try:
-        from app.services.infrastructure.ai.service_orchestrator import get_service_orchestrator
-        return get_service_orchestrator()
+        from app.services.infrastructure.agents import execute_agent_task
+        return execute_agent_task
     except Exception as e:
         logger.error(f"Failed to create VisualizationService: {e}")
         raise HTTPException(

@@ -389,7 +389,7 @@ class UnifiedServiceFacade:
     async def _get_ai_service(self):
         """获取统一AI门面服务"""
         if self._ai_service is None:
-            from app.services.infrastructure.ai.unified_ai_facade import get_unified_ai_facade
+            from app.services.infrastructure.agents import execute_agent_task
             self._ai_service = get_unified_ai_facade()
         return self._ai_service
     

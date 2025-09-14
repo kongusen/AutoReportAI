@@ -1,37 +1,37 @@
 """
-Application Layer - DDD Architecture
+Application Layer - 统一架构
 
-DDD架构应用层，包含：
-- services: 应用服务（协调业务流程）
-- orchestrators: 编排器（复杂工作流管理）  
-- tasks: 编排任务（分布式任务编排）
+基于Agent系统成功经验的应用层：
+- tasks: 任务应用服务
+- llm: LLM编排服务
+- orchestrators: 复杂业务编排
+- services: 业务应用服务
 - context: 上下文构建器
-- facades: 统一服务门面
 """
 
-# 应用服务
-from .services import (
-    ReportApplicationService, 
-    WorkflowApplicationService,
-    ContextAwareApplicationService
-)
-
-# 任务服务（从 tasks 目录导入）
+# 任务应用服务
 from .tasks import (
     TaskApplicationService,
     TaskExecutionService
 )
 
-# 编排器
+# LLM编排服务
+from .llm import (
+    LLMOrchestrationService,
+    get_llm_orchestration_service
+)
+
+# 复杂业务编排
 from .orchestrators import (
     ReportOrchestrator,
     DataOrchestrator
 )
 
-# 编排任务
-from .tasks import (
-    orchestrate_report_generation,
-    orchestrate_data_processing
+# 业务应用服务
+from .services import (
+    ReportApplicationService,
+    WorkflowApplicationService,
+    ContextAwareApplicationService
 )
 
 # 上下文构建器
@@ -41,37 +41,26 @@ from .context import (
     DocumentContextBuilder
 )
 
-# 统一服务门面
-try:
-    from .facades.unified_service_facade import get_unified_facade
-    _HAS_FACADES = True
-except ImportError:
-    _HAS_FACADES = False
-
 __all__ = [
-    # 应用服务
-    "ReportApplicationService", 
-    "WorkflowApplicationService",
-    "ContextAwareApplicationService",
-    
-    # 任务服务
+    # 任务应用服务
     "TaskApplicationService",
     "TaskExecutionService",
     
-    # 编排器
+    # LLM编排服务
+    "LLMOrchestrationService",
+    "get_llm_orchestration_service",
+    
+    # 复杂业务编排
     "ReportOrchestrator",
     "DataOrchestrator",
     
-    # 编排任务
-    "orchestrate_report_generation",
-    "orchestrate_data_processing", 
+    # 业务应用服务
+    "ReportApplicationService",
+    "WorkflowApplicationService",
+    "ContextAwareApplicationService",
     
     # 上下文构建器
     "TimeContextBuilder",
-    "BusinessContextBuilder", 
+    "BusinessContextBuilder",
     "DocumentContextBuilder",
 ]
-
-# 可选门面支持
-if _HAS_FACADES:
-    __all__.append("get_unified_facade")

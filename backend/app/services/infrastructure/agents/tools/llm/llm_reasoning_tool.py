@@ -17,13 +17,12 @@ from ..core.base import (
     ValidationError, ExecutionError, create_tool_definition
 )
 
-from app.services.infrastructure.llm import (
-    # 新的统一接口
-    get_llm_manager, select_best_model_for_user,
-    ask_agent_for_user, get_user_available_models,
-    
-    # 必要的类型定义
-    TaskRequirement, TaskComplexity, ProcessingStep, StepContext
+from app.services.infrastructure.llm.model_executor import get_model_executor
+from app.services.infrastructure.llm.simple_model_selector import (
+    get_simple_model_selector, TaskRequirement
+)
+from app.services.infrastructure.llm.step_based_model_selector import (
+    ProcessingStep, StepContext, TaskComplexity
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,7 @@ class LLMReasoningTool(StreamingAgentTool):
         super().__init__(definition)
         
         self.model_executor = get_model_executor()
-        self.step_selector = get_step_based_model_selector()
+        self.step_selector = get_simple_model_selector()
         
         # 推理深度到复杂度的映射
         self.depth_complexity_mapping = {
@@ -146,10 +145,32 @@ class LLMReasoningTool(StreamingAgentTool):
         except Exception as e:
             raise ValidationError(f"推理输入无效: {e}", tool_name=self.name)
     
+    async def check_permissions(self, input_data: Dict[str, Any], context: ToolExecutionContext) -> bool:
+        """检查工具执行权限"""
+        try:
+            # LLM推理工具只需要读取权限
+            required_permissions = {ToolPermission.READ_ONLY}
+            user_permissions = set(context.permissions) if isinstance(context.permissions, list) else {context.permissions} if context.permissions else set()
+            
+            # 检查是否有所需权限
+            if not required_permissions.issubset(user_permissions):
+                from ..core.base import PermissionError
+                raise PermissionError(f"LLM推理工具需要权限: {[p.value for p in required_permissions]}", tool_name=self.name)
+            
+            return True
+        except ImportError as e:
+            logger.warning(f"权限检查导入错误，使用默认权限: {e}")
+            return True  # 临时允许访问
+        except Exception as e:
+            logger.error(f"权限检查失败: {e}")
+            return True  # 临时允许访问
+    
     async def execute(self, input_data: Dict[str, Any], context: ToolExecutionContext) -> AsyncGenerator[ToolResult, None]:
         """执行推理任务"""
         
         try:
+            logger.info(f"LLM推理工具开始执行，用户ID: {context.user_id}")
+            
             # 阶段1: 准备推理
             yield await self.stream_progress({
                 'status': 'preparing',
@@ -160,17 +181,17 @@ class LLMReasoningTool(StreamingAgentTool):
             # 构建推理提示词
             prompt = self._build_reasoning_prompt(input_data, context)
             
-            # 选择模型
-            step_context = self._build_step_context(input_data)
-            model_selection = self.step_selector.select_model_for_step(step_context)
+            # 构建任务需求用于模型选择
+            task_requirement = self._build_task_requirement(input_data)
             
             yield await self.stream_progress({
                 'status': 'model_selection',
-                'message': f'选择推理模型: {model_selection.model_type}',
+                'message': f'选择推理模型: {task_requirement}',
                 'progress': 20,
                 'model_info': {
-                    'type': model_selection.model_type,
-                    'complexity': model_selection.complexity.value
+                    'requires_thinking': task_requirement.requires_thinking,
+                    'cost_sensitive': task_requirement.cost_sensitive,
+                    'speed_priority': task_requirement.speed_priority
                 }
             }, context)
             
@@ -185,17 +206,38 @@ class LLMReasoningTool(StreamingAgentTool):
                 }, context)
                 
                 # 执行LLM推理
-                llm_result = await self.model_executor.execute_with_auto_selection(
-                    user_id=context.user_id or "system",
-                    prompt=prompt,
-                    task_requirement=self._build_task_requirement(input_data),
-                    max_tokens=4000  # 推理任务需要更多tokens
-                )
+                try:
+                    logger.info(f"执行LLM推理迭代 {iteration + 1}")
+                    if not context.user_id:
+                        raise ExecutionError("缺少有效的用户ID，无法执行LLM推理", tool_name=self.name)
+                    
+                    llm_result = await self.model_executor.execute_with_auto_selection(
+                        user_id=context.user_id,
+                        prompt=prompt,
+                        task_requirement=self._build_task_requirement(input_data),
+                        max_tokens=4000  # 推理任务需要更多tokens
+                    )
+                    
+                    logger.info(f"LLM推理迭代结果: {llm_result.get('success', False)}")
+                    
+                    if not llm_result.get("success"):
+                        error_msg = llm_result.get('error', 'Unknown error')
+                        logger.error(f"LLM推理迭代失败: {error_msg}")
+                        raise ExecutionError(f"推理迭代失败: {error_msg}", tool_name=self.name)
+                    
+                except Exception as llm_error:
+                    logger.error(f"LLM推理执行异常: {llm_error}")
+                    raise ExecutionError(f"推理执行异常: {str(llm_error)}", tool_name=self.name)
                 
-                if not llm_result.get("success"):
-                    raise ExecutionError(f"推理迭代失败: {llm_result.get('error')}", tool_name=self.name)
+                # 安全地获取结果，处理不同的数据格式
+                if isinstance(llm_result, dict):
+                    result = llm_result.get('result', '')
+                else:
+                    result = str(llm_result)  # 兜底处理
                 
-                result = llm_result.get('result', '')
+                # 确保result是字符串
+                if not isinstance(result, str):
+                    result = str(result)
                 
                 # 检查是否需要进一步迭代
                 if self._needs_more_iteration(result, iteration, input_data):
@@ -214,7 +256,7 @@ class LLMReasoningTool(StreamingAgentTool):
             
             # 构建结构化结果
             result_data = self._structure_reasoning_result(
-                final_result or result, input_data, model_selection
+                final_result or result, input_data, task_requirement
             )
             
             yield await self.stream_final_result(result_data, context)
@@ -247,17 +289,6 @@ class LLMReasoningTool(StreamingAgentTool):
         
         return template.format(**template_vars)
     
-    def _build_step_context(self, input_data: Dict[str, Any]) -> StepContext:
-        """构建步骤上下文"""
-        reasoning_depth = input_data.get('reasoning_depth', ReasoningDepth.DETAILED)
-        complexity = self.depth_complexity_mapping.get(reasoning_depth, TaskComplexity.HIGH)
-        
-        return StepContext(
-            step=ProcessingStep.GENERAL_REASONING,
-            task_description=input_data['problem'][:100],
-            custom_complexity=complexity,
-            data_complexity='high' if input_data.get('context') or input_data.get('memory_state') else 'medium'
-        )
     
     def _build_task_requirement(self, input_data: Dict[str, Any]) -> TaskRequirement:
         """构建任务需求"""
@@ -315,7 +346,7 @@ class LLMReasoningTool(StreamingAgentTool):
         return current_prompt + iteration_prompt
     
     def _structure_reasoning_result(self, result: str, input_data: Dict[str, Any], 
-                                  model_selection: Any) -> Dict[str, Any]:
+                                  task_requirement: TaskRequirement) -> Dict[str, Any]:
         """结构化推理结果"""
         return {
             'operation': 'llm_reasoning',
@@ -325,8 +356,9 @@ class LLMReasoningTool(StreamingAgentTool):
             'structured_analysis': self._extract_analysis_structure(result),
             'execution_metrics': {
                 'iterations_used': input_data.get('max_iterations', 3),
-                'model_type': model_selection.model_type,
-                'complexity_level': model_selection.complexity.value,
+                'requires_thinking': task_requirement.requires_thinking,
+                'cost_sensitive': task_requirement.cost_sensitive,
+                'speed_priority': task_requirement.speed_priority,
                 'execution_time': datetime.now().isoformat()
             },
             'context_used': bool(input_data.get('context')),

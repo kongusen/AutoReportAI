@@ -1,114 +1,65 @@
 """
-Agents 核心模块
-==============
+Agent Core - Clean Architecture
+==============================
 
-包含Agent系统的核心组件：
-- 消息传递系统
-- Agent协调器
-- 内存管理
-- 进度聚合
-- 流式解析
-- 错误处理
+核心Agent系统的简洁架构实现。
+
+模块组织：
+- coordinator: 核心协调器
+- tt_controller: TT控制循环
+- message_*: 消息系统
+- memory_manager: 内存管理
+- progress_aggregator: 进度聚合
+- error_formatter: 错误格式化
 """
 
-from .main import AgentCoordinator
-from .message_types import (
-    MessageType,
-    MessagePriority,
-    AgentState,
-    MessageMetadata,
-    AgentMessage,
-    StreamingMessage,
-    MessagePattern,
-    MessageHandler,
-    create_task_request,
-    create_progress_message,
-    create_result_message,
-    create_error_message,
-    create_heartbeat,
-    create_broadcast
-)
-from .message_bus import (
-    MessageBus,
-    create_message_bus,
-    create_simple_handler,
-    RoutingStrategy,
-    DeliveryGuarantee
-)
-from .memory_manager import (
-    MemoryManager,
-    create_memory_manager
-)
-from .progress_aggregator import (
-    ProgressAggregator,
-    create_simple_aggregator,
-    AggregationStrategy,
-    AgentProgress
-)
-from .streaming_parser import (
-    StreamingMessageParser,
-    parse_single_message
-)
-from .error_formatter import (
-    ErrorFormatter,
-    create_error_message as format_error
+# 核心协调器 - 新的清洁架构
+from .coordinator import AgentCoordinator, get_coordinator, shutdown_coordinator
+
+# TT控制循环
+from .tt_controller import (
+    TTController, TTContext, TTLoopState, TTEvent, TTEventType
 )
 
-from .message_processor import (
-    MessageProcessor, StructuredMessage, ProcessedContent,
-    InputType, ContentType, process_user_message
+# 消息系统
+from .message_types import (
+    AgentMessage, MessageType, MessagePriority,
+    create_task_request, create_progress_message, create_result_message
 )
+
+from .message_bus import MessageBus
+
+# 核心组件
+from .memory_manager import MemoryManager
+from .progress_aggregator import ProgressAggregator
+from .streaming_parser import StreamingMessageParser
+from .error_formatter import ErrorFormatter
 
 __all__ = [
     # 核心协调器
     "AgentCoordinator",
+    "get_coordinator", 
+    "shutdown_coordinator",
+    
+    # TT控制循环
+    "TTController",
+    "TTContext",
+    "TTLoopState", 
+    "TTEvent",
+    "TTEventType",
     
     # 消息系统
-    "MessageType",
-    "MessagePriority", 
-    "AgentState",
-    "MessageMetadata",
     "AgentMessage",
-    "StreamingMessage",
-    "MessagePattern",
-    "MessageHandler",
+    "MessageType",
+    "MessagePriority",
     "create_task_request",
-    "create_progress_message",
+    "create_progress_message", 
     "create_result_message",
-    "create_error_message",
-    "create_heartbeat", 
-    "create_broadcast",
-    
-    # 消息总线
     "MessageBus",
-    "create_message_bus",
-    "create_simple_handler",
-    "RoutingStrategy",
-    "DeliveryGuarantee",
     
-    # 内存管理
+    # 核心组件
     "MemoryManager",
-    "create_memory_manager",
-    
-    # 进度聚合
     "ProgressAggregator",
-    "create_simple_aggregator",
-    "AggregationStrategy",
-    "AgentProgress",
-    
-    # 流式解析
-    "StreamingMessageParser", 
-    "parse_single_message",
-    
-    # 错误处理
+    "StreamingMessageParser",
     "ErrorFormatter",
-    "format_error",
-    
-    # 消息处理器
-    "MessageProcessor",
-    "StructuredMessage",
-    "ProcessedContent",
-    "InputType",
-    "ContentType",
-    "process_user_message"
 ]

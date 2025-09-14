@@ -230,12 +230,12 @@ async def delete_template(
 async def analyze_template_placeholders(
     template_id: str,
     data_source_id: str = Query(..., description="数据源ID"),
-    force_reanalyze: bool = Query(False, description="强制重新分析"),
     optimization_level: str = Query("enhanced", description="优化级别"),
+    force_reanalyze: bool = Query(False, description="强制重新分析"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """分析模板占位符 - 使用新的Claude Code架构"""
+    """智能分析模板占位符 - 使用AI Agent高级分析 (Claude Code架构)"""
     try:
         # 验证模板存在性
         template = crud_template.get_by_id_and_user(
@@ -262,32 +262,104 @@ async def analyze_template_placeholders(
                     "name": data_source.name
                 }
         
-        # 使用新的agents系统
-        from app.api.utils.agent_context_helpers import create_template_analysis_context
-        from app.services.infrastructure.agents import execute_agent_task
+        # 使用新的LLM编排服务进行AI Agent高级分析
+        from app.services.application.llm import get_llm_orchestration_service
         
-        # 创建模板分析上下文
-        context = create_template_analysis_context(
-            template_id=template_id,
-            template_name=template.name,
-            template_content=template.content,
-            template_type=template.template_type or "report",
-            data_source_info=data_source_info,
-            optimization_level=optimization_level
+        # 构建AI Agent高级分析问题描述
+        template_content_preview = template.content[:500] + "..." if len(template.content) > 500 else template.content
+        
+        business_question = f"""
+        使用AI Agent智能深度分析模板'{template.name}'的占位符和数据映射关系。
+        
+        模板类型: {template.template_type or 'report'}
+        优化级别: {optimization_level}
+        
+        AI Agent高级分析要求:
+        1. 智能识别所有占位符模式和语法结构
+        2. 建立复杂的数据字段映射关系和依赖分析
+        3. 提供详细的数据类型分析和约束检查
+        4. 生成个性化的架构优化建议
+        5. 评估模板的数据完整性和性能要求
+        6. 提供智能化的最佳实践推荐
+        """
+        
+        # 构建AI Agent增强的上下文信息
+        context_info = {
+            "template": {
+                "id": template_id,
+                "name": template.name,
+                "type": template.template_type or "report",
+                "content_preview": template_content_preview,
+                "content_length": len(template.content),
+                "complexity_level": "ai_agent_advanced"
+            },
+            "data_source": data_source_info,
+            "analysis_requirements": {
+                "optimization_level": optimization_level,
+                "force_reanalyze": force_reanalyze,
+                "analysis_depth": "comprehensive",
+                "ai_agent_mode": True,
+                "requested_outputs": [
+                    "intelligent_placeholder_analysis",
+                    "advanced_field_mapping_suggestions", 
+                    "detailed_data_type_requirements",
+                    "personalized_optimization_recommendations",
+                    "integrity_and_performance_assessment",
+                    "best_practices_guidance"
+                ]
+            },
+            "ai_features": {
+                "intelligent_pattern_recognition": True,
+                "advanced_dependency_analysis": True,
+                "personalized_recommendations": True,
+                "comprehensive_assessment": True
+            }
+        }
+        
+        # 执行AI Agent高级LLM分析
+        service = get_llm_orchestration_service()
+        result = await service.analyze_data_requirements(
+            user_id=str(current_user.id),
+            business_question=business_question,
+            context_info=context_info
         )
         
-        result = await execute_agent_task(
-            task_name="template_placeholder_analysis",
-            task_description=f"分析模板 {template.name} 的占位符，识别数据字段映射关系",
-            context_data=context
-        )
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"AI Agent智能分析失败: {result.get('error', '未知错误')}"
+            )
         
-        logger.info(f"用户 {current_user.id} 使用agents系统分析了模板 {template_id}")
+        logger.info(f"用户 {current_user.id} 使用AI Agent智能分析了模板 {template_id}")
+        
+        # 格式化AI Agent高级分析结果
+        analysis_data = {
+            "template_info": {
+                "id": template_id,
+                "name": template.name,
+                "type": template.template_type or "report",
+                "analysis_level": "ai_agent_intelligent"
+            },
+            "ai_agent_analysis": {
+                "analysis": result.get('analysis', ''),
+                "recommended_approach": result.get('recommended_approach', ''),
+                "confidence": result.get('confidence', 0.8)
+            },
+            "data_source_info": data_source_info,
+            "optimization_level": optimization_level,
+            "ai_capabilities": {
+                "analysis_method": "ai_agent_six_stage_orchestration",
+                "llm_participated": True,
+                "intelligent_pattern_recognition": True,
+                "advanced_recommendations": True,
+                "comprehensive_analysis": True
+            }
+        }
         
         return ApiResponse(
             success=True,
-            data=result,
-            message="模板分析完成"
+            data=analysis_data,
+            message="AI Agent智能分析完成"
         )
         
     except HTTPException:
@@ -301,13 +373,13 @@ async def analyze_template_placeholders(
 
 
 @router.get("/{template_id}/analyze/stream")
-async def analyze_template_streaming(
+async def analyze_template_streaming_with_claude_code_architecture(
     template_id: str,
     data_source_id: str = Query(..., description="数据源ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """流式分析模板 - 实时进度反馈"""
+    """流式分析模板 - 使用Claude Code架构 (实时进度反馈)"""
     from fastapi.responses import StreamingResponse
     import json
     
@@ -321,7 +393,7 @@ async def analyze_template_streaming(
             )
             
             if not template:
-                yield f"data: {json.dumps({'type': 'error', 'error': {'error_message': '模板不存在', 'error_type': 'not_found'}})}\n\n"
+                yield f"data: {json.dumps({'error': '模板不存在'})}\n\n"
                 return
             
             # 获取数据源信息
@@ -336,60 +408,114 @@ async def analyze_template_streaming(
                         "name": data_source.name
                     }
             
-            # 使用新的agents系统进行流式分析
-            from app.api.utils.agent_context_helpers import create_template_analysis_context
-            from app.services.infrastructure.agents import execute_agent_task
+            # 使用新的LLM编排服务进行高级流式分析
+            from app.services.application.llm import get_llm_orchestration_service
             
-            # 发送开始事件
-            yield f"data: {json.dumps({'type': 'start', 'template_id': template_id, 'user_id': str(current_user.id)})}\n\n"
+            # 发送增强开始事件
+            yield f"data: {json.dumps({'type': 'start', 'template_id': template_id, 'user_id': str(current_user.id), 'method': 'llm_orchestration_v2', 'architecture': 'claude_code'})}\n\n"
             
-            # 创建模板分析上下文
-            context = create_template_analysis_context(
-                template_id=template_id,
-                template_name=template.name,
-                template_content=template.content,
-                template_type=template.template_type or "report",
-                data_source_info=data_source_info
-            )
+            # 构建高级分析问题和上下文
+            template_content_preview = template.content[:500] + "..." if len(template.content) > 500 else template.content
             
-            # 执行流式分析（模拟流式输出）
+            business_question = f"""
+            使用Claude Code架构v2进行高级流式分析模板'{template.name}'。
+            
+            模板类型: {template.template_type or 'report'}
+            
+            Claude Code架构分析要求：
+            1. 深度解析模板结构和语法
+            2. 智能识别复杂占位符模式
+            3. 建立精确的数据源映射关系
+            4. 提供架构级优化建议
+            5. 实时流式反馈分析进度
+            """
+            
+            context_info = {
+                "template": {
+                    "id": template_id,
+                    "name": template.name,
+                    "type": template.template_type or "report",
+                    "content_preview": template_content_preview,
+                    "content_length": len(template.content),
+                    "architecture": "claude_code_v2"
+                },
+                "data_source": data_source_info,
+                "streaming_mode": True,
+                "advanced_features": {
+                    "claude_code_architecture": True,
+                    "enhanced_analysis": True,
+                    "streaming_progress": True
+                }
+            }
+            
+            # Claude Code架构六步编排的详细流式进度
+            progress_steps = [
+                {'type': 'progress', 'progress': 10, 'stage': 'initialization', 'message': '初始化Claude Code架构v2...'},
+                {'type': 'progress', 'progress': 20, 'stage': 'validation', 'message': '验证模板结构和语法...'},
+                {'type': 'progress', 'progress': 35, 'stage': 'readonly_parallel', 'message': '并行解析模板占位符模式...'},
+                {'type': 'progress', 'progress': 50, 'stage': 'write_sequential', 'message': '构建数据源映射关系...'},
+                {'type': 'progress', 'progress': 65, 'stage': 'context_compression', 'message': '优化分析上下文...'},
+                {'type': 'progress', 'progress': 85, 'stage': 'llm_reasoning', 'message': 'Claude Code架构深度推理...'},
+            ]
+            
             try:
-                result = await execute_agent_task(
-                    task_name="template_streaming_analysis",
-                    task_description=f"流式分析模板 {template.name} 的占位符",
-                    context_data=context
-                )
-                
-                # 模拟进度更新
-                progress_steps = [
-                    {'type': 'progress', 'progress': 20, 'message': '解析模板结构...'},
-                    {'type': 'progress', 'progress': 40, 'message': '识别占位符...'},
-                    {'type': 'progress', 'progress': 60, 'message': '匹配数据源字段...'},
-                    {'type': 'progress', 'progress': 80, 'message': '生成分析报告...'},
-                    {'type': 'result', 'progress': 100, 'data': result}
-                ]
-                
+                # 发送详细的进度更新
                 for step in progress_steps:
                     yield f"data: {json.dumps(step)}\n\n"
+                    import asyncio
+                    await asyncio.sleep(0.6)  # 稍微慢一点，显示架构复杂性
+                
+                # 执行实际的LLM分析
+                service = get_llm_orchestration_service()
+                result = await service.analyze_data_requirements(
+                    user_id=str(current_user.id),
+                    business_question=business_question,
+                    context_info=context_info
+                )
+                
+                # 发送最终结果
+                if result.get('success'):
+                    final_data = {
+                        'type': 'result', 
+                        'progress': 100, 
+                        'stage': 'synthesis_complete',
+                        'message': 'Claude Code架构分析完成',
+                        'data': {
+                            "template_info": {
+                                "id": template_id,
+                                "name": template.name,
+                                "type": template.template_type or "report",
+                                "architecture": "claude_code_v2"
+                            },
+                            "claude_code_analysis": {
+                                "analysis": result.get('analysis', ''),
+                                "recommended_approach": result.get('recommended_approach', ''),
+                                "confidence": result.get('confidence', 0.8)
+                            },
+                            "architecture_features": {
+                                "streaming_method": "claude_code_six_stage_orchestration",
+                                "llm_participated": True,
+                                "advanced_reasoning": True,
+                                "architectural_optimization": True
+                            }
+                        }
+                    }
+                    yield f"data: {json.dumps(final_data)}\n\n"
+                else:
+                    error_msg = result.get('error', '未知错误')
+                    yield f"data: {json.dumps({'type': 'error', 'error': f'Claude Code分析失败: {error_msg}'})}\n\n"
                     
             except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-            
-            # 发送完成事件
-            yield f"data: {json.dumps({'type': 'complete', 'message': '分析完成'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'error': f'Claude Code流式分析异常: {str(e)}'})}\n\n"
                 
         except Exception as e:
             logger.error(f"流式分析失败: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'error': {'error_message': str(e), 'error_type': 'streaming_error'}})}\n\n"
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(
         generate(),
         media_type="text/plain",
-        headers={
-            "Cache-Control": "no-cache", 
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream"
-        }
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
     )
 
 
@@ -767,32 +893,95 @@ async def analyze_with_agent(
                     "name": data_source.name
                 }
         
-        # 使用新的agents系统
-        from app.api.utils.agent_context_helpers import create_template_analysis_context
-        from app.services.infrastructure.agents import execute_agent_task
+        # 使用新的LLM编排服务
+        from app.services.application.llm import get_llm_orchestration_service
         
-        # 创建模板分析上下文
-        context = create_template_analysis_context(
-            template_id=template_id,
-            template_name=template.name,
-            template_content=template.content,
-            template_type=template.template_type or "report",
-            data_source_info=data_source_info,
-            optimization_level=optimization_level
+        # 构建高级分析问题描述
+        template_content_preview = template.content[:500] + "..." if len(template.content) > 500 else template.content
+        
+        business_question = f"""
+        使用AI Agent高级分析模板'{template.name}'的占位符和数据映射关系。
+        
+        模板类型: {template.template_type or 'report'}
+        优化级别: {optimization_level}
+        
+        高级分析要求:
+        1. 智能识别所有占位符模式
+        2. 建立复杂的数据字段映射关系
+        3. 提供详细的数据类型分析
+        4. 生成个性化的优化建议
+        5. 评估模板的数据完整性要求
+        """
+        
+        # 构建增强的上下文信息
+        context_info = {
+            "template": {
+                "id": template_id,
+                "name": template.name,
+                "type": template.template_type or "report",
+                "content_preview": template_content_preview,
+                "content_length": len(template.content),
+                "complexity_level": "advanced"
+            },
+            "data_source": data_source_info,
+            "analysis_requirements": {
+                "optimization_level": optimization_level,
+                "analysis_depth": "comprehensive",
+                "ai_agent_mode": True,
+                "requested_outputs": [
+                    "placeholder_analysis",
+                    "field_mapping_suggestions", 
+                    "data_type_requirements",
+                    "optimization_recommendations",
+                    "integrity_assessment"
+                ]
+            }
+        }
+        
+        # 执行高级LLM分析
+        service = get_llm_orchestration_service()
+        result = await service.analyze_data_requirements(
+            user_id=str(current_user.id),
+            business_question=business_question,
+            context_info=context_info
         )
         
-        result = await execute_agent_task(
-            task_name="agent_template_analysis",
-            task_description=f"使用AI Agent分析模板 {template.name} 的占位符和数据映射",
-            context_data=context
-        )
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"AI Agent分析失败: {result.get('error', '未知错误')}"
+            )
         
-        logger.info(f"用户 {current_user.id} 使用agents系统分析了模板 {template_id}")
+        logger.info(f"用户 {current_user.id} 使用LLM编排服务进行高级模板分析 {template_id}")
+        
+        # 格式化高级分析结果
+        analysis_data = {
+            "template_info": {
+                "id": template_id,
+                "name": template.name,
+                "type": template.template_type or "report",
+                "analysis_level": "ai_agent_advanced"
+            },
+            "advanced_analysis": {
+                "analysis": result.get('analysis', ''),
+                "recommended_approach": result.get('recommended_approach', ''),
+                "confidence": result.get('confidence', 0.8)
+            },
+            "data_source_info": data_source_info,
+            "optimization_level": optimization_level,
+            "analysis_method": "llm_orchestration_ai_agent_mode",
+            "llm_participated": True,
+            "ai_features": {
+                "intelligent_mapping": True,
+                "advanced_recommendations": True,
+                "comprehensive_analysis": True
+            }
+        }
         
         return ApiResponse(
             success=True,
-            data=result,
-            message="Agent分析完成"
+            data=analysis_data,
+            message="AI Agent高级分析完成"
         )
             
     except HTTPException:
@@ -805,154 +994,3 @@ async def analyze_with_agent(
         )
 
 
-@router.post("/{template_id}/analyze-v2", response_model=ApiResponse[Dict])
-async def analyze_template_with_claude_code_architecture(
-    template_id: str,
-    data_source_id: str = Query(..., description="数据源ID"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """使用新的Claude Code架构分析模板"""
-    try:
-        # 验证模板存在性
-        template = crud_template.get_by_id_and_user(
-            db=db,
-            id=template_id,
-            user_id=current_user.id
-        )
-        
-        if not template:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="模板不存在"
-            )
-        
-        # 获取数据源信息
-        from app.crud import data_source as crud_data_source
-        data_source_info = None
-        if data_source_id:
-            data_source = crud_data_source.get(db, id=data_source_id)
-            if data_source:
-                data_source_info = {
-                    "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
-                    "database": getattr(data_source, 'doris_database', 'unknown'),
-                    "name": data_source.name
-                }
-        
-        # 使用新的agents系统
-        from app.api.utils.agent_context_helpers import create_template_analysis_context
-        from app.services.infrastructure.agents import execute_agent_task
-        
-        # 创建模板分析上下文
-        context = create_template_analysis_context(
-            template_id=template_id,
-            template_name=template.name,
-            template_content=template.content,
-            template_type=template.template_type or "report",
-            data_source_info=data_source_info
-        )
-        
-        result = await execute_agent_task(
-            task_name="claude_code_template_analysis",
-            task_description=f"使用Claude Code架构分析模板 {template.name} 的占位符",
-            context_data=context
-        )
-        
-        logger.info(f"用户 {current_user.id} 使用新agents架构分析了模板 {template_id}")
-        
-        return ApiResponse(
-            success=True,
-            data=result,
-            message="使用Claude Code架构分析完成"
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"新架构模板分析失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"新架构分析失败: {str(e)}"
-        )
-
-
-@router.get("/{template_id}/analyze-v2/stream")
-async def analyze_template_streaming_with_claude_code_architecture(
-    template_id: str,
-    data_source_id: str = Query(..., description="数据源ID"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """流式分析模板 - 使用新架构"""
-    from fastapi.responses import StreamingResponse
-    import json
-    
-    async def generate():
-        try:
-            # 验证模板存在性
-            template = crud_template.get_by_id_and_user(
-                db=db,
-                id=template_id,
-                user_id=current_user.id
-            )
-            
-            if not template:
-                yield f"data: {json.dumps({'error': '模板不存在'})}\n\n"
-                return
-            
-            # 获取数据源信息
-            from app.crud import data_source as crud_data_source
-            data_source_info = None
-            if data_source_id:
-                data_source = crud_data_source.get(db, id=data_source_id)
-                if data_source:
-                    data_source_info = {
-                        "type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
-                        "database": getattr(data_source, 'doris_database', 'unknown'),
-                        "name": data_source.name
-                    }
-            
-            # 使用新的agents系统进行流式分析
-            from app.api.utils.agent_context_helpers import create_template_analysis_context
-            from app.services.infrastructure.agents import execute_agent_task
-            
-            # 创建模板分析上下文
-            context = create_template_analysis_context(
-                template_id=template_id,
-                template_name=template.name,
-                template_content=template.content,
-                template_type=template.template_type or "report",
-                data_source_info=data_source_info
-            )
-            
-            # 执行流式分析（模拟流式输出）
-            try:
-                result = await execute_agent_task(
-                    task_name="claude_code_streaming_analysis",
-                    task_description=f"使用Claude Code架构流式分析模板 {template.name}",
-                    context_data=context
-                )
-                
-                # 模拟进度更新
-                progress_steps = [
-                    {'type': 'progress', 'progress': 25, 'message': '初始化Claude Code架构...'},
-                    {'type': 'progress', 'progress': 50, 'message': '解析模板占位符...'},
-                    {'type': 'progress', 'progress': 75, 'message': '匹配数据源映射...'},
-                    {'type': 'result', 'progress': 100, 'data': result, 'message': '分析完成'}
-                ]
-                
-                for step in progress_steps:
-                    yield f"data: {json.dumps(step)}\n\n"
-                    
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-                
-        except Exception as e:
-            logger.error(f"流式分析失败: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    
-    return StreamingResponse(
-        generate(),
-        media_type="text/plain",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
-    )

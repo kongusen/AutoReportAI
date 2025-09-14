@@ -689,7 +689,7 @@ class TaskApplicationService:
         analysis_type: str = "exploratory"
     ) -> Dict[str, Any]:
         """
-        使用Claude Code架构分析数据
+        使用新的LLM编排服务分析数据
         
         Args:
             user_id: 用户ID
@@ -700,51 +700,73 @@ class TaskApplicationService:
             Dict: 分析结果
         """
         try:
-            # 使用新的agents系统
-            from app.api.utils.agent_context_helpers import create_data_analysis_context
+            # 使用新的LLM编排服务
+            from app.services.application.llm import get_llm_orchestration_service
             
-            # 准备数据信息
-            data_info = {
-                "source": "user_dataset",
-                "schema": {
-                    "table_name": "analysis_data",
-                    "columns": dataset.get("columns", []),
-                    "sample_data": dataset.get("sample_data", [])
+            # 准备数据信息描述
+            columns_info = dataset.get("columns", [])
+            sample_data = dataset.get("sample_data", [])
+            statistics = dataset.get("statistics", {})
+            
+            # 构建业务问题描述
+            if analysis_type == "exploratory":
+                business_question = "对这个数据集进行探索性数据分析，识别主要模式、趋势和异常值"
+            elif analysis_type == "correlation":
+                business_question = "分析数据集中各变量之间的相关关系和依赖模式"
+            elif analysis_type == "summary":
+                business_question = "提供数据集的统计摘要和关键洞察"
+            else:
+                business_question = f"执行{analysis_type}类型的数据分析"
+            
+            # 构建上下文信息
+            context_info = {
+                "dataset_info": {
+                    "columns": columns_info,
+                    "sample_data": sample_data,
+                    "statistics": statistics,
+                    "size": len(dataset.get("data", [])) if "data" in dataset else 0
                 },
-                "statistics": dataset.get("statistics", {}),
-                "sample_data": dataset.get("sample_data", [])
-            }
-            
-            analysis_parameters = {
-                "user_id": user_id,
-                "dataset_size": len(dataset.get("data", [])) if "data" in dataset else 0,
-                "columns_count": len(dataset.get("columns", [])) if "columns" in dataset else 0
-            }
-            
-            # 创建数据分析上下文
-            context = create_data_analysis_context(
-                analysis_type=analysis_type,
-                data_info=data_info,
-                analysis_parameters=analysis_parameters
-            )
-            
-            # 执行数据分析任务
-            agent_result = await execute_agent_task(
-                task_name="data_analysis",
-                task_description=f"执行{analysis_type}数据分析",
-                context_data=context,
-                additional_data={
-                    "dataset": dataset,
-                    "analysis_type": analysis_type,
-                    "user_id": user_id
-                }
-            )
-            
-            return {
-                "dataset_info": dataset,
                 "analysis_type": analysis_type,
-                "results": agent_result,
-                "architecture": "agents_v2"
+                "requested_insights": [
+                    "数据质量评估",
+                    "主要趋势识别",
+                    "异常值检测",
+                    "关键统计特征",
+                    "业务洞察建议"
+                ]
+            }
+            
+            # 获取编排服务并执行分析
+            service = get_llm_orchestration_service()
+            result = await service.analyze_data_requirements(
+                user_id=user_id,
+                business_question=business_question,
+                context_info=context_info
+            )
+            
+            if not result.get('success'):
+                raise Exception(f"数据分析失败: {result.get('error', '未知错误')}")
+            
+            # 格式化返回结果
+            return {
+                "success": True,
+                "dataset_info": {
+                    "columns": columns_info,
+                    "size": len(dataset.get("data", [])) if "data" in dataset else 0,
+                    "sample_data_count": len(sample_data)
+                },
+                "analysis_type": analysis_type,
+                "analysis_results": {
+                    "analysis": result.get('analysis', ''),
+                    "recommended_approach": result.get('recommended_approach', ''),
+                    "confidence": result.get('confidence', 0.8)
+                },
+                "insights": {
+                    "llm_participated": True,
+                    "analysis_method": "six_stage_orchestration",
+                    "timestamp": datetime.now().isoformat()
+                },
+                "architecture": "llm_orchestration_v2"
             }
             
         except Exception as e:

@@ -167,21 +167,23 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     """应用关闭处理"""
-    # 停止LLM监控服务
-    try:
-        from app.services.infrastructure.llm.monitor_integration import stop_llm_monitoring
-        await stop_llm_monitoring()
-        print("🤖 LLM监控服务已停止")
-    except Exception as e:
-        print(f"⚠️ 停止LLM监控服务失败: {e}")
+    shutdown_tasks = [
+        ("LLM监控服务", "app.services.infrastructure.llm.monitor_integration", "stop_llm_monitoring"),
+        ("WebSocket管理器", "app.websocket.manager", "websocket_manager")
+    ]
     
-    # 关闭WebSocket管理器
-    try:
-        from app.websocket.manager import websocket_manager
-        await websocket_manager.shutdown()
-        print("🌐 WebSocket管理器已关闭")
-    except Exception as e:
-        print(f"⚠️ 关闭WebSocket管理器失败: {e}")
+    for service_name, module_path, service_attr in shutdown_tasks:
+        try:
+            if service_attr == "websocket_manager":
+                from app.websocket.manager import websocket_manager
+                await websocket_manager.shutdown()
+            else:
+                module = __import__(module_path, fromlist=[service_attr])
+                stop_func = getattr(module, service_attr)
+                await stop_func()
+            print(f"✅ {service_name}已停止")
+        except Exception as e:
+            print(f"⚠️ 停止{service_name}失败: {e}")
     
     print("👋 应用已安全关闭")
 

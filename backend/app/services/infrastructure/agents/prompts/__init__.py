@@ -14,7 +14,7 @@ from .specialized_instructions import (
     get_specialized_instructions
 )
 from .tool_specific_prompts import ToolSpecificPrompts, get_tool_specific_prompt
-from .error_recovery_prompts import ErrorRecoveryPrompts, get_error_recovery_prompt, get_complete_error_recovery_instructions
+from .error_recovery_prompts import ErrorRecoveryPrompts, ErrorType, get_error_recovery_prompt, get_complete_error_recovery_instructions
 
 class PromptManager:
     """智能体提示词管理器"""
@@ -79,9 +79,9 @@ class PromptManager:
         # 添加错误恢复指令
         instructions.extend([
             "",
-            "# 错误恢复指令",
+            "# 错误恢复指令", 
             "",
-            get_complete_error_recovery_instructions()
+            get_complete_error_recovery_instructions(ErrorType.PROCESSING_ERROR)
         ])
         
         return "\n".join(instructions)
@@ -239,6 +239,7 @@ __all__ = [
     "BusinessIntelligenceAgentInstructions",
     "ToolSpecificPrompts",
     "ErrorRecoveryPrompts",
+    "ErrorType",
     "PromptManager",
     "prompt_manager",
     "get_complete_instructions",

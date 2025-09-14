@@ -331,15 +331,15 @@ def get_ai_service(db: Session = Depends(get_db), user = Depends(get_current_use
 
 
 def get_agents_executor():
-    """Get new agents system executor dependency"""
+    """Get LLM orchestration service as executor dependency"""
     try:
-        from app.services.infrastructure.agents import execute_agent_task
-        return execute_agent_task
+        from app.services.application.llm import get_llm_orchestration_service
+        return get_llm_orchestration_service()
     except Exception as e:
-        logger.error(f"Failed to create AgentsExecutor: {e}")
+        logger.error(f"Failed to create LLM orchestration service: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Agents executor service unavailable"
+            detail="LLM orchestration service unavailable"
         )
 
 
@@ -357,10 +357,10 @@ def get_context_builder():
 
 
 def get_content_generation_service():
-    """Get content generation service (using new architecture)"""
+    """Get content generation service (using LLM orchestration)"""
     try:
-        from app.services.infrastructure.agents import execute_agent_task
-        return execute_agent_task
+        from app.services.application.llm import get_llm_orchestration_service
+        return get_llm_orchestration_service()
     except Exception as e:
         logger.error(f"Failed to create ContentGenerationService: {e}")
         raise HTTPException(
@@ -370,10 +370,10 @@ def get_content_generation_service():
 
 
 def get_visualization_service():
-    """Get visualization service (using new architecture)"""
+    """Get visualization service (using LLM orchestration)"""
     try:
-        from app.services.infrastructure.agents import execute_agent_task
-        return execute_agent_task
+        from app.services.application.llm import get_llm_orchestration_service
+        return get_llm_orchestration_service()
     except Exception as e:
         logger.error(f"Failed to create VisualizationService: {e}")
         raise HTTPException(

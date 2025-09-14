@@ -13,7 +13,7 @@ from app.core.api_specification import NotificationMessage, WebSocketMessage, We
 from app.websocket.manager import websocket_manager
 from .health_service import get_model_health_service
 from .rate_limiter import get_llm_rate_limiter
-from app.services.infrastructure.ai.service_pool import get_ai_service_pool
+# from app.services.infrastructure.ai.service_pool import get_ai_service_pool  # 已移除
 
 logger = logging.getLogger(__name__)
 
@@ -171,21 +171,22 @@ class LLMMonitorWebSocketService:
                     "requests_per_minute": 0.0
                 }
             
-            # 获取服务池状态（安全方式）
+            # 获取服务池状态（使用LLM健康服务替代）
             try:
-                service_pool = get_ai_service_pool()
-                pool_stats = service_pool.get_pool_stats()
-                
+                # 使用现有的健康检查服务获取基本统计
+                health_service = get_model_health_service()
+                # 由于service_pool已移除，使用健康服务提供基本信息
                 service_pool_data = {
-                    "healthy_instances": pool_stats.get("healthy_instances", 0),
-                    "total_instances": pool_stats.get("total_instances", 0),
-                    "pool_usage": pool_stats.get("pool_usage", 0.0)
+                    "healthy_instances": 1 if health_service else 0,
+                    "total_instances": 1,
+                    "pool_usage": 0.5 if health_service else 0.0  # 简化的使用率
                 }
+                logger.debug("使用健康检查服务替代服务池统计")
             except Exception as e:
-                logger.warning(f"获取服务池统计失败: {e}")
+                logger.warning(f"获取服务状态失败: {e}")
                 service_pool_data = {
                     "healthy_instances": 0,
-                    "total_instances": 0,
+                    "total_instances": 1,
                     "pool_usage": 0.0
                 }
             

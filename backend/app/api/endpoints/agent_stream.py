@@ -15,10 +15,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..deps import get_current_user
-from ...services.infrastructure.agents.core.universal_agent_coordinator import (
-    UniversalAgentCoordinator, CoordinationMode, CoordinationResult
+# Updated imports for new agent architecture
+from ...services.infrastructure.agents.core.orchestration.coordinator import (
+    AgentCoordinator
 )
-from ...services.infrastructure.agents.core.tt_controller import TTEvent, TTEventType
+# from ...services.infrastructure.agents.core.tt_controller import TTEvent, TTEventType  # deprecated
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

@@ -10,10 +10,10 @@ from pydantic import BaseModel
 
 from app.api import deps
 from app.core.architecture import ApiResponse
-from app.services.infrastructure.llm.simple_model_selector import (
-    get_simple_model_selector,
-    TaskRequirement,
-    ModelSelection
+from app.services.infrastructure.llm.step_based_model_selector import (
+    StepBasedModelSelector,
+    TaskComplexity,
+    ProcessingStep
 )
 
 router = APIRouter()

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def create_agent_coordinator(user_id: str = None):
     """创建Agent协调器"""
-    from app.services.infrastructure.agents.core import AgentCoordinator
+    from app.services.infrastructure.agents.core.orchestration import AgentCoordinator
     return AgentCoordinator()
 
 
@@ -90,8 +90,8 @@ def create_file_storage_service():
 
 def create_llm_service(db: Session):
     """创建LLM服务"""
-    from app.services.infrastructure.llm.simple_model_selector import SimpleModelSelector
-    return SimpleModelSelector(db)
+    from app.services.infrastructure.llm import get_llm_manager
+    return get_llm_manager()
 
 
 # =============================================================================

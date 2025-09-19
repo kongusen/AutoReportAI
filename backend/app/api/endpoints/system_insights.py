@@ -69,7 +69,8 @@ async def get_system_performance_insights(
     """获取系统性能洞察"""
     try:
         # AI tools migrated to agents
-        from app.services.infrastructure.agents.tools import get_tool_registry
+        # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+        from app.services.infrastructure.agents.core.tools import ToolRegistry
         
         # Return mock data for now since the original service is being migrated
         performance_data = {
@@ -114,7 +115,8 @@ async def get_system_health_insights(
 ):
     """获取系统健康洞察"""
     try:
-        from app.services.infrastructure.agents.tools import get_tool_registry
+        # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+        from app.services.infrastructure.agents.core.tools import ToolRegistry
         # AI tools migrated to agents - using new agent system
         
         # TODO: Replace with actual agent service call
@@ -147,7 +149,8 @@ async def get_system_usage_insights(
 ):
     """获取系统使用洞察"""
     try:
-        from app.services.infrastructure.agents.tools import get_tool_registry
+        # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+        from app.services.infrastructure.agents.core.tools import ToolRegistry
         # AI tools migrated to agents - using new agent system
         
         # TODO: Replace with actual agent service call
@@ -181,7 +184,8 @@ async def get_system_optimization_insights(
 ):
     """获取系统优化洞察"""
     try:
-        from app.services.infrastructure.agents.tools import get_tool_registry
+        # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+        from app.services.infrastructure.agents.core.tools import ToolRegistry
         # AI tools migrated to agents - using new agent system
         
         # TODO: Replace with actual agent service call
@@ -219,7 +223,8 @@ async def test_system_insights(
 ):
     """测试系统洞察功能"""
     try:
-        from app.services.infrastructure.agents.tools import get_tool_registry
+        # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+        from app.services.infrastructure.agents.core.tools import ToolRegistry
         # AI tools migrated to agents - using new agent system
         
         test_type = test_request.get("test_type", "dashboard")

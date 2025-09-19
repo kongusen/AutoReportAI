@@ -312,10 +312,11 @@ def get_react_agent_llm_service(db: Session = Depends(get_db), user = Depends(ge
 
 
 def get_workflow_orchestration_agent(db: Session = Depends(get_db), user = Depends(get_current_user)):
-    """获取工作流编排代理依赖"""
+    """获取工作流编排代理依赖（统一到新Agent适配器）"""
     try:
-        from app.services.application.agents.workflow_orchestration_agent import get_workflow_orchestration_agent as get_agent
-        return get_agent()
+        from app.services.application.agents.new_workflow_orchestration_agent import WorkflowOrchestrationAgent
+        user_id = str(user.id) if user else 'system'
+        return WorkflowOrchestrationAgent(user_id=user_id)
     except Exception as e:
         logger.error(f"Failed to create WorkflowOrchestrationAgent: {e}")
         raise HTTPException(

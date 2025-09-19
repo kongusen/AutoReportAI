@@ -1,30 +1,51 @@
 /**
- * AutoReportAI 前端 TypeScript 类型定义
- * 基于后端API接口文档自动生成
- * 版本: v2.0.0
+ * AutoReportAI 前端 TypeScript 类型定义 - DDD架构v2.0
+ * 与后端DDD架构完全对齐
+ * 版本: v2.1.0
  */
 
 // ============================================================================
-// 基础类型和通用接口
+// 基础类型和通用接口 - DDD架构v2.0兼容
 // ============================================================================
 
 /**
- * 统一API响应格式
+ * 统一API响应格式 - 对应backend APIResponse
+ * 与 app/api/base_api_controller.py 完全一致
  */
 export interface APIResponse<T = any> {
   success: boolean
   data?: T
   message: string
-  error?: string
-  errors?: Array<{
-    field?: string
-    message: string
-    code?: string
-  }>
-  meta?: PaginationMeta
+  errors: string[]
+  warnings: string[]
+  metadata: Record<string, any>
   timestamp: string
-  request_id?: string
-  version?: string
+}
+
+/**
+ * 应用结果状态 - 对应backend OperationResult
+ */
+export enum OperationResult {
+  SUCCESS = "success",
+  FAILURE = "failure",
+  PARTIAL_SUCCESS = "partial_success", 
+  VALIDATION_ERROR = "validation_error",
+  NOT_FOUND = "not_found",
+  PERMISSION_DENIED = "permission_denied"
+}
+
+/**
+ * 应用结果接口 - 对应backend ApplicationResult
+ */
+export interface ApplicationResult<T = any> {
+  success: boolean
+  result: OperationResult
+  data?: T
+  message: string
+  errors: string[]
+  warnings: string[]
+  metadata: Record<string, any>
+  execution_time_ms?: number
 }
 
 /**

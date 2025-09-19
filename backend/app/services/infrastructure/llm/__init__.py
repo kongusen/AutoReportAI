@@ -20,13 +20,8 @@ from .model_executor import (
     ModelExecutor
 )
 
-# 简化选择器
-from .simple_model_selector import (
-    get_simple_model_selector,
-    TaskRequirement,
-    ModelSelection,
-    SimpleModelSelector
-)
+# 任务需求定义（从simple_model_selector迁移）
+from .pure_database_manager import TaskRequirement, ModelSelection
 
 # 步骤选择器
 from .step_based_model_selector import (
@@ -167,7 +162,6 @@ __all__ = [
     
     # Agent系统接口
     "get_model_executor",
-    "get_simple_model_selector",
     "create_step_based_model_selector",
     "TaskRequirement",
     "TaskComplexity",
@@ -177,7 +171,6 @@ __all__ = [
     
     # 类定义
     "ModelExecutor",
-    "SimpleModelSelector",
     "StepBasedModelSelector",
     "ModelSelection",
     

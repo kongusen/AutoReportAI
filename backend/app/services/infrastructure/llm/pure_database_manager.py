@@ -7,8 +7,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from .model_executor import get_model_executor
-from .simple_model_selector import TaskRequirement
+from .types import TaskRequirement, ModelSelection, LLMExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -193,14 +192,19 @@ async def ask_agent(
 ) -> str:
     """Agent友好的问答接口"""
     try:
+        # 延迟导入以避免循环导入
+        from .model_executor import get_model_executor
+        
         # 获取模型执行器
         executor = get_model_executor()
         
         # 构建任务需求
         task_requirement = TaskRequirement(
-            requires_thinking=(complexity in ["high", "complex"]),
-            cost_sensitive=(complexity == "low"),
-            speed_priority=(agent_type == "quick_response")
+            complexity=complexity,
+            domain=task_type,
+            context_length=len(question) + (len(context) if context else 0),
+            response_format="text",
+            quality_level="high" if complexity in ["high", "complex"] else "medium"
         )
         
         # 构建完整的提示词

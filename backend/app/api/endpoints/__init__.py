@@ -30,11 +30,11 @@ from . import (
     user_llm_preferences,
 )
 
-# Agent流式处理
-from . import (
-    agent_stream,
-    sql_enhanced,
-)
+# Agent流式处理 - temporarily disabled due to missing components
+# from . import (
+#     agent_stream,
+#     sql_enhanced,
+# )
 
 # 系统管理
 from . import (

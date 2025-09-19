@@ -21,7 +21,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/workers/status", response_model=APIResponse)
+@router.get("/workers/status", response_model=APIResponse[Dict[str, Any]])
 def get_workers_status(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -41,7 +41,7 @@ def get_workers_status(
         raise HTTPException(status_code=500, detail=f"获取 Workers 状态失败: {str(e)}")
 
 
-@router.get("/tasks/scheduled", response_model=APIResponse)
+@router.get("/tasks/scheduled", response_model=APIResponse[List[Dict[str, Any]]])
 def get_scheduled_tasks(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -61,7 +61,7 @@ def get_scheduled_tasks(
         raise HTTPException(status_code=500, detail=f"获取调度任务失败: {str(e)}")
 
 
-@router.get("/tasks/{task_id}/status", response_model=APIResponse)
+@router.get("/tasks/{task_id}/status", response_model=APIResponse[Dict[str, Any]])
 def get_task_status(
     task_id: int,
     current_user: User = Depends(get_current_active_user)

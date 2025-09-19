@@ -4,6 +4,8 @@
 """
 
 import logging
+import os
+from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 from io import BytesIO
 
@@ -122,6 +124,40 @@ class HybridStorageService:
                     logger.error(f"回退存储也失败: {fallback_error}")
                     raise fallback_error
             raise e
+
+    def upload_with_key(
+        self,
+        file_data: BytesIO,
+        object_name: str,
+        content_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """按指定对象键上传（MinIO优先，回退本地）"""
+        storage = self.storage_service
+        try:
+            # MinIO 路径
+            if self.backend_type == "minio":
+                from .minio_storage_service import MinIOStorageService
+                assert isinstance(storage, MinIOStorageService)
+                return storage.upload_with_key(object_name, file_data, content_type)
+            # 本地回退：将 object_name 作为相对路径写入
+            from .file_storage_service import FileStorageService
+            if isinstance(storage, FileStorageService):
+                # 直接写入本地路径
+                path = os.path.join(storage.base_path, object_name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                file_data.seek(0)
+                with open(path, 'wb') as f:
+                    f.write(file_data.read())
+                return {
+                    "file_path": object_name,
+                    "size": os.path.getsize(path),
+                    "uploaded_at": datetime.now().isoformat(),
+                    "backend": "local"
+                }
+            raise RuntimeError("Unsupported storage backend for upload_with_key")
+        except Exception as e:
+            logger.error(f"upload_with_key failed: {e}")
+            raise
     
     def file_exists(self, file_path: str) -> bool:
         """检查文件是否存在"""

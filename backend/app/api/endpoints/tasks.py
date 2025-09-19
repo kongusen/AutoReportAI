@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.core.architecture import ApiResponse, PaginatedResponse
+from app.api.base_api_controller import CRUDAPIController, APIResponse, PaginatedAPIResponse
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
@@ -16,8 +16,11 @@ from app.services.infrastructure.task_queue.celery_config import celery_app
 
 router = APIRouter()
 
+# 创建任务控制器实例
+task_controller = CRUDAPIController("任务", "TaskController")
 
-@router.get("/", response_model=ApiResponse)
+
+@router.get("/", response_model=APIResponse[PaginatedAPIResponse])
 async def get_tasks(
     skip: int = Query(0, ge=0, description="跳过的记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回的记录数"),
@@ -85,64 +88,54 @@ async def get_tasks(
         }
         task_dicts.append(task_dict)
     
-    return ApiResponse(
+    return APIResponse(
         success=True,
-        data=PaginatedResponse(
+        data=PaginatedAPIResponse.create(
             items=task_dicts,
             total=total,
             page=skip // limit + 1,
             size=limit,
-            pages=(total + limit - 1) // limit,
-            has_next=skip + limit < total,
-            has_prev=skip > 0
-        )
+            message="获取任务列表成功"
+        ),
+        message="获取任务列表成功",
+        errors=[],
+        warnings=[],
+        metadata={"user_id": str(current_user.id), "query_count": total}
     )
 
 
-@router.post("/", response_model=ApiResponse)
+@router.post("/", response_model=APIResponse[TaskResponse])
 async def create_task(
     task_in: TaskCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """创建任务"""
-    try:
-        task_service = TaskApplicationService()
-        user_id = str(current_user.id)
-        
-        task = task_service.create_task(
-            db=db,
-            user_id=user_id,
-            name=task_in.name,
-            template_id=str(task_in.template_id),
-            data_source_id=str(task_in.data_source_id),
-            report_period=task_in.report_period,
-            description=task_in.description,
-            schedule=task_in.schedule,
-            recipients=task_in.recipients,
-            is_active=task_in.is_active,
-            processing_mode=task_in.processing_mode,
-            workflow_type=task_in.workflow_type,
-            max_context_tokens=task_in.max_context_tokens,
-            enable_compression=task_in.enable_compression
-        )
-        
-        task_schema = TaskResponse.model_validate(task)
-        task_dict = task_schema.model_dump()
-        return ApiResponse(
-            success=True,
-            data=task_dict,
-            message="任务创建成功"
-        )
-    except Exception as e:
-        return ApiResponse(
-            success=False,
-            error=str(e),
-            message="任务创建失败"
-        )
+    task_controller.log_api_request("create_task", user_id=str(current_user.id))
+    
+    task_service = TaskApplicationService(db=db, user_id=str(current_user.id))
+    
+    # 调用应用服务
+    app_result = await task_service.create_task(
+        name=task_in.name,
+        template_id=str(task_in.template_id),
+        data_source_id=str(task_in.data_source_id),
+        report_period=task_in.report_period,
+        description=task_in.description,
+        schedule=task_in.schedule,
+        recipients=task_in.recipients,
+        is_active=task_in.is_active,
+        processing_mode=task_in.processing_mode,
+        workflow_type=task_in.workflow_type,
+        max_context_tokens=task_in.max_context_tokens,
+        enable_compression=task_in.enable_compression
+    )
+    
+    # 使用控制器处理结果
+    return task_controller.handle_application_result(app_result)
 
 
-@router.put("/{task_id}", response_model=ApiResponse)
+@router.put("/{task_id}", response_model=APIResponse[TaskResponse])
 async def update_task(
     task_id: int,
     task_in: TaskUpdate,
@@ -166,21 +159,21 @@ async def update_task(
         
         task_schema = TaskResponse.model_validate(task)
         task_dict = task_schema.model_dump()
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=task_dict,
             message="任务更新成功"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="任务更新失败"
         )
 
 
-@router.get("/{task_id}", response_model=ApiResponse)
+@router.get("/{task_id}", response_model=APIResponse[TaskResponse])
 async def get_task(
     task_id: int,
     db: Session = Depends(get_db),
@@ -197,14 +190,14 @@ async def get_task(
     
     task_schema = TaskResponse.model_validate(task)
     task_dict = task_schema.model_dump()
-    return ApiResponse(
+    return APIResponse(
         success=True,
         data=task_dict,
         message="获取任务成功"
     )
 
 
-@router.delete("/{task_id}", response_model=ApiResponse)
+@router.delete("/{task_id}", response_model=APIResponse[bool])
 async def delete_task(
     task_id: int,
     db: Session = Depends(get_db),
@@ -221,21 +214,21 @@ async def delete_task(
             user_id=user_id
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data={"task_id": task_id, "deleted": success},
             message="任务删除成功"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="任务删除失败"
         )
 
 
-@router.post("/{task_id}/execute", response_model=ApiResponse)
+@router.post("/{task_id}/execute", response_model=APIResponse[Dict[str, Any]])
 async def execute_task(
     task_id: int,
     execution_time: Optional[str] = Query(None, description="任务执行时间 (YYYY-MM-DD HH:MM:SS，默认为当前时间)"),
@@ -264,21 +257,21 @@ async def execute_task(
             execution_context=execution_context
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message="任务执行请求已提交"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="任务执行失败"
         )
 
 
-@router.post("/{task_id}/run", response_model=ApiResponse)
+@router.post("/{task_id}/run", response_model=APIResponse[Dict[str, Any]])
 async def run_task(
     task_id: int,
     execution_time: Optional[str] = Query(None, description="任务执行时间 (YYYY-MM-DD HH:MM:SS，默认为当前时间)"),
@@ -290,7 +283,7 @@ async def run_task(
     return await execute_task(task_id, execution_time, db, current_user)
 
 
-@router.get("/{task_id}/executions", response_model=ApiResponse)
+@router.get("/{task_id}/executions", response_model=APIResponse)
 async def get_task_executions(
     task_id: int,
     limit: int = Query(50, ge=1, le=100, description="返回记录数量限制"),
@@ -309,7 +302,7 @@ async def get_task_executions(
             limit=limit
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data={
                 "task_id": task_id,
@@ -319,14 +312,14 @@ async def get_task_executions(
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="获取执行历史失败"
         )
 
 
-@router.post("/{task_id}/validate", response_model=ApiResponse)
+@router.post("/{task_id}/validate", response_model=APIResponse)
 async def validate_task_configuration(
     task_id: int,
     db: Session = Depends(get_db),
@@ -343,21 +336,21 @@ async def validate_task_configuration(
             user_id=user_id
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=validation_result,
             message="任务配置验证已启动"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="任务配置验证失败"
         )
 
 
-@router.post("/{task_id}/schedule", response_model=ApiResponse)
+@router.post("/{task_id}/schedule", response_model=APIResponse)
 async def schedule_task(
     task_id: int,
     schedule: str = Query(..., description="Cron表达式"),
@@ -376,21 +369,21 @@ async def schedule_task(
             user_id=user_id
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message="任务调度设置成功"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="任务调度设置失败"
         )
 
 
-@router.get("/{task_id}/status", response_model=ApiResponse)
+@router.get("/{task_id}/status", response_model=APIResponse)
 async def get_task_status(
     task_id: int,
     db: Session = Depends(get_db),
@@ -407,21 +400,21 @@ async def get_task_status(
             user_id=user_id
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=status_data,
             message="获取任务状态成功"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="获取任务状态失败"
         )
 
 
-@router.post("/{task_id}/execute-claude-code", response_model=ApiResponse)
+@router.post("/{task_id}/execute-claude-code", response_model=APIResponse)
 async def execute_task_with_claude_code(
     task_id: int,
     execution_context: Optional[Dict[str, Any]] = None,
@@ -441,21 +434,21 @@ async def execute_task_with_claude_code(
             execution_context=execution_context or {}
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message="Claude Code任务执行完成"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="Claude Code任务执行失败"
         )
 
 
-@router.post("/sql/generate", response_model=ApiResponse)
+@router.post("/sql/generate", response_model=APIResponse)
 async def generate_sql_with_claude_code(
     query_description: str,
     table_info: Optional[Dict[str, Any]] = None,
@@ -472,21 +465,21 @@ async def generate_sql_with_claude_code(
             table_info=table_info or {}
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message="SQL生成完成"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="SQL生成失败"
         )
 
 
-@router.post("/data/analyze", response_model=ApiResponse)
+@router.post("/data/analyze", response_model=APIResponse)
 async def analyze_data_with_claude_code(
     dataset: Dict[str, Any],
     analysis_type: str = "exploratory",
@@ -503,14 +496,14 @@ async def analyze_data_with_claude_code(
             analysis_type=analysis_type
         )
         
-        return ApiResponse(
+        return APIResponse(
             success=True,
             data=result,
             message="数据分析完成"
         )
         
     except Exception as e:
-        return ApiResponse(
+        return APIResponse(
             success=False,
             error=str(e),
             message="数据分析失败"

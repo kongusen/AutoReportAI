@@ -8,74 +8,74 @@ AutoReportAI采用**领域驱动设计(DDD)**架构，以**React Agent**作为�
 
 ## 🏗️ 整体架构
 
-### 架构原则
+### 架构原则 - DDD v2.0
 
-1. **纯数据库驱动** - 所有配置从数据库读取，无静态配置文件
+1. **领域驱动设计** - 严格按照DDD架构分层，清晰的职责边界
 2. **用户中心化** - 所有服务都需要`user_id`参数进行个性化处理  
-3. **智能代理集成** - React Agent贯穿所有层级提供智能决策能力
-4. **DDD分层架构** - 清晰的层级分离和职责边界
+3. **智能代理集成** - Agent系统作为基础设施层技术服务
+4. **业务流驱动** - 业务逻辑通过placeholder和tasks调用agents
 
-### 目录结构
+### DDD v2.0 目录结构
 
 ```
 backend/app/services/
-├── application/           # 应用层 - 工作流编排与协调
-│   ├── agents/           # React Agent工作流代理
-│   ├── services/         # 应用服务（任务、工作流、上下文感知）
-│   ├── orchestrators/    # 数据和报告编排器
-│   ├── context/          # 上下文构建器
-│   ├── facades/          # 统一服务门面
-│   └── factories.py      # 现代化工厂方法
-├── domain/               # 领域层 - 核心业务逻辑
-│   ├── placeholder/      # 占位符处理核心领域
-│   ├── template/         # 模板管理领域
-│   ├── reporting/        # 报告生成领域  
-│   ├── data_source/      # 数据源领域实体
-│   └── analysis/         # 数据分析领域服务
+├── application/           # 应用层 - 工作流编排与事务协调
+│   ├── base_application_service.py  # 应用服务基类
+│   ├── tasks/            # 任务应用服务
+│   ├── templates/        # 模板应用服务  
+│   ├── placeholders/     # 占位符应用服务
+│   └── factories.py      # DDD工厂方法
+├── domain/               # 领域层 - 纯业务逻辑
+│   ├── placeholder/      # 占位符领域服务
+│   │   └── services/     # 领域服务
+│   ├── template/         # 模板领域服务
+│   ├── tasks/           # 任务领域服务
+│   │   └── services/     # 任务执行领域服务
+│   └── base_domain_service.py  # 领域服务基类
 ├── infrastructure/       # 基础设施层 - 技术实现
-│   ├── ai/              # AI服务(React Agent、LLM集成)
-│   ├── cache/           # 统一缓存系统
-│   ├── storage/         # 文件存储与版本管理
-│   ├── notification/    # 通知服务
-│   └── monitoring/      # 指标收集
-├── data/                # 数据层 - 持久化管理
-│   ├── connectors/      # 数据库连接器
-│   ├── repositories/    # 数据访问模式
-│   ├── schemas/         # Schema分析服务
-│   └── processing/      # ETL和数据处理
-└── cache/               # 缓存服务
+│   ├── agents/          # Agent系统（技术服务）
+│   │   ├── config/      # Agent配置
+│   │   ├── core/        # 核心Agent组件
+│   │   ├── llm_service.py  # LLM服务
+│   │   └── main.py      # Agent主入口
+│   ├── llm/             # LLM基础设施
+│   ├── cache/           # 缓存系统
+│   └── storage/         # 存储服务
+└── data/                # 数据层 - 持久化管理
+    ├── repositories/    # 数据访问仓库
+    ├── models/          # 数据模型
+    └── schemas/         # Schema服务
 ```
 
 ---
 
 ## 🎯 各层级详细说明
 
-### 应用层 (Application Layer)
+### 应用层 (Application Layer) - DDD v2.0
 
-**职责**: 编排业务工作流，协调领域服务间的交互
+**职责**: 业务工作流编排，事务协调，领域服务组合
 
-#### 核心服务
+#### 核心应用服务
 
 | 服务 | 文件路径 | 职责 | API模式 |
 |------|----------|------|---------|
-| **工作流编排代理** | `application/agents/workflow_orchestration_agent.py` | 复杂跨领域工作流 | `async def orchestrate_report_generation()` |
-| **任务协调代理** | `application/agents/task_coordination_agent.py` | 任务调度与协调 | `async def coordinate_tasks()` |
-| **上下文感知代理** | `application/agents/context_aware_agent.py` | 上下文感知任务处理 | `async def process_with_context()` |
-| **统一服务门面** | `application/facades/unified_service_facade.py` | API层集成 | 所有API统一入口 |
+| **任务应用服务** | `application/tasks/task_application_service.py` | 任务执行工作流编排 | `async def analyze_task_with_domain_services()` |
+| **基础应用服务** | `application/base_application_service.py` | 统一事务处理和事件发布 | `BaseApplicationService`, `TransactionalApplicationService` |
+| **应用服务工厂** | `application/factories.py` | DDD架构下的服务创建 | 工厂方法模式 |
 
-#### 工厂模式
+#### DDD v2.0 工厂模式
 
 ```python
-# 现代化工厂方法 - 全部需要user_id
+# DDD v2.0 工厂方法 - 统一架构
 from app.services.application.factories import (
-    create_react_agent,
-    create_agent_sql_analysis_service,
-    create_pure_database_schema_analysis_service
+    create_task_application_service,
+    create_placeholder_domain_service,
+    create_template_domain_service
 )
 
-# 使用示例
-agent = create_react_agent(user_id="user123")
-sql_service = create_agent_sql_analysis_service(db, user_id="user123")
+# 使用示例 - 严格DDD分层
+task_service = create_task_application_service(db, user_id="user123")
+placeholder_domain = create_placeholder_domain_service(db, user_id="user123")
 ```
 
 ### 领域层 (Domain Layer)

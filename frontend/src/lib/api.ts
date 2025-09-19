@@ -33,7 +33,7 @@ apiClient.interceptors.request.use(
   }
 )
 
-// 响应拦截器 - 统一错误处理和元数据处理
+// 响应拦截器 - 统一错误处理和元数据处理 (DDD架构v2.0)
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
     // 记录API版本和请求ID（如果需要调试）
@@ -46,6 +46,22 @@ apiClient.interceptors.response.use(
         url: response.config.url,
         data: response.data
       })
+    }
+    
+    // DDD架构v2.0: 处理新的APIResponse格式
+    const apiResponse = response.data
+    if (apiResponse && typeof apiResponse === 'object') {
+      // 如果响应包含warnings，在开发环境显示
+      if (apiResponse.warnings && apiResponse.warnings.length > 0 && process.env.NODE_ENV === 'development') {
+        console.warn('API Warnings:', apiResponse.warnings)
+      }
+      
+      // 如果响应不成功但HTTP状态是200，处理为业务逻辑错误
+      if (!apiResponse.success && response.status === 200) {
+        // 这是DDD架构的业务逻辑错误，不应该抛出HTTP异常
+        // 让调用方处理业务逻辑错误
+        console.warn('Business Logic Error:', apiResponse.errors)
+      }
     }
     
     return response

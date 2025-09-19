@@ -133,8 +133,9 @@ from app.schemas.template_placeholder import (
 # AI core tools have been migrated to agents system
 # from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
 # from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
-from app.services.infrastructure.agents.tools import get_tool_registry
-from app.services.infrastructure.agents.tools.data.sql_tool import SQLGeneratorTool
+# Updated imports for new agent architecture
+from app.services.infrastructure.agents.core.tools import ToolRegistry
+# from app.services.infrastructure.agents.tools.data.sql_tool import SQLGeneratorTool
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -377,7 +378,7 @@ async def intelligent_placeholder_analysis(
         # tool_chain.register_tool(sql_generator)
         
         # 使用新的agents系统
-        from app.services.infrastructure.agents import execute_agent_task
+        from app.services.infrastructure.agents import analyze_placeholder
         
         # 2. 获取数据源信息（如果提供）
         data_source_info = None
@@ -502,11 +503,27 @@ async def analyze_single_placeholder(
 ) -> APIResponse[Dict[str, Any]]:
     """智能分析占位符并生成SQL - 使用增强架构v3.0"""
     try:
+        logger.info(f"request参数类型: {type(request)}, 是否为字典: {isinstance(request, dict)}")
+        if not isinstance(request, dict):
+            logger.error(f"❌ request不是字典类型: {request}")
+            raise ValueError(f"request参数必须是字典类型，实际类型: {type(request)}")
+        
         placeholder_name = request.get("placeholder_name")
         placeholder_text = request.get("placeholder_text")
         template_id = request.get("template_id")
         data_source_id = request.get("data_source_id")
-        template_context = request.get("template_context", "")
+        template_context = request.get("template_context", {})
+        logger.info(f"初始template_context类型: {type(template_context)}, 内容: {template_context}")
+        
+        # 处理template_context可能是字符串的情况
+        if isinstance(template_context, str):
+            logger.info("template_context是字符串，转换为字典格式")
+            template_context = {
+                "content": template_context,
+                "name": "模板内容",
+                "description": f"模板内容：\n{template_context[:200]}..." if len(template_context) > 200 else f"模板内容：\n{template_context}"
+            }
+            logger.info(f"转换后的template_context类型: {type(template_context)}, 包含字段: {list(template_context.keys())}")
         
         # 获取完整的模板内容作为上下文（而非仅仅使用传入的标题）
         if template_id and not template_context:
@@ -514,8 +531,12 @@ async def analyze_single_placeholder(
             try:
                 template = crud.template.get(db=db, id=template_id)
                 if template:
-                    template_context = f"模板名称：{template.name}\n模板内容：\n{template.content}"
-                    logger.info(f"从数据库获取模板内容作为上下文，长度: {len(template_context)}")
+                    template_context = {
+                        "name": template.name,
+                        "content": template.content,
+                        "description": f"模板名称：{template.name}\n模板内容：\n{template.content}"
+                    }
+                    logger.info(f"从数据库获取模板内容作为上下文，长度: {len(template_context.get('content', ''))}")
                 else:
                     logger.warning(f"未找到模板ID: {template_id}")
             except Exception as e:
@@ -638,138 +659,109 @@ async def analyze_single_placeholder(
             except Exception as e:
                 logger.warning(f"解析执行时间失败: {execution_time}, 错误: {e}")
         
-        # 使用ServiceOrchestrator进行单个占位符分析
-        # Service orchestrator has been migrated to agents system
-        from app.services.infrastructure.agents import execute_agent_task
-        
-        # 记录分析开始
-        logger.info(f"开始单个占位符分析: {placeholder_name}")
-        logger.info(f"占位符格式: {placeholder_text}")
-        logger.info(f"模板ID: {template_id}")
-        logger.info(f"数据源信息: {data_source_info}")
-        logger.info(f"任务类型: {task_type}")
-        if cron_expression:
-            logger.info(f"Cron表达式: {cron_expression}")
-        if exec_time:
-            logger.info(f"执行时间: {exec_time}")
-        
-        # 获取任务信息和具体参数，加入固定任务信息
-        task_params = request.get("task_params", {})
-        
-        # 增强任务参数：添加固定的时间和数据范围信息
-        enhanced_task_params = {
-            **task_params,
-            "execution_time": execution_time.isoformat() if hasattr(execution_time, 'isoformat') else str(execution_time),
-            "data_range": data_range,
+        # 使用领域服务进行分析（正确的DDD架构）
+        from app.services.domain.placeholder.services.placeholder_analysis_domain_service import PlaceholderAnalysisDomainService
+        # 构建时间上下文（默认“前一日”，也可来自请求）
+        time_ctx = {
             "time_context": {
-                "range_type": data_range,
-                "execution_time": execution_time.isoformat() if hasattr(execution_time, 'isoformat') else str(execution_time),
-                "current_time": current_time.isoformat(),
-                "suggested_date_filter": f"DATE(create_time) = '{current_time.strftime('%Y-%m-%d')}'"
-            },
-            "analysis_context": {
-                "is_time_sensitive": True,
-                "default_time_range": data_range,
-                "reference_date": current_time.strftime('%Y-%m-%d')
+                "time_column": request.get("time_column", "created_at"),
+                # 业务可以传 start/end 或 preset；若未传，这里保持空，由工具在分析阶段默认使用“前一日”
             }
         }
+        # 使用之前构建的data_source_info，它包含了完整的表结构信息
+        logger.info(f"data_source_info类型: {type(data_source_info)}, 内容: {data_source_info}")
+        ds_info = data_source_info if data_source_info else None
+        if not ds_info:  # 如果data_source_info为空，则构建基本的信息
+            if data_source_id:
+                ds_info = {"data_source_id": str(data_source_id)}
+            elif request.get("connector"):
+                ds_info = {"connector": request.get("connector")}
+        logger.info(f"最终ds_info类型: {type(ds_info)}, 内容: {ds_info}")
+
+        # 创建领域服务实例
+        domain_service = PlaceholderAnalysisDomainService()
         
-        logger.info(f"增强任务参数: {enhanced_task_params['time_context']}")
-        
-        # 使用Agent系统进行占位符分析
-        from app.services.infrastructure.agents import execute_agent_task
-        
-        # 构建Agent任务上下文
-        context_data = {
-            "user_id": str(current_user.id),
+        # 构建业务上下文 - 使用明确的字段映射，避免字典解包
+        business_context = {
+            # 基本需求信息
+            "requirements": request.get("requirements", ""),
+            "target_objective": request.get("target_objective", ""),
+            
+            # 时间上下文
+            "time_context": time_ctx.get("time_context", {}),
+            "time_column": request.get("time_column", "created_at"),
+            
+            # 模板信息
+            "template_content": template_context.get("content", "") if template_context else "",
+            "template_name": template_context.get("name", "") if template_context else "",
+            "template_description": template_context.get("description", "") if template_context else "",
+            
+            # 数据源信息
+            "data_source_info": ds_info,
+            "data_source_id": str(data_source_id) if data_source_id else None,
+            
+            # 占位符信息
             "placeholder_name": placeholder_name,
             "placeholder_text": placeholder_text,
-            "template_id": template_id,
-            "template_context": template_context,
-            "data_source_info": data_source_info,
-            "task_params": enhanced_task_params,
-            "cron_expression": None,
-            "execution_time": current_time.isoformat(),
-            "task_type": "manual"
+            
+            # 执行上下文
+            "execution_time": execution_time.isoformat() if hasattr(execution_time, 'isoformat') else str(execution_time),
+            "data_range": data_range,
+            "task_type": task_type
         }
         
-        # 使用简化的占位符分析逻辑作为兜底方案
-        try:
-            # 尝试使用Agent系统进行占位符分析
-            agent_result = await execute_agent_task(
-                task_name="placeholder_analysis",
-                task_description=f"分析占位符: {placeholder_text}",
-                context_data=context_data,
-                user_id=str(current_user.id)  # 传递真实用户ID
-            )
-            
-            # 转换Agent结果为期望格式
-            if agent_result.get("success", False):
-                result = {
-                    "status": "success",
-                    "placeholder_name": placeholder_name,
-                    "generated_sql": {
-                        placeholder_name: agent_result.get("result", {}).get("sql_query", ""),
-                        "sql": agent_result.get("result", {}).get("sql_query", "")
-                    },
-                    "analysis_result": {
-                        "description": agent_result.get("result", {}).get("explanation", f"智能分析占位符: {placeholder_name}"),
-                        "analysis_type": "ai_placeholder_analysis",
-                        "confidence": 0.85
-                    },
-                    "confidence_score": 0.85,
-                    "analyzed_at": current_time.isoformat(),
-                    "task_type": "manual",
-                    "context_used": {
-                        "template_context": bool(template_context),
-                        "data_source_info": bool(data_source_info),
-                        "task_params": bool(enhanced_task_params),
-                        "ai_agent_used": True
-                    }
-                }
-            else:
-                raise Exception(f"Agent分析失败: {agent_result.get('error', '未知错误')}")
-                
-        except Exception as e:
-            logger.warning(f"Agent系统分析失败，使用兜底逻辑: {e}")
-            
-            # 兜底：简化的占位符分析
-            generated_sql = _generate_fallback_sql(
-                placeholder_name, 
-                placeholder_text, 
-                data_source_info, 
-                enhanced_task_params
-            )
-            
-            result = {
-                "status": "success",
-                "placeholder_name": placeholder_name,
-                "generated_sql": {
-                    placeholder_name: generated_sql,
-                    "sql": generated_sql
-                },
-                "analysis_result": {
-                    "description": f"基于占位符'{placeholder_text}'和固定时间信息的智能SQL生成",
-                    "analysis_type": "fallback_placeholder_analysis",
-                    "confidence": 0.7
-                },
-                "confidence_score": 0.7,
-                "analyzed_at": current_time.isoformat(),
-                "task_type": "manual",
-                "context_used": {
-                    "template_context": bool(template_context),
-                    "data_source_info": bool(data_source_info),
-                    "task_params": bool(enhanced_task_params),
-                    "ai_agent_used": False,
-                    "fallback_used": True
-                }
-            }
+        # 使用领域服务进行业务分析
+        logger.info(f"开始调用领域服务，placeholder_text类型: {type(placeholder_text)}, business_context类型: {type(business_context)}")
+        analysis_result = await domain_service.analyze_placeholder_business_requirements(
+            placeholder_text, business_context
+        )
+        logger.info(f"领域服务返回结果类型: {type(analysis_result)}, 是否为字典: {isinstance(analysis_result, dict)}")
+
+        # 从领域服务结果中提取技术分析信息
+        logger.info(f"准备提取technical_analysis，analysis_result类型: {type(analysis_result)}")
+        if not isinstance(analysis_result, dict):
+            logger.error(f"❌ analysis_result不是字典类型: {analysis_result}")
+            raise ValueError(f"领域服务返回了非字典类型的结果: {type(analysis_result)}")
+        technical_analysis = analysis_result.get("technical_analysis", {})
+        
+        result = {
+            "status": "success",
+            "placeholder_name": placeholder_name,
+            "generated_sql": {
+                placeholder_name: technical_analysis.get("sql_suggestions", ["SELECT * FROM table"])[0] if technical_analysis.get("sql_suggestions") else "SELECT * FROM table",
+                "sql": technical_analysis.get("sql_suggestions", ["SELECT * FROM table"])[0] if technical_analysis.get("sql_suggestions") else "SELECT * FROM table",
+            },
+            "analysis_result": {
+                "description": "基于DDD领域服务的占位符分析",
+                "analysis_type": "domain_service_placeholder_analysis",
+                "business_type": analysis_result.get("business_type"),
+                "priority": analysis_result.get("priority"),
+                "constraints": analysis_result.get("constraints"),
+                "semantic_intent": analysis_result.get("semantic_intent"),
+                "data_requirements": analysis_result.get("data_requirements"),
+                "time_sensitivity": analysis_result.get("time_sensitivity"),
+                "technical_analysis": technical_analysis,
+            },
+            "confidence_score": 0.85,
+            "analyzed_at": datetime.now().isoformat(),
+            "task_type": "manual",
+            "context_used": {
+                "template_context": bool(template_context),
+                "data_source_info": bool(ds_info),
+                "agent_used": True,
+            },
+        }
         
         logger.info(f"占位符 '{placeholder_name}' 分析完成，状态: {result.get('status', 'unknown')}")
         
         # 如果有错误，直接返回错误信息
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=f"分析失败: {result.get('error', {}).get('error_message', '未知错误')}")
+            error_info = result.get('error', {})
+            if isinstance(error_info, dict):
+                error_message = error_info.get('error_message', '未知错误')
+            else:
+                error_message = str(error_info) if error_info else '未知错误'
+            raise HTTPException(status_code=500, detail=f"分析失败: {error_message}")
   
         # 确保结果包含必要字段
         if "analyzed_at" not in result:
@@ -832,7 +824,9 @@ async def analyze_single_placeholder(
             logger.info(f"查找现有占位符结果: {'找到' if existing else '未找到'}")
             
             # 从结果中提取必要的数据
+            logger.info(f"开始提取结果数据，result类型: {type(result)}")
             generated_sql = result.get("generated_sql", {})
+            logger.info(f"generated_sql类型: {type(generated_sql)}, 内容: {generated_sql}")
             sql_content = ""
             if isinstance(generated_sql, dict):
                 sql_content = generated_sql.get(placeholder_name, "") or generated_sql.get("sql", "")
@@ -840,6 +834,7 @@ async def analyze_single_placeholder(
                 sql_content = generated_sql
             
             analysis_result = result.get("analysis_result", {})
+            logger.info(f"analysis_result类型: {type(analysis_result)}, 内容: {analysis_result}")
             analysis_text = ""
             if isinstance(analysis_result, dict):
                 analysis_text = str(analysis_result.get("description", analysis_result.get("analysis_type", "")))

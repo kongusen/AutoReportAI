@@ -101,6 +101,10 @@ class TaskExecutionService:
             "progress": 0.0
         }
         
+        # 新版：直接委托给 Agents 流水线，保持接口不变
+        return await self._execute_with_agents(request, start_time)
+
+        
         try:
             # Step 1: 占位符验证和修复
             await self._update_task_status(task_id, TaskStatus.VALIDATING, "验证和修复占位符", 10.0)
@@ -171,50 +175,85 @@ class TaskExecutionService:
         except Exception as e:
             logger.error(f"任务执行异常: {task_id}, 错误: {e}")
             return self._create_error_result(request, "任务执行异常", str(e))
+
+    async def _execute_with_agents(self, request: TaskExecutionRequest, start_time: datetime) -> TaskExecutionResult:
+        """使用 PlaceholderProcessingSystem 的 ReAct 流水线执行任务（新架构）"""
+        task_id = request.task_id
+        try:
+            # 时间窗口
+            period_start_date = request.time_context.get("period_start_date") if request.time_context else None
+            period_end_date = request.time_context.get("period_end_date") if request.time_context else None
+            if not (period_start_date and period_end_date):
+                time_ctx = self.time_context_manager.generate_time_context(
+                    report_period=request.execution_context.get("report_period", "monthly")
+                )
+                period_start_date = time_ctx.get("period_start_date")
+                period_end_date = time_ctx.get("period_end_date")
+            time_window = {"start": f"{period_start_date} 00:00:00", "end": f"{period_end_date} 23:59:59"}
+
+            # 更新状态
+            await self._update_task_status(task_id, TaskStatus.PROCESSING, "Agents流水线执行", 50.0)
+
+            from app.services.application.placeholder import PlaceholderApplicationService as PlaceholderProcessingSystem
+            system = PlaceholderProcessingSystem(user_id=request.user_id)
+            await system.initialize()
+
+            success_criteria = {
+                "min_rows": 1,
+                "max_rows": 100000,
+                "required_fields": request.execution_context.get("required_fields", []) if request.execution_context else [],
+                "quality_threshold": request.execution_context.get("quality_threshold", 0.6) if request.execution_context else 0.6,
+            }
+            objective = request.execution_context.get("objective") if request.execution_context else f"任务[{task_id}]数据准备与分析"
+
+            events: List[Dict[str, Any]] = []
+            async for ev in system.run_task_with_agent(
+                task_objective=objective,
+                success_criteria=success_criteria,
+                data_source_id=(request.data_source_ids[0] if request.data_source_ids else None),
+                time_window=time_window,
+                time_column=request.execution_context.get("time_column", "created_at") if request.execution_context else "created_at",
+                max_attempts=request.execution_context.get("max_attempts", 3) if request.execution_context else 3,
+            ):
+                events.append(ev)
+
+            final = next((e for e in reversed(events) if e.get("type") == "agent_session_complete"), None)
+            success = bool(final and final.get("success"))
+
+            await self._update_task_status(task_id, TaskStatus.COMPLETED if success else TaskStatus.FAILED, "完成", 100.0)
+            duration = (datetime.now() - start_time).total_seconds()
+
+            # 清理任务状态
+            if task_id in self.active_tasks:
+                del self.active_tasks[task_id]
+
+            return TaskExecutionResult(
+                task_id=task_id,
+                status=TaskStatus.COMPLETED if success else TaskStatus.FAILED,
+                success=success,
+                message="任务执行成功" if success else "任务执行失败",
+                data={"events": events, "final": final, "time_window": time_window},
+                execution_time_seconds=duration,
+            )
+        except Exception as e:
+            logger.error(f"Agents流水线执行异常: {e}")
+            duration = (datetime.now() - start_time).total_seconds()
+            return TaskExecutionResult(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                success=False,
+                message="任务执行异常",
+                error=str(e),
+                execution_time_seconds=duration,
+            )
     
     async def _validate_and_repair_placeholders(
         self, 
         request: TaskExecutionRequest
     ) -> Dict[str, Any]:
         """验证和修复占位符"""
-        try:
-            from app.services.domain.placeholder.placeholder_validation_service import (
-                create_placeholder_validation_service
-            )
-            
-            validation_service = create_placeholder_validation_service(self.user_id)
-            
-            # 获取数据源信息
-            data_source_info = await self._get_data_source_info(request.data_source_ids[0])
-            
-            # 批量修复模板占位符
-            repair_result = await validation_service.batch_repair_template_placeholders(
-                template_id=request.template_id,
-                data_source_info=data_source_info,
-                time_context=request.time_context,
-                force_repair=request.execution_context.get("force_repair", False)
-            )
-            
-            if repair_result["status"] == "error":
-                return {
-                    "success": False,
-                    "error": repair_result["error"],
-                    "data": None
-                }
-            
-            return {
-                "success": True,
-                "data": repair_result,
-                "message": f"成功验证和修复 {repair_result['repaired_count']} 个占位符"
-            }
-            
-        except Exception as e:
-            logger.error(f"占位符验证修复异常: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": None
-            }
+        # 旧流程已迁移，由 Agents 流水线在执行阶段处理
+        return {"success": True, "data": {}, "message": "migrated_to_agents"}
     
     async def _execute_etl_pipeline(
         self, 

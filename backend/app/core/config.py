@@ -218,6 +218,20 @@ class Settings(BaseSettings):
     ALERT_FAILURE_RATE_CRITICAL: float = float(os.getenv("ALERT_FAILURE_RATE_CRITICAL", 0.2))  # 20%
     ALERT_AVG_TIME_WARNING: int = int(os.getenv("ALERT_AVG_TIME_WARNING", 600))  # 10分钟
     ALERT_ERROR_COUNT_WARNING: int = int(os.getenv("ALERT_ERROR_COUNT_WARNING", 50))  # 每小时50次
+
+    # ===========================================
+    # 新Agent 编排配置
+    # ===========================================
+    AGENT_ENGINE: str = os.getenv("AGENT_ENGINE", "new")  # new 或 legacy
+    NEW_AGENT_MODE: str = os.getenv("NEW_AGENT_MODE", "local_stub")  # local_stub 或 http
+    NEW_AGENT_ENDPOINT: str = os.getenv("NEW_AGENT_ENDPOINT", "")  # HTTP模式下的服务地址
+    NEW_AGENT_API_KEY: str = os.getenv("NEW_AGENT_API_KEY", "")
+    NEW_AGENT_TIMEOUT: int = int(os.getenv("NEW_AGENT_TIMEOUT", 60))
+    # 并发与重试
+    NEW_AGENT_MAX_CONCURRENCY: int = int(os.getenv("NEW_AGENT_MAX_CONCURRENCY", 10))
+    NEW_AGENT_MAX_RETRIES: int = int(os.getenv("NEW_AGENT_MAX_RETRIES", 3))
+    NEW_AGENT_BACKOFF_BASE: float = float(os.getenv("NEW_AGENT_BACKOFF_BASE", 0.5))  # 秒
+    NEW_AGENT_BACKOFF_CAP: float = float(os.getenv("NEW_AGENT_BACKOFF_CAP", 5.0))  # 秒
     
     # 管理员邮件配置
     ADMIN_EMAILS: List[str] = os.getenv("ADMIN_EMAILS", "admin@autoreportai.com").split(",")

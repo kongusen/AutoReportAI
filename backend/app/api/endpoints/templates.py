@@ -12,6 +12,7 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema, TemplatePreview
+from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
 from app.crud import template as crud_template
 from app.services.domain.template.services.template_domain_service import TemplateParser
 from app.api import deps
@@ -728,82 +729,83 @@ async def download_template_file(
             id=template_id,
             user_id=current_user.id
         )
-        
         if not template:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="模板不存在"
-            )
-        
-        # 检查是否有文件路径
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
         if not template.file_path:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="模板没有关联的文件"
-            )
-        
-        # 从存储系统下载文件
-        try:
-            from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
-            from fastapi.responses import StreamingResponse
-            import io
-            
-            storage_service = get_hybrid_storage_service()
-            
-            # 检查文件是否存在
-            if not storage_service.file_exists(template.file_path):
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="文件在存储系统中不存在"
-                )
-            
-            # 下载文件
-            file_data, backend_type = storage_service.download_file(template.file_path)
-            
-            # 确定Content-Type
-            content_type = "application/octet-stream"
-            if template.original_filename:
-                if template.original_filename.endswith(".docx"):
-                    content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                elif template.original_filename.endswith(".doc"):
-                    content_type = "application/msword"
-                elif template.original_filename.endswith(".pdf"):
-                    content_type = "application/pdf"
-                elif template.original_filename.endswith(".txt"):
-                    content_type = "text/plain"
-                elif template.original_filename.endswith(".html"):
-                    content_type = "text/html"
-            
-            # 创建响应
-            file_stream = io.BytesIO(file_data)
-            
-            logger.info(f"用户 {current_user.id} 下载模板文件: {template.name} ({template.original_filename})")
-            
-            return StreamingResponse(
-                file_stream,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f'attachment; filename="{template.original_filename or f"template_{template_id}"}"',
-                    "X-Storage-Backend": backend_type,
-                    "X-Template-ID": template_id
-                }
-            )
-            
-        except Exception as storage_error:
-            logger.error(f"从存储系统下载文件失败: {storage_error}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="文件下载失败"
-            )
-        
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板没有关联的文件")
+
+        from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+        from fastapi.responses import StreamingResponse
+        import io
+
+        storage_service = get_hybrid_storage_service()
+        if not storage_service.file_exists(template.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件在存储系统中不存在")
+
+        file_data, backend_type = storage_service.download_file(template.file_path)
+        content_type = "application/octet-stream"
+        if template.original_filename:
+            fn = template.original_filename.lower()
+            if fn.endswith(".docx"):
+                content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif fn.endswith(".doc"):
+                content_type = "application/msword"
+            elif fn.endswith(".pdf"):
+                content_type = "application/pdf"
+            elif fn.endswith(".txt"):
+                content_type = "text/plain"
+            elif fn.endswith(".html"):
+                content_type = "text/html"
+
+        file_stream = io.BytesIO(file_data)
+        logger.info(f"用户 {current_user.id} 下载模板文件: {template.name} ({template.original_filename})")
+        return StreamingResponse(
+            file_stream,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{template.original_filename or f"template_{template_id}"}"',
+                "X-Storage-Backend": backend_type,
+                "X-Template-ID": template_id
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"模板文件下载失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="模板文件下载失败"
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="文件下载失败")
+
+
+@router.get("/{template_id}/download-url", response_model=ApiResponse[Dict[str, Any]])
+async def get_template_download_url(
+    request: Request,
+    template_id: str,
+    expires: int = Query(3600, ge=60, le=86400),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取模板文件的预签名下载URL（MinIO或回退）"""
+    try:
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
         )
+        if not template:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板不存在")
+        if not template.file_path:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模板没有关联的文件")
+
+        storage = get_hybrid_storage_service()
+        if not storage.file_exists(template.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件在存储系统中不存在")
+
+        url = storage.get_download_url(template.file_path, expires=expires)
+        return ApiResponse(success=True, data={"url": url, "file_path": template.file_path}, message="获取下载URL成功")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取模板下载URL失败: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="获取下载URL失败")
 
 
 @router.post("/{template_id}/placeholders/reparse", response_model=ApiResponse[Dict])
@@ -992,5 +994,3 @@ async def analyze_with_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Agent分析失败"
         )
-
-

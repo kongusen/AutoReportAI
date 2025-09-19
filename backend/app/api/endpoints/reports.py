@@ -114,6 +114,60 @@ async def get_reports(
     )
 
 
+@router.get("/{task_id}/download-url", response_model=ApiResponse)
+async def get_latest_report_download_url(
+    task_id: int,
+    expires: int = Query(86400, ge=60, le=7*24*3600, description="下载链接有效期(秒)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取任务最近一次报告的预签名下载URL（基于存储路径生成）。"""
+    try:
+        from app.models.task import Task, TaskExecution, TaskStatus
+        from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+        
+        # 校验任务归属
+        task = db.query(Task).filter(
+            Task.id == task_id,
+            Task.owner_id == current_user.id
+        ).first()
+        if not task:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在或无权限")
+
+        # 最近执行记录（完成态优先）
+        execution = db.query(TaskExecution).filter(
+            TaskExecution.task_id == task_id,
+            TaskExecution.execution_status == TaskStatus.COMPLETED
+        ).order_by(TaskExecution.completed_at.desc().nullslast(), TaskExecution.id.desc()).first()
+
+        if not execution or not execution.execution_result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到可下载的报告")
+
+        report_info = (execution.execution_result or {}).get("report") or {}
+        storage_path = report_info.get("storage_path")
+        if not storage_path:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告未包含存储路径")
+
+        storage = get_hybrid_storage_service()
+        url = storage.get_download_url(storage_path, expires=expires)
+
+        return ApiResponse(
+            success=True,
+            data={
+                "task_id": task_id,
+                "url": url,
+                "storage_path": storage_path,
+                "expires": expires
+            },
+            message="获取下载URL成功"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取报告下载URL失败: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="获取下载URL失败")
+
+
 from pydantic import BaseModel
 
 class ReportGenerateRequest(BaseModel):

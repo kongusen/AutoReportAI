@@ -1,314 +1,225 @@
 """
-Agent System - Clean Architecture
-=================================
+Lexicon Agent Framework v2.0
 
-简洁的智能代理系统架构：
-
-核心模块：
-- core/: 核心协调器和TT控制循环
-- context/: 任务上下文构建
-- tools/: 工具系统
-- prompts/: 指令系统
-
-设计原则：
-- 统一的命名规范
-- 清晰的模块分离
-- 最小化复杂度
-- 标准化接口
+基于Claude Code分析的智能体框架，实现上下文工程和多智能体协调
 """
 
-# =============================================================================
-# 核心系统 - 简化架构
-# =============================================================================
-from .core import (
-    # 核心协调器
-    AgentCoordinator,
-    get_coordinator,
-    shutdown_coordinator,
-    
-    # TT控制循环
-    TTController,
-    TTContext,
-    TTLoopState,
-    TTEvent,
-    TTEventType,
-    
-    # 消息系统
-    AgentMessage,
-    MessageType,
-    MessagePriority,
-    create_task_request,
-    create_progress_message,
-    create_result_message,
-    MessageBus,
-    
-    # 核心组件
-    MemoryManager,
-    ProgressAggregator,
-    StreamingMessageParser,
-    ErrorFormatter
+# 导出主要类型
+from .types import (
+    AgentEvent, AgentEventType, ToolCall, ToolResult, 
+    ToolSafetyLevel, Agent, ManagedContext, SessionState
 )
 
-# =============================================================================
-# 上下文构建系统
-# =============================================================================
-from .context import (
-    AgentContextBuilder,
-    ContextType,
-    PlaceholderType,
-    PlaceholderInfo,
-    DatabaseSchemaInfo,
-    TemplateInfo,
-    TaskInfo,
-    AgentContext,
-    create_simple_context,
-    ContextExamples,
-    create_context_for_task,
-    create_data_analysis_context,
-    create_sql_generation_context,
-    create_report_generation_context,
-    create_business_intelligence_context,
-    get_context_builder as get_context_builder_instance
+# 导出核心组件
+from .core.context import ContextRetrievalEngine, ContextProcessor, ContextManager
+from .core.agent import AgentController
+from .core.orchestration import OrchestrationEngine, AgentCoordinator
+from .core.tools import ToolRegistry, IntelligentToolScheduler, ToolExecutor
+from .core.streaming import StreamingProcessor, PerformanceOptimizer, StreamingPipeline
+
+# 导出主框架接口
+from .main import (
+    LexiconAgent, 
+    create_agent, 
+    quick_chat,
+    create_development_agent,
+    create_production_agent,
+    create_minimal_agent,
+    create_custom_llm_agent
 )
 
-# =============================================================================
-# 工具系统
-# =============================================================================
-from .tools import (
-    # 核心工具框架
-    AgentTool,
-    StreamingAgentTool,
-    ToolDefinition,
-    ToolResult,
-    ToolExecutionContext,
-    ToolCategory,
-    ToolPriority,
-    ToolPermission,
-    
-    # 数据工具
-    SQLGeneratorTool,
-    SQLExecutorTool,
-    DataAnalysisTool,
-    ReportGeneratorTool,
-    
-    # AI工具
-    ReasoningTool,
-    
-    # LLM工具
-    LLMExecutionTool,
-    LLMReasoningTool,
-    LLMTaskType,
-    ReasoningDepth,
-    
-    # 系统工具
-    BashTool,
-    FileTool,
-    SearchTool
-)
+# 设置包版本
+__version__ = "2.0.0"
 
-# =============================================================================
-# LLM服务导入
-# =============================================================================
-from app.services.infrastructure.llm import (
-    # 新的统一接口
-    get_llm_manager,
-    select_best_model_for_user,
-    ask_agent_for_user,
-    get_user_available_models,
-    get_user_preferences,
-    record_usage_feedback,
-    health_check,
-    get_service_info,
-    
-    # 必要的类型定义，供agents工具使用
-    TaskRequirement,
-    TaskComplexity,
-    ProcessingStep,
-    StepContext
-)
-
-# =============================================================================
-# LLM工具实例导入
-# =============================================================================
-from .tools.llm import (
-    get_llm_execution_tool,
-    get_llm_reasoning_tool,
-    get_all_llm_tools
-)
-
-# =============================================================================
-# 专业化指令系统  
-# =============================================================================
-from .prompts import (
-    get_specialized_instructions,
-    DataAnalysisAgentInstructions,
-    SystemAdministrationAgentInstructions,
-    DevelopmentAgentInstructions,
-    BusinessIntelligenceAgentInstructions
-)
-
-# =============================================================================
-# 便捷函数和工厂方法
-# =============================================================================
-
-# 全局实例
-_global_coordinator = None
-
-async def get_agent_coordinator() -> AgentCoordinator:
-    """获取全局Agent协调器实例"""
-    global _global_coordinator
-    if _global_coordinator is None:
-        _global_coordinator = AgentCoordinator()
-        await _global_coordinator.start()
-        
-        # 注册默认的专业化agents
-        await _register_default_agents(_global_coordinator)
-    
-    return _global_coordinator
-
-def get_context_builder() -> AgentContextBuilder:
-    """获取全局上下文构建器实例"""
-    return get_context_builder_instance()
-
-async def _register_default_agents(coordinator: AgentCoordinator):
-    """注册默认的专业化agents"""
-    
-    # 数据分析Agent
-    await coordinator.register_agent(
-        "data_analysis_agent",
-        capabilities=["data_analysis", "statistical_analysis", "pattern_recognition"],
-        groups=["analysis_agents", "data_agents"]
-    )
-    
-    # SQL生成Agent
-    await coordinator.register_agent(
-        "sql_generation_agent", 
-        capabilities=["sql_generation", "query_optimization", "database_interaction"],
-        groups=["data_agents", "sql_agents"]
-    )
-    
-    # 报告生成Agent
-    await coordinator.register_agent(
-        "report_generation_agent",
-        capabilities=["report_generation", "data_visualization", "document_formatting"],
-        groups=["presentation_agents", "report_agents"]
-    )
-    
-    # 商业智能Agent
-    await coordinator.register_agent(
-        "business_intelligence_agent",
-        capabilities=["business_intelligence", "kpi_analysis", "dashboard_creation"],
-        groups=["bi_agents", "analysis_agents"]
-    )
-    
-    # 系统管理Agent
-    await coordinator.register_agent(
-        "system_administration_agent",
-        capabilities=["system_management", "file_operations", "process_monitoring"],
-        groups=["system_agents"]
-    )
-    
-    # 开发Agent
-    await coordinator.register_agent(
-        "development_agent",
-        capabilities=["code_analysis", "software_development", "architecture_review"],
-        groups=["development_agents"]
-    )
-
+# 临时兼容性函数 - 用于满足现有代码的导入需求
 async def execute_agent_task(
     task_name: str,
-    task_description: str, 
-    context_data: dict = None,
-    target_agent: str = None,
-    timeout_seconds: int = 120,
+    task_description: str,
+    context_data: dict,
     user_id: str = None
 ) -> dict:
     """
-    执行Agent任务 - 简化版本
+    执行Agent任务 - 临时实现
+    
+    TODO: 这是一个临时的兼容性实现，在完整的agent系统实现后应被替换
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"execute_agent_task临时实现被调用: {task_name}")
+    
+    return {
+        "success": False,
+        "error": "agent任务执行功能暂未完全实现",
+        "task_name": task_name,
+        "description": task_description
+    }
+
+async def analyze_placeholder_technical(
+    placeholder_text: str,
+    technical_context: dict = None
+) -> dict:
+    """
+    占位符技术分析 - 基础设施层实现
+    
+    仅提供技术层面的分析功能，不包含业务逻辑
+    业务逻辑应该在领域服务中实现
     
     Args:
-        task_name: 任务名称
-        task_description: 任务描述
-        context_data: 任务上下文数据
-        target_agent: 目标Agent
-        timeout_seconds: 超时时间
+        placeholder_text: 占位符文本
+        technical_context: 技术上下文（数据库连接、SQL能力等）
         
     Returns:
-        dict: 执行结果
+        技术分析结果
     """
+    import logging
+    import re
+    from datetime import datetime
     
-    # 获取协调器
-    coordinator = await get_coordinator()
+    logger = logging.getLogger(__name__)
+    logger.info(f"[Agent基础设施层] 开始技术分析占位符: {placeholder_text}")
     
-    # 确定目标Agent
-    if not target_agent:
-        target_agent = "sql_generation_agent"  # 默认SQL生成Agent
-    
-    # 执行任务
-    result = await coordinator.execute_task(
-        task_description=task_description,
-        context=context_data or {},
-        target_agents=[target_agent],
-        timeout_seconds=timeout_seconds,
-        user_id=user_id
-    )
-    
-    # 构建标准化结果
-    if result.get("success", False):
+    try:
+        # 技术层面的模式识别 - 增强版
+        sql_patterns = {
+            "count": r"(总数|数量|count|num|件数|个数|条数|统计)",
+            "sum": r"(总计|合计|sum|total|累计|汇总)",
+            "avg": r"(平均|average|avg|均值)",
+            "max": r"(最大|最高|max|最多)",
+            "min": r"(最小|最低|min|最少)",
+            "date": r"(时间|日期|date|time|年|月|日|周)",
+            "group": r"(分组|group|category|分类|按.*分|类型)",
+            "statistical": r"(统计|分析|计算|总.*数|总.*量)",
+            "financial": r"(金额|费用|成本|收入|价格|总价|单价)",
+            "performance": r"(率|比例|占比|百分比|效率|性能)"
+        }
+        
+        detected_patterns = []
+        for pattern_type, pattern in sql_patterns.items():
+            if re.search(pattern, placeholder_text, re.IGNORECASE):
+                detected_patterns.append(pattern_type)
+        
+        # 技术复杂度评估
+        complexity_score = len(detected_patterns)
+        if "group" in detected_patterns:
+            complexity_score += 2
+        if "date" in detected_patterns:
+            complexity_score += 1
+            
+        complexity_level = "low"
+        if complexity_score >= 4:
+            complexity_level = "high"
+        elif complexity_score >= 2:
+            complexity_level = "medium"
+        
+        # SQL生成建议（技术层面）- 增强版
+        sql_suggestions = []
+        if "count" in detected_patterns or "statistical" in detected_patterns:
+            sql_suggestions.append("使用COUNT()聚合函数")
+            sql_suggestions.append("SELECT COUNT(*) FROM table_name")
+        if "sum" in detected_patterns:
+            sql_suggestions.append("使用SUM()聚合函数")
+            sql_suggestions.append("SELECT SUM(column_name) FROM table_name")
+        if "avg" in detected_patterns:
+            sql_suggestions.append("使用AVG()聚合函数")
+        if "group" in detected_patterns:
+            sql_suggestions.append("需要GROUP BY子句")
+        if "date" in detected_patterns:
+            sql_suggestions.append("需要日期函数处理")
+            sql_suggestions.append("WHERE DATE(date_column) = CURDATE()")
+        if "financial" in detected_patterns:
+            sql_suggestions.append("注意金额字段的精度处理")
+        if "performance" in detected_patterns:
+            sql_suggestions.append("计算比率: (value1/value2)*100")
+            
         return {
             "success": True,
-            "result": result.get("result", {}),
-            "task_name": task_name,
-            "target_agent": target_agent,
-            "llm_interactions": result.get("llm_interactions", 0),
-            "architecture": result.get("architecture", "tt_controlled")
+            "technical_analysis": {
+                "detected_patterns": detected_patterns,
+                "complexity_level": complexity_level,
+                "complexity_score": complexity_score,
+                "sql_suggestions": sql_suggestions,
+                "requires_aggregation": any(p in detected_patterns for p in ["count", "sum", "avg", "max", "min"]),
+                "requires_grouping": "group" in detected_patterns,
+                "requires_date_handling": "date" in detected_patterns
+            },
+            "metadata": {
+                "analyzed_at": datetime.now().isoformat(),
+                "agent_layer": "infrastructure",
+                "analysis_type": "technical_only"
+            }
         }
-    else:
+        
+    except Exception as e:
+        logger.error(f"[Agent基础设施层] 技术分析失败: {str(e)}")
         return {
             "success": False,
-            "error": result.get("error", "Task execution failed"),
-            "task_name": task_name,
-            "target_agent": target_agent,
-            "architecture": result.get("architecture", "tt_controlled")
+            "error": f"技术分析失败: {str(e)}",
+            "metadata": {
+                "analyzed_at": datetime.now().isoformat(),
+                "error_type": type(e).__name__
+            }
         }
 
+# 向后兼容的包装器
+async def analyze_placeholder(placeholder_text: str, **kwargs) -> dict:
+    """
+    兼容性包装器 - 重定向到技术分析
+    
+    注意：这个函数应该被废弃，API层应该调用领域服务，
+    领域服务再调用 analyze_placeholder_technical
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️  架构警告：API层直接调用agent，应该通过领域服务调用")
+    
+    return await analyze_placeholder_technical(placeholder_text, technical_context=kwargs)
 
-async def shutdown_agents():
-    """关闭agents系统"""
-    await shutdown_coordinator()
+def get_agent_coordinator():
+    """
+    获取Agent协调器 - 临时实现
+    
+    TODO: 这是一个临时的兼容性实现
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("get_agent_coordinator临时实现被调用")
+    
+    # 返回一个基础的协调器对象
+    return AgentCoordinator()
 
-# =============================================================================
-# 导出组件 - 简化列表
-# =============================================================================
+def create_data_analysis_context(**kwargs):
+    """
+    创建数据分析上下文 - 临时实现
+    
+    TODO: 这是一个临时的兼容性实现
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("create_data_analysis_context临时实现被调用")
+    
+    # 返回一个基础的ManagedContext对象
+    return ManagedContext()
+
 __all__ = [
-    # 核心系统
-    "AgentCoordinator",
-    "get_coordinator",
-    "shutdown_coordinator",
+    # 主框架接口
+    "LexiconAgent", "create_agent", "quick_chat",
+    "create_development_agent", "create_production_agent", 
+    "create_minimal_agent", "create_custom_llm_agent",
     
-    # TT控制循环
-    "TTController",
-    "TTContext",
-    "TTLoopState",
-    "TTEvent", 
-    "TTEventType",
-    
-    # 消息系统
-    "AgentMessage",
-    "MessageType",
-    "MessagePriority", 
-    "create_task_request",
-    "create_progress_message", 
-    "create_result_message",
-    "MessageBus",
+    # 主要类型
+    "AgentEvent", "AgentEventType", "ToolCall", "ToolResult", 
+    "ToolSafetyLevel", "Agent", "ManagedContext", "SessionState",
     
     # 核心组件
-    "MemoryManager",
-    "ProgressAggregator",
-    "StreamingMessageParser",
-    "ErrorFormatter",
+    "ContextRetrievalEngine", "ContextProcessor", "ContextManager",
+    "AgentController", "OrchestrationEngine", "AgentCoordinator",
+    "ToolRegistry", "IntelligentToolScheduler", "ToolExecutor",
+    "StreamingProcessor", "PerformanceOptimizer", "StreamingPipeline",
     
-    # 便捷函数
+    # 兼容性函数
     "execute_agent_task",
-    "shutdown_agents"
+    "analyze_placeholder",  # 废弃，仅兼容
+    "analyze_placeholder_technical",  # 正确的基础设施层接口
+    "get_agent_coordinator",
+    "create_data_analysis_context"
 ]

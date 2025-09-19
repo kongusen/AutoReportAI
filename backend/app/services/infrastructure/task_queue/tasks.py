@@ -5,15 +5,19 @@ Infrastructure层 - Celery任务定义
 """
 
 import logging
-from typing import Any, Dict, Optional
+import asyncio
+import os
+from typing import Any, Dict, Optional, List
 from datetime import datetime, timedelta
 from celery import Task as CeleryTask
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.task import Task, TaskExecution, TaskStatus
-from app.services.application.tasks.task_execution_service import TaskExecutionService
+from app.services.application.placeholder import PlaceholderApplicationService as PlaceholderProcessingSystem
+from app.utils.time_context import TimeContextManager
 from app.services.infrastructure.task_queue.celery_config import celery_app
+from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
 from app.services.infrastructure.notification.notification_service import NotificationService
 from celery.schedules import crontab
 
@@ -76,8 +80,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         task.last_execution_at = datetime.utcnow()
         db.commit()
         
-        # 4. 初始化TaskExecutionService
-        task_execution_service = TaskExecutionService()
+        # 4. 初始化新Agent系统与时间上下文
+        system = PlaceholderProcessingSystem(user_id=str(task.owner_id))
+        time_ctx_mgr = TimeContextManager()
         
         # 5. 准备执行参数
         execution_params = {
@@ -91,33 +96,130 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             "schedule": task.schedule
         }
         
-        # 6. 使用新的TaskExecutionService执行完整流程
-        logger.info(f"Starting task execution for task {task_id} with TaskExecutionService")
-        
-        def progress_callback(progress: int, message: str, current_step: str = None):
-            """进度回调函数"""
-            task_execution.progress_percentage = progress
-            task_execution.current_step = current_step or message
-            task_execution.updated_at = datetime.utcnow()
-            db.commit()
-            
-            # 发送WebSocket进度更新
-            self.update_state(
-                state='PROGRESS',
-                meta={
-                    'progress': progress,
-                    'status': 'processing',
-                    'message': message,
-                    'current_step': current_step,
-                    'task_id': task_id
-                }
-            )
-        
-        # 执行完整的任务流程
-        execution_result = task_execution_service.execute_complete_task_flow(
-            execution_params,
-            progress_callback=progress_callback
+        logger.info(f"Starting task execution for task {task_id} with Agents pipeline")
+
+        # 5. 生成时间窗口（基于任务报告周期）
+        time_ctx = time_ctx_mgr.generate_time_context(
+            report_period=task.report_period.value if task.report_period else "monthly",
+            execution_time=datetime.utcnow(),
+            schedule=task.schedule,
         )
+        time_window = {
+            "start": f"{time_ctx.get('period_start_date')} 00:00:00",
+            "end": f"{time_ctx.get('period_end_date')} 23:59:59",
+        }
+
+        # 6. 运行ReAct流水线（生成SQL→注入时间→执行→自修正）
+        asyncio.run(system.initialize())
+        events = []
+
+        # Build required_fields from template placeholders if available
+        required_fields: List[str] = []
+        try:
+            from app.crud import template_placeholder as crud_template_placeholder
+            placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
+            fields: set[str] = set()
+            for ph in placeholders or []:
+                rf = getattr(ph, 'required_fields', None)
+                # Accept list or dict forms
+                if isinstance(rf, list):
+                    for f in rf:
+                        if isinstance(f, str):
+                            fields.add(f)
+                elif isinstance(rf, dict):
+                    for key in ('columns', 'fields', 'required_fields'):
+                        val = rf.get(key)
+                        if isinstance(val, list):
+                            for f in val:
+                                if isinstance(f, str):
+                                    fields.add(f)
+                            break
+                # Fallback to parsing_metadata if present
+                pm = getattr(ph, 'parsing_metadata', None)
+                if isinstance(pm, dict):
+                    meta_rf = pm.get('required_fields') or pm.get('metadata', {}).get('required_fields')
+                    if isinstance(meta_rf, list):
+                        for f in meta_rf:
+                            if isinstance(f, str):
+                                fields.add(f)
+            required_fields = sorted(fields)
+        except Exception as e:
+            logger.warning(f"Failed to load required_fields from placeholders: {e}")
+
+        success_criteria = {
+            "min_rows": 1,
+            "max_rows": 100000,
+            "required_fields": required_fields,
+            "quality_threshold": 0.6,
+        }
+        objective = f"执行任务[{task.name}]的数据准备与分析"
+        async def _run():
+            async for ev in system.run_task_with_agent(
+                task_objective=objective,
+                success_criteria=success_criteria,
+                data_source_id=str(task.data_source_id),
+                time_window=time_window,
+                time_column="created_at",
+                max_attempts=3,
+            ):
+                events.append(ev)
+        asyncio.run(_run())
+
+        final = next((e for e in reversed(events) if e.get("type") == "agent_session_complete"), None)
+        execution_result = {
+            "success": bool(final and final.get("success")),
+            "events": events,
+            "final": final,
+            "time_window": time_window,
+        }
+
+        # 7b. 生成文档（使用模板 + doc_assembler）
+        try:
+            from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path
+            from app.services.infrastructure.agents.tools.doc_assembler import DocAssemblerTool
+            from io import BytesIO
+            from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+
+            # 仅在有模板文件时生成
+            if getattr(task, 'template_id', None):
+                tpl_meta = resolve_docx_template_path(db, str(task.template_id))
+                assembler = DocAssemblerTool()
+                # 简单内容块（可改为基于 events 的摘要/指标）
+                context_blocks = [
+                    {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
+                ]
+                safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
+                docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
+                assemble_res = asyncio.run(assembler.execute({
+                    "format": "docx",
+                    "template_path": tpl_meta['path'],
+                    "context_blocks": context_blocks,
+                    "charts": [],
+                    "output_path": docx_out,
+                }))
+                if assemble_res.get('success') and assemble_res.get('output_path'):
+                    # 上传到存储
+                    storage = get_hybrid_storage_service()
+                    with open(assemble_res['output_path'], 'rb') as f:
+                        file_bytes = f.read()
+                    # 采用对象键: reports/{tenant_id}/{task_name}/report_{timestamp}.docx
+                    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                    # 获取租户（若无租户字段，则使用用户ID代替）
+                    from app.models.user import User
+                    user = db.query(User).filter(User.id == task.owner_id).first()
+                    tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
+                    # 任务名slug
+                    import re
+                    slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
+                    object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
+                    upload = storage.upload_with_key(BytesIO(file_bytes), object_name, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                    execution_result["report"] = {
+                        "storage_path": upload.get("file_path"),
+                        "backend": upload.get("backend"),
+                        "friendly_name": f"{slug}_{ts}.docx",
+                    }
+        except Exception as e:
+            logger.error(f"Document assembly failed: {e}")
         
         # 7. 更新执行结果
         task_execution.execution_status = TaskStatus.COMPLETED
@@ -139,16 +241,46 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         
         db.commit()
         
-        # 8. 发送成功通知
+        # 8. 发送成功通知（携带下载链接）
         if task.recipients:
             try:
-                notification_service.send_task_completion_notification(
-                    task_id=task_id,
-                    task_name=task.name,
+                # 生成下载URL（若有report）
+                download_url = None
+                try:
+                    if execution_result.get("report", {}).get("storage_path"):
+                        storage = get_hybrid_storage_service()
+                        download_url = storage.get_download_url(execution_result["report"]["storage_path"], expires=86400)
+                except Exception as e:
+                    logger.warning(f"Failed to generate download URL: {e}")
+
+                # 使用DeliveryService 发送邮件（若可用）或通知服务
+                from app.services.infrastructure.delivery.delivery_service import create_delivery_service, DeliveryRequest, DeliveryMethod, StorageConfig, EmailConfig, NotificationConfig
+                delivery_service = create_delivery_service(str(task.owner_id))
+                # 友好名称: 任务名+时间
+                friendly_name = execution_result.get("report", {}).get("friendly_name") or f"report_{task.id}.docx"
+                ts_email = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                email_config = EmailConfig(
                     recipients=task.recipients,
-                    execution_result=execution_result,
-                    success=True
+                    subject=f"报告生成完成 - {task.name} - {ts_email}",
+                    body=(
+                        f"报告已生成: {friendly_name}\n\n"
+                        f"下载链接: {download_url if download_url else '请登录系统查看'}\n"
+                        f"任务: {task.name}\n时间窗口: {time_window['start']} - {time_window['end']}\n"
+                    ),
+                    attach_files=False
                 )
+                req = DeliveryRequest(
+                    task_id=str(task_id),
+                    user_id=str(task.owner_id),
+                    files=[],
+                    delivery_method=DeliveryMethod.EMAIL_ONLY,
+                    storage_config=StorageConfig(bucket_name="reports", path_prefix=f"reports/{task.owner_id}", public_access=False, retention_days=90),
+                    email_config=email_config,
+                    notification_config=NotificationConfig(channels=["system"], message="报告已生成", priority="normal"),
+                    metadata={"report_path": execution_result.get("report", {}).get("storage_path")}
+                )
+                # 在同步任务中执行异步投递
+                asyncio.run(delivery_service.deliver_report(req))
             except Exception as e:
                 logger.error(f"Failed to send success notification for task {task_id}: {e}")
         
@@ -212,23 +344,13 @@ def validate_placeholders_task(self, template_id: str, data_source_id: str, user
         Dict: 验证结果
     """
     try:
-        task_execution_service = TaskExecutionService()
-        
-        logger.info(f"Starting placeholder validation for template {template_id}")
-        
-        # 使用TaskExecutionService进行占位符验证
-        validation_result = task_execution_service.validate_all_placeholders(
-            template_id=template_id,
-            data_source_id=data_source_id,
-            user_id=user_id
-        )
-        
-        logger.info(f"Placeholder validation completed for template {template_id}")
-        
+        # 迁移说明：旧的占位符验证流程已弃用。
+        # 新架构在执行阶段由 Agents 进行 SQL 生成→注入→执行的自验证（ReAct）。
+        logger.info(f"Placeholder validation (legacy) skipped for template {template_id}; replaced by Agents pipeline")
         return {
-            "status": "completed",
+            "status": "migrated",
             "template_id": template_id,
-            "validation_result": validation_result
+            "message": "Validation is handled by Agents pipeline during execution",
         }
         
     except Exception as e:

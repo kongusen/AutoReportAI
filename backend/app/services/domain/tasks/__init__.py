@@ -1,8 +1,17 @@
 """
-Domain层任务
+Tasks Domain Module - DDD架构
 
-核心业务逻辑的异步任务实现
-包含：模板、占位符、报告等领域的业务规则处理
+任务领域模块
 """
 
-__version__ = "1.0.0"
+from .services import (
+    TaskExecutionDomainService,
+    TaskExecutionStrategy,
+    TaskComplexity
+)
+
+__all__ = [
+    "TaskExecutionDomainService",
+    "TaskExecutionStrategy",
+    "TaskComplexity"
+]

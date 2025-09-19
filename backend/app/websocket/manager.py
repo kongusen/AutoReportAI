@@ -1,6 +1,6 @@
 """
 WebSocket连接管理器
-基于React Agent架构的实时通信管理器
+基于DDD v2.0架构的实时通信管理器
 """
 
 import asyncio
@@ -94,7 +94,7 @@ class ConnectionInfo:
 
 
 class WebSocketManager:
-    """React Agent架构的WebSocket管理器"""
+    """DDD v2.0架构的WebSocket管理器"""
     
     def __init__(self):
         # 连接管理

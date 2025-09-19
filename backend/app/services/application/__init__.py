@@ -1,18 +1,39 @@
 """
-Application Layer - 统一架构
+Application Layer - DDD架构v2.0统一应用层
 
-基于Agent系统成功经验的应用层：
+基于DDD架构和Agent系统成功经验的应用层：
+- base: 基础应用服务架构
 - tasks: 任务应用服务
+- reporting: 报告应用服务
 - llm: LLM编排服务
 - orchestrators: 复杂业务编排
 - services: 业务应用服务
 - context: 上下文构建器
 """
 
+# 基础应用服务架构
+from .base_application_service import (
+    BaseApplicationService,
+    TransactionalApplicationService,
+    ApplicationResult,
+    OperationResult,
+    PaginationRequest,
+    PaginationResult,
+    event_publisher,
+    register_application_service,
+    get_application_service,
+    list_application_services
+)
+
 # 任务应用服务
 from .tasks import (
     TaskApplicationService,
     TaskExecutionService
+)
+
+# 报告应用服务
+from .reporting import (
+    ReportApplicationService
 )
 
 # LLM编排服务
@@ -29,7 +50,6 @@ from .orchestrators import (
 
 # 业务应用服务
 from .services import (
-    ReportApplicationService,
     WorkflowApplicationService,
     ContextAwareApplicationService
 )
@@ -42,9 +62,24 @@ from .context import (
 )
 
 __all__ = [
+    # 基础架构
+    "BaseApplicationService",
+    "TransactionalApplicationService", 
+    "ApplicationResult",
+    "OperationResult",
+    "PaginationRequest",
+    "PaginationResult",
+    "event_publisher",
+    "register_application_service",
+    "get_application_service",
+    "list_application_services",
+    
     # 任务应用服务
     "TaskApplicationService",
     "TaskExecutionService",
+    
+    # 报告应用服务
+    "ReportApplicationService",
     
     # LLM编排服务
     "LLMOrchestrationService",
@@ -55,7 +90,6 @@ __all__ = [
     "DataOrchestrator",
     
     # 业务应用服务
-    "ReportApplicationService",
     "WorkflowApplicationService",
     "ContextAwareApplicationService",
     
@@ -64,3 +98,10 @@ __all__ = [
     "BusinessContextBuilder",
     "DocumentContextBuilder",
 ]
+
+# 自动注册核心应用服务
+_task_service = TaskApplicationService()
+_report_service = ReportApplicationService()
+
+register_application_service("task", _task_service)
+register_application_service("report", _report_service)

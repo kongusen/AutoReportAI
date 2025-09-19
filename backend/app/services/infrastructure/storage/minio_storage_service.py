@@ -43,7 +43,7 @@ class MinIOStorageService:
             raise RuntimeError("MinIO client is not available. Install with: pip install minio")
     
     @property
-    def client(self) -> Minio:
+    def client(self) -> Any:
         """获取 MinIO 客户端实例"""
         if self._client is None:
             try:
@@ -117,6 +117,33 @@ class MinIOStorageService:
             
         except S3Error as e:
             logger.error(f"MinIO upload failed: {e}")
+            raise
+
+    def upload_with_key(
+        self,
+        object_name: str,
+        file_data: BytesIO,
+        content_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """按指定对象键上传文件到 MinIO"""
+        try:
+            file_data.seek(0)
+            size = len(file_data.getvalue())
+            self.client.put_object(
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+                data=file_data,
+                length=size,
+                content_type=content_type or 'application/octet-stream'
+            )
+            return {
+                "file_path": object_name,
+                "size": size,
+                "uploaded_at": datetime.now().isoformat(),
+                "backend": "minio"
+            }
+        except Exception as e:
+            logger.error(f"upload_with_key failed: {e}")
             raise
         except Exception as e:
             logger.error(f"File upload failed: {e}")

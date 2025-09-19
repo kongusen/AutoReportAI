@@ -19,7 +19,8 @@ from app.models.template import Template
 from app.models.report_history import ReportHistory
 from app.services.data.connectors.connector_factory import create_connector
 # AI tools migrated to agents
-from app.services.infrastructure.agents.tools import get_tool_registry
+# from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
+from app.services.infrastructure.agents.core.tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

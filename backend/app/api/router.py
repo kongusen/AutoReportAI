@@ -25,9 +25,9 @@ from app.api.endpoints import (
     model_execution,
     user_llm_preferences,
     
-    # Agent流式处理
-    agent_stream,
-    sql_enhanced,
+    # Agent流式处理 - temporarily disabled due to missing components
+    # agent_stream,
+    # sql_enhanced,
     
     # 系统管理
     system,
@@ -74,11 +74,11 @@ api_router.include_router(llm_monitor.router, prefix="/v1/llm-monitor", tags=["L
 api_router.include_router(llm_orchestration.router, prefix="/v1/llm-orchestration", tags=["LLM编排"])
 api_router.include_router(simple_model_selection.router, prefix="/v1/model-selection", tags=["模型选择"])
 
-# Agent流式处理API路由
-api_router.include_router(agent_stream.router, prefix="/v1/agent", tags=["Agent流式处理"])
+# Agent流式处理API路由 - temporarily disabled due to missing components
+# api_router.include_router(agent_stream.router, prefix="/v1/agent", tags=["Agent流式处理"])
 
-# SQL增强处理API路由  
-api_router.include_router(sql_enhanced.router, prefix="/v1/sql", tags=["SQL增强处理"])
+# SQL增强处理API路由 - temporarily disabled due to missing components
+# api_router.include_router(sql_enhanced.router, prefix="/v1/sql", tags=["SQL增强处理"])
 api_router.include_router(model_execution.router, prefix="/v1/model-execution", tags=["模型执行"])
 api_router.include_router(user_llm_preferences.router, prefix="/v1/llm-preferences", tags=["LLM偏好"])
 

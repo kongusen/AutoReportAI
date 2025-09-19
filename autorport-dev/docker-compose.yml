@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-go/master/schema/compose-spec.json
 # ==========================================
 # AutoReportAI 开发环境 Docker Compose 配置
-# 基于 React Agent 架构 - 现代化微服务设计
+# 基于 DDD v2.0 架构 - 领域驱动设计
 # ==========================================
 
 services:
@@ -34,10 +34,10 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=database"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
-  # Redis缓存服务 - React Agent缓存支持
+  # Redis缓存服务 - DDD架构缓存支持
   # ==========================================
   redis:
     image: redis:7-alpine
@@ -61,10 +61,10 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=cache"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
-  # 后端API服务 - React Agent架构
+  # 后端API服务 - DDD v2.0架构
   # ==========================================
   backend:
     build:
@@ -126,13 +126,13 @@ services:
       - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
       - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
       
-      # React Agent系统配置
-      - REACT_AGENT_ENABLED=true
-      - REACT_AGENT_MAX_ITERATIONS=20
-      - REACT_AGENT_TIMEOUT=300
-      - REACT_AGENT_VERBOSE=true
-      - REACT_AGENT_DEBUG_STEPS=true
-      - REACT_AGENT_CACHE_ENABLED=true
+      # Agent系统配置 - 基础设施层技术服务
+      - AGENT_ENGINE=new
+      - NEW_AGENT_MODE=local_stub
+      - NEW_AGENT_TIMEOUT=60
+      - NEW_AGENT_MAX_CONCURRENCY=10
+      - NEW_AGENT_MAX_RETRIES=3
+      - AGENT_SYSTEM_ENABLED=true
       
       # LLM配置
       - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-openai}
@@ -141,26 +141,20 @@ services:
       - LLM_TEMPERATURE=0.1
       - LLM_MAX_TOKENS=4096
       
-      # LlamaIndex配置 - React Agent核心
-      - LLAMAINDEX_CACHE_DIR=./cache/llamaindex
-      - LLAMAINDEX_ENABLE_CACHE=true
-      - EMBEDDING_MODEL=text-embedding-ada-002
-      - VECTOR_STORE_TYPE=simple
-      - LLAMAINDEX_DEBUG=true
-      
-      # React Agent架构配置
-      - REACT_AGENT_ARCHITECTURE=enabled
-      - INTELLIGENT_PLACEHOLDER_SERVICE=enabled
-      - NOTIFICATION_SERVICE=react_agent
-      - FILE_STORAGE_SERVICE=modern
-      - TEMPLATE_SERVICE=react_agent
+      # DDD架构服务配置
+      - DDD_ARCHITECTURE_ENABLED=true
+      - APPLICATION_SERVICE_LAYER=enabled
+      - DOMAIN_SERVICE_LAYER=enabled
+      - INFRASTRUCTURE_SERVICE_LAYER=enabled
+      - UNIFIED_API_RESPONSE=enabled
+      - TRANSACTIONAL_APPLICATION_SERVICE=enabled
       
       # 缓存系统配置
       - CACHE_SYSTEM_ENABLED=true
       - CONTEXT_CACHE_ENABLED=true
       - EXECUTION_CACHE_ENABLED=true
       - RESULT_CACHE_ENABLED=true
-      - REACT_AGENT_CACHE_TTL=3600
+      - CACHE_DEFAULT_EXPIRE=3600
       
       # 实时系统配置
       - WEBSOCKET_ENABLED=true
@@ -185,8 +179,8 @@ services:
       
       # 监控配置
       - ENABLE_PERFORMANCE_MONITORING=true
-      - REACT_AGENT_MONITORING=true
-      - REACT_AGENT_METRICS=true
+      - ENABLE_MONITORING=true
+      - DDD_METRICS_ENABLED=true
       
       # 开发配置
       - SQLALCHEMY_ECHO=false
@@ -221,10 +215,10 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=backend"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
-  # Celery Worker服务 - React Agent任务处理
+  # Celery Worker服务 - DDD架构任务处理
   # ==========================================
   celery-worker:
     build:
@@ -277,21 +271,21 @@ services:
       - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
       - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
       
-      # React Agent系统配置
-      - REACT_AGENT_ENABLED=true
-      - REACT_AGENT_MAX_ITERATIONS=20
-      - REACT_AGENT_TIMEOUT=300
-      - REACT_AGENT_VERBOSE=true
-      - REACT_AGENT_WORKER_MODE=true
+      # Agent系统配置 - Worker模式
+      - AGENT_ENGINE=new
+      - NEW_AGENT_MODE=local_stub
+      - NEW_AGENT_TIMEOUT=60
+      - AGENT_WORKER_MODE=true
+      - DDD_WORKER_ENABLED=true
       
       # LLM配置
       - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-openai}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LLM_TEMPERATURE=0.1
       
-      # LlamaIndex配置
-      - LLAMAINDEX_CACHE_DIR=./cache/llamaindex
-      - LLAMAINDEX_ENABLE_CACHE=true
+      # DDD Worker配置
+      - DDD_WORKER_CACHE_ENABLED=true
+      - WORKER_CACHE_DIR=./cache/worker
       
     volumes:
       - ./data/backend/logs:/app/logs
@@ -320,7 +314,7 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=celery-worker"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
   # Celery Beat调度器
@@ -391,10 +385,10 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=celery-beat"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
-  # 前端服务 - React Agent UI
+  # 前端服务 - DDD架构 UI
   # ==========================================
   frontend:
     build:
@@ -420,10 +414,10 @@ services:
       - FORCE_COLOR=1
       # 时区配置
       - TZ=${TZ:-Asia/Shanghai}
-      # React Agent UI 特定配置
-      - NEXT_PUBLIC_REACT_AGENT_UI=enabled
-      - NEXT_PUBLIC_INTELLIGENT_COMPONENTS=enabled
-      - NEXT_PUBLIC_REALTIME_UPDATES=enabled
+      # DDD架构 UI 特定配置
+      - NEXT_PUBLIC_DDD_ARCHITECTURE=enabled
+      - NEXT_PUBLIC_UNIFIED_API=enabled
+      - NEXT_PUBLIC_TYPE_SAFE_API=enabled
       - NEXT_PUBLIC_APP_TIMEZONE=${APP_TIMEZONE:-Asia/Shanghai}
       # 前端容器时区配置
       - TZ=${TZ:-Asia/Shanghai}
@@ -444,7 +438,7 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=frontend"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
   # ==========================================
   # Minio对象存储服务 - 默认启动
@@ -477,7 +471,7 @@ services:
       - "project=autoreportai"
       - "environment=development"
       - "service=minio"
-      - "architecture=react_agent"
+      - "architecture=ddd_v2"
 
 
 # ==========================================

@@ -41,9 +41,9 @@ if os.getenv("SERVICES_LIGHT_IMPORT") != "1":
     # 核心服务导入 - 基于Agent系统架构
     # =============================================================================
 
-    # Agent系统 - 核心编排引擎
-    from .infrastructure.agents import execute_agent_task
-    from .infrastructure.agents.core.orchestration import AgentCoordinator
+    # Agent系统 - 新的简化架构（旧函数已移除）
+    # from .infrastructure.agents import execute_agent_task
+    # from .infrastructure.agents.core.orchestration import AgentCoordinator
 
     # 数据服务
     from .data.processing.analysis import DataAnalysisService
@@ -74,8 +74,8 @@ if os.getenv("SERVICES_LIGHT_IMPORT") != "1":
         # =========================================================================
         # Agent系统核心服务
         # =========================================================================
-        "execute_agent_task",
-        "AgentCoordinator",
+        # "execute_agent_task", -- removed
+        # "AgentCoordinator", -- removed
         
         # =========================================================================
         # 核心业务服务

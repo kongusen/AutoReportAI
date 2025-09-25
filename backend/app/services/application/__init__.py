@@ -54,12 +54,17 @@ from .services import (
     ContextAwareApplicationService
 )
 
-# 上下文构建器
+# 上下文构建器 - 核心三大构建器
 from .context import (
-    TimeContextBuilder,
-    BusinessContextBuilder,
-    DocumentContextBuilder
+    DataSourceContextBuilder,
+    TemplateContextBuilder,
+    TaskDrivenContextBuilder,
+    ContextCoordinator,
+    Context
 )
+
+# Agent Input 构建与桥接
+from .agent_input import AgentInputBridge, AgentInputBuilder
 
 __all__ = [
     # 基础架构
@@ -94,9 +99,14 @@ __all__ = [
     "ContextAwareApplicationService",
     
     # 上下文构建器
-    "TimeContextBuilder",
-    "BusinessContextBuilder",
-    "DocumentContextBuilder",
+    "DataSourceContextBuilder",
+    "TemplateContextBuilder",
+    "TaskDrivenContextBuilder",
+    "ContextCoordinator",
+    "Context",
+    # 桥接服务
+    "AgentInputBridge",
+    "AgentInputBuilder",
 ]
 
 # 自动注册核心应用服务

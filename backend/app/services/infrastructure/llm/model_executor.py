@@ -136,19 +136,32 @@ class ModelExecutor:
                 stream_id=stream_id,
                 correlation_id=correlation_id
             )
-            
-            # 选择模型
+
+            # 选择模型 - 使用数据库驱动的选择
+            from .pure_database_manager import select_model_for_user
             db = SessionLocal()
+
             try:
-                selection = self.selector.select_model_for_user(
+                selection_dict = await select_model_for_user(
                     user_id=user_id,
-                    task_requirement=task_requirement,
-                    db=db
+                    task_type=task_requirement.task_type,
+                    complexity=task_requirement.complexity_level
                 )
-                
+
+                # 转换为 ModelSelection 格式
+                selection = ModelSelection(
+                    model_id=1,  # 临时ID
+                    model_name=selection_dict["model"],
+                    model_type="reasoning" if "claude" in selection_dict["model"] else "general",
+                    server_id=1,  # 临时ID
+                    server_name=selection_dict["provider"],
+                    provider_type=selection_dict["provider"],
+                    reasoning=selection_dict["reasoning"]
+                )
+
                 if not selection:
                     raise Exception("未找到可用的模型")
-                
+
                 # 发送模型选择结果
                 yield create_streaming_message(
                     UnifiedMessageType.LLM_STREAM_DELTA,
@@ -160,7 +173,7 @@ class ModelExecutor:
                     stream_id=stream_id,
                     correlation_id=correlation_id
                 )
-                
+
                 # 模拟流式执行（实际应该调用真实的流式API）
                 await self._simulate_streaming_execution(
                     selection=selection,
@@ -169,10 +182,10 @@ class ModelExecutor:
                     correlation_id=correlation_id,
                     streaming_ctx=streaming_ctx
                 )
-                
+
             finally:
                 db.close()
-            
+
             # 发送完成信号
             yield create_streaming_message(
                 UnifiedMessageType.COMPLETION,
@@ -303,11 +316,24 @@ class ModelExecutor:
             should_close_db = False
         
         try:
-            # 1. 选择最适合的模型
-            selection = self.selector.select_model_for_user(
+            # 1. 选择最适合的模型 - 使用数据库驱动的选择
+            from .pure_database_manager import select_model_for_user
+
+            selection_dict = await select_model_for_user(
                 user_id=user_id,
-                task_requirement=task_requirement,
-                db=db
+                task_type=task_requirement.task_type,
+                complexity=task_requirement.complexity_level
+            )
+
+            # 转换为 ModelSelection 格式 - 使用真实的数据库ID
+            selection = ModelSelection(
+                model_id=selection_dict.get("model_id", 1),  # 使用真实model_id
+                model_name=selection_dict["model"],
+                model_type="reasoning" if "claude" in selection_dict["model"] else "general",
+                server_id=selection_dict.get("server_id", 1),  # 使用真实server_id
+                server_name=selection_dict["provider"],
+                provider_type=selection_dict["provider"],
+                reasoning=selection_dict["reasoning"]
             )
             
             if not selection:
@@ -319,7 +345,7 @@ class ModelExecutor:
             
             logger.info(f"为用户 {user_id} 选择模型: {selection.model_name} (理由: {selection.reasoning})")
             
-            # 2. 执行模型调用
+            # 2. 执行模型调用 - 使用正确的执行路径（真实API）
             result = await self._execute_model(
                 selection=selection,
                 prompt=prompt,
@@ -332,7 +358,7 @@ class ModelExecutor:
                 "selected_model": {
                     "model_id": selection.model_id,
                     "model_name": selection.model_name,
-                    "model_type": selection.model_type.value,
+                    "model_type": selection.model_type,
                     "server_name": selection.server_name,
                     "reasoning": selection.reasoning
                 }
@@ -426,6 +452,34 @@ class ModelExecutor:
             if should_close_db:
                 db.close()
     
+    async def _execute_model_direct(
+        self,
+        model_name: str,
+        provider: str,
+        prompt: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """直接执行模型调用，不依赖数据库查询"""
+
+        try:
+            # 根据提供商类型调用不同的实现
+            if provider == "anthropic":
+                return await self._call_anthropic_direct(model_name, prompt, **kwargs)
+            elif provider == "openai":
+                return await self._call_openai_direct(model_name, prompt, **kwargs)
+            else:
+                # 默认尝试OpenAI兼容格式
+                return await self._call_openai_direct(model_name, prompt, **kwargs)
+
+        except Exception as e:
+            logger.error(f"直接模型调用失败: {e}")
+
+            return {
+                "success": False,
+                "error": f"模型调用失败: {str(e)}",
+                "model_name": model_name
+            }
+
     async def _execute_model(
         self,
         selection: ModelSelection,
@@ -610,6 +664,66 @@ class ModelExecutor:
             logger.error(f"Anthropic兼容API调用失败: {e}")
             raise
     
+    async def _call_openai_direct(
+        self,
+        model_name: str,
+        prompt: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """直接调用OpenAI兼容API（模拟调用，返回假数据）"""
+
+        import time
+        import asyncio
+
+        # 模拟处理延迟
+        await asyncio.sleep(0.1)
+
+        start_time = time.time()
+        response_time = int((time.time() - start_time) * 1000)
+
+        # 不再返回硬编码的SQL，而是提示需要真实LLM服务
+        logger.warning("使用模拟OpenAI调用，无法生成真实SQL，需要配置真实LLM服务")
+
+        return {
+            "success": False,
+            "error": "mock_llm_service",
+            "message": "Using mock LLM service, please configure real LLM server for SQL generation",
+            "model": model_name,
+            "provider": "openai_mock",
+            "tokens_used": 0,
+            "response_time_ms": response_time
+        }
+
+    async def _call_anthropic_direct(
+        self,
+        model_name: str,
+        prompt: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """直接调用Anthropic兼容API（模拟调用，返回假数据）"""
+
+        import time
+        import asyncio
+
+        # 模拟处理延迟
+        await asyncio.sleep(0.2)
+
+        start_time = time.time()
+        response_time = int((time.time() - start_time) * 1000)
+
+        # 不再返回硬编码的SQL，而是提示需要真实LLM服务
+        logger.warning("使用模拟Anthropic调用，无法生成真实SQL，需要配置真实LLM服务")
+
+        return {
+            "success": False,
+            "error": "mock_llm_service",
+            "message": "Using mock LLM service, please configure real LLM server for SQL generation",
+            "model": model_name,
+            "provider": "anthropic_mock",
+            "tokens_used": 0,
+            "response_time_ms": response_time
+        }
+
     async def _call_custom_api(
         self,
         server: LLMServer,
@@ -618,17 +732,17 @@ class ModelExecutor:
         **kwargs
     ) -> Dict[str, Any]:
         """调用自定义API"""
-        
+
         # 实际的自定义API调用
         import httpx
         import time
-        
+
         start_time = time.time()
         headers = {
             "Authorization": f"Bearer {server.api_key}",
             "Content-Type": "application/json"
         }
-        
+
         # 根据服务器配置构建请求
         payload = {
             "prompt": prompt,
@@ -636,7 +750,7 @@ class ModelExecutor:
             "max_tokens": kwargs.get("max_tokens", 1000),
             "temperature": kwargs.get("temperature", 0.7)
         }
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -644,12 +758,12 @@ class ModelExecutor:
                     json=payload,
                     headers=headers
                 )
-                
+
                 response_time = int((time.time() - start_time) * 1000)
-                
+
                 if response.status_code == 200:
                     data = response.json()
-                    
+
                     return {
                         "success": True,
                         "result": data.get("text", data.get("response", "")),
@@ -661,7 +775,7 @@ class ModelExecutor:
                 else:
                     error_text = response.text
                     raise Exception(f"自定义API调用失败 (状态码: {response.status_code}): {error_text}")
-                        
+
         except Exception as e:
             logger.error(f"自定义API调用失败: {e}")
             raise

@@ -13,13 +13,26 @@ from typing import Dict, Any, Optional, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from typing import Any
 
 from ..deps import get_current_user
-# Updated imports for new agent architecture
-from ...services.infrastructure.agents.core.orchestration.coordinator import (
-    AgentCoordinator
+# Updated imports for new simplified agent architecture
+from ...services.infrastructure.agents import (
+    AgentFacade,
+    AgentInput,
+    PlaceholderSpec,
+    SchemaInfo,
+    TaskContext,
+    AgentConstraints
 )
-# from ...services.infrastructure.agents.core.tt_controller import TTEvent, TTEventType  # deprecated
+from ...core.container import Container
+from enum import Enum
+
+class CoordinationMode(Enum):
+    """协调模式 - 在新架构中简化处理"""
+    INTELLIGENT = "intelligent"
+    STANDARD = "standard"
+    SIMPLE = "simple"
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,25 +69,9 @@ class StreamEvent(BaseModel):
     progress: Optional[float] = Field(None, description="进度百分比")
 
 
-async def format_tt_event_for_stream(event: TTEvent) -> StreamEvent:
-    """将TTEvent格式化为前端流事件"""
-    
-    # 事件类型映射
-    event_type_mapping = {
-        TTEventType.UI_STATE_UPDATE: "ui_update",
-        TTEventType.STAGE_START: "stage_start", 
-        TTEventType.STAGE_COMPLETE: "stage_complete",
-        TTEventType.TOOL_EXECUTION_START: "tool_start",
-        TTEventType.TOOL_EXECUTION_COMPLETE: "tool_complete",
-        TTEventType.LLM_INTERACTION_START: "llm_start",
-        TTEventType.LLM_INTERACTION_COMPLETE: "llm_complete",
-        TTEventType.PROGRESS_UPDATE: "progress",
-        TTEventType.SQL_GENERATED: "sql_generated",
-        TTEventType.DATA_PREVIEW: "data_preview",
-        TTEventType.SYSTEM_ERROR: "error",
-        TTEventType.TASK_COMPLETE: "task_complete"
-    }
-    
+async def format_tt_event_for_stream(event: Any) -> StreamEvent:
+    """将通用事件格式化为前端流事件（去除对旧TTEvent类型的依赖）"""
+
     # 阶段映射
     phase_mapping = {
         "intent_understanding": "意图理解",
@@ -85,26 +82,36 @@ async def format_tt_event_for_stream(event: TTEvent) -> StreamEvent:
         "synthesis": "综合整合"
     }
     
-    event_type = event_type_mapping.get(event.type, "unknown")
+    # 兼容不同事件结构
+    raw_type = getattr(event, "type", None)
+    if raw_type is None and isinstance(event, dict):
+        raw_type = event.get("type")
+    event_type = str(getattr(raw_type, "value", raw_type or "unknown"))
     phase = None
     progress = None
     
     # 提取阶段和进度信息
-    if hasattr(event, 'data') and event.data:
-        stage_name = event.data.get('stage_name')
+    event_data = None
+    if hasattr(event, 'data'):
+        event_data = event.data
+    elif isinstance(event, dict):
+        event_data = event.get('data')
+
+    if isinstance(event_data, dict):
+        stage_name = event_data.get('stage_name')
         if stage_name:
             phase = phase_mapping.get(stage_name, stage_name)
         
         # 提取进度信息
-        if 'progress' in event.data:
-            progress = event.data['progress']
+        if 'progress' in event_data:
+            progress = event_data['progress']
         elif event_type == "stage_complete":
-            progress = event.data.get('completion_progress', None)
+            progress = event_data.get('completion_progress', None)
     
     return StreamEvent(
         event_type=event_type,
         timestamp=datetime.utcnow(),
-        data=event.data if hasattr(event, 'data') else {},
+        data=event_data or {},
         phase=phase,
         progress=progress
     )
@@ -125,29 +132,54 @@ async def agent_task_stream_generator(
         }
         coordination_mode = mode_mapping.get(task_request.coordination_mode, CoordinationMode.INTELLIGENT)
         
-        # 创建协调器
-        coordinator = UniversalAgentCoordinator(coordination_mode=coordination_mode)
-        
+        # 创建新的Agent系统组件
+        container = Container()
+        agent_facade = AgentFacade(container)
+
         # 发送开始事件
         start_event = StreamEvent(
             event_type="task_start",
             data={
                 "task_description": task_request.task_description,
                 "mode": task_request.coordination_mode,
-                "streaming_enabled": task_request.enable_streaming
+                "streaming_enabled": task_request.enable_streaming,
+                "agent_version": "2.0-simplified"
             }
         )
         yield f"data: {start_event.json()}\n\n"
-        
-        # 如果启用流式输出，我们需要修改协调器以支持流式事件
-        if task_request.enable_streaming:
-            # 执行智能任务（这里我们需要修改以支持流式输出）
-            result = await coordinator.execute_intelligent_task(
-                task_description=task_request.task_description,
-                context_data=task_request.context_data,
-                user_id=user_id,
-                coordination_mode=coordination_mode
+
+        # 构建Agent输入
+        agent_input = AgentInput(
+            user_prompt=task_request.task_description,
+            placeholder=PlaceholderSpec(
+                id=f"stream_task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                description=task_request.task_description,
+                type="stream_task"
+            ),
+            schema=SchemaInfo(
+                tables=task_request.context_data.get("tables", []),
+                columns=task_request.context_data.get("columns", {})
+            ),
+            context=TaskContext(
+                task_time=int(datetime.now().timestamp()),
+                timezone="Asia/Shanghai"
+            ),
+            constraints=AgentConstraints(
+                sql_only=task_request.context_data.get("sql_only", False),
+                output_kind=task_request.context_data.get("output_kind", "analysis")
             )
+        )
+
+        # 发送处理中事件
+        processing_event = StreamEvent(
+            event_type="task_processing",
+            data={"phase": "agent_execution", "message": "正在执行Agent任务..."}
+        )
+        yield f"data: {processing_event.json()}\n\n"
+
+        # 执行Agent任务
+        if task_request.enable_streaming:
+            result = await agent_facade.execute(agent_input)
             
             # 模拟阶段进度事件（在实际实现中，这应该来自TT控制循环）
             phases = [
@@ -191,13 +223,8 @@ async def agent_task_stream_generator(
         
         else:
             # 非流式模式，直接执行
-            result = await coordinator.execute_intelligent_task(
-                task_description=task_request.task_description,
-                context_data=task_request.context_data,
-                user_id=user_id,
-                coordination_mode=coordination_mode
-            )
-        
+            result = await agent_facade.execute(agent_input)
+
         # 发送最终结果
         final_event = StreamEvent(
             event_type="task_complete",
@@ -205,27 +232,26 @@ async def agent_task_stream_generator(
             data={
                 "success": result.success,
                 "result": result.result,
-                "task_id": result.task_id,
-                "execution_time": result.execution_time,
-                "phases_completed": [p.value for p in result.phases_completed],
-                "metadata": result.metadata
+                "task_id": f"agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "execution_time": 0.0,  # TODO: 添加执行时间统计
+                "phases_completed": ["plan", "tool", "observe", "finalize"],
+                "metadata": result.metadata or {}
             }
         )
         yield f"data: {final_event.json()}\n\n"
         
         # 如果有SQL生成，发送SQL预览事件
-        if (task_request.sql_preview and 
-            result.success and 
-            result.metadata and 
-            result.metadata.get('scenario') in ['sql_generation', 'data_analysis']):
-            
+        if (task_request.sql_preview and result.success and
+            "SELECT" in str(result.result).upper()):
+
             sql_event = StreamEvent(
                 event_type="sql_generated",
                 data={
-                    "sql_query": "SELECT * FROM users WHERE DATE(created_at) = '2025-09-14'",  # 示例
-                    "query_explanation": "根据上下文生成的用户数据查询",
-                    "estimated_rows": 1500,
-                    "complexity": "simple"
+                    "sql_query": result.result,
+                    "query_explanation": "基于新Agent系统生成的SQL查询",
+                    "estimated_rows": 1000,  # 模拟估算
+                    "complexity": "standard",
+                    "agent_version": "2.0-simplified"
                 }
             )
             yield f"data: {sql_event.json()}\n\n"
@@ -242,7 +268,7 @@ async def agent_task_stream_generator(
         yield f"data: {error_event.json()}\n\n"
 
 
-@router.post("/execute-stream")
+@router.post("/execute-stream", deprecated=True)
 async def execute_agent_task_stream(
     task_request: AgentTaskRequest,
     current_user = Depends(get_current_user)
@@ -258,23 +284,25 @@ async def execute_agent_task_stream(
     - 错误处理
     """
     
-    try:
-        return StreamingResponse(
-            agent_task_stream_generator(task_request, str(current_user.id)),
-            media_type="text/plain",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
+    # 已废弃：请改用 /api/agent/run-async + /api/agent/run-async/{task_id}/stream
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": True,
+            "message": "接口已废弃，请改用异步运行与SSE流式监控",
+            "code": "API_DEPRECATED",
+            "replacement": {
+                "start": "POST /api/agent/run-async",
+                "status": "GET /api/agent/run-async/{task_id}/status",
+                "stream": "GET /api/agent/run-async/{task_id}/stream"
             }
-        )
-        
-    except Exception as e:
-        logger.error(f"Agent stream endpoint failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        },
+        headers={"X-Deprecated": "true"}
+    )
 
 
-@router.post("/execute", response_model=AgentTaskResponse)
+@router.post("/execute", response_model=AgentTaskResponse, deprecated=True)
 async def execute_agent_task(
     task_request: AgentTaskRequest,
     current_user = Depends(get_current_user)
@@ -285,41 +313,23 @@ async def execute_agent_task(
     提供传统的请求-响应模式，适用于不需要实时反馈的场景。
     """
     
-    try:
-        # 解析协调模式
-        mode_mapping = {
-            "intelligent": CoordinationMode.INTELLIGENT,
-            "standard": CoordinationMode.STANDARD,
-            "simple": CoordinationMode.SIMPLE
-        }
-        coordination_mode = mode_mapping.get(task_request.coordination_mode, CoordinationMode.INTELLIGENT)
-        
-        # 创建协调器并执行任务
-        coordinator = UniversalAgentCoordinator(coordination_mode=coordination_mode)
-        
-        result = await coordinator.execute_intelligent_task(
-            task_description=task_request.task_description,
-            context_data=task_request.context_data,
-            user_id=str(current_user.id),
-            coordination_mode=coordination_mode
-        )
-        
-        return AgentTaskResponse(
-            task_id=result.task_id,
-            success=result.success,
-            result=result.result,
-            error=result.error,
-            execution_time=result.execution_time,
-            phases_completed=[p.value for p in result.phases_completed],
-            metadata=result.metadata
-        )
-        
-    except Exception as e:
-        logger.error(f"Agent execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # 已废弃：请改用 /api/agent/run
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": True,
+            "message": "接口已废弃，请改用同步运行接口 /api/agent/run",
+            "code": "API_DEPRECATED",
+            "replacement": {
+                "run": "POST /api/agent/run"
+            }
+        },
+        headers={"X-Deprecated": "true"}
+    )
 
 
-@router.get("/status/{task_id}")
+@router.get("/status/{task_id}", deprecated=True)
 async def get_agent_task_status(
     task_id: str,
     current_user = Depends(get_current_user)
@@ -330,24 +340,23 @@ async def get_agent_task_status(
     查询特定任务的执行状态和结果。
     """
     
-    try:
-        # 这里需要实现任务状态查询
-        # 暂时返回示例数据
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "progress": 100,
-            "phases_completed": ["context_building", "strategy_generation", "tool_selection"],
-            "current_phase": None,
-            "result": {"message": "Task completed successfully"}
-        }
-        
-    except Exception as e:
-        logger.error(f"Get task status failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # 已废弃：请改用 /api/agent/run-async/{task_id}/status
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": True,
+            "message": "接口已废弃，请改用任务状态查询接口",
+            "code": "API_DEPRECATED",
+            "replacement": {
+                "status": "GET /api/agent/run-async/{task_id}/status"
+            }
+        },
+        headers={"X-Deprecated": "true"}
+    )
 
 
-@router.get("/coordinator/status")
+@router.get("/coordinator/status", deprecated=True)
 async def get_coordinator_status(
     current_user = Depends(get_current_user)
 ):
@@ -357,15 +366,17 @@ async def get_coordinator_status(
     返回协调器的整体运行状态和性能指标。
     """
     
-    try:
-        coordinator = UniversalAgentCoordinator()
-        status = coordinator.get_coordination_status()
-        
-        return {
-            "coordinator_status": status,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Get coordinator status failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # 已废弃：请改用 /api/agent/system/async-status
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "error": True,
+            "message": "接口已废弃，请改用异步系统状态接口",
+            "code": "API_DEPRECATED",
+            "replacement": {
+                "system_status": "GET /api/agent/system/async-status"
+            }
+        },
+        headers={"X-Deprecated": "true"}
+    )

@@ -134,7 +134,8 @@ from app.schemas.template_placeholder import (
 # from app.services.infrastructure.ai.core.tools import ToolChain, ToolContext
 # from app.services.infrastructure.ai.tools.sql_generator import AdvancedSQLGenerator
 # Updated imports for new agent architecture
-from app.services.infrastructure.agents.core.tools import ToolRegistry
+# Removed old agent tool registry import - using new agent system
+# from app.services.infrastructure.agents.core.tools import ToolRegistry
 # from app.services.infrastructure.agents.tools.data.sql_tool import SQLGeneratorTool
 
 logger = logging.getLogger(__name__)
@@ -372,11 +373,6 @@ async def intelligent_placeholder_analysis(
         
         logger.info(f"启动智能占位符分析: user_id={current_user.id}, session_id={session_id}")
         
-        # 1. 初始化增强工具链 - 已迁移到agents系统
-        # tool_chain = ToolChain()
-        # sql_generator = AdvancedSQLGenerator()
-        # tool_chain.register_tool(sql_generator)
-        
         # 使用新的agents系统
         from app.services.infrastructure.agents import analyze_placeholder
         
@@ -396,14 +392,6 @@ async def intelligent_placeholder_analysis(
             except Exception as e:
                 logger.warning(f"获取数据源信息失败: {e}")
         
-        # 3. 创建执行上下文 - 已迁移到agents系统
-        # context = ToolContext(
-        #     user_id=str(current_user.id),
-        #     task_id=f"placeholder_intel_{session_id}",
-        #     session_id=session_id,
-        #     data_source_info=data_source_info
-        # )
-        
         # 4. 准备智能分析输入
         context_data = {
             "user_id": str(current_user.id),
@@ -420,32 +408,29 @@ async def intelligent_placeholder_analysis(
             }
         }
         
-        # 5. 执行智能分析 - 使用agents系统
-        agent_result = await execute_agent_task(
-            task_name="intelligent_placeholder_analysis",
-            task_description=f"智能分析占位符: {placeholder_text}",
-            context_data=context_data,
-            target_agent="sql_generation_agent",
-            timeout_seconds=120
+        # 5. 执行智能分析 - 使用Domain服务（正确的DDD架构）
+        from app.services.domain.placeholder.intelligent_placeholder_service import analyze_single_placeholder
+        
+        agent_result = await analyze_single_placeholder(
+            placeholder_text=placeholder_text,
+            context_data=context_data
         )
         
-        # 从agent结果中提取信息
+        # 从Domain服务结果中提取信息
         analysis_results = []
         sql_preview = None
         confidence_score = 0.8
         
-        if agent_result.get("success", False):
-            result_data = agent_result.get("result", {})
-            if "sql" in result_data:
-                sql_preview = result_data["sql"]
-            elif "generated_sql" in result_data:
-                sql_preview = result_data["generated_sql"]
+        if agent_result.success:
+            if agent_result.generated_sql:
+                sql_preview = agent_result.generated_sql
             
             # 添加分析结果
             analysis_results.append({
                 "type": "ai_analysis",
                 "content": f"AI智能分析完成: {placeholder_text}",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "confidence_score": agent_result.confidence_score
             })
         
         # 6. 生成智能洞察
@@ -713,7 +698,7 @@ async def analyze_single_placeholder(
         # 使用领域服务进行业务分析
         logger.info(f"开始调用领域服务，placeholder_text类型: {type(placeholder_text)}, business_context类型: {type(business_context)}")
         analysis_result = await domain_service.analyze_placeholder_business_requirements(
-            placeholder_text, business_context
+            placeholder_text, business_context, user_id=str(current_user.id)
         )
         logger.info(f"领域服务返回结果类型: {type(analysis_result)}, 是否为字典: {isinstance(analysis_result, dict)}")
 
@@ -724,12 +709,29 @@ async def analyze_single_placeholder(
             raise ValueError(f"领域服务返回了非字典类型的结果: {type(analysis_result)}")
         technical_analysis = analysis_result.get("technical_analysis", {})
         
+        # 智能选择SQL建议：优先选择包含SELECT的SQL语句
+        sql_suggestions = technical_analysis.get("sql_suggestions", ["SELECT * FROM table"])
+        selected_sql = "SELECT * FROM table"  # 默认SQL
+        
+        if sql_suggestions:
+            # 优先选择包含SELECT的SQL语句
+            for suggestion in sql_suggestions:
+                if isinstance(suggestion, str) and suggestion.upper().strip().startswith('SELECT'):
+                    selected_sql = suggestion
+                    break
+            else:
+                # 如果没有找到SELECT语句，使用第一个建议
+                selected_sql = sql_suggestions[0]
+        
+        logger.info(f"SQL建议列表: {sql_suggestions}")
+        logger.info(f"选择的SQL: {selected_sql}")
+        
         result = {
             "status": "success",
             "placeholder_name": placeholder_name,
             "generated_sql": {
-                placeholder_name: technical_analysis.get("sql_suggestions", ["SELECT * FROM table"])[0] if technical_analysis.get("sql_suggestions") else "SELECT * FROM table",
-                "sql": technical_analysis.get("sql_suggestions", ["SELECT * FROM table"])[0] if technical_analysis.get("sql_suggestions") else "SELECT * FROM table",
+                placeholder_name: selected_sql,
+                "sql": selected_sql,
             },
             "analysis_result": {
                 "description": "基于DDD领域服务的占位符分析",

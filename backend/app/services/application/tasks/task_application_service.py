@@ -22,7 +22,8 @@ from app.services.application.base_application_service import (
 )
 from app.services.application.tasks.task_execution_service import TaskExecutionService
 # Use lazy loading for domain services to avoid circular imports
-from app.services.infrastructure.task_queue.tasks import execute_report_task, validate_placeholders_task, scheduled_task_runner
+# Temporarily removed to fix circular imports
+# from app.services.infrastructure.task_queue.tasks import validate_placeholders_task, scheduled_task_runner
 from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.core.exceptions import ValidationError, NotFoundError
 from app.utils.time_context import TimeContextManager

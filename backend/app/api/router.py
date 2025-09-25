@@ -25,8 +25,9 @@ from app.api.endpoints import (
     model_execution,
     user_llm_preferences,
     
-    # Agent流式处理 - temporarily disabled due to missing components
-    # agent_stream,
+    # Agent流式处理
+    agent_stream,
+    agent_run,
     # sql_enhanced,
     
     # 系统管理
@@ -74,8 +75,13 @@ api_router.include_router(llm_monitor.router, prefix="/v1/llm-monitor", tags=["L
 api_router.include_router(llm_orchestration.router, prefix="/v1/llm-orchestration", tags=["LLM编排"])
 api_router.include_router(simple_model_selection.router, prefix="/v1/model-selection", tags=["模型选择"])
 
-# Agent流式处理API路由 - temporarily disabled due to missing components
-# api_router.include_router(agent_stream.router, prefix="/v1/agent", tags=["Agent流式处理"])
+# Agent API路由（版本化路径）
+api_router.include_router(agent_stream.router, prefix="/v1/agent", tags=["Agent流式处理（已废弃）"])
+api_router.include_router(agent_run.router, prefix="/v1/agent", tags=["Agent执行"])
+
+# Agent API路由（无版本别名，为生产稳定路径）
+# 提供 /api/agent/* 以匹配外部集成与示例文档
+api_router.include_router(agent_run.router, prefix="/agent", tags=["Agent执行（稳定别名）"])
 
 # SQL增强处理API路由 - temporarily disabled due to missing components
 # api_router.include_router(sql_enhanced.router, prefix="/v1/sql", tags=["SQL增强处理"])

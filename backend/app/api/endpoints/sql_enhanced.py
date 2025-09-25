@@ -23,10 +23,16 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..deps import get_current_user, get_db
-from ...services.infrastructure.agents.core.universal_agent_coordinator import (
-    UniversalAgentCoordinator, CoordinationMode
+# Updated imports for new simplified agent architecture
+from ...services.infrastructure.agents import (
+    AgentFacade,
+    AgentInput,
+    PlaceholderSpec,
+    SchemaInfo,
+    TaskContext,
+    AgentConstraints
 )
-from ...services.infrastructure.agents.tools.data.sql_tool import SQLGeneratorTool
+from ...core.container import Container
 from ...models.data_source import DataSource
 
 router = APIRouter()

@@ -68,9 +68,57 @@ async def ask_agent_for_user(
     agent_type: str = "general",
     context: Optional[str] = None,
     task_type: str = "general",
-    complexity: str = "medium"
+    complexity: str = "medium",
+    enable_agent_mode: bool = True,
+    **kwargs
 ) -> str:
-    """Agent友好的问答接口 - 需要用户ID"""
+    """
+    Agent友好的问答接口 - 统一入口
+    
+    Args:
+        user_id: 用户ID
+        question: 问题
+        agent_type: Agent类型
+        context: 上下文
+        task_type: 任务类型
+        complexity: 复杂度
+        enable_agent_mode: 是否启用Agent模式（工具调用、ReAct等）
+        **kwargs: 额外参数（enable_tools, enable_react等）
+        
+    Returns:
+        响应文本或Agent响应结果
+    """
+    
+    # 如果启用Agent模式，使用Agent集成管理器
+    if enable_agent_mode:
+        try:
+            from .agent_integrated_manager import ask_agent_enhanced
+            
+            result = await ask_agent_enhanced(
+                user_id=user_id,
+                question=question,
+                agent_type=agent_type,
+                context=context,
+                task_type=task_type,
+                complexity=complexity,
+                enable_tools=kwargs.get("enable_tools", True),
+                enable_react=kwargs.get("enable_react", True),
+                session_id=kwargs.get("session_id")
+            )
+            
+            # 如果调用者需要完整结果，返回字典；否则返回文本
+            if kwargs.get("return_full_result", False):
+                return result
+            else:
+                return result["response"]
+                
+        except Exception as e:
+            # Agent模式失败，回退到基础模式
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Agent模式执行失败，回退到基础模式: {e}")
+    
+    # 基础模式：使用原始ask_agent
     return await ask_agent(
         user_id=user_id,
         question=question,

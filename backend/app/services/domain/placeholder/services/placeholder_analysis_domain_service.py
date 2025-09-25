@@ -30,7 +30,8 @@ class PlaceholderAnalysisDomainService:
     async def analyze_placeholder_business_requirements(
         self,
         placeholder_text: str,
-        business_context: Dict[str, Any]
+        business_context: Dict[str, Any],
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         分析占位符的业务需求
@@ -47,7 +48,7 @@ class PlaceholderAnalysisDomainService:
         self.logger.info(f"[领域服务] 分析占位符业务需求: {placeholder_text}")
         
         # 1. 调用基础设施层进行技术分析
-        technical_analysis = await self._get_technical_analysis(placeholder_text)
+        technical_analysis = await self._get_technical_analysis(placeholder_text, user_id, business_context)
         
         # 2. 基于技术分析结果进行业务分析
         business_type = self._identify_business_type(placeholder_text, technical_analysis)
@@ -71,7 +72,7 @@ class PlaceholderAnalysisDomainService:
         
         return requirements
     
-    async def _get_technical_analysis(self, placeholder_text: str) -> Dict[str, Any]:
+    async def _get_technical_analysis(self, placeholder_text: str, user_id: Optional[str] = None, business_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         通过基础设施层获取技术分析
         
@@ -82,7 +83,12 @@ class PlaceholderAnalysisDomainService:
             from app.services.infrastructure.agents import analyze_placeholder_technical
             
             self.logger.info(f"[领域服务] 调用基础设施层agent进行技术分析")
-            technical_result = await analyze_placeholder_technical(placeholder_text)
+            # 传递业务上下文给基础设施层
+            technical_context = {
+                "business_context": business_context or {},
+                "placeholder_text": placeholder_text
+            }
+            technical_result = await analyze_placeholder_technical(placeholder_text, technical_context=technical_context, user_id=user_id)
             
             if technical_result.get("success"):
                 return technical_result

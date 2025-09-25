@@ -1,6 +1,6 @@
 """
 纯数据库驱动的LLM管理器 - React Agent系统核心
-完全基于数据库的LLM管理，无配置文件依赖
+从数据库读取 LLM 服务器/模型，支持按任务阶段与复杂度的策略化选择
 """
 
 import logging
@@ -8,6 +8,10 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from .types import TaskRequirement, ModelSelection, LLMExecutionContext
+from app.db.session import get_db_session
+from app.crud.crud_llm_server import crud_llm_server
+from app.crud.crud_llm_model import crud_llm_model
+from app.models.llm_server import LLMModel, ModelType
 
 logger = logging.getLogger(__name__)
 
@@ -17,26 +21,6 @@ class PureDatabaseLLMManager:
     
     def __init__(self):
         self.is_initialized = False
-        self.available_models = {
-            "claude-3-5-sonnet-20241022": {
-                "provider": "anthropic",
-                "capabilities": ["reasoning", "coding", "analysis"],
-                "max_tokens": 200000,
-                "cost_per_token": 0.003
-            },
-            "gpt-4": {
-                "provider": "openai", 
-                "capabilities": ["reasoning", "coding", "creative"],
-                "max_tokens": 128000,
-                "cost_per_token": 0.02
-            },
-            "gpt-3.5-turbo": {
-                "provider": "openai",
-                "capabilities": ["general", "simple_reasoning"],
-                "max_tokens": 4000,
-                "cost_per_token": 0.002
-            }
-        }
     
     async def initialize(self):
         """初始化管理器"""
@@ -50,44 +34,147 @@ class PureDatabaseLLMManager:
         task_type: str,
         complexity: str = "medium",
         constraints: Optional[Dict[str, Any]] = None,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        stage: Optional[str] = None,
+        output_kind: Optional[str] = None,
+        tool_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """为用户选择最佳模型"""
         await self.initialize()
-        
+
         constraints = constraints or {}
-        max_cost = constraints.get("max_cost", 0.05)
-        preferred_providers = constraints.get("preferred_providers", ["anthropic", "openai"])
-        
-        # 简单的模型选择逻辑
-        if task_type == "reasoning" and complexity in ["medium", "complex"]:
-            return {
-                "model": "claude-3-5-sonnet-20241022",
-                "provider": "anthropic",
-                "confidence": 0.95,
-                "reasoning": "Claude Sonnet最适合复杂推理任务"
-            }
-        elif task_type == "coding":
-            return {
-                "model": "gpt-4",
-                "provider": "openai",
-                "confidence": 0.9,
-                "reasoning": "GPT-4在代码生成方面表现优秀"
-            }
-        elif complexity == "simple":
-            return {
-                "model": "gpt-3.5-turbo",
-                "provider": "openai",
-                "confidence": 0.8,
-                "reasoning": "简单任务使用GPT-3.5即可满足需求"
-            }
+        need_json = constraints.get("json") is True
+
+        # 记录模型选择上下文
+        context = {
+            "user_id": user_id,
+            "task_type": task_type,
+            "stage": stage,
+            "complexity": complexity,
+            "output_kind": output_kind,
+            "tool_name": tool_name,
+            "need_json": need_json,
+            "agent_id": agent_id
+        }
+
+        logger.info(f"🤖 [ModelSelection] 开始模型选择: {context}")
+
+        # 策略：确定期望的模型类型（default/think）
+        desired_type = ModelType.DEFAULT.value
+        strategy_reasons = []
+
+        if task_type in ("plan", "finalize"):
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append("高级任务类型(plan/finalize)")
+        elif complexity in ("high", "complex"):
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append("高复杂度任务")
+        elif need_json:
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append("需要结构化JSON输出")
+        elif output_kind == "json":
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append("输出类型为JSON")
+        elif stage in ("plan", "finalize", "think"):
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append(f"思考阶段({stage})")
         else:
-            return {
-                "model": "gpt-4",
-                "provider": "openai",
-                "confidence": 0.85,
-                "reasoning": "默认使用GPT-4处理中等复杂度任务"
+            strategy_reasons.append("默认任务类型")
+
+        logger.info(f"🎯 [ModelSelection] 选择策略: {desired_type} 模型，原因: {'; '.join(strategy_reasons)}")
+
+        # 查询 DB 中活跃且健康的模型，优先当前用户的服务器
+        with get_db_session() as db:
+            # 先找该用户的健康服务器上的健康模型
+            models = db.query(LLMModel).join(LLMModel.server).filter(
+                LLMModel.is_active == True,
+                LLMModel.is_healthy == True,
+                LLMModel.model_type == desired_type,
+                LLMModel.server.has(is_active=True, is_healthy=True, user_id=user_id)
+            ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
+
+            # 记录初始查询结果
+            user_models_count = len(models)
+            if models:
+                logger.info(f"🔍 [ModelSelection] 用户专属模型找到 {user_models_count} 个")
+            else:
+                logger.info("🔄 [ModelSelection] 用户专属模型未找到，回退到全局健康模型")
+
+            # 若该用户无可用模型，回退到任意健康服务器
+            if not models:
+                models = db.query(LLMModel).join(LLMModel.server).filter(
+                    LLMModel.is_active == True,
+                    LLMModel.is_healthy == True,
+                    LLMModel.model_type == desired_type,
+                    LLMModel.server.has(is_active=True, is_healthy=True)
+                ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
+
+                global_models_count = len(models)
+                if models:
+                    logger.info(f"🌐 [ModelSelection] 全局健康模型找到 {global_models_count} 个")
+                else:
+                    logger.warning(f"⚠️ [ModelSelection] 指定类型({desired_type})健康模型未找到，进一步回退")
+
+            if not models:
+                logger.warning(f"🚨 [ModelSelection] 没有健康的{desired_type}模型，回退到任意活跃模型")
+                models = db.query(LLMModel).join(LLMModel.server).filter(
+                    LLMModel.is_active == True,
+                    LLMModel.server.has(is_active=True)
+                ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
+
+                fallback_count = len(models)
+                if models:
+                    logger.warning(f"🆘 [ModelSelection] 回退模型找到 {fallback_count} 个")
+                else:
+                    logger.error("💥 [ModelSelection] 无任何可用模型!")
+
+            if not models:
+                logger.error(f"💥 [ModelSelection] 模型选择失败，context: {context}")
+                return {
+                    "model": None,
+                    "provider": None,
+                    "confidence": 0.0,
+                    "reasoning": "没有可用的LLM模型",
+                    "fallback_used": True,
+                    "selection_context": context
+                }
+
+            m = models[0]
+            s = m.server
+
+            # 详细的选择结果日志
+            selection_info = {
+                "model_id": m.id,
+                "model_name": m.name,
+                "model_type": m.model_type,
+                "server_id": s.id,
+                "server_name": s.name,
+                "provider_type": s.provider_type,
+                "is_healthy": m.is_healthy,
+                "is_user_owned": s.user_id == user_id,
+                "priority": m.priority
             }
+
+            confidence = 0.9 if m.model_type == ModelType.THINK.value else 0.8
+            reasoning = f"选择{m.model_type}模型: {m.name} @ {s.name}"
+
+            logger.info(f"✅ [ModelSelection] 模型选择完成: {selection_info}, confidence={confidence}")
+
+            result = {
+                "model_id": m.id,
+                "server_id": s.id,
+                "model": m.name,
+                "provider": s.provider_type,
+                "model_type": m.model_type,
+                "server_name": s.name,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "selection_context": context,
+                "selection_info": selection_info,
+                "fallback_used": user_models_count == 0
+            }
+
+            return result
     
     async def get_user_available_models(
         self,
@@ -97,18 +184,25 @@ class PureDatabaseLLMManager:
     ) -> Dict[str, Any]:
         """获取用户可用的模型列表"""
         await self.initialize()
-        
-        available = {}
-        for model_id, model_info in self.available_models.items():
-            if provider_name and model_info["provider"] != provider_name:
-                continue
-            available[model_id] = model_info
-        
-        return {
-            "available_models": available,
-            "total_count": len(available),
-            "user_id": user_id
-        }
+        with get_db_session() as db:
+            q = db.query(LLMModel).join(LLMModel.server).filter(
+                LLMModel.is_active == True,
+                LLMModel.server.has(is_active=True)
+            )
+            if provider_name:
+                q = q.filter(LLMModel.provider_name == provider_name)
+            models = q.order_by(LLMModel.priority.asc()).all()
+            available = {m.name: {
+                "provider": m.provider_name,
+                "type": m.model_type,
+                "server": m.server.name,
+                "healthy": m.is_healthy
+            } for m in models}
+            return {
+                "available_models": available,
+                "total_count": len(available),
+                "user_id": user_id
+            }
     
     async def get_user_preferences(self, user_id: str) -> Optional[Dict[str, Any]]:
         """获取用户LLM偏好"""
@@ -147,13 +241,15 @@ class PureDatabaseLLMManager:
     
     def get_service_info(self) -> Dict[str, Any]:
         """获取服务信息"""
-        return {
-            "service_type": "pure_database_llm_manager",
-            "version": "1.0.0",
-            "capabilities": ["model_selection", "user_preferences", "usage_tracking"],
-            "supported_providers": ["anthropic", "openai"],
-            "total_models": len(self.available_models)
-        }
+        with get_db_session() as db:
+            total_models = db.query(LLMModel).count()
+            return {
+                "service_type": "pure_database_llm_manager",
+                "version": "1.1.0",
+                "capabilities": ["model_selection", "user_preferences", "usage_tracking"],
+                "supported_providers": ["anthropic", "openai", "custom"],
+                "total_models": total_models
+            }
 
 
 # 全局管理器实例

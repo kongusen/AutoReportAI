@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { useToast } from '@/hooks/useToast'
+import AgentService, { AgentTaskRequest, AgentRunRequest } from '@/services/agentService'
 
 interface AgentExecutionEvent {
   event_type: string
@@ -186,88 +187,98 @@ export default function AgentStreamingExecution({
 
     try {
       if (enableStreaming) {
-        // 流式执行
-        const response = await fetch('/api/v1/agent/execute-stream', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: JSON.stringify({
-            task_description: taskDescription,
-            context_data: {},
-            coordination_mode: coordinationMode,
-            enable_streaming: true,
-            sql_preview: sqlPreview
-          })
-        })
+        // 使用新的异步流式执行架构
+        addLog('info', '正在启动异步Agent任务...', '初始化')
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+        const agentRequest: AgentTaskRequest = {
+          task_description: taskDescription,
+          context_data: {},
+          coordination_mode: coordinationMode as any,
+          enable_streaming: true,
+          sql_preview: sqlPreview
         }
 
-        // 创建EventSource来接收流式数据
-        const reader = response.body?.getReader()
-        const decoder = new TextDecoder()
+        // 使用兼容方法启动异步任务
+        const taskResponse = await AgentService.executeStreamCompat(agentRequest)
 
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
+        if (taskResponse.success && taskResponse.task_id) {
+          addLog('success', `任务已启动: ${taskResponse.task_id}`, '任务启动')
 
-            const chunk = decoder.decode(value)
-            const lines = chunk.split('\n')
+          // 创建EventSource连接
+          const token = localStorage.getItem('authToken') || localStorage.getItem('token') || ''
+          const eventSource = AgentService.createAsyncTaskStream(taskResponse.task_id, token)
+          eventSourceRef.current = eventSource
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const eventData = JSON.parse(line.substring(6))
-                  handleAgentEvent(eventData)
-                } catch (e) {
-                  console.warn('解析事件数据失败:', e, line)
-                }
-              }
+          eventSource.onmessage = (event) => {
+            try {
+              const eventData = JSON.parse(event.data)
+              handleAgentEvent(eventData)
+            } catch (e) {
+              console.warn('解析事件数据失败:', e, event.data)
             }
           }
+
+          eventSource.onerror = (error) => {
+            console.error('EventSource error:', error)
+            addLog('error', 'SSE连接发生错误', currentPhase || '连接错误')
+            eventSource.close()
+            setIsExecuting(false)
+          }
+
+          // 监控任务状态
+          const statusInterval = setInterval(async () => {
+            try {
+              const status = await AgentService.getAsyncTaskStatus(taskResponse.task_id!)
+              if (status.status === 'completed' || status.status === 'failed') {
+                clearInterval(statusInterval)
+                if (eventSource) {
+                  eventSource.close()
+                }
+                setIsExecuting(false)
+              }
+            } catch (e) {
+              // 忽略状态查询错误，继续等待流式事件
+            }
+          }, 2000)
+
+          // 清理定时器
+          setTimeout(() => clearInterval(statusInterval), 300000) // 5分钟超时
+        } else {
+          throw new Error(taskResponse.error || '启动异步任务失败')
         }
       } else {
-        // 非流式执行
-        const response = await fetch('/api/v1/agent/execute', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: JSON.stringify({
-            task_description: taskDescription,
-            context_data: {},
-            coordination_mode: coordinationMode,
-            enable_streaming: false,
-            sql_preview: sqlPreview
-          })
-        })
+        // 非流式执行 - 使用兼容的同步接口
+        addLog('info', '正在执行同步Agent任务...', '同步执行')
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+        const agentRequest: AgentTaskRequest = {
+          task_description: taskDescription,
+          context_data: {},
+          coordination_mode: coordinationMode as any,
+          enable_streaming: false,
+          sql_preview: sqlPreview
         }
 
-        const result = await response.json()
+        const result = await AgentService.executeCompat(agentRequest)
+
         setExecutionResult(result)
         setProgress(100)
         setCurrentPhase('任务完成')
         addLog('success', '任务执行完成', '任务完成', result)
-        
+
         if (onExecutionComplete) {
           onExecutionComplete(result)
         }
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Agent执行失败:', error)
-      addLog('error', `执行失败: ${error}`, currentPhase || '错误')
-      showToast('Agent执行失败', 'error')
+      const errorMsg = error?.message || error?.toString() || 'Unknown error'
+      addLog('error', `执行失败: ${errorMsg}`, currentPhase || '错误')
+      showToast(`Agent执行失败: ${errorMsg}`, 'error')
     } finally {
-      setIsExecuting(false)
+      if (!enableStreaming) {
+        setIsExecuting(false)
+      }
     }
   }
 
@@ -310,6 +321,18 @@ export default function AgentStreamingExecution({
 
   return (
     <div className="space-y-6">
+      {/* API升级提示 */}
+      <Card className="p-4 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+        <div className="flex items-center space-x-2">
+          <Badge variant="outline" className="text-blue-600 border-blue-600">
+            API v2.0
+          </Badge>
+          <span className="text-sm text-blue-700 dark:text-blue-300">
+            现在使用稳定的无版本别名路由 (/api/agent/*) 和新的异步+流式架构
+          </span>
+        </div>
+      </Card>
+
       {/* 任务配置 */}
       <Card className="p-6">
         <h3 className="text-lg font-semibold mb-4">Agent任务配置</h3>

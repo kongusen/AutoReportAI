@@ -21,7 +21,8 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 # 使用统一AI门面
-from app.services.infrastructure.agents import execute_agent_task
+# Agent import removed - updated to use direct service calls
+# from app.services.infrastructure.agents import execute_agent_task
 
 logger = logging.getLogger(__name__)
 

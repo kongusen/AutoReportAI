@@ -23,7 +23,7 @@ class LLMMonitorWebSocketService:
     
     def __init__(self):
         self.monitoring_active = False
-        self.monitor_interval = 300  # 5分钟
+        self.monitor_interval = 900  # 15分钟
         self.monitor_task: Optional[asyncio.Task] = None
         self.last_health_states: Dict[str, bool] = {}
         

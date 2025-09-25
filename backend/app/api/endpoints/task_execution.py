@@ -21,10 +21,10 @@ from app.models.user import User
 from app.schemas.base import APIResponse
 from app import crud
 
-# 导入增强架构v3.0组件 - 已迁移到agents系统
-from app.services.infrastructure.agents import execute_agent_task
+# 导入增强架构v3.0组件 - 更新为新Agent系统
+# from app.services.infrastructure.agents import execute_agent_task  # removed
 # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
-from app.services.infrastructure.agents.core.tools import ToolRegistry
+# from app.services.infrastructure.agents.core.tools import ToolRegistry  # removed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

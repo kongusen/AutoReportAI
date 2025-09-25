@@ -400,11 +400,22 @@ class DorisConnector(BaseConnector):
         try:
             start_time = time.time()
             with self._get_mysql_cursor() as cursor:
-                cursor.execute(cleaned_sql, params)
+                # 检查参数和SQL的兼容性
+                if params and '%s' not in cleaned_sql:
+                    # SQL中没有占位符，但传递了参数 - 直接执行不带参数的SQL
+                    self.logger.warning(f"SQL中没有占位符但传递了参数，忽略参数: {params}")
+                    cursor.execute(cleaned_sql)
+                elif params:
+                    # SQL中有占位符，使用参数
+                    cursor.execute(cleaned_sql, params)
+                else:
+                    # 没有参数，直接执行
+                    cursor.execute(cleaned_sql)
+
                 results = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description]
                 execution_time = time.time() - start_time
-                
+
                 df = pd.DataFrame(results, columns=columns)
                 self.logger.info(f"✅ MySQL查询执行成功，耗时: {execution_time:.3f}秒，返回 {len(df)} 行")
                 return df

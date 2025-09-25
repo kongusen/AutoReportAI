@@ -11,9 +11,12 @@ from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
 from app.services.infrastructure.agents import (
-    get_agent_coordinator, 
-    execute_agent_task,
-    create_data_analysis_context
+    AgentFacade,
+    AgentInput,
+    PlaceholderSpec,
+    SchemaInfo,
+    TaskContext,
+    AgentConstraints
 )
 from app.core.exceptions import (
     ValidationError, 
@@ -236,31 +239,46 @@ class SchemaAnalysisService:
     
     async def _analyze_relationships_with_ai(self, schema_data: Dict[str, Any]) -> Dict[str, Any]:
         """使用纯数据库驱动AI分析表关系"""
-        
+
         # 构建分析提示
         analysis_prompt = self._build_relationship_analysis_prompt(schema_data)
-        
+
         try:
-            # 使用agents系统进行Schema分析
-            result = await execute_agent_task(
-                task_name="表关系分析",
-                task_description="分析数据库表结构和关系",
-                context_data={
-                    "placeholders": {
-                        "schema_data": schema_data,
-                        "analysis_type": "relationship_analysis",
-                        "user_id": self.user_id
-                    },
-                    "database_schemas": [{"table_name": "schema_analysis", "columns": [], "relationships": []}]
-                },
-                target_agent="data_analysis_agent"
+            # 使用新的Agent系统进行Schema分析
+            from app.core.container import Container
+            container = Container()
+            agent_facade = AgentFacade(container)
+
+            # 构建Agent输入
+            agent_input = AgentInput(
+                user_prompt=analysis_prompt,
+                placeholder=PlaceholderSpec(
+                    id="schema_relationship_analysis",
+                    description="分析数据库表结构和关系",
+                    type="analysis"
+                ),
+                schema=SchemaInfo(
+                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                ),
+                context=TaskContext(
+                    task_time=int(datetime.now().timestamp()),
+                    timezone="Asia/Shanghai"
+                ),
+                constraints=AgentConstraints(
+                    sql_only=False,
+                    output_kind="analysis"
+                )
             )
-            response = result.get("result", {}).get("analysis_result", "") if result.get("success") else ""
-            
+
+            # 执行Agent分析
+            result = await agent_facade.execute(agent_input)
+            response = result.result if result.success else ""
+
             # 完整解析AI响应
             parsed_result = self._parse_relationship_analysis_response(response, schema_data)
             return parsed_result
-            
+
         except Exception as e:
             self.logger.error(f"AI表关系分析失败: {e}")
             return {
@@ -272,30 +290,46 @@ class SchemaAnalysisService:
     
     async def _analyze_semantics_with_ai(self, schema_data: Dict[str, Any]) -> Dict[str, Any]:
         """使用纯数据库驱动AI分析业务语义"""
-        
+
         # 构建语义分析提示
         semantic_prompt = self._build_semantic_analysis_prompt(schema_data)
-        
+
         try:
-            # 使用agents系统进行语义分析
-            result = await execute_agent_task(
-                task_name="语义分析",
-                task_description="分析表结构的业务语义和数据质量",
-                context_data={
-                    "placeholders": {
-                        "schema_data": schema_data,
-                        "analysis_type": "semantic_analysis",
-                        "user_id": self.user_id
-                    }
-                },
-                target_agent="data_analysis_agent"
+            # 使用新的Agent系统进行语义分析
+            from app.core.container import Container
+            container = Container()
+            agent_facade = AgentFacade(container)
+
+            # 构建Agent输入
+            agent_input = AgentInput(
+                user_prompt=semantic_prompt,
+                placeholder=PlaceholderSpec(
+                    id="schema_semantic_analysis",
+                    description="分析表结构的业务语义和数据质量",
+                    type="analysis"
+                ),
+                schema=SchemaInfo(
+                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                ),
+                context=TaskContext(
+                    task_time=int(datetime.now().timestamp()),
+                    timezone="Asia/Shanghai"
+                ),
+                constraints=AgentConstraints(
+                    sql_only=False,
+                    output_kind="analysis"
+                )
             )
-            response = result.get("result", "") if isinstance(result, dict) else str(result)
-            
+
+            # 执行Agent分析
+            result = await agent_facade.execute(agent_input)
+            response = result.result if result.success else ""
+
             # 完整解析AI响应
             parsed_result = self._parse_semantic_analysis_response(response, schema_data)
             return parsed_result
-            
+
         except Exception as e:
             self.logger.error(f"AI语义分析失败: {e}")
             return {
@@ -308,31 +342,46 @@ class SchemaAnalysisService:
     
     async def _analyze_data_quality_with_ai(self, schema_data: Dict[str, Any]) -> Dict[str, Any]:
         """使用纯数据库驱动AI分析数据质量"""
-        
+
         # 构建数据质量分析提示
         quality_prompt = self._build_quality_analysis_prompt(schema_data)
-        
+
         try:
-            # 使用agents系统进行数据质量分析
-            result = await execute_agent_task(
-                task_name="数据质量分析",
-                task_description="分析表结构的数据质量和完整性",
-                context_data={
-                    "placeholders": {
-                        "schema_data": schema_data,
-                        "analysis_type": "data_quality_analysis",
-                        "user_id": self.user_id,
-                        "quality_metrics": ["data_completeness", "data_consistency", "data_accuracy"]
-                    }
-                },
-                target_agent="data_analysis_agent"
+            # 使用新的Agent系统进行数据质量分析
+            from app.core.container import Container
+            container = Container()
+            agent_facade = AgentFacade(container)
+
+            # 构建Agent输入
+            agent_input = AgentInput(
+                user_prompt=quality_prompt,
+                placeholder=PlaceholderSpec(
+                    id="schema_quality_analysis",
+                    description="分析表结构的数据质量和完整性",
+                    type="analysis"
+                ),
+                schema=SchemaInfo(
+                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                ),
+                context=TaskContext(
+                    task_time=int(datetime.now().timestamp()),
+                    timezone="Asia/Shanghai"
+                ),
+                constraints=AgentConstraints(
+                    sql_only=False,
+                    output_kind="analysis"
+                )
             )
-            response = result.get("result", "") if isinstance(result, dict) else str(result)
-            
+
+            # 执行Agent分析
+            result = await agent_facade.execute(agent_input)
+            response = result.result if result.success else ""
+
             # 完整解析AI响应
             parsed_result = self._parse_quality_analysis_response(response, schema_data)
             return parsed_result
-            
+
         except Exception as e:
             self.logger.error(f"AI质量分析失败: {e}")
             return {

@@ -12,40 +12,58 @@ from datetime import datetime
 @dataclass
 class TaskRequirement:
     """任务需求定义"""
-    complexity: str
-    domain: str
-    context_length: int
-    response_format: str
-    quality_level: str
+    task_type: str = "general"
+    complexity_level: str = "medium"
+    complexity: str = "medium"  # 保持兼容性
+    domain: str = "general"
+    context_length: int = 4000
+    response_format: str = "text"
+    quality_level: str = "standard"
+    requires_reasoning: bool = False
+    requires_tool_use: bool = False
+    max_tokens: int = 4000
+    temperature: float = 0.7
     
     def to_dict(self) -> Dict[str, Any]:
         return {
+            'task_type': self.task_type,
+            'complexity_level': self.complexity_level,
             'complexity': self.complexity,
             'domain': self.domain,
             'context_length': self.context_length,
             'response_format': self.response_format,
-            'quality_level': self.quality_level
+            'quality_level': self.quality_level,
+            'requires_reasoning': self.requires_reasoning,
+            'requires_tool_use': self.requires_tool_use,
+            'max_tokens': self.max_tokens,
+            'temperature': self.temperature
         }
 
 
 @dataclass
 class ModelSelection:
     """模型选择结果"""
-    server_id: int
     model_id: int
-    server_name: str
     model_name: str
+    model_type: str
+    server_id: int
+    server_name: str
+    provider_type: str
     reasoning: str
-    confidence: float
+    confidence: float = 0.8
+    fallback_model_id: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'server_id': self.server_id,
             'model_id': self.model_id,
-            'server_name': self.server_name,
             'model_name': self.model_name,
+            'model_type': self.model_type,
+            'server_id': self.server_id,
+            'server_name': self.server_name,
+            'provider_type': self.provider_type,
             'reasoning': self.reasoning,
-            'confidence': self.confidence
+            'confidence': self.confidence,
+            'fallback_model_id': self.fallback_model_id
         }
 
 

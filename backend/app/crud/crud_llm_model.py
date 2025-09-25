@@ -29,6 +29,12 @@ class CRUDLLMModel(CRUDBase[LLMModel, LLMModelCreate, LLMModelUpdate]):
                 LLMModel.is_active == True
             )
         ).order_by(LLMModel.priority.asc(), LLMModel.name.asc()).all()
+
+    def get_active_models(self, db: Session) -> List[LLMModel]:
+        """获取所有活跃模型"""
+        return db.query(self.model).filter(
+            LLMModel.is_active == True
+        ).order_by(LLMModel.priority.asc(), LLMModel.name.asc()).all()
     
     def get_by_name_and_server(
         self, 

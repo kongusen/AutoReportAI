@@ -884,7 +884,9 @@ async def generate_agent_based_intelligent_report_task(
         # 使用新的agents系统生成智能报告内容
         try:
             from app.api.utils.agent_context_helpers import create_report_generation_context
-            from app.services.infrastructure.agents import execute_agent_task
+            # Updated to use new Agent system
+            from app.services.infrastructure.agents import AgentFacade, AgentInput, PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
+            from app.core.container import Container
             
             # 创建报告生成上下文
             data_source_info = {

@@ -52,7 +52,7 @@ class RequestMetrics:
 class LimiterConfig:
     """限制器配置"""
     max_concurrent_requests: int = 3
-    min_interval_seconds: float = 1.0
+    min_interval_seconds: float = 2.0
     request_timeout_seconds: float = 120.0
     enable_rate_limiting: bool = True
     enable_concurrency_limiting: bool = True
@@ -241,7 +241,7 @@ _global_rate_limiter: Optional[LLMRateLimiter] = None
 
 def get_llm_rate_limiter(
     max_concurrent_requests: int = 3,
-    min_interval_seconds: float = 1.0,
+    min_interval_seconds: float = 2.0,
     request_timeout_seconds: float = 120.0
 ) -> LLMRateLimiter:
     """获取全局LLM速度限制器"""

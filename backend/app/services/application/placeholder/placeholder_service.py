@@ -18,11 +18,10 @@ from app.services.domain.placeholder.types import (
     PlaceholderAgent
 )
 
-# 基础设施层导入 - 使用我们新建的prompt系统
-from app.services.infrastructure.agents.core.prompts import PromptManager
-from app.services.infrastructure.agents.core.agent import AgentController
-from app.services.infrastructure.agents.core.tools import ToolExecutor
-from app.services.infrastructure.agents.types import ManagedContext
+# 基础设施层导入 - 使用现有的PTOF agent系统
+from app.services.infrastructure.agents.facade import AgentFacade
+from app.services.infrastructure.agents.tools.registry import ToolRegistry
+from app.core.container import Container
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,10 @@ class PlaceholderApplicationService:
     """
     
     def __init__(self):
-        # 基础设施组件
-        self.prompt_manager = PromptManager()
-        self.agent_controller = None  # 延迟初始化
-        self.tool_executor = None     # 延迟初始化
+        # 基础设施组件 - 使用现有的PTOF agent系统
+        self.container = Container()
+        self.agent_facade = AgentFacade(self.container)
+        self.tool_registry = ToolRegistry()
         
         # 业务状态
         self.is_initialized = False
@@ -74,62 +73,136 @@ class PlaceholderApplicationService:
     
     async def analyze_placeholder(self, request: PlaceholderAnalysisRequest) -> AsyncIterator[Dict[str, Any]]:
         """
-        分析占位符 - 业务流程编排
-        
-        使用新的prompt系统生成高质量的分析prompt
+        分析占位符 - 使用任务验证智能模式进行业务流程编排
+
+        结合SQL验证和PTAV回退机制，实现自动化运维
         """
         await self.initialize()
-        
-        # 1. 生成分析prompt
-        analysis_prompt = self.prompt_manager.sql_analysis(
-            business_command=request.business_command,
-            requirements=request.requirements,
-            target_objective=request.target_objective
-        )
-        
+
         yield {
             "type": "analysis_started",
             "placeholder_id": request.placeholder_id,
-            "prompt_generated": True,
+            "mode": "task_validation_intelligent",
             "timestamp": datetime.now().isoformat()
         }
-        
-        # 2. 创建分析上下文
-        from app.services.infrastructure.agents.types import ProcessedContext
-        processed_context = ProcessedContext(
-            content={
-                "business_command": request.business_command,
-                "requirements": request.requirements,
-                "target_objective": request.target_objective,
-                "context": request.context,
-                "data_source_info": request.data_source_info
+
+        try:
+            # 1. 构建Agent输入
+            from app.services.infrastructure.agents.types import AgentInput, PlaceholderInfo, SchemaInfo, TaskContext
+
+            # 提取数据源信息构建Schema
+            schema_info = SchemaInfo()
+            if request.data_source_info:
+                schema_info.database_name = request.data_source_info.get('database_name')
+                schema_info.host = request.data_source_info.get('host')
+                schema_info.port = request.data_source_info.get('port')
+                schema_info.username = request.data_source_info.get('username')
+                schema_info.password = request.data_source_info.get('password')
+
+            # 构建占位符信息
+            placeholder_info = PlaceholderInfo(
+                description=f"{request.business_command} - {request.requirements}",
+                type="placeholder_analysis"
+            )
+
+            agent_input = AgentInput(
+                user_prompt=f"占位符分析: {request.business_command}\n需求: {request.requirements}\n目标: {request.target_objective}",
+                placeholder=placeholder_info,
+                schema=schema_info,
+                context=TaskContext(
+                    task_time=int(datetime.now().timestamp()),
+                    timezone="Asia/Shanghai"
+                ),
+                task_driven_context={
+                    "placeholder_id": request.placeholder_id,
+                    "business_command": request.business_command,
+                    "requirements": request.requirements,
+                    "target_objective": request.target_objective,
+                    "context": request.context,
+                    "data_source_info": request.data_source_info,
+                    "analysis_type": "placeholder_service"
+                }
+            )
+
+            yield {
+                "type": "agent_input_prepared",
+                "placeholder_id": request.placeholder_id,
+                "timestamp": datetime.now().isoformat()
             }
-        )
-        context = ManagedContext(active_context=processed_context)
-        
-        # 3. 执行分析（使用基础设施层）
-        # TODO: 当 AgentController 可用时，使用它来执行分析
-        
-        # 临时实现：返回模拟结果
-        result = SQLGenerationResult(
-            sql_query="SELECT * FROM users WHERE active = 1",
-            validation_status="valid",
-            optimization_applied=True,
-            estimated_performance="good",
-            metadata={
-                "prompt_used": len(analysis_prompt) > 0,
-                "business_logic_applied": True,
-                "confidence_level": 0.9,
-                "generated_at": datetime.now().isoformat()
+
+            # 2. 使用任务验证智能模式执行分析
+            result = await self.agent_facade.execute_task_validation(agent_input)
+
+            # 3. 构建结果
+            if result.success:
+                sql_result = SQLGenerationResult(
+                    sql_query=result.content,
+                    validation_status="valid",
+                    optimization_applied=True,
+                    estimated_performance="good",
+                    metadata={
+                        "generation_method": result.metadata.get('generation_method', 'validation'),
+                        "time_updated": result.metadata.get('time_updated', False),
+                        "fallback_reason": result.metadata.get('fallback_reason'),
+                        "validation_info": result.metadata,
+                        "confidence_level": 0.9,
+                        "generated_at": datetime.now().isoformat()
+                    }
+                )
+
+                yield {
+                    "type": "sql_generation_complete",
+                    "placeholder_id": request.placeholder_id,
+                    "content": sql_result,
+                    "generation_method": result.metadata.get('generation_method', 'validation'),
+                    "time_updated": result.metadata.get('time_updated', False),
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                # 分析失败
+                error_result = SQLGenerationResult(
+                    sql_query="",
+                    validation_status="failed",
+                    optimization_applied=False,
+                    estimated_performance="poor",
+                    metadata={
+                        "error": result.metadata.get('error', '分析失败'),
+                        "validation_info": result.metadata,
+                        "generated_at": datetime.now().isoformat()
+                    }
+                )
+
+                yield {
+                    "type": "sql_generation_failed",
+                    "placeholder_id": request.placeholder_id,
+                    "content": error_result,
+                    "error": result.metadata.get('error', '分析失败'),
+                    "timestamp": datetime.now().isoformat()
+                }
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"占位符分析失败: {e}")
+
+            error_result = SQLGenerationResult(
+                sql_query="",
+                validation_status="error",
+                optimization_applied=False,
+                estimated_performance="poor",
+                metadata={
+                    "error": str(e),
+                    "generated_at": datetime.now().isoformat()
+                }
+            )
+
+            yield {
+                "type": "analysis_error",
+                "placeholder_id": request.placeholder_id,
+                "content": error_result,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
             }
-        )
-        
-        yield {
-            "type": "sql_generation_complete",
-            "placeholder_id": request.placeholder_id,
-            "content": result,
-            "timestamp": datetime.now().isoformat()
-        }
     
     async def update_placeholder(self, request: PlaceholderUpdateRequest) -> AsyncIterator[Dict[str, Any]]:
         """
@@ -290,12 +363,32 @@ async def analyze_placeholder_simple(
     requirements: str,
     context: Optional[Dict[str, Any]] = None,
     target_objective: str = "",
-    data_source_info: Optional[Dict[str, Any]] = None
+    data_source_info: Optional[Dict[str, Any]] = None,
+    existing_sql: Optional[str] = None
 ) -> SQLGenerationResult:
-    """简化的占位符分析接口 - 兼容性函数"""
-    
+    """
+    简化的占位符分析接口 - 使用任务验证智能模式
+
+    Args:
+        placeholder_id: 占位符ID
+        business_command: 业务命令
+        requirements: 需求描述
+        context: 上下文信息
+        target_objective: 目标要求
+        data_source_info: 数据源信息
+        existing_sql: 现有SQL（如果存在）
+
+    Returns:
+        SQL生成结果
+    """
+
     service = await get_placeholder_service()
-    
+
+    # 如果提供了existing_sql，加入到context中
+    if existing_sql:
+        context = context or {}
+        context["current_sql"] = existing_sql
+
     request = PlaceholderAnalysisRequest(
         placeholder_id=placeholder_id,
         business_command=business_command,
@@ -304,13 +397,17 @@ async def analyze_placeholder_simple(
         target_objective=target_objective,
         data_source_info=data_source_info
     )
-    
+
     result = None
     async for response in service.analyze_placeholder(request):
         if response["type"] == "sql_generation_complete":
             result = response["content"]
             break
-    
+        elif response["type"] == "sql_generation_failed":
+            # 返回失败的结果
+            result = response["content"]
+            break
+
     return result
 
 

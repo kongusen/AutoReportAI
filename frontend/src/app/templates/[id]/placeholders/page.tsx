@@ -35,6 +35,8 @@ import { PlaceholderConfig, PlaceholderAnalytics, DataSource } from '@/types'
 import { formatRelativeTime } from '@/utils'
 import { normalizePlaceholders, NormalizedPlaceholder, calculatePlaceholderStats, getPlaceholderTypeStyle } from '@/utils/placeholderUtils'
 import { api } from '@/lib/api'
+import { InlineAnalysisProgress } from '@/components/ui/InlineAnalysisProgress'
+import { InlineTestProgress } from '@/components/ui/InlineTestProgress'
 import toast from 'react-hot-toast'
 
 export default function TemplatePlaceholdersPage() {
@@ -184,7 +186,7 @@ export default function TemplatePlaceholdersPage() {
     }
   }
 
-  // 单个占位符分析
+  // 单个占位符分析 - 增加超时时间和进度指示器
   const handleAnalyzeSinglePlaceholder = async (placeholder: NormalizedPlaceholder) => {
     if (!selectedDataSource) {
       toast.error('请先选择数据源')
@@ -194,34 +196,50 @@ export default function TemplatePlaceholdersPage() {
     const placeholderKey = placeholder.name
     try {
       setAnalyzingSingle(prev => ({ ...prev, [placeholderKey]: true }))
-      toast.loading('正在分析占位符...', { duration: 1000 })
-      
-      const response = await api.post('/placeholders/analyze-single', {
+
+      // 使用更长的超时时间（90秒）和显示进度
+      const response = await api.post('/placeholders/analyze', {
         placeholder_name: placeholder.name,
         placeholder_text: placeholder.text,
         template_id: templateId,
         data_source_id: selectedDataSource,
         template_context: currentTemplate?.content || ''
+      }, {
+        timeout: 90000 // 90秒超时
       })
-      
+
       // 检查响应结构，API可能直接返回数据而不是包装的格式
       const result = response.data?.data || response.data
       const isSuccess = response.data?.success !== undefined ? response.data.success : (result && result.generated_sql)
+
+      // 🔧 添加调试信息
+      console.log('🔧 [Debug] API响应结构:', response.data)
+      console.log('🔧 [Debug] 提取的result:', result)
+      console.log('🔧 [Debug] isSuccess:', isSuccess)
+      console.log('🔧 [Debug] generated_sql:', result?.generated_sql)
       
       if (isSuccess && result) {
-        // 清除该占位符的测试结果，因为SQL可能已经改变
-        setTestResults(prev => {
-          const updated = { ...prev }
-          delete updated[placeholderKey]
-          return updated
-        })
-        
+        // 检查是否有测试结果（周期性占位符会直接包含测试结果）
+        if (result.test_result) {
+          setTestResults(prev => ({
+            ...prev,
+            [placeholderKey]: result.test_result
+          }))
+        } else {
+          // 清除该占位符的测试结果，因为SQL可能已经改变
+          setTestResults(prev => {
+            const updated = { ...prev }
+            delete updated[placeholderKey]
+            return updated
+          })
+        }
+
         // 使用callback形式的setState来确保获取最新状态
         setPlaceholders(currentPlaceholders => {
           // 寻找匹配的占位符
           let targetIndex = -1
           let matchedPlaceholder = null
-          
+
           for (let i = 0; i < currentPlaceholders.length; i++) {
             const p = currentPlaceholders[i]
             if (p.name === placeholder.name && p.text === placeholder.text) {
@@ -230,30 +248,41 @@ export default function TemplatePlaceholdersPage() {
               break
             }
           }
-          
+
           if (targetIndex === -1) {
             return currentPlaceholders
           }
-          
+
           // 创建新的数组，更新指定索引的占位符
           const updatedPlaceholders = [...currentPlaceholders]
           updatedPlaceholders[targetIndex] = {
             ...matchedPlaceholder,
+            id: result.placeholder_id || matchedPlaceholder?.id, // 保存数据库ID
             generated_sql: typeof result.generated_sql === 'object' ? result.generated_sql.sql || result.generated_sql[placeholder.name] : result.generated_sql,
             suggested_sql: typeof result.generated_sql === 'object' ? result.generated_sql.sql || result.generated_sql[placeholder.name] : result.generated_sql,
-            analysis: result.analysis,
+            analysis: result.analysis || result.analysis_result?.description,
             agent_analyzed: true,
             sql_validated: result.sql_validated,
             confidence_score: result.confidence_score,
-            status: 'analyzed',
-            // 清除旧的测试结果
-            last_test_result: undefined
+            status: result.test_result ? 'tested' : 'analyzed',
+            // 设置测试结果
+            last_test_result: result.test_result,
+            // 数据库保存状态
+            db_saved: result.placeholder_db_saved
           } as any
-          
+
           return updatedPlaceholders
         })
-        
-        toast.success('占位符重新分析完成')
+
+        // 根据是否是周期性占位符显示不同的成功消息
+        if (result.test_result && result.test_result.result_type === 'period_value') {
+          toast.success(`周期性占位符分析完成：${result.test_result.computed_value}`)
+        } else {
+          toast.success('占位符分析完成，SQL已自动保存')
+        }
+
+        // 💾 可选：重新加载数据以确保数据一致性（可以注释掉以提高性能）
+        // setTimeout(() => loadData(), 1000)
       } else {
         toast.error(response.data?.message || '分析失败')
       }
@@ -404,25 +433,49 @@ export default function TemplatePlaceholdersPage() {
     setEditModalOpen(true)
   }
 
-  // 保存编辑 - 当前仅用于展示，实际保存功能待后端支持
+  // 保存编辑 - 连接到后端API
   const handleSaveEdit = async () => {
     if (!selectedPlaceholder) return
 
     try {
-      // TODO: 实现占位符配置保存到后端
-      toast.success('占位符配置已临时保存（功能开发中）')
+      // 准备更新数据
+      const updateData = {
+        generated_sql: editForm.generated_sql,
+        execution_order: editForm.execution_order,
+        cache_ttl_hours: editForm.cache_ttl_hours,
+        is_active: editForm.is_active,
+        placeholder_type: editForm.placeholder_type,
+        description: editForm.description
+      }
+
+      // 如果有placeholder ID，调用更新API
+      if (selectedPlaceholder.id) {
+        const response = await api.put(`/placeholders/${selectedPlaceholder.id}/sql`, updateData)
+
+        if (response.data.success) {
+          toast.success('占位符配置已保存')
+
+          // 更新本地状态
+          setPlaceholders(currentPlaceholders =>
+            currentPlaceholders.map(p =>
+              p.name === selectedPlaceholder.name && p.text === selectedPlaceholder.text
+                ? { ...p, ...updateData }
+                : p
+            )
+          )
+        } else {
+          toast.error(response.data.message || '保存失败')
+        }
+      } else {
+        // 没有ID的占位符，提示用户先分析
+        toast.warning('请先分析占位符生成数据库记录')
+      }
+
       setEditModalOpen(false)
-      
-      // 暂时不调用后端API，因为还没有占位符管理端点
-      // const updates = {
-      //   ...editForm,
-      //   agent_config: JSON.parse(editForm.agent_config)
-      // }
-      // const response = await api.put(`/templates/${templateId}/placeholders/${selectedPlaceholder.id}`, updates)
-      
+
     } catch (error: any) {
       console.error('Failed to update placeholder:', error)
-      toast.error('占位符更新失败')
+      toast.error(error.response?.data?.detail || '占位符更新失败')
     }
   }
 
@@ -678,6 +731,11 @@ export default function TemplatePlaceholdersPage() {
                           {placeholder.type || '变量'}
                         </Badge>
                         {getPlaceholderStatusBadge(placeholder)}
+                        {(placeholder as any).db_saved && (
+                          <Badge variant="success" className="text-xs">
+                            💾 已保存
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="space-y-2 text-sm">
@@ -753,11 +811,16 @@ export default function TemplatePlaceholdersPage() {
                         )}
                       </div>
                       
-                      {hasGeneratedSql ? (
+                      {isAnalyzingThis ? (
+                        <InlineAnalysisProgress
+                          isAnalyzing={true}
+                          placeholderName={placeholder.name}
+                        />
+                      ) : hasGeneratedSql ? (
                         <div className="bg-gray-900 rounded-md p-3 max-h-40 overflow-y-auto">
                           <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">
-                            {typeof hasGeneratedSql === 'object' ? 
-                              hasGeneratedSql.sql || hasGeneratedSql[placeholder.name] : 
+                            {typeof hasGeneratedSql === 'object' ?
+                              hasGeneratedSql.sql || hasGeneratedSql[placeholder.name] :
                               hasGeneratedSql}
                           </pre>
                         </div>
@@ -771,8 +834,13 @@ export default function TemplatePlaceholdersPage() {
                     {/* 下半部分：测试结果 */}
                     <div>
                       <h4 className="text-sm font-medium text-gray-700 mb-2">测试结果</h4>
-                      
-                      {testResult ? (
+
+                      {isTestingThis ? (
+                        <InlineTestProgress
+                          isTesting={true}
+                          placeholderName={placeholder.name}
+                        />
+                      ) : testResult ? (
                         <div className={`p-3 rounded-md ${testResult.success ? 'bg-green-50' : 'bg-red-50'}`}>
                           {testResult.success ? (
                             <div className="space-y-2">
@@ -782,41 +850,82 @@ export default function TemplatePlaceholdersPage() {
                                   执行成功 ({testResult.execution_time_ms}ms)
                                 </span>
                               </div>
-                              <p className="text-xs text-green-700">
-                                返回 {testResult.row_count} 行数据
-                              </p>
-                              
-                              {testResult.data && testResult.data.length > 0 && (
-                                <div className="mt-2">
-                                  <div className="bg-white rounded border overflow-hidden">
-                                    <table className="w-full text-xs">
-                                      <thead className="bg-gray-50">
-                                        <tr>
-                                          {testResult.columns?.slice(0, 3).map((col: string) => (
-                                            <th key={col} className="px-2 py-1 text-left font-medium text-gray-700">
-                                              {col}
-                                            </th>
-                                          ))}
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {testResult.data.slice(0, 2).map((row: any, i: number) => (
-                                          <tr key={i} className="border-t">
-                                            {Object.values(row).slice(0, 3).map((val: any, j: number) => (
-                                              <td key={j} className="px-2 py-1 text-gray-900">
-                                                {String(val).substring(0, 20)}
-                                                {String(val).length > 20 ? '...' : ''}
-                                              </td>
-                                            ))}
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+
+                              {/* 检查是否是周期性占位符结果 */}
+                              {testResult.result_type === 'period_value' ? (
+                                <div className="space-y-2">
+                                  <p className="text-xs text-green-700">
+                                    周期值计算完成
+                                  </p>
+                                  <div className="bg-white rounded border p-3">
+                                    <div className="text-center">
+                                      <div className="text-lg font-semibold text-blue-600 mb-2">
+                                        📅 {testResult.computed_value || testResult.data?.[0]?.[0] || '计算中...'}
+                                      </div>
+                                      {testResult.period_info && (
+                                        <div className="text-xs text-gray-600 space-y-1">
+                                          <div>开始日期: {testResult.period_info.start_date}</div>
+                                          <div>结束日期: {testResult.period_info.end_date}</div>
+                                          <div>周期类型: {testResult.period_info.period_type}</div>
+                                          {testResult.period_info.description && (
+                                            <div>说明: {testResult.period_info.description}</div>
+                                          )}
+                                        </div>
+                                      )}
+                                      {/* 如果computed_value仍是变量，显示实际数据结果 */}
+                                      {testResult.computed_value && testResult.computed_value.includes('{{') && testResult.data?.[0] && (
+                                        <div className="mt-2 text-xs text-gray-500">
+                                          实际值: {JSON.stringify(testResult.data[0])}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                  {testResult.data.length > 2 && (
-                                    <p className="text-xs text-green-600 mt-1">
-                                      ... 还有 {testResult.data.length - 2} 行数据
+                                  {testResult.message && (
+                                    <p className="text-xs text-green-600 italic">
+                                      {testResult.message}
                                     </p>
+                                  )}
+                                </div>
+                              ) : (
+                                /* 常规SQL测试结果 */
+                                <div className="space-y-2">
+                                  <p className="text-xs text-green-700">
+                                    返回 {testResult.row_count} 行数据
+                                  </p>
+
+                                  {testResult.data && testResult.data.length > 0 && (
+                                    <div className="mt-2">
+                                      <div className="bg-white rounded border overflow-hidden">
+                                        <table className="w-full text-xs">
+                                          <thead className="bg-gray-50">
+                                            <tr>
+                                              {testResult.columns?.slice(0, 3).map((col: string) => (
+                                                <th key={col} className="px-2 py-1 text-left font-medium text-gray-700">
+                                                  {col}
+                                                </th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {testResult.data.slice(0, 2).map((row: any, i: number) => (
+                                              <tr key={i} className="border-t">
+                                                {Object.values(row).slice(0, 3).map((val: any, j: number) => (
+                                                  <td key={j} className="px-2 py-1 text-gray-900">
+                                                    {String(val).substring(0, 20)}
+                                                    {String(val).length > 20 ? '...' : ''}
+                                                  </td>
+                                                ))}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                      {testResult.data.length > 2 && (
+                                        <p className="text-xs text-green-600 mt-1">
+                                          ... 还有 {testResult.data.length - 2} 行数据
+                                        </p>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}

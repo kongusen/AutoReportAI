@@ -79,6 +79,87 @@ class TimeContextManager:
             logger.error(f"Failed to generate time context: {e}")
             # 返回基础的时间上下文作为回退
             return self._get_fallback_context(execution_time, report_period)
+
+    # 新增：基于cron表达式与执行时间推断任务周期，返回上一周期的数据时间范围
+    def build_task_time_context(self, cron_expression: str, execution_time: Optional[datetime] = None) -> Dict[str, Any]:
+        """
+        基于调度表达式与执行时间构建任务时间上下文：
+        - 每日：返回昨日 00:00:00 ~ 23:59:59
+        - 每周：返回过去7天（含昨日）[y-6, y]
+        - 每月：返回上月1号 ~ 上月末
+        - 每年：返回去年1月1日 ~ 去年12月31日
+        """
+        if execution_time is None:
+            execution_time = datetime.now()
+
+        try:
+            freq = self._infer_period_by_cron(cron_expression)
+        except Exception:
+            freq = "daily"
+
+        # 统一计算上一周期
+        exec_date = execution_time.date()
+        if freq == "daily":
+            target_date = exec_date - timedelta(days=1)
+            start = datetime.combine(target_date, datetime.min.time())
+            end = datetime.combine(target_date, datetime.max.time())
+            desc = f"每日周期：{target_date.strftime('%Y-%m-%d')}"
+        elif freq == "weekly":
+            # 自然周：上周周一至上周周日
+            days_since_monday = exec_date.weekday()  # 周一=0, 周日=6
+            current_week_monday = exec_date - timedelta(days=days_since_monday)
+            last_week_monday = current_week_monday - timedelta(days=7)
+            last_week_sunday = last_week_monday + timedelta(days=6)
+            start = datetime.combine(last_week_monday, datetime.min.time())
+            end = datetime.combine(last_week_sunday, datetime.max.time())
+            desc = f"每周周期：{last_week_monday.strftime('%Y-%m-%d')}～{last_week_sunday.strftime('%Y-%m-%d')}"
+        elif freq == "monthly":
+            # 上一整月
+            if exec_date.month == 1:
+                last_month_first = exec_date.replace(year=exec_date.year - 1, month=12, day=1)
+            else:
+                last_month_first = exec_date.replace(month=exec_date.month - 1, day=1)
+            next_month_first = (last_month_first + relativedelta(months=1))
+            last_month_last = next_month_first - timedelta(days=1)
+            start = datetime.combine(last_month_first, datetime.min.time())
+            end = datetime.combine(last_month_last, datetime.max.time())
+            desc = f"每月周期：{last_month_first.strftime('%Y-%m-%d')}～{last_month_last.strftime('%Y-%m-%d')}"
+        else:  # yearly
+            last_year = exec_date.year - 1
+            start = datetime(last_year, 1, 1, 0, 0, 0)
+            end = datetime(last_year, 12, 31, 23, 59, 59, 999999)
+            desc = f"每年周期：{last_year}-01-01～{last_year}-12-31"
+
+        return {
+            "period": freq,
+            "period_description": desc,
+            "data_start_time": start.strftime('%Y-%m-%d'),
+            "data_end_time": end.strftime('%Y-%m-%d'),
+            "start_datetime": start.isoformat(),
+            "end_datetime": end.isoformat(),
+            "execution_time": execution_time.isoformat(),
+            "cron_expression": cron_expression,
+        }
+
+    def _infer_period_by_cron(self, cron_expression: str) -> str:
+        """根据cron表达式粗略推断周期：优先判断周/月/年，否则视为每日。"""
+        try:
+            parts = cron_expression.split()
+            if len(parts) < 5:
+                return "daily"
+            minute, hour, dom, month, dow = parts[:5]
+            # 若指定了星期（如 0 9 * * 1），视为每周
+            if dow not in ('*', '?'):
+                return "weekly"
+            # 若指定了日期（如 0 9 1 * *），视为每月
+            if dom not in ('*', '?'):
+                return "monthly"
+            # 若指定了月份（如 0 0 1 1 *），视为每年
+            if month not in ('*', '?'):
+                return "yearly"
+            return "daily"
+        except Exception:
+            return "daily"
     
     def _calculate_period_range(self, report_period: str, execution_time: datetime) -> Tuple[datetime, datetime]:
         """

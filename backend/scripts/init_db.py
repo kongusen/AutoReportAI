@@ -322,9 +322,9 @@ def validate_new_architecture():
         # 验证应用层工厂
         from app.services.application.factories import create_intelligent_placeholder_workflow
         
-        # 验证领域服务
+        # 验证领域服务（通过应用工厂创建，确保端口已注入）
         from app.services.domain.template.template_service import TemplateService
-        from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
+        from app.services.application.factories import create_intelligent_placeholder_service
         
         # 验证基础设施层
         from app.services.infrastructure.cache.unified_cache_system import UnifiedCacheSystem

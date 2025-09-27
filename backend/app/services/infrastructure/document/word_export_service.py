@@ -228,15 +228,29 @@ class WordExportService:
         try:
             # 构建替换映射
             replacement_map = {}
+
+            # 优先使用调用方提供的直接替换值（保持“能用原值尽量用原值”）
+            # 支持两种占位符格式：{{name}} 和 {name}
+            direct_values = placeholder_data.get('direct_values') if isinstance(placeholder_data, dict) else None
+            if isinstance(direct_values, dict):
+                for name, value in direct_values.items():
+                    try:
+                        text_value = str(value) if value is not None else ""
+                        replacement_map[f"{{{{{name}}}}}"] = text_value
+                        replacement_map[f"{{{name}}}"] = text_value
+                    except Exception:
+                        continue
             
-            # 从占位符数据中提取替换值
-            validation_results = placeholder_data.get('validation_results', [])
+            # 如果未提供direct_values或某个占位符仍无值，则回退到从ETL数据推断
+            validation_results = placeholder_data.get('validation_results', []) if isinstance(placeholder_data, dict) else []
             for result in validation_results:
                 placeholder_name = result.get('placeholder_name', '')
-                if placeholder_name:
-                    replacement_map[f"{{{{{placeholder_name}}}}}"] = self._get_placeholder_value(
-                        result, etl_data
-                    )
+                key_braced = f"{{{{{placeholder_name}}}}}"
+                key_single = f"{{{placeholder_name}}}"
+                if placeholder_name and key_braced not in replacement_map and key_single not in replacement_map:
+                    replacement_value = self._get_placeholder_value(result, etl_data)
+                    replacement_map[key_braced] = replacement_value
+                    replacement_map[key_single] = replacement_value
             
             # 替换文档中的占位符
             for paragraph in doc.paragraphs:

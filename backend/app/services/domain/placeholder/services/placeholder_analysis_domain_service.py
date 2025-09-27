@@ -74,31 +74,11 @@ class PlaceholderAnalysisDomainService:
     
     async def _get_technical_analysis(self, placeholder_text: str, user_id: Optional[str] = None, business_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        通过基础设施层获取技术分析
-        
-        这是正确的DDD架构：领域服务调用基础设施层
+        技术分析占位实现（避免Domain直接依赖Infra）。
+        可在应用层通过装饰/注入方式替换为真实实现。
         """
-        try:
-            # 导入基础设施层agent
-            from app.services.infrastructure.agents import analyze_placeholder_technical
-            
-            self.logger.info(f"[领域服务] 调用基础设施层agent进行技术分析")
-            # 传递业务上下文给基础设施层
-            technical_context = {
-                "business_context": business_context or {},
-                "placeholder_text": placeholder_text
-            }
-            technical_result = await analyze_placeholder_technical(placeholder_text, technical_context=technical_context, user_id=user_id)
-            
-            if technical_result.get("success"):
-                return technical_result
-            else:
-                self.logger.warning(f"技术分析失败，使用默认分析: {technical_result.get('error')}")
-                return {"technical_analysis": {"detected_patterns": [], "complexity_level": "unknown"}}
-                
-        except Exception as e:
-            self.logger.error(f"调用基础设施层agent失败: {str(e)}")
-            return {"technical_analysis": {"detected_patterns": [], "complexity_level": "unknown"}}
+        self.logger.debug("使用占位技术分析实现（未注入Infra）")
+        return {"technical_analysis": {"detected_patterns": [], "complexity_level": "unknown"}}
     
     def validate_placeholder_business_rules(
         self,

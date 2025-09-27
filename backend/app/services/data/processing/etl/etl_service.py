@@ -671,23 +671,23 @@ class ETLService:
     async def extract_data(self, data_source_id: str, query_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         从数据源提取数据
-        
+
         Args:
             data_source_id: 数据源ID
             query_config: 查询配置
-            
+
         Returns:
             提取结果
         """
         try:
             self.logger.info(f"开始从数据源 {data_source_id} 提取数据")
-            
+
             with get_db_session() as db:
                 # 获取数据源信息
                 data_source = crud.data_source.get(db, id=data_source_id)
                 if not data_source:
                     raise ValueError(f"数据源 {data_source_id} 不存在")
-                
+
                 # 根据数据源类型进行数据提取
                 if data_source.source_type.value == "doris":
                     return await self._extract_from_doris(data_source, query_config or {})
@@ -702,9 +702,128 @@ class ETLService:
                         "error": f"不支持的数据源类型: {data_source.source_type.value}",
                         "data": None
                     }
-                    
+
         except Exception as e:
             self.logger.error(f"数据提取失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": None
+            }
+
+    async def extract_data_with_templates(
+        self,
+        data_source_id: str,
+        placeholder_sql_map: Dict[str, str],
+        time_context: Dict[str, Any],
+        execution_mode: str = "production"
+    ) -> Dict[str, Any]:
+        """
+        使用模板化SQL进行数据提取 - 新的增强方法
+
+        Args:
+            data_source_id: 数据源ID
+            placeholder_sql_map: 占位符到SQL模板的映射
+            time_context: 时间上下文
+            execution_mode: 执行模式 (production/test)
+
+        Returns:
+            提取结果
+        """
+        try:
+            self.logger.info(f"开始模板化数据提取: {data_source_id}, 模式: {execution_mode}")
+
+            # 1. 推断时间参数
+            from app.services.data.template import time_inference_service, sql_template_service
+            from app.services.data.query.template_query_executor import TemplateQueryExecutor
+
+            # 根据执行模式确定时间推断方式
+            if execution_mode == "test":
+                # 测试模式：使用固定时间便于验证
+                time_result = time_inference_service.get_test_validation_date(
+                    fixed_date=time_context.get("test_date"),
+                    days_offset=time_context.get("days_offset", -1)
+                )
+            else:
+                # 生产模式：基于cron表达式推断
+                cron_expression = time_context.get("cron_expression", "0 8 * * *")  # 默认每天8点
+                task_execution_time = time_context.get("execution_time")
+                time_result = time_inference_service.infer_base_date_from_cron(
+                    cron_expression,
+                    task_execution_time
+                )
+
+            base_date = time_result["base_date"]
+            self.logger.info(f"时间推断完成: {base_date} (模式: {execution_mode})")
+
+            # 2. 处理SQL模板参数
+            executable_sql_map = sql_template_service.process_placeholder_map(
+                placeholder_sql_map,
+                base_date,
+                additional_params=time_context.get("additional_params", {})
+            )
+
+            # 3. 批量执行SQL查询
+            with get_db_session() as db:
+                data_source = crud.data_source.get(db, id=data_source_id)
+                if not data_source:
+                    raise ValueError(f"数据源 {data_source_id} 不存在")
+
+                executor = TemplateQueryExecutor(data_source)
+                execution_results = await executor.execute_template_batch(
+                    executable_sql_map,
+                    context={
+                        "execution_mode": execution_mode,
+                        "time_context": time_result,
+                        "user_id": self.user_id
+                    }
+                )
+
+            # 4. 整理结果
+            successful_extractions = []
+            failed_extractions = []
+
+            for placeholder_name, result in execution_results.items():
+                if result and not str(result).startswith("ERROR"):
+                    successful_extractions.append({
+                        "placeholder": placeholder_name,
+                        "data": result,
+                        "row_count": len(result) if hasattr(result, '__len__') else 1
+                    })
+                else:
+                    failed_extractions.append({
+                        "placeholder": placeholder_name,
+                        "error": str(result)
+                    })
+
+            success = len(successful_extractions) > 0
+            total_rows = sum(ext["row_count"] for ext in successful_extractions)
+
+            result = {
+                "success": success,
+                "data": {
+                    "extraction_mode": "template_based",
+                    "execution_mode": execution_mode,
+                    "time_inference": time_result,
+                    "base_date": base_date,
+                    "successful_extractions": successful_extractions,
+                    "failed_extractions": failed_extractions,
+                    "total_placeholders": len(placeholder_sql_map),
+                    "successful_count": len(successful_extractions),
+                    "failed_count": len(failed_extractions),
+                    "total_rows_extracted": total_rows
+                },
+                "message": f"模板化提取完成: 成功 {len(successful_extractions)}/{len(placeholder_sql_map)} 个占位符"
+            }
+
+            if failed_extractions:
+                result["warning"] = f"有 {len(failed_extractions)} 个占位符提取失败"
+
+            self.logger.info(f"模板化数据提取完成: {result['message']}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"模板化数据提取失败: {e}")
             return {
                 "success": False,
                 "error": str(e),

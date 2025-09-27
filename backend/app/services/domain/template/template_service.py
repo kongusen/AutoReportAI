@@ -331,53 +331,15 @@ class TemplateService:
             
             # 2. 使用统一AI门面进行智能分析
             enhanced_placeholders = []
-            if self.user_id:
-                try:
-                    from app.services.infrastructure.agents import execute_agent_task
-                    
-                    # Using agents system instead of AI facade
-                    
-                    # 使用统一的模板分析服务
-                    analysis_result = await execute_agent_task(
-                        task_name="数据分析",
-                        task_description="分析请求",
-                        context_data={
-                            "user_id": str(self.user_id),
-                            "template_id": str(template_id),
-                            "template_content": content,
-                            "data_source_info": {
-                                "type": "placeholder_analysis",
-                                "placeholders_count": len(placeholders),
-                                "discovered_placeholders": [p['name'] for p in placeholders]
-                            }
-                        }
-                    )
-                    
-                    # 增强占位符信息
-                    analysis_response = str(analysis_result)
-                    for i, placeholder in enumerate(placeholders):
-                        enhanced_placeholder = {
-                            **placeholder,
-                            "type": "intelligent",  # ServiceOrchestrator分析的类型
-                            "content_type": "mixed",
-                            "description": f"智能分析结果：{analysis_response[:100]}...",
-                            "complexity": "medium",
-                            "ai_suggestions": analysis_response,
-                            "requires_data_source": True
-                        }
-                        enhanced_placeholders.append(enhanced_placeholder)
-                        
-                except Exception as e:
-                    logger.warning(f"ServiceOrchestrator分析失败，使用基础解析: {str(e)}")
-                    # 回退到基础分析
-                    for placeholder in placeholders:
-                        enhanced_placeholders.append({
-                            **placeholder,
-                            "type": "simple",
-                            "content_type": "text",
-                            "description": f"占位符: {placeholder['name']}",
-                            "complexity": "low"
-                        })
+            # 优先使用基础解析（Domain不依赖Infra）。如需智能增强，请在应用层编排调用占位符服务。
+            for placeholder in placeholders:
+                enhanced_placeholders.append({
+                    **placeholder,
+                    "type": "simple",
+                    "content_type": "text",
+                    "description": f"占位符: {placeholder['name']}",
+                    "complexity": "low"
+                })
             else:
                 # 无用户上下文时的基础分析
                 for placeholder in placeholders:
@@ -462,46 +424,10 @@ class TemplateService:
         使用React Agent为模板占位符生成SQL
         """
         try:
-            if self.user_id:
-                from app.services.infrastructure.agents import execute_agent_task
-                
-                # Using agents system instead of AI facade
-                
-                # 获取模板的占位符信息
-                from app.crud import template_placeholder as crud_placeholder
-                placeholders = crud_placeholder.get_by_template(self.db, template_id=str(template_id))
-                
-                placeholder_data = [
-                    {
-                        "name": p.placeholder_name,
-                        "text": p.placeholder_text,
-                        "type": p.placeholder_type
-                    } for p in placeholders
-                ]
-                
-                # 使用统一的SQL生成服务
-                sql_result = await execute_agent_task(
-                    task_name="内容生成",
-                    task_description="生成请求",
-                    context_data={
-                        "user_id": str(user_id),
-                        "placeholders": placeholder_data,
-                        "data_source_info": {"data_source_id": str(data_source_id)},
-                        "template_context": f"Template ID: {template_id}"
-                    }
-                )
-                
-                return {
-                    "sql_generation_enabled": True,
-                    "sql_generation_result": sql_result,
-                    "total_sqls_generated": len(placeholder_data),
-                    "sql_generation_method": "unified_ai_facade"
-                }
-            else:
-                return {
-                    "sql_generation_enabled": False,
-                    "reason": "需要用户上下文才能生成SQL"
-                }
+            return {
+                "sql_generation_enabled": False,
+                "reason": "SQL生成由应用层通过端口编排，不在Domain内直接调用"
+            }
                 
         except Exception as e:
             logger.error(f"React Agent SQL生成失败: {str(e)}")

@@ -98,3 +98,35 @@ class DataSource(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @property
+    def connection_config(self) -> dict:
+        """动态构建连接配置以兼容现有代码"""
+        if self.source_type == DataSourceType.doris:
+            return {
+                "source_type": "doris",
+                "fe_hosts": self.doris_fe_hosts or ["localhost"],
+                "http_port": self.doris_http_port or 8030,
+                "query_port": self.doris_query_port or 9030,
+                "database": self.doris_database or "default",
+                "username": self.doris_username or "root",
+                "password": self.doris_password or ""
+            }
+        elif self.source_type == DataSourceType.sql:
+            return {
+                "source_type": "sql",
+                "connection_string": self.connection_string or "",
+                "database": getattr(self, 'database_name', None) or "default"
+            }
+        elif self.source_type == DataSourceType.api:
+            return {
+                "source_type": "api",
+                "api_url": self.api_url or "",
+                "api_method": self.api_method or "GET",
+                "api_headers": self.api_headers or {},
+                "api_body": self.api_body or {}
+            }
+        else:
+            return {
+                "source_type": self.source_type.value if self.source_type else "unknown"
+            }

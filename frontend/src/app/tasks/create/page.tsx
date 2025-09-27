@@ -26,7 +26,8 @@ const taskSchema = z.object({
   template_id: z.string().min(1, '请选择模板'),
   data_source_id: z.string().min(1, '请选择数据源'),
   schedule: z.string().optional(),
-  report_period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('monthly'),
+  // report_period 不再由用户选择，改为由 cron 表达式推断
+  report_period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
   
@@ -72,7 +73,6 @@ export default function CreateTaskPage() {
       is_active: true,
       recipients: [],
       schedule: '',
-      report_period: 'monthly' as ReportPeriod,
     },
   })
 
@@ -101,20 +101,44 @@ export default function CreateTaskPage() {
     }
   }, [fetchDataSources, fetchTemplates, setValue])
 
+  // 基于 cron 表达式推断报告周期
+  const inferReportPeriodFromCron = (cron?: string): ReportPeriod => {
+    if (!cron || typeof cron !== 'string') return 'monthly'
+    // 解析简单的 5 字段 cron: m h dom mon dow
+    const parts = cron.trim().split(/\s+/)
+    if (parts.length < 5) return 'monthly'
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+
+    // 如果指定了星期几（非 *），判定为每周
+    if (dayOfWeek && dayOfWeek !== '*') return 'weekly'
+
+    // 如果指定了月份（非 *），通常为每年
+    if (month && month !== '*') return 'yearly'
+
+    // 如果指定了某一天（非 *），通常为每月
+    if (dayOfMonth && dayOfMonth !== '*') return 'monthly'
+
+    // 其余默认按每日
+    return 'daily'
+  }
+
   const onSubmit = async (data: FormData) => {
     try {
+      const inferredPeriod = inferReportPeriodFromCron(data.schedule)
       const result = await createTask({
         ...data,
         template_id: data.template_id as any, // UUID类型转换
         data_source_id: data.data_source_id as any, // UUID类型转换
         schedule: data.schedule || undefined,
         recipients: data.recipients || [],
+        report_period: inferredPeriod,
       })
       
       // 确保创建成功后才跳转
       if (result) {
         console.log('任务创建成功，准备跳转到任务列表页:', result)
-        router.push('/tasks')
+        router.replace('/tasks')
+        router.refresh()
       } else {
         console.error('任务创建返回空结果')
         throw new Error('任务创建失败：返回结果为空')

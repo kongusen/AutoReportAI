@@ -20,7 +20,7 @@ from app.models.report_history import ReportHistory
 from app.services.data.connectors.connector_factory import create_connector
 # AI tools migrated to agents
 # from app.services.infrastructure.agents.tools import get_tool_registry  # deprecated
-from app.services.infrastructure.agents.core.tools import ToolRegistry
+from app.services.data.processing.visualization_service import VisualizationService, ChartType as VsChartType
 
 logger = logging.getLogger(__name__)
 
@@ -159,15 +159,43 @@ class ChartIntegrationService:
         # 生成示例数据（在真实环境中应该从data_results提取）
         chart_data = self._prepare_chart_data(chart_req, data_results, data_source)
         
-        # 调用图表生成工具
-        chart_config = {
-            'type': chart_type,
-            'title': title,
-            **chart_data
-        }
-        
-        result = generate_chart(json.dumps(chart_config))
-        return json.loads(result)
+        # 使用统一可视化服务生成图表配置（JSON 输出）
+        vs = VisualizationService()
+        # 将 chart_data 转为列表数据 + 配置
+        data, cfg = self._to_visualization_inputs(chart_type, title, chart_data)
+        return vs.generate_chart(data, self._map_chart_type(chart_type), cfg, output_format="json")
+
+    def _to_visualization_inputs(self, chart_type: str, title: str, chart_data: Dict[str, Any]):
+        """将内部chart_data转换为 VisualizationService 所需输入。"""
+        if chart_type == 'bar':
+            x = chart_data.get('x_data') or chart_data.get('labels') or []
+            y = chart_data.get('y_data') or []
+            data = [{"x": xv, "y": y[i] if i < len(y) else None} for i, xv in enumerate(x)]
+            cfg = {"title": title, "x_column": "x", "y_column": "y"}
+            return data, cfg
+        if chart_type == 'line':
+            x = chart_data.get('x_data') or []
+            series = chart_data.get('series') or []
+            # Flatten first series for demo
+            if series:
+                name = series[0].get('name', 'y')
+                vals = series[0].get('data', [])
+                data = [{"x": xv, name: vals[i] if i < len(vals) else None} for i, xv in enumerate(x)]
+                cfg = {"title": title, "x_column": "x", "y_column": name}
+            else:
+                data = [{"x": i, "y": v} for i, v in enumerate(x)]
+                cfg = {"title": title, "x_column": "x", "y_column": "y"}
+            return data, cfg
+        # default map to bar
+        x = chart_data.get('x_data') or []
+        y = chart_data.get('y_data') or []
+        data = [{"x": xv, "y": y[i] if i < len(y) else None} for i, xv in enumerate(x)]
+        cfg = {"title": title, "x_column": "x", "y_column": "y"}
+        return data, cfg
+
+    def _map_chart_type(self, chart_type: str) -> str:
+        mapping = {"bar": VsChartType.BAR.value, "line": VsChartType.LINE.value, "pie": VsChartType.PIE.value}
+        return mapping.get(chart_type, VsChartType.BAR.value)
     
     def _prepare_chart_data(
         self,

@@ -13,6 +13,10 @@ from app.core.architecture import ApiResponse
 from app.db.session import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from app.schemas.frontend_adapters import (
+    adapt_chart_for_frontend, adapt_error_for_frontend,
+    FrontendChartData, ErrorDisplayInfo
+)
 # 使用React Agent系统的图表编排器
 
 router = APIRouter()
@@ -70,11 +74,55 @@ async def test_chart_generation(
                 result['data']['semantic_analysis'] = {}
             result['data']['semantic_analysis']['chart_type_hint'] = request.chart_type_hint
         
-        return ApiResponse(
-            success=result.get('success', False),
-            data=result,
-            message="图表测试执行完成" if result.get('success') else f"图表测试失败: {result.get('error', '未知错误')}"
-        )
+        # 适配前端格式
+        if result.get('success') and result.get('data'):
+            # 提取图表数据进行前端适配
+            data = result.get('data', {})
+            echarts_config = data.get('echarts_config', {})
+            chart_type = data.get('chart_type', 'bar')
+            raw_data = data.get('raw_data', [])
+
+            # 构建图表元数据
+            metadata = {
+                'data_source': {
+                    'sql_query': data.get('sql_query'),
+                    'execution_time_ms': result.get('processing_time_ms', 0),
+                    'row_count': len(raw_data),
+                    'data_quality_score': 0.9
+                },
+                'chart_elements': {
+                    'series_count': 1,
+                    'chart_type': chart_type
+                },
+                'title': f"图表测试 - {chart_type}"
+            }
+
+            # 使用前端适配器
+            frontend_data = adapt_chart_for_frontend(
+                echarts_config=echarts_config,
+                chart_type=chart_type,
+                raw_data=raw_data,
+                metadata=metadata
+            )
+
+            return ApiResponse(
+                success=True,
+                data=frontend_data.dict(),
+                message="图表测试执行完成"
+            )
+        else:
+            # 错误情况使用错误适配器
+            error_info = adapt_error_for_frontend(
+                error_message=result.get('error', '未知错误'),
+                error_type="chart_generation",
+                error_code="chart_test_failed"
+            )
+
+            return ApiResponse(
+                success=False,
+                data=error_info.dict(),
+                message=f"图表测试失败: {result.get('error', '未知错误')}"
+            )
         
     except Exception as e:
         raise HTTPException(

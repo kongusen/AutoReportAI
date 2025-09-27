@@ -94,7 +94,8 @@ class CelerySchedulerManager:
                 'args': (str(task.id), [str(task.data_source_id)] if task.data_source_id else [], {
                     'template_id': str(task.template_id),
                     'output_format': 'html',
-                    'scheduled_execution': True
+                    'scheduled_execution': True,
+                    'cron_expression': task.schedule
                 }),
                 'options': {
                     'queue': 'application_queue',

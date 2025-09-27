@@ -110,7 +110,7 @@ export class AutoReportAPIClient {
   constructor(config: ApiClientConfig = {}) {
     this.config = {
       baseURL: config.baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1',
-      timeout: config.timeout || 30000,
+      timeout: config.timeout || 90000, // 90秒默认超时，支持长时间的分析任务
       retryCount: config.retryCount || 3,
       enableCache: config.enableCache ?? true,
       showToast: config.showToast ?? true,
@@ -684,7 +684,8 @@ export class AutoReportAPIClient {
   }
 
   async getTaskProgress(id: string): Promise<TaskProgress> {
-    return this.request<TaskProgress>('GET', `/scheduler/tasks/${id}/status`)
+    // 与后端 /v1/tasks/{id}/status 对齐
+    return this.request<TaskProgress>('GET', `/tasks/${id}/status`)
   }
 
   // ============================================================================

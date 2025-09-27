@@ -40,6 +40,7 @@ class UnifiedServiceFacade:
         self._etl_service = None
         self._visualization_service = None
         self._schema_analysis_service = None
+        self._placeholder_pipeline = None
     
     # === 模板相关服务 ===
     
@@ -381,8 +382,8 @@ class UnifiedServiceFacade:
     async def _get_placeholder_service(self):
         """获取占位符服务"""
         if self._placeholder_service is None:
-            from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
-            self._placeholder_service = IntelligentPlaceholderService()
+            from app.services.application.factories import create_intelligent_placeholder_service
+            self._placeholder_service = create_intelligent_placeholder_service()
             await self._placeholder_service.initialize()
         return self._placeholder_service
     
@@ -413,6 +414,53 @@ class UnifiedServiceFacade:
             from app.services.data.schemas.schema_analysis_service import create_schema_analysis_service
             self._schema_analysis_service = create_schema_analysis_service(self.db, self.user_id)
         return self._schema_analysis_service
+
+    async def _get_placeholder_pipeline(self):
+        if self._placeholder_pipeline is None:
+            from app.services.application.factories import create_placeholder_pipeline_service
+            self._placeholder_pipeline = create_placeholder_pipeline_service()
+        return self._placeholder_pipeline
+
+    # === 新增：占位符流水线编排 ===
+    async def etl_pre_scan_placeholders(self, template_id: str, data_source_id: str) -> Dict[str, Any]:
+        pipeline = await self._get_placeholder_pipeline()
+        return await pipeline.etl_pre_scan(template_id, data_source_id)
+
+    async def generate_report_v2(
+        self,
+        template_id: str,
+        data_source_id: str,
+        *,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        output_dir: Optional[str] = None,
+        schedule: Optional[Dict[str, Any]] = None,
+        execution_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        pipeline = await self._get_placeholder_pipeline()
+        assembled = await pipeline.assemble_report(
+            template_id,
+            data_source_id,
+            start_date=start_date,
+            end_date=end_date,
+            schedule=schedule,
+            execution_time=execution_time,
+        )
+        content = assembled.get("content", "")
+        artifacts = assembled.get("artifacts", [])
+        # 可选：调用Word生成
+        try:
+            from app.services.domain.reporting.word_generator_service import WordGeneratorService
+            wg = WordGeneratorService()
+            report_path = wg.generate_report_from_content(content, output_path=None)  # 若服务支持自动路径
+        except Exception:
+            report_path = None
+        return {
+            "success": True,
+            "content_preview": content[:2000],
+            "artifacts": artifacts,
+            "output_path": report_path,
+        }
     
     async def _parse_chart_requirements(self, requirements: str) -> Dict[str, Any]:
         """解析图表需求描述"""

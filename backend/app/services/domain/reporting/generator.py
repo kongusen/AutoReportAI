@@ -11,6 +11,7 @@ from app.core.logging_config import get_module_logger, get_performance_logger
 # 使用React Agent系统
 from app.services.data.processing.retrieval import DataRetrievalService
 from .composer import ReportCompositionService
+from app.services.domain.placeholder.ports.ai_content_port import AiContentPort
 from .document_pipeline import TemplateParser
 # ServiceCoordinator功能已整合到React Agent工作流编排中
 from .word_generator_service import WordGeneratorService
@@ -30,7 +31,7 @@ class ReportGenerationStatus:
 
 
 class ReportGenerationService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, ai_content_port: AiContentPort = None):
         self.db = db
         self.template_parser = TemplateParser()
         # 服务协调功能通过React Agent工作流编排实现
@@ -38,6 +39,7 @@ class ReportGenerationService:
         self.word_generator = WordGeneratorService()
         # AI服务通过React Agent LLM选择器实现
         self.data_retrieval = DataRetrievalService()
+        self._ai_content_port = ai_content_port
 
     async def generate_report(
         self,
@@ -106,45 +108,17 @@ class ReportGenerationService:
                         "data_source_id": str(data_source_id),
                     }
                     
-                    # 使用统一AI门面处理占位符内容生成
-                    try:
-                        from app.services.infrastructure.agents import execute_agent_task
-                        
-                        # 构建内容生成的数据上下文
-                        template_parts = [{
-                            "placeholder_name": placeholder_name,
-                            "placeholder_type": placeholder_type,
-                            "description": placeholder_description
-                        }]
-                        
-                        data_context = {
-                            "data_source_id": data_source_id,
-                            "task_id": task_id,
-                            "template_id": template_id
-                        }
-                        
-                        # 使用agents系统生成内容
-                        content_result = await execute_agent_task(
-                            task_name="内容生成",
-                            task_description=f"为占位符 {placeholder_name} 生成报告内容",
-                            context_data={
-                                "placeholders": {
-                                    "placeholder_name": placeholder_name,
-                                    "placeholder_type": placeholder_type,
-                                    "placeholder_description": placeholder_description,
-                                    "data_source_id": str(data_source_id),
-                                    "task_id": str(task_id),
-                                    "template_id": str(template_id)
-                                }
-                            },
-                            target_agent="report_generation_agent"
-                        )
-                        
-                        result = content_result.get("result", {}).get("generated_content", "") if content_result.get("success") else f"[生成失败: {placeholder_name}]"
-                        
-                    except Exception as e:
-                        logger.warning(f"React Agent处理占位符失败: {str(e)}")
-                        result = f"[占位符处理错误: {placeholder_name} - {str(e)}]"
+                    if self._ai_content_port:
+                        result = await self._ai_content_port.generate_placeholder_content(
+                            placeholder_name=placeholder_name,
+                            placeholder_type=placeholder_type,
+                            description=placeholder_description,
+                            data_source_id=str(data_source_id),
+                            task_id=str(task_id),
+                            template_id=str(template_id),
+                        ) or f"[生成失败: {placeholder_name}]"
+                    else:
+                        result = f"[未配置AI内容端口，无法生成 {placeholder_name}]"
 
                     # Format the placeholder key for replacement
                     if placeholder_type == "scalar":
@@ -301,11 +275,7 @@ class ReportGenerationService:
 
                 # Get AI interpretation if description is provided
                 if placeholder.get("description"):
-                    try:
-                        # 使用agents系统进行业务洞察解释
-                        from app.services.infrastructure.agents import execute_agent_task
-                        
-                        # 构建分析结果数据
+                    if self._ai_content_port:
                         data_analysis_results = {
                             "placeholder_name": placeholder['name'],
                             "placeholder_type": placeholder['type'],
@@ -313,26 +283,16 @@ class ReportGenerationService:
                             "available_columns": sample_data.columns.tolist() if not sample_data.empty else [],
                             "data_shape": sample_data.shape if not sample_data.empty else (0, 0)
                         }
-                        
-                        # 使用agents系统进行业务洞察解释
-                        interpretation_result = await execute_agent_task(
-                            task_name="业务洞察解释",
-                            task_description=f"解释模板占位符 '{placeholder['name']}' 的业务含义",
-                            context_data={
-                                "placeholders": {
-                                    "placeholder_name": placeholder['name'],
-                                    "placeholder_type": placeholder['type'], 
-                                    "placeholder_description": placeholder['description'],
-                                    "analysis_results": data_analysis_results,
-                                    "target_audience": "business"
-                                }
-                            },
-                            target_agent="business_intelligence_agent"
+                        interp = await self._ai_content_port.interpret_placeholder(
+                            placeholder_name=placeholder['name'],
+                            placeholder_type=placeholder['type'],
+                            description=placeholder['description'],
+                            analysis_results=data_analysis_results,
+                            target_audience="business",
                         )
-                        
-                        analysis["ai_interpretation"] = interpretation_result.get("result", {}).get("interpretation", "") if interpretation_result.get("success") else f"解释生成失败: {placeholder['name']}"
-                    except Exception as e:
-                        analysis["ai_interpretation"] = f"Error: {str(e)}"
+                        analysis["ai_interpretation"] = interp or f"解释生成失败: {placeholder['name']}"
+                    else:
+                        analysis["ai_interpretation"] = "未配置AI内容端口"
 
                 placeholder_analysis.append(analysis)
 

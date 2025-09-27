@@ -8,15 +8,15 @@ from app.api.endpoints import (
     templates,
     placeholders,
     reports,
-    
+
     # 任务执行
     tasks,
     task_execution,
     task_scheduler,
-    
+
     # ETL与数据处理
     etl_jobs,
-    
+
     # AI/LLM服务
     llm_servers,
     llm_monitor,
@@ -24,18 +24,29 @@ from app.api.endpoints import (
     simple_model_selection,
     model_execution,
     user_llm_preferences,
-    
+
     # Agent流式处理
     agent_stream,
     agent_run,
     # sql_enhanced,
-    
+
     # 系统管理
     system,
     system_health,
     system_insights,
     health,
-    
+
+    # 流水线管理
+    pipeline_management,
+    template_analysis_adapter,
+    pipeline_websocket,
+
+    # 报告工作流
+    report_workflow,
+
+    # 系统验证
+    system_validation,
+
     # 工具与监控
     dashboard,
     files,
@@ -92,6 +103,21 @@ api_router.include_router(user_llm_preferences.router, prefix="/v1/llm-preferenc
 api_router.include_router(system.router, prefix="/v1/system", tags=["系统管理"])
 api_router.include_router(system_health.router, prefix="/v1/system-health", tags=["系统健康"])
 api_router.include_router(system_insights.router, prefix="/v1/system-insights", tags=["系统洞察"])
+
+# 流水线管理路由
+api_router.include_router(pipeline_management.router, prefix="/v1/pipeline", tags=["流水线管理"])
+
+# 模板分析适配器路由 - 前端兼容性
+api_router.include_router(template_analysis_adapter.router, prefix="/v1", tags=["模板分析"])
+
+# 流水线WebSocket路由 - 实时更新
+api_router.include_router(pipeline_websocket.router, prefix="/v1/pipeline/ws", tags=["流水线实时通信"])
+
+# 报告工作流路由 - 模板化SQL报告生成
+api_router.include_router(report_workflow.router, prefix="/v1/report-workflow", tags=["报告工作流"])
+
+# 系统验证路由 - 验证新功能
+api_router.include_router(system_validation.router, prefix="/v1/system-validation", tags=["系统验证"])
 
 # 工具与监控路由
 api_router.include_router(dashboard.router, prefix="/v1/dashboard", tags=["仪表盘"])

@@ -234,7 +234,7 @@ class ContextAwareApplicationService:
         try:
             # 调用Domain层的占位符分析服务
             from app.services.domain.template.services.template_domain_service import TemplateParser
-            from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
+            from app.services.application.factories import create_intelligent_placeholder_service
             
             # 解析模板内容中的占位符
             parser = TemplateParser()
@@ -242,7 +242,7 @@ class ContextAwareApplicationService:
             
             # 使用智能占位符服务进行分析
             try:
-                placeholder_service = IntelligentPlaceholderService()
+                placeholder_service = create_intelligent_placeholder_service()
                 intelligence_result = await placeholder_service.analyze_placeholders(
                     placeholders=structure.get('placeholders', []),
                     content_context=request.content,

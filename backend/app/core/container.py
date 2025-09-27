@@ -45,11 +45,62 @@ class DataSourceAdapter:
             connector = create_connector_from_config(src_type_norm, name, cfg)
             async with connector:
                 q = sql
-                if limit and "LIMIT" not in (sql or "").upper():
+                # 排除不支持LIMIT的语句（特别是Doris的SHOW命令）
+                sql_upper = (sql or "").upper().strip()
+                skip_limit_patterns = ["SHOW FULL COLUMNS", "SHOW COLUMNS", "DESC ", "DESCRIBE "]
+                should_skip_limit = any(sql_upper.startswith(pattern) for pattern in skip_limit_patterns)
+
+                if limit and "LIMIT" not in sql_upper and not should_skip_limit:
                     q = f"{sql.strip()} LIMIT {limit}"
+                    logger.debug(f"添加LIMIT到查询: {sql.strip()[:50]}...")
+                elif should_skip_limit:
+                    logger.debug(f"跳过LIMIT (Doris兼容): {sql.strip()[:50]}...")
                 result = await connector.execute_query(q, cfg)
-                rows = result.get("rows") or result.get("data") or []
-                cols = result.get("columns") or result.get("column_names") or []
+
+                # 兼容不同数据库的结果格式
+                rows, cols = [], []
+
+                try:
+                    if hasattr(result, 'get') and callable(result.get):
+                        # 标准字典格式 (MySQL等)
+                        rows = result.get("rows") or result.get("data") or []
+                        cols = result.get("columns") or result.get("column_names") or []
+                        logger.debug(f"使用字典格式解析: {len(rows)}行")
+                    elif hasattr(result, 'rows'):
+                        # Doris等特殊对象格式 - 直接访问属性
+                        rows = getattr(result, 'rows', [])
+                        cols = getattr(result, 'columns', []) or getattr(result, 'column_names', [])
+                        logger.debug(f"使用对象属性解析: {len(rows)}行")
+                    elif isinstance(result, (list, tuple)):
+                        # 直接返回行数据的格式
+                        rows = result
+                        cols = []
+                        logger.debug(f"使用列表格式解析: {len(rows)}行")
+                    else:
+                        # 尝试所有可能的属性访问
+                        for attr in ['rows', 'data']:
+                            if hasattr(result, attr):
+                                rows = getattr(result, attr, [])
+                                break
+                        for attr in ['columns', 'column_names', 'fields']:
+                            if hasattr(result, attr):
+                                cols = getattr(result, attr, [])
+                                break
+                        logger.debug(f"使用属性扫描解析: {len(rows)}行, {len(cols)}列")
+
+                except Exception as parse_error:
+                    logger.warning(f"结果解析失败: {parse_error}, 使用空结果")
+                    rows, cols = [], []
+
+                # 最终DataFrame安全检查
+                import pandas as pd
+                if isinstance(rows, pd.DataFrame):
+                    if not rows.empty:
+                        rows = rows.to_dict('records')
+                        logger.debug(f"Container最终转换DataFrame为字典列表: {len(rows)}行")
+                    else:
+                        rows = []
+
                 return {"success": True, "rows": rows, "columns": cols}
         except Exception as e:
             logger.error(f"run_query failed: {e}")
@@ -83,6 +134,10 @@ class RealLLMServiceAdapter:
             import re
 
             policy = llm_policy or {}
+
+            # 默认统一启用结构化JSON输出
+            if response_format is None:
+                response_format = {"type": "json_object"}
             stage = policy.get("stage", "general")
             step = policy.get("step", "unknown")  # 工具名称，如 sql.draft
             complexity = policy.get("complexity", "medium")
@@ -100,16 +155,13 @@ class RealLLMServiceAdapter:
             model_selection_method = "fallback"
 
             try:
-                # 增强模型选择调用，传递更多上下文
+                # 修正模型选择调用，只传递支持的参数
                 sel = await select_best_model_for_user(
                     user_id=user_id,
                     task_type=stage,
                     complexity=complexity,
                     constraints=constraints,
-                    agent_id=policy.get("agent_id"),
-                    stage=stage,
-                    output_kind=output_kind,
-                    tool_name=policy.get("tool_name")
+                    agent_id=policy.get("agent_id")
                 )
 
                 model_id = sel.get("model_id")
@@ -152,7 +204,8 @@ class RealLLMServiceAdapter:
                 execu = get_model_executor()
                 result = await execu.execute_with_specific_model(
                     model_id=selected_model["model_id"],
-                    prompt=prompt
+                    prompt=prompt,
+                    response_format=response_format
                 )
                 text = result.get("result", "") if isinstance(result, dict) else str(result)
 
@@ -383,3 +436,7 @@ class _UserDataSourceServiceAdapter:
                     self.connection_config = connection_config
 
             return _DS(ds.name, ds.source_type, cfg)
+
+
+# 全局容器实例
+container = Container()

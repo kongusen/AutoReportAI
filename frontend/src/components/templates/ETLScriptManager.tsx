@@ -25,6 +25,7 @@ import { Modal } from '@/components/ui/Modal'
 import { ChartPreview } from '@/components/ui/ChartPreview'
 import { PlaceholderConfig, PlaceholderValue, DataSource } from '@/types'
 import { api } from '@/lib/api'
+import { APIAdapter, FrontendChartData } from '@/services/apiAdapter'
 import { formatDateTime } from '@/utils'
 import toast from 'react-hot-toast'
 
@@ -91,63 +92,88 @@ export function ETLScriptManager({ placeholder, dataSources, onUpdate }: ETLScri
     try {
       setExecuting(true)
       
-      // 使用新的图表测试接口
-      const res = await api.post(`/chart-test/placeholders/${placeholder.id}/test-chart`, {
-        data_source_id: selectedDataSource,
-        execution_mode: 'test_with_chart'  // 完整测试模式，生成图表
-      })
+      // 使用API适配器调用新的图表测试接口
+      const result = await APIAdapter.testChartGeneration(
+        placeholder.id,
+        selectedDataSource,
+        'test_with_chart'
+      )
 
-      if (res?.success) {
-        const d = res.data || res || {}
-        
-        // 兼容旧格式的同时支持新的图表功能
-        const normalized: any = {
-          ...d,
-          success: Boolean(d.success),
-          execution_time_ms: Number(d.execution_time_ms ?? d.execution_time ?? 0),
-          row_count: Number(d.row_count ?? (Array.isArray(d.raw_data) ? d.raw_data.length : 0)),
-          formatted_text: d.formatted_text ?? '',
-          error_message: d.error_message ?? d.error ?? null,
-          data: d.raw_data || d.data || [],
-          sql_executed: d.sql_executed || '',
-          
-          // 新增图表相关字段
-          chart_config: d.chart_config,
-          chart_type: d.chart_type,
-          echarts_config: d.echarts_config,
-          chart_ready: Boolean(d.chart_ready),
-          test_summary: d.test_summary,
-          
-          // 占位符类型信息
-          is_chart_placeholder: d.is_chart_placeholder,
-          placeholder_type_info: d.placeholder_type_info,
-          
-          full_result: d.full_result
-        }
-        
-        setTestResult(normalized)
-        
-        // 根据占位符类型和结果显示不同的成功消息
-        if (normalized.is_chart_placeholder === false) {
-          toast.success('SQL查询测试成功')
-        } else if (normalized.chart_ready) {
-          toast.success(`图表生成成功！类型：${normalized.chart_type}，数据点：${normalized.row_count}`)
+      if (result.success && result.data) {
+        // 处理图表数据格式
+        if ('echartsConfig' in result.data) {
+          const chartData = result.data as FrontendChartData
+          const normalized: any = {
+            success: true,
+            execution_time_ms: chartData.metadata?.data_source?.execution_time_ms || 0,
+            row_count: chartData.metadata?.data_source?.row_count || chartData.chartData.length,
+            formatted_text: `生成 ${chartData.chartType} 图表，包含 ${chartData.chartData.length} 个数据点`,
+            error_message: null,
+            data: chartData.chartData,
+            sql_executed: chartData.metadata?.data_source?.sql_query || '',
+
+            // 图表相关字段
+            chart_config: chartData,
+            chart_type: chartData.chartType,
+            echarts_config: chartData.echartsConfig,
+            chart_ready: true,
+            test_summary: chartData.title,
+
+            // 占位符类型信息
+            is_chart_placeholder: true,
+            placeholder_type_info: { is_chart_placeholder: true }
+          }
+
+          setTestResult(normalized)
+          toast.success(`图表生成成功！类型：${chartData.chartType}，数据点：${chartData.chartData.length}`)
         } else {
+          // 非图表数据格式
+          const d = result.data as any
+          const normalized: any = {
+            ...d,
+            success: true,
+            execution_time_ms: Number(d.execution_time_ms || 0),
+            row_count: Number(d.row_count || (Array.isArray(d.raw_data) ? d.raw_data.length : 0)),
+            formatted_text: d.formatted_text || 'SQL查询执行成功',
+            error_message: null,
+            data: d.raw_data || d.data || [],
+            sql_executed: d.sql_executed || '',
+
+            // 图表相关字段
+            chart_ready: false,
+            is_chart_placeholder: false
+          }
+
+          setTestResult(normalized)
           toast.success('SQL查询测试成功')
         }
-        
+
         loadExecutionHistory() // 重新加载历史
       } else {
-        // 根据占位符类型提供更友好的错误提示
-        const baseMessage = res?.message || '测试失败'
-        const errorMessage = isChartPlaceholder ? `图表生成失败: ${baseMessage}` : `SQL查询测试失败: ${baseMessage}`
-        toast.error(errorMessage)
+        // 使用API适配器的错误处理
+        if (result.error) {
+          APIAdapter.handleError(result.error)
+        } else {
+          const errorMessage = isChartPlaceholder ? '图表生成失败' : 'SQL查询测试失败'
+          toast.error(errorMessage)
+        }
       }
     } catch (error: any) {
       console.error('Failed to test query:', error)
-      const errorDetail = error.response?.data?.detail || '网络错误或服务异常'
-      const errorMessage = isChartPlaceholder ? `图表生成异常: ${errorDetail}` : `SQL查询测试异常: ${errorDetail}`
-      toast.error(errorMessage)
+
+      // 使用统一的错误处理
+      const errorInfo = {
+        error_code: 'chart_test_failed',
+        error_message: error.message || '测试失败',
+        user_friendly_message: isChartPlaceholder
+          ? '图表生成过程中出现异常，请检查配置后重试'
+          : 'SQL查询测试过程中出现异常，请检查配置后重试',
+        error_type: 'system',
+        severity: 'error',
+        suggestions: ['检查网络连接', '验证数据源配置', '联系技术支持']
+      }
+
+      APIAdapter.handleError(errorInfo)
     } finally {
       setExecuting(false)
     }

@@ -135,13 +135,22 @@ class TaskApplicationService(TransactionalApplicationService):
                 except ImportError:
                     self.logger.warning("croniter模块不可用，跳过cron验证")
             
-            # 创建任务
+            # 创建任务 - 确保 UUID 字段使用正确的类型
+            from uuid import UUID as UUIDType
+
+            # 转换UUID并记录调试信息
+            owner_uuid = UUIDType(user_id) if isinstance(user_id, str) else user_id
+            template_uuid = UUIDType(template_id) if isinstance(template_id, str) else template_id
+            data_source_uuid = UUIDType(data_source_id) if isinstance(data_source_id, str) else data_source_id
+
+            self.logger.info(f"创建任务，UUID转换: owner_id={owner_uuid}, template_id={template_uuid}, data_source_id={data_source_uuid}")
+
             task = Task(
                 name=name,
                 description=description,
-                owner_id=user_id,
-                template_id=template_id,
-                data_source_id=data_source_id,
+                owner_id=owner_uuid,
+                template_id=template_uuid,
+                data_source_id=data_source_uuid,
                 report_period=report_period,
                 schedule=schedule,
                 recipients=recipients or [],
@@ -154,17 +163,23 @@ class TaskApplicationService(TransactionalApplicationService):
             )
             
             db.add(task)
-            db.refresh(task)
+            db.flush()  # 将挂起的更改刷新到数据库，但不提交事务
+            db.refresh(task)  # 现在可以安全地刷新对象
             
             # 异步验证模板占位符（可选）
             if is_active:
                 try:
+                    # 延迟导入以避免循环导入
+                    from app.services.infrastructure.task_queue.tasks import validate_placeholders_task
+
                     validate_placeholders_task.delay(
                         template_id=template_id,
                         data_source_id=data_source_id,
                         user_id=user_id
                     )
                     self.logger.info(f"占位符验证任务已排队，任务ID: {task.id}")
+                except ImportError as e:
+                    self.logger.warning(f"无法导入占位符验证任务，跳过异步验证，任务ID: {task.id}, 错误: {e}")
                 except Exception as e:
                     self.logger.warning(f"排队占位符验证失败，任务ID: {task.id}, 错误: {e}")
             

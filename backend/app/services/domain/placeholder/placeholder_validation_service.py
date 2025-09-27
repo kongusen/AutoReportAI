@@ -13,6 +13,7 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from .ports.sql_execution_port import SqlExecutionPort
 from app.utils.time_context import TimeContextManager
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,9 @@ class SQLRepairContext:
     max_attempts: int = 3
 
 
+from .ports.ai_sql_repair_port import AiSqlRepairPort
+
+
 class PlaceholderValidationService:
     """
     占位符验证和修复服务
@@ -55,13 +59,15 @@ class PlaceholderValidationService:
     4. 与统一AI门面的集成
     """
     
-    def __init__(self, user_id: str):
+    def __init__(self, user_id: str, ai_sql_repair_port: Optional[AiSqlRepairPort] = None, sql_execution_port: Optional[SqlExecutionPort] = None):
         if not user_id:
             raise ValueError("user_id is required for PlaceholderValidationService")
         self.user_id = user_id
         self.max_retry_attempts = 3
         self.validation_timeout = 30  # 秒
         self.time_context_manager = TimeContextManager()
+        self._ai_sql_repair_port = ai_sql_repair_port
+        self._sql_execution_port = sql_execution_port
         
     async def validate_and_repair_placeholders(
         self,
@@ -174,94 +180,18 @@ class PlaceholderValidationService:
         sql_content: str,
         data_source_info: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """测试SQL执行"""
+        """通过执行端口测试SQL执行（Domain不直接依赖具体连接器）。"""
+        if not self._sql_execution_port:
+            return {"success": False, "error": "未配置SQL执行端口", "data": [], "row_count": 0}
         try:
-            # 根据数据源类型选择连接器
-            source_type = data_source_info.get('type', 'unknown')
-            
-            if source_type == 'doris':
-                return await self._test_doris_sql(sql_content, data_source_info)
-            else:
-                return {
-                    "success": False,
-                    "error": f"不支持的数据源类型: {source_type}",
-                    "data": [],
-                    "row_count": 0
-                }
-                
+            ds_id = data_source_info.get('id') or data_source_info.get('data_source_id') or data_source_info.get('name') or 'default'
+            qr = await self._sql_execution_port.execute(sql_content, ds_id)
+            return {"success": True, "data": qr.rows, "row_count": qr.row_count}
         except Exception as e:
             logger.error(f"SQL测试异常: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": [],
-                "row_count": 0
-            }
+            return {"success": False, "error": str(e), "data": [], "row_count": 0}
     
-    async def _test_doris_sql(
-        self,
-        sql_content: str,
-        data_source_info: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """测试Doris SQL执行"""
-        try:
-            from app.services.data.connectors.doris_connector import DorisConnector, DorisConfig
-            from app.core.data_source_utils import DataSourcePasswordManager
-            
-            # 从data_source_info构建DorisConfig
-            config = DorisConfig(
-                source_type='doris',
-                name=data_source_info.get('name', 'test_source'),
-                description='SQL验证测试',
-                fe_hosts=data_source_info.get('fe_hosts', ['localhost']),
-                mysql_host=data_source_info.get('mysql_host', 'localhost'),
-                mysql_port=data_source_info.get('mysql_port', 9030),
-                query_port=data_source_info.get('query_port', 9030),
-                username=data_source_info.get('username', 'root'),
-                password=DataSourcePasswordManager.get_password(
-                    data_source_info.get('password', '')
-                ),
-                database=data_source_info.get('database', 'default'),
-                mysql_username=data_source_info.get('username', 'root'),
-                mysql_password=DataSourcePasswordManager.get_password(
-                    data_source_info.get('password', '')
-                ),
-                mysql_database=data_source_info.get('database', 'default'),
-                use_mysql_protocol=False
-            )
-            
-            connector = DorisConnector(config=config)
-            
-            try:
-                # 为了验证，我们添加LIMIT限制
-                test_sql = sql_content.strip()
-                if test_sql.upper().startswith('SELECT') and 'LIMIT' not in test_sql.upper():
-                    test_sql = f"SELECT * FROM ({test_sql}) AS validation_query LIMIT 1"
-                
-                result = await connector.execute_query(test_sql)
-                
-                if hasattr(result, 'to_dict'):
-                    return result.to_dict()
-                else:
-                    return {
-                        "success": True,
-                        "data": getattr(result, 'data', []),
-                        "columns": getattr(result, 'columns', []),
-                        "row_count": getattr(result, 'row_count', 0)
-                    }
-                    
-            finally:
-                if hasattr(connector, 'close'):
-                    await connector.close()
-                    
-        except Exception as e:
-            logger.error(f"Doris SQL测试失败: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": [],
-                "row_count": 0
-            }
+    # 旧的 _test_doris_sql 逻辑已移除，统一通过 SqlExecutionPort 执行
     
     def _analyze_sql_error(self, error_message: str) -> List[str]:
         """分析SQL错误并提供修复建议"""
@@ -353,86 +283,25 @@ class PlaceholderValidationService:
         repair_context: SQLRepairContext,
         placeholder: Dict[str, Any]
     ) -> Optional[str]:
-        """使用AI修复SQL"""
-        try:
-            # Service orchestrator migrated to agents
-from app.services.infrastructure.agents import execute_agent_task
-            
-            orchestrator = execute_agent_task
-            
-            # 构建增强的时间上下文提示
-            time_context_prompt = self._build_time_context_prompt(repair_context.time_context)
-            
-            # 构建修复请求
-            repair_request = {
-                "placeholder_name": repair_context.placeholder_name,
-                "placeholder_text": placeholder.get('text', placeholder.get('placeholder_text', '')),
-                "template_id": placeholder.get('template_id', 'unknown'),
-                "template_context": f"""SQL修复任务 - 原SQL执行失败: {repair_context.error_message}
-
-{time_context_prompt}
-
-重要：生成的SQL必须使用动态时间范围，不能写死固定日期。使用相对时间表达式如：
-- CURDATE() - INTERVAL 1 DAY （前一天）
-- DATE_SUB(CURDATE(), INTERVAL 1 DAY) （前一天）
-- DATE_FORMAT(CURDATE() - INTERVAL 1 DAY, '%Y-%m-%d') （前一天格式化）
-
-示例：
-- 错误：WHERE date = '2024-11-30'
-- 正确：WHERE date = CURDATE() - INTERVAL 1 DAY""",
-                "data_source_info": repair_context.data_source_info,
-                "task_params": {
-                    "original_sql": repair_context.original_sql,
-                    "error_message": repair_context.error_message,
-                    "repair_mode": True,
-                    "validation_mode": True,
-                    "dynamic_time_required": True,
-                    "time_context": repair_context.time_context
-                }
-            }
-            
-            # 添加时间上下文
-            if repair_context.time_context:
-                repair_request.update({
-                    "cron_expression": repair_context.time_context.get('cron_expression'),
-                    "execution_time": repair_context.time_context.get('execution_time'),
-                    "task_type": "repair"
-                })
-            
-            # 调用统一AI门面进行SQL修复
-            result = await orchestrator.analyze_single_placeholder_simple(
-                user_id=self.user_id,
-                placeholder_name=repair_request["placeholder_name"],
-                placeholder_text=repair_request["placeholder_text"],
-                template_id=repair_request["template_id"],
-                template_context=repair_request["template_context"],
-                data_source_info=repair_request["data_source_info"],
-                task_params=repair_request["task_params"],
-                cron_expression=repair_request.get("cron_expression"),
-                execution_time=repair_request.get("execution_time"),
-                task_type=repair_request.get("task_type", "repair")
-            )
-            
-            if result.get('status') == 'completed':
-                generated_sql = result.get('generated_sql', {})
-                raw_sql = None
-                
-                if isinstance(generated_sql, dict):
-                    raw_sql = generated_sql.get(repair_context.placeholder_name) or generated_sql.get('sql', '')
-                elif isinstance(generated_sql, str):
-                    raw_sql = generated_sql
-                
-                if raw_sql:
-                    # 后处理：确保SQL使用动态时间
-                    processed_sql = self._ensure_dynamic_time_in_sql(raw_sql, repair_context.time_context)
-                    return processed_sql
-            
-            logger.warning(f"AI修复未成功: {result.get('status', 'unknown')}")
+        """使用AI修复SQL（通过Domain Port）"""
+        if not self._ai_sql_repair_port:
+            logger.warning("AI SQL repair port not configured; skipping repair.")
             return None
-            
-        except Exception as e:
-            logger.error(f"AI修复异常: {e}")
-            return None
+
+        repaired = await self._ai_sql_repair_port.repair_sql(
+            user_id=self.user_id,
+            placeholder_name=repair_context.placeholder_name,
+            placeholder_text=placeholder.get('text', placeholder.get('placeholder_text', '')),
+            template_id=placeholder.get('template_id', 'unknown'),
+            original_sql=repair_context.original_sql,
+            error_message=repair_context.error_message,
+            data_source_info=repair_context.data_source_info,
+            time_context=repair_context.time_context,
+        )
+        if repaired:
+            # 确保使用动态时间表达式
+            return self._ensure_dynamic_time_in_sql(repaired, repair_context.time_context)
+        return None
     
     def _build_time_context_prompt(self, time_context: Optional[Dict[str, Any]]) -> str:
         """构建时间上下文提示"""
@@ -447,8 +316,6 @@ from app.services.infrastructure.agents import execute_agent_task
         
         if cron_expr:
             # 解析cron表达式
-            # AI core components migrated to agents
-from app.services.infrastructure.agents.core import *
             try:
                 time_manager = TimeContextManager()
                 context = time_manager.build_task_time_context(cron_expr, execution_time)

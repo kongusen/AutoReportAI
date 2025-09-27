@@ -390,7 +390,8 @@ class DataSourceContextBuilder:
         user_id: str,
         data_source_id: str,
         required_tables: Optional[List[str]] = None,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        names_only: bool = False
     ) -> Dict[str, Any]:
         """构建数据源上下文（backup2原始接口）"""
 
@@ -418,12 +419,17 @@ class DataSourceContextBuilder:
                         if table_info:
                             table_infos.append(table_info)
                 else:
-                    # 获取所有表
-                    table_infos = await self.get_all_tables_info(
-                        data_source_id=data_source_id,
-                        connection_config=data_source.connection_config,
-                        force_refresh=force_refresh
-                    )
+                    if names_only:
+                        # 仅获取表名，列信息留待后续按需获取
+                        table_names = await self._get_all_table_names(connection_config=data_source.connection_config)
+                        table_infos = [TableInfo(name=t, columns=[]) for t in table_names]
+                    else:
+                        # 获取所有表的详细信息
+                        table_infos = await self.get_all_tables_info(
+                            data_source_id=data_source_id,
+                            connection_config=data_source.connection_config,
+                            force_refresh=force_refresh
+                        )
 
                 # 3. 构建Agent上下文
                 context_info = DataSourceContextInfo(
@@ -439,7 +445,7 @@ class DataSourceContextBuilder:
 
             else:
                 logger.warning("Container or user_data_source_service not available, using fallback mode")
-                return await self._build_fallback_data_source_context(user_id, data_source_id)
+                return await self._build_fallback_data_source_context(user_id, data_source_id, names_only=names_only)
 
         except Exception as e:
             logger.error(f"构建数据源上下文失败: {e}")
@@ -448,7 +454,8 @@ class DataSourceContextBuilder:
     async def _build_fallback_data_source_context(
         self,
         user_id: str,
-        data_source_id: str
+        data_source_id: str,
+        names_only: bool = False
     ) -> Dict[str, Any]:
         """回退模式构建数据源上下文 - 连接真实数据源获取表结构"""
 
@@ -467,8 +474,16 @@ class DataSourceContextBuilder:
                     logger.warning(f"Data source {data_source_id} not found for user {user_id}")
                     return {"success": False, "error": "data_source_not_found"}
 
-                # 获取真实表结构
-                real_tables = await self._get_real_table_info(data_source)
+                # 获取表结构或仅表名
+                if names_only:
+                    # 仅根据数据源类型获取表名（不依赖 connection_config 字段）
+                    if data_source.source_type and getattr(data_source.source_type, 'value', None) == 'doris':
+                        table_names = await self._get_doris_table_names(data_source)
+                    else:
+                        table_names = []
+                    real_tables = [TableInfo(name=t, columns=[]) for t in table_names]
+                else:
+                    real_tables = await self._get_real_table_info(data_source)
 
                 if not real_tables:
                     # 如果获取真实表结构失败，直接返回错误，不使用模拟表结构
@@ -521,14 +536,125 @@ class DataSourceContextBuilder:
             logger.error(f"Failed to get real table info: {e}")
             return []
 
-    async def _get_doris_table_info(self, data_source) -> List[TableInfo]:
-        """获取Doris数据源的表结构"""
+    async def _get_doris_table_info(self, data_source, max_retries: int = 3) -> List[TableInfo]:
+        """获取Doris数据源的表结构 - 带重试机制"""
 
+        for attempt in range(max_retries):
+            try:
+                from app.services.data.connectors.doris_connector import DorisConnector, DorisConfig
+                from app.core.data_source_utils import DataSourcePasswordManager
+
+                # 构建Doris配置
+                password = ""
+                if data_source.doris_password:
+                    password = DataSourcePasswordManager.get_password(data_source.doris_password)
+
+                config = DorisConfig(
+                    source_type="doris",
+                    name=data_source.name,
+                    fe_hosts=data_source.doris_fe_hosts or ["localhost"],
+                    http_port=data_source.doris_http_port or 8030,
+                    query_port=data_source.doris_query_port or 9030,
+                    database=data_source.doris_database or "default",
+                    username=data_source.doris_username or "root",
+                    password=password,
+                    use_mysql_protocol=False  # 使用HTTP API更稳定
+                )
+
+                connector = DorisConnector(config)
+                tables = []
+
+                try:
+                    await connector.__aenter__()
+
+                    # 获取所有表名
+                    tables_result = await connector.execute_query("SHOW TABLES")
+                    table_names = []
+
+                    for row in tables_result.to_dict().get('data', []):
+                        if isinstance(row, dict):
+                            table_name = list(row.values())[0]
+                        elif isinstance(row, list):
+                            table_name = row[0]
+                        else:
+                            table_name = str(row)
+                        table_names.append(table_name)
+
+                    logger.info(f"Found {len(table_names)} tables in Doris: {table_names}")
+
+                    # 一次性抓取所有表的列信息（分批，带回退），避免上下文无列
+                    batch_size = 10
+                    def _append_table(name: str, cols: List[ColumnInfo]):
+                        tables.append(TableInfo(
+                            name=name,
+                            columns=cols,
+                            comment=f"{name}表",
+                            engine="Doris"
+                        ))
+
+                    for i in range(0, len(table_names), batch_size):
+                        batch = table_names[i:i+batch_size]
+                        for table_name in batch:
+                            try:
+                                desc_result = await connector.execute_query(f"DESCRIBE {table_name}")
+                                columns: List[ColumnInfo] = []
+
+                                for row in desc_result.to_dict().get('data', []):
+                                    if isinstance(row, dict):
+                                        field = row.get('Field', '')
+                                        type_info = row.get('Type', '')
+                                        null_info = row.get('Null', 'YES')
+                                        key_info = row.get('Key', '')
+                                        default = row.get('Default')
+                                        extra = row.get('Extra', '')
+                                    elif isinstance(row, list) and len(row) >= 4:
+                                        field = row[0] or ''
+                                        type_info = row[1] or ''
+                                        null_info = row[2] or 'YES'
+                                        key_info = row[3] or ''
+                                        default = row[4] if len(row) > 4 else None
+                                        extra = row[5] if len(row) > 5 else ''
+                                    else:
+                                        continue
+
+                                    columns.append(ColumnInfo(
+                                        name=field,
+                                        type=type_info,
+                                        nullable=null_info.upper() != 'NO',
+                                        default_value=str(default) if default is not None else None,
+                                        key=key_info if key_info else None,
+                                        extra=extra if extra else None
+                                    ))
+
+                                _append_table(table_name, columns)
+                            except Exception as e:
+                                logger.warning(f"Failed to get structure for table {table_name}: {e}")
+                                _append_table(table_name, [])
+
+                finally:
+                    await connector.__aexit__(None, None, None)
+
+                logger.info(f"Successfully retrieved {len(tables)} table structures from Doris")
+                return tables
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    import asyncio
+                    delay = 2 ** attempt  # 指数退避
+                    logger.warning(f"Schema获取第{attempt+1}次失败，{delay}秒后重试: {e}")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"Schema获取失败，已重试{max_retries}次: {e}")
+                    return []
+
+        return []  # 如果所有重试都失败
+
+    async def _get_doris_table_names(self, data_source) -> List[str]:
+        """仅获取Doris数据源的表名（轻量模式）。"""
         try:
             from app.services.data.connectors.doris_connector import DorisConnector, DorisConfig
             from app.core.data_source_utils import DataSourcePasswordManager
 
-            # 构建Doris配置
             password = ""
             if data_source.doris_password:
                 password = DataSourcePasswordManager.get_password(data_source.doris_password)
@@ -542,86 +668,28 @@ class DataSourceContextBuilder:
                 database=data_source.doris_database or "default",
                 username=data_source.doris_username or "root",
                 password=password,
-                use_mysql_protocol=False  # 使用HTTP API更稳定
+                use_mysql_protocol=False
             )
 
             connector = DorisConnector(config)
-            tables = []
-
+            names: List[str] = []
             try:
                 await connector.__aenter__()
-
-                # 获取所有表名
                 tables_result = await connector.execute_query("SHOW TABLES")
-                table_names = []
-
                 for row in tables_result.to_dict().get('data', []):
                     if isinstance(row, dict):
                         table_name = list(row.values())[0]
-                    elif isinstance(row, list):
+                    elif isinstance(row, list) and row:
                         table_name = row[0]
                     else:
                         table_name = str(row)
-                    table_names.append(table_name)
-
-                logger.info(f"Found {len(table_names)} tables in Doris: {table_names}")
-
-                # 获取每个表的结构（限制前10个表避免超时）
-                for table_name in table_names[:10]:
-                    try:
-                        desc_result = await connector.execute_query(f"DESCRIBE {table_name}")
-                        columns = []
-
-                        for row in desc_result.to_dict().get('data', []):
-                            if isinstance(row, dict):
-                                field = row.get('Field', '')
-                                type_info = row.get('Type', '')
-                                null_info = row.get('Null', 'YES')
-                                key_info = row.get('Key', '')
-                                default = row.get('Default')
-                                extra = row.get('Extra', '')
-                            elif isinstance(row, list) and len(row) >= 4:
-                                field = row[0] or ''
-                                type_info = row[1] or ''
-                                null_info = row[2] or 'YES'
-                                key_info = row[3] or ''
-                                default = row[4] if len(row) > 4 else None
-                                extra = row[5] if len(row) > 5 else ''
-                            else:
-                                continue
-
-                            column = ColumnInfo(
-                                name=field,
-                                type=type_info,
-                                nullable=null_info.upper() != 'NO',
-                                default_value=str(default) if default is not None else None,
-                                key=key_info if key_info else None,
-                                extra=extra if extra else None
-                            )
-                            columns.append(column)
-
-                        if columns:
-                            table_info = TableInfo(
-                                name=table_name,
-                                columns=columns,
-                                comment=f"{table_name}表",
-                                engine="Doris"
-                            )
-                            tables.append(table_info)
-                            logger.debug(f"Added table {table_name} with {len(columns)} columns")
-
-                    except Exception as e:
-                        logger.warning(f"Failed to get structure for table {table_name}: {e}")
-                        continue
-
+                    if table_name:
+                        names.append(str(table_name))
             finally:
                 await connector.__aexit__(None, None, None)
-
-            logger.info(f"Successfully retrieved {len(tables)} table structures from Doris")
-            return tables
-
+            return names
         except Exception as e:
-            logger.error(f"Failed to connect to Doris data source: {e}")
+            logger.error(f"Failed to get Doris table names: {e}")
             return []
 
     async def _get_sql_table_info(self, data_source) -> List[TableInfo]:
@@ -740,6 +808,24 @@ class DataSourceContextBuilder:
 
         except Exception as e:
             logger.error(f"Error getting all tables info: {str(e)}")
+            return []
+
+    async def _get_all_table_names(self, connection_config: Dict[str, Any]) -> List[str]:
+        """仅获取所有表名（轻量模式）"""
+        try:
+            tables_result = await self._execute_sql(connection_config, "SHOW TABLES")
+            names: List[str] = []
+            rows = tables_result.get("rows", []) or tables_result.get("data", []) or []
+            for row in rows:
+                if isinstance(row, dict):
+                    names.append(list(row.values())[0])
+                elif isinstance(row, list) and len(row) > 0:
+                    names.append(str(row[0]))
+                elif isinstance(row, str):
+                    names.append(row)
+            return [n for n in names if n]
+        except Exception as e:
+            logger.error(f"Error getting table names: {str(e)}")
             return []
 
     async def _execute_sql(self, connection_config: Dict[str, Any], sql: str) -> Dict[str, Any]:

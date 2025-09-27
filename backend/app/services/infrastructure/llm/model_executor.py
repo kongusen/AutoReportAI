@@ -549,12 +549,37 @@ class ModelExecutor:
             "Content-Type": "application/json"
         }
         
+        # Default JSON mode for structured outputs unless explicitly overridden
+        response_format = kwargs.get("response_format")
+        if not response_format:
+            response_format = {"type": "json_object"}
+
+        # Build messages, adding a JSON-only system instruction if in JSON mode
+        messages = []
+        if isinstance(response_format, dict) and response_format.get("type") in {"json_object", "json_schema"}:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "You are a strict JSON generator. Respond with one single JSON object only, "
+                    "no explanations, no markdown, no code fences."
+                )
+            })
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": model.name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "max_tokens": kwargs.get("max_tokens", 1000),
-            "temperature": kwargs.get("temperature", 0.7)
+            "temperature": kwargs.get("temperature", 0.2),
+            "top_p": kwargs.get("top_p", 1.0),
+            "frequency_penalty": kwargs.get("frequency_penalty", 0.0),
+            "presence_penalty": kwargs.get("presence_penalty", 0.0)
         }
+
+        # Attach response_format (for JSON mode)
+        if response_format:
+            payload["response_format"] = response_format
+            logger.info(f"Using response_format: {response_format}")
         
         try:
             logger.info(f"调用API: {server.base_url}/chat/completions, 模型: {model.name}")
@@ -584,8 +609,17 @@ class ModelExecutor:
                         
                         content = data["choices"][0]["message"]["content"]
                         logger.info(f"API返回内容长度: {len(content) if content else 0}")
-                        
-                        return {
+
+                        # Try to parse JSON if JSON mode enabled
+                        parsed_json = None
+                        try:
+                            if isinstance(response_format, dict) and response_format.get("type") in {"json_object", "json_schema"} and content:
+                                import json as _json
+                                parsed_json = _json.loads(content)
+                        except Exception:
+                            parsed_json = None
+
+                        result_payload = {
                             "success": True,
                             "result": content,
                             "model": model.name,
@@ -593,6 +627,10 @@ class ModelExecutor:
                             "tokens_used": data.get("usage", {}).get("total_tokens", 0),
                             "response_time_ms": response_time
                         }
+                        if parsed_json is not None:
+                            result_payload["result_json"] = parsed_json
+
+                        return result_payload
                     except Exception as parse_e:
                         response_text = response.text
                         logger.error(f"解析API响应失败: {parse_e}, 原始响应: {response_text[:500]}")

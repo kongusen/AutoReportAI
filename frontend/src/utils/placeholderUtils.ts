@@ -4,12 +4,19 @@
  */
 
 export interface NormalizedPlaceholder {
+  id?: string  // 数据库ID，用于编辑操作
   name: string
   text: string
   start: number
   end: number
   type?: string
   description?: string
+  // SQL编辑相关字段
+  execution_order?: number
+  cache_ttl_hours?: number
+  is_active?: boolean
+  generated_sql?: string
+  placeholder_type?: string
 }
 
 /**
@@ -18,12 +25,19 @@ export interface NormalizedPlaceholder {
  */
 export function normalizePlaceholder(placeholder: any, index: number = 0): NormalizedPlaceholder {
   return {
-    name: placeholder.name || placeholder.description || `占位符 ${index + 1}`,
+    id: placeholder.id,
+    name: placeholder.name || placeholder.placeholder_name || placeholder.description || `占位符 ${index + 1}`,
     text: placeholder.text || placeholder.placeholder_text || '',
     start: placeholder.start || placeholder.start_index || 0,
     end: placeholder.end || placeholder.end_index || 0,
     type: placeholder.type || inferPlaceholderType(placeholder.name || placeholder.description || ''),
-    description: placeholder.description || placeholder.name
+    description: placeholder.description || placeholder.name,
+    // SQL编辑相关字段
+    execution_order: placeholder.execution_order || 0,
+    cache_ttl_hours: placeholder.cache_ttl_hours || 24,
+    is_active: placeholder.is_active !== undefined ? placeholder.is_active : true,
+    generated_sql: placeholder.generated_sql || placeholder.suggested_sql,
+    placeholder_type: placeholder.placeholder_type || placeholder.type
   }
 }
 

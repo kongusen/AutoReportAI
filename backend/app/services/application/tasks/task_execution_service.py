@@ -212,7 +212,7 @@ class TaskExecutionService:
                 success_criteria=success_criteria,
                 data_source_id=(request.data_source_ids[0] if request.data_source_ids else None),
                 time_window=time_window,
-                time_column=request.execution_context.get("time_column", "created_at") if request.execution_context else "created_at",
+                time_column=request.execution_context.get("time_column") if request.execution_context else None,
                 max_attempts=request.execution_context.get("max_attempts", 3) if request.execution_context else 3,
             ):
                 events.append(ev)
@@ -256,57 +256,124 @@ class TaskExecutionService:
         return {"success": True, "data": {}, "message": "migrated_to_agents"}
     
     async def _execute_etl_pipeline(
-        self, 
+        self,
         request: TaskExecutionRequest,
         placeholder_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """执行ETL数据处理"""
         try:
             from app.services.data.processing.etl.etl_service import ETLService
-            
+
             etl_service = ETLService(user_id=self.user_id)
-            
-            # 为每个数据源执行ETL
-            etl_results = {}
-            for data_source_id in request.data_source_ids:
-                # 构建查询配置
-                query_config = {
-                    "template_id": request.template_id,
-                    "placeholder_data": placeholder_data,
-                    "time_context": request.time_context,
-                    "execution_context": request.execution_context
-                }
-                
-                # 执行数据提取
-                extract_result = await etl_service.extract_data(
-                    data_source_id=data_source_id,
-                    query_config=query_config
-                )
-                
-                if extract_result.get("success"):
-                    # 数据转换
-                    transform_result = await etl_service.transform_data(
-                        raw_data=extract_result["data"],
-                        transformation_config=request.execution_context.get("transform_config", {})
+
+            # 检查是否有模板化SQL映射
+            placeholder_sql_map = placeholder_data.get("placeholder_sql_map")
+
+            if placeholder_sql_map:
+                # 使用模板化方法进行数据提取
+                logger.info("使用模板化SQL执行ETL流水线")
+
+                etl_results = {}
+                for data_source_id in request.data_source_ids:
+                    # 确定执行模式
+                    execution_mode = request.execution_context.get("execution_mode", "production")
+                    if request.execution_context.get("mode") == "validation_only":
+                        execution_mode = "test"
+
+                    # 构建时间上下文
+                    time_context = {
+                        "cron_expression": request.execution_context.get("cron_expression", "0 8 * * *"),
+                        "execution_time": request.time_context.get("execution_time"),
+                        "test_date": request.time_context.get("test_date"),
+                        "additional_params": request.execution_context.get("additional_params", {})
+                    }
+
+                    # 使用模板化提取
+                    extract_result = await etl_service.extract_data_with_templates(
+                        data_source_id=data_source_id,
+                        placeholder_sql_map=placeholder_sql_map,
+                        time_context=time_context,
+                        execution_mode=execution_mode
                     )
-                    
-                    etl_results[data_source_id] = {
-                        "extract": extract_result,
-                        "transform": transform_result
+
+                    if extract_result.get("success"):
+                        # 数据转换（如果需要）
+                        transform_config = request.execution_context.get("transform_config", {})
+                        if transform_config:
+                            # 为每个成功提取的占位符应用转换
+                            transformed_extractions = []
+                            for extraction in extract_result["data"]["successful_extractions"]:
+                                transform_result = await etl_service.transform_data(
+                                    raw_data=extraction["data"],
+                                    transformation_config=transform_config
+                                )
+                                extraction["transform_result"] = transform_result
+                                transformed_extractions.append(extraction)
+                            extract_result["data"]["successful_extractions"] = transformed_extractions
+
+                        etl_results[data_source_id] = {
+                            "extract": extract_result,
+                            "method": "template_based"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"模板化数据提取失败: {extract_result.get('error', '未知错误')}",
+                            "data": None
+                        }
+
+                return {
+                    "success": True,
+                    "data": etl_results,
+                    "method": "template_based",
+                    "message": f"成功处理 {len(etl_results)} 个数据源的模板化数据"
+                }
+            else:
+                # 回退到传统方法
+                logger.info("使用传统方法执行ETL流水线")
+
+                etl_results = {}
+                for data_source_id in request.data_source_ids:
+                    # 构建查询配置
+                    query_config = {
+                        "template_id": request.template_id,
+                        "placeholder_data": placeholder_data,
+                        "time_context": request.time_context,
+                        "execution_context": request.execution_context
                     }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"数据提取失败: {extract_result.get('error', '未知错误')}",
-                        "data": None
-                    }
-            
-            return {
-                "success": True,
-                "data": etl_results,
-                "message": f"成功处理 {len(etl_results)} 个数据源的数据"
-            }
-            
+
+                    # 执行数据提取
+                    extract_result = await etl_service.extract_data(
+                        data_source_id=data_source_id,
+                        query_config=query_config
+                    )
+
+                    if extract_result.get("success"):
+                        # 数据转换
+                        transform_result = await etl_service.transform_data(
+                            raw_data=extract_result["data"],
+                            transformation_config=request.execution_context.get("transform_config", {})
+                        )
+
+                        etl_results[data_source_id] = {
+                            "extract": extract_result,
+                            "transform": transform_result,
+                            "method": "traditional"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"数据提取失败: {extract_result.get('error', '未知错误')}",
+                            "data": None
+                        }
+
+                return {
+                    "success": True,
+                    "data": etl_results,
+                    "method": "traditional",
+                    "message": f"成功处理 {len(etl_results)} 个数据源的数据"
+                }
+
         except Exception as e:
             logger.error(f"ETL处理异常: {e}")
             return {

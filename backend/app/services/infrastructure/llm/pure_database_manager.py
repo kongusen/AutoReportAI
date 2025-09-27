@@ -59,27 +59,54 @@ class PureDatabaseLLMManager:
 
         logger.info(f"🤖 [ModelSelection] 开始模型选择: {context}")
 
-        # 策略：确定期望的模型类型（default/think）
+        # 策略：智能确定期望的模型类型（default/think）
         desired_type = ModelType.DEFAULT.value
         strategy_reasons = []
 
+        # 分析阶段用think模型 - 需要深度思考和规划
         if task_type in ("plan", "finalize"):
             desired_type = ModelType.THINK.value
-            strategy_reasons.append("高级任务类型(plan/finalize)")
+            strategy_reasons.append("分析规划阶段")
+        elif stage in ("plan", "finalize", "think", "analysis"):
+            desired_type = ModelType.THINK.value
+            strategy_reasons.append(f"深度分析阶段({stage})")
+
+        # SQL生成根据复杂度智能选择
+        elif tool_name == "sql.draft" or task_type == "sql_generation":
+            # 简单统计用default，复杂分析用think
+            context_info = str(context or {}).lower()
+            if (complexity in ("low", "medium") and
+                any(word in context_info for word in ["统计", "计数", "count", "sum", "总数"])):
+                desired_type = ModelType.DEFAULT.value
+                strategy_reasons.append("简单SQL生成任务")
+            else:
+                desired_type = ModelType.THINK.value
+                strategy_reasons.append("复杂SQL分析任务")
+
+        # 执行验证等操作用default模型
+        elif tool_name in ("sql.validate", "sql.execute", "schema.get_columns", "schema.list_tables"):
+            desired_type = ModelType.DEFAULT.value
+            strategy_reasons.append(f"执行验证操作({tool_name})")
+
+        # JSON输出需求：区分场景
+        elif need_json or output_kind == "json":
+            if stage in ("plan", "finalize") or task_type in ("plan", "finalize"):
+                desired_type = ModelType.THINK.value
+                strategy_reasons.append("分析阶段的结构化输出")
+            else:
+                desired_type = ModelType.DEFAULT.value
+                strategy_reasons.append("执行阶段的结构化输出")
+
+        # 高复杂度：只有分析任务才用think
         elif complexity in ("high", "complex"):
-            desired_type = ModelType.THINK.value
-            strategy_reasons.append("高复杂度任务")
-        elif need_json:
-            desired_type = ModelType.THINK.value
-            strategy_reasons.append("需要结构化JSON输出")
-        elif output_kind == "json":
-            desired_type = ModelType.THINK.value
-            strategy_reasons.append("输出类型为JSON")
-        elif stage in ("plan", "finalize", "think"):
-            desired_type = ModelType.THINK.value
-            strategy_reasons.append(f"思考阶段({stage})")
+            if task_type in ("analysis", "planning", "reasoning"):
+                desired_type = ModelType.THINK.value
+                strategy_reasons.append("高复杂度分析任务")
+            else:
+                desired_type = ModelType.DEFAULT.value
+                strategy_reasons.append("高复杂度执行任务")
         else:
-            strategy_reasons.append("默认任务类型")
+            strategy_reasons.append("默认执行任务")
 
         logger.info(f"🎯 [ModelSelection] 选择策略: {desired_type} 模型，原因: {'; '.join(strategy_reasons)}")
 
@@ -299,7 +326,7 @@ async def ask_agent(
             complexity=complexity,
             domain=task_type,
             context_length=len(question) + (len(context) if context else 0),
-            response_format="text",
+            response_format="json",
             quality_level="high" if complexity in ["high", "complex"] else "medium"
         )
         
@@ -308,11 +335,12 @@ async def ask_agent(
         if context:
             full_prompt = f"上下文信息：{context}\n\n问题：{question}"
         
-        # 执行模型调用
+        # 执行模型调用（默认启用JSON结构化输出）
         result = await executor.execute_with_auto_selection(
             user_id=user_id,
             prompt=full_prompt,
-            task_requirement=task_requirement
+            task_requirement=task_requirement,
+            response_format={"type": "json_object"}
         )
         
         if result.get("success"):

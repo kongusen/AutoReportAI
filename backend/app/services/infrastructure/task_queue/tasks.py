@@ -159,7 +159,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 success_criteria=success_criteria,
                 data_source_id=str(task.data_source_id),
                 time_window=time_window,
-                time_column="created_at",
+                time_column=None,  # 让系统自动检测
                 max_attempts=3,
             ):
                 events.append(ev)

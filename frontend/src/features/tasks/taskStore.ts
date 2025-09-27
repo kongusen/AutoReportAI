@@ -165,7 +165,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 切换任务状态
   toggleTaskStatus: async (id: string, isActive: boolean) => {
     try {
-      const response = await api.patch(`/tasks/${id}/status`, { is_active: isActive })
+      // 对齐后端：启用 -> POST /tasks/{id}/resume；停用 -> POST /tasks/{id}/pause
+      const response = isActive
+        ? await api.post(`/tasks/${id}/resume`)
+        : await api.post(`/tasks/${id}/pause`)
       const updatedTask = response.data || response
       
       get().updateTaskInList(updatedTask)

@@ -64,12 +64,21 @@ def create_data_analysis_service(db: Session, user_id: str = None):
 
 
 def create_report_generation_service(db: Session, user_id: str):
-    """创建报告生成服务"""
+    """创建报告生成服务（注入AI内容端口）。"""
     if not user_id:
         raise ValueError("user_id is required for Report Generation Service")
-    
     from app.services.domain.reporting.generator import ReportGenerationService
-    return ReportGenerationService(db, user_id)
+    from app.services.infrastructure.agents.adapters.ai_content_adapter import AiContentAdapter
+    service = ReportGenerationService(db, ai_content_port=AiContentAdapter())
+    return service
+
+
+def create_placeholder_validation_service(user_id: str):
+    """创建占位符验证服务（注入AI修复端口）"""
+    from app.services.domain.placeholder.placeholder_validation_service import PlaceholderValidationService
+    from app.services.infrastructure.agents.adapters.ai_sql_repair_adapter import AiSqlRepairAdapter
+    from app.services.infrastructure.agents.adapters.sql_execution_adapter import SqlExecutionAdapter
+    return PlaceholderValidationService(user_id=user_id, ai_sql_repair_port=AiSqlRepairAdapter(), sql_execution_port=SqlExecutionAdapter())
 
 
 # =============================================================================
@@ -94,6 +103,29 @@ def create_llm_service(db: Session):
     return get_llm_manager()
 
 
+def create_intelligent_placeholder_service():
+    """创建并配置智能占位符服务（端口注入）。"""
+    from app.services.domain.placeholder.intelligent_placeholder_service import IntelligentPlaceholderService
+    from app.services.infrastructure.agents.adapters.sql_generation_adapter import SqlGenerationAdapter
+    from app.services.infrastructure.agents.adapters.sql_execution_adapter import SqlExecutionAdapter
+    from app.services.infrastructure.agents.adapters.chart_rendering_adapter import ChartRenderingAdapter
+
+    service = IntelligentPlaceholderService()
+    # 初始化由调用方决定；如需立即初始化可调用 await service.initialize()
+    service.configure_ports(
+        sql_gen=SqlGenerationAdapter(),
+        sql_exec=SqlExecutionAdapter(),
+        chart=ChartRenderingAdapter(),
+    )
+    return service
+
+
+def create_placeholder_pipeline_service():
+    """创建占位符流水线服务（扫描+组装）。"""
+    from app.services.application.placeholder.pipeline_service import PlaceholderPipelineService
+    return PlaceholderPipelineService()
+
+
 # =============================================================================
 # 导出列表
 # =============================================================================
@@ -108,9 +140,12 @@ __all__ = [
     "create_llm_orchestration_service",
     "create_data_analysis_service",
     "create_report_generation_service",
+    "create_placeholder_validation_service",
     
     # 基础设施服务
     "create_notification_service",
     "create_file_storage_service",
     "create_llm_service",
+    "create_intelligent_placeholder_service",
+    "create_placeholder_pipeline_service",
 ]

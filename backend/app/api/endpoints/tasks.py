@@ -13,6 +13,12 @@ from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.services.application.tasks.task_application_service import TaskApplicationService
 from app.services.infrastructure.task_queue.celery_config import celery_app
+from app.services.application.factories import create_placeholder_validation_service
+from app.services.data.query.query_executor_service import query_executor_service
+from app.services.infrastructure.document.word_export_service import create_word_export_service
+from app.utils.time_context import TimeContextManager
+import time as _time
+import os as _os
 
 router = APIRouter()
 
@@ -20,7 +26,7 @@ router = APIRouter()
 task_controller = CRUDAPIController("任务", "TaskController")
 
 
-@router.get("/", response_model=APIResponse[PaginatedAPIResponse])
+@router.get("/", response_model=PaginatedAPIResponse)
 async def get_tasks(
     skip: int = Query(0, ge=0, description="跳过的记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回的记录数"),
@@ -36,6 +42,7 @@ async def get_tasks(
     
     # 构建查询
     query = db.query(Task).filter(Task.owner_id == user_id)
+
     
     # 应用过滤器
     if is_active is not None:
@@ -88,19 +95,13 @@ async def get_tasks(
         }
         task_dicts.append(task_dict)
     
-    return APIResponse(
-        success=True,
-        data=PaginatedAPIResponse.create(
-            items=task_dicts,
-            total=total,
-            page=skip // limit + 1,
-            size=limit,
-            message="获取任务列表成功"
-        ),
-        message="获取任务列表成功",
-        errors=[],
-        warnings=[],
-        metadata={"user_id": str(current_user.id), "query_count": total}
+    # 直接返回分页响应，避免双重包装
+    return PaginatedAPIResponse.create(
+        items=task_dicts,
+        total=total,
+        page=skip // limit + 1,
+        size=limit,
+        message="获取任务列表成功"
     )
 
 
@@ -113,10 +114,12 @@ async def create_task(
     """创建任务"""
     task_controller.log_api_request("create_task", user_id=str(current_user.id))
     
-    task_service = TaskApplicationService(db=db, user_id=str(current_user.id))
-    
+    task_service = TaskApplicationService()
+
     # 调用应用服务
-    app_result = await task_service.create_task(
+    app_result = task_service.create_task(
+        db=db,
+        user_id=str(current_user.id),
         name=task_in.name,
         template_id=str(task_in.template_id),
         data_source_id=str(task_in.data_source_id),
@@ -269,6 +272,70 @@ async def execute_task(
             error=str(e),
             message="任务执行失败"
         )
+
+
+@router.post("/{task_id}/pause", response_model=APIResponse[Dict[str, Any]])
+async def pause_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """暂停任务（将 is_active 置为 False）"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+
+        task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在或无权限")
+
+        if task.is_active is False:
+            return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已处于暂停状态")
+
+        task.is_active = False
+        task.updated_at = datetime.utcnow()
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已暂停")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return APIResponse(success=False, error=str(e), message="暂停任务失败")
+
+
+@router.post("/{task_id}/resume", response_model=APIResponse[Dict[str, Any]])
+async def resume_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """恢复任务（将 is_active 置为 True）"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+
+        task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在或无权限")
+
+        if task.is_active is True:
+            return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已处于启用状态")
+
+        task.is_active = True
+        task.updated_at = datetime.utcnow()
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已恢复")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return APIResponse(success=False, error=str(e), message="恢复任务失败")
 
 
 @router.post("/{task_id}/run", response_model=APIResponse[Dict[str, Any]])
@@ -512,3 +579,293 @@ async def analyze_data_with_claude_code(
 
 
 
+@router.post("/{task_id}/run-report", response_model=APIResponse[Dict[str, Any]])
+async def run_task_report_pipeline(
+    task_id: int,
+    request: Dict[str, Any] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """执行任务报告流水线：占位符校验/修复 -> ETL -> 组装并生成DOCX。
+
+    请求体（可选）:
+    - execution_time: ISO时间，用作时间窗口参考
+    - cron_expression: Cron表达式，不传则使用任务上的 schedule
+    - force_repair: 是否强制重修复（默认False）
+    - preview_only: 仅返回校验和ETL JSON，不生成docx（默认False）
+    - output_format: 默认 docx
+    """
+    try:
+        req = request or {}
+        force_repair = bool(req.get("force_repair", False))
+        preview_only = bool(req.get("preview_only", False))
+        output_format = str(req.get("output_format", "docx")).lower()
+        exec_time_str = req.get("execution_time")
+        cron_expression = req.get("cron_expression")
+
+        # 1) 加载任务/模板/数据源，校验权限
+        user_id = current_user.id
+        task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在或无权限")
+
+        from app.models.template import Template
+        from app.models.data_source import DataSource
+        template = db.query(Template).filter(Template.id == task.template_id).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="模板不存在")
+
+        data_source = db.query(DataSource).filter(DataSource.id == task.data_source_id).first()
+        if not data_source:
+            raise HTTPException(status_code=404, detail="数据源不存在")
+
+        # 2) 构建时间上下文（基于任务cron+执行时间）
+        tcm = TimeContextManager()
+        if not cron_expression:
+            cron_expression = task.schedule
+        exec_dt = None
+        if exec_time_str:
+            try:
+                exec_dt = datetime.fromisoformat(exec_time_str.replace('Z', '+00:00'))
+            except Exception:
+                exec_dt = None
+        time_ctx: Dict[str, Any] = {}
+        if cron_expression:
+            tc = tcm.build_task_time_context(cron_expression, exec_dt)
+            time_ctx = {
+                "cron_expression": cron_expression,
+                "execution_time": (exec_dt.isoformat() if exec_dt else tc.execution_time),
+                "start_date": tc.data_start_time,
+                "end_date": tc.data_end_time,
+                "period_description": tc.period_description,
+            }
+        else:
+            # 无cron时，使用近7天窗口
+            from datetime import timedelta as _td
+            end = datetime.utcnow().date().isoformat()
+            start = (datetime.utcnow().date() - _td(days=7)).isoformat()
+            time_ctx = {"start_date": start, "end_date": end, "execution_time": (datetime.utcnow().isoformat())}
+
+        # 3) 占位符校验/修复
+        validation_service = create_placeholder_validation_service(str(user_id))
+        ds_info = {"data_source_id": str(task.data_source_id), "name": data_source.name}
+        validation_summary = await validation_service.batch_repair_template_placeholders(
+            template_id=str(task.template_id),
+            data_source_info=ds_info,
+            time_context=time_ctx,
+            force_repair=force_repair,
+        )
+
+        # 读取DB中当前占位符配置，以便ETL
+        from app import crud as _crud
+        placeholders = _crud.template_placeholder.get_by_template(db, template_id=str(task.template_id))
+
+        # 所有占位符若均无效，则强制重修复/重新生成SQL
+        total_ph = len(placeholders)
+        if total_ph == 0:
+            raise HTTPException(status_code=400, detail="模板未包含任何占位符")
+        all_invalid = all((not p.generated_sql) or (not p.sql_validated) for p in placeholders)
+        if all_invalid:
+            validation_summary = await validation_service.batch_repair_template_placeholders(
+                template_id=str(task.template_id),
+                data_source_info=ds_info,
+                time_context=time_ctx,
+                force_repair=True,
+            )
+            # 重新加载占位符
+            placeholders = _crud.template_placeholder.get_by_template(db, template_id=str(task.template_id))
+
+        # 4) ETL：逐占位符执行SQL
+        etl_results: Dict[str, Any] = {}
+        etl_start = _time.time()
+        for p in placeholders:
+            if not getattr(p, 'is_active', True) or not p.generated_sql:
+                continue
+            q_start = _time.time()
+            qres = await query_executor_service.execute_query(p.generated_sql, {"data_source_id": str(task.data_source_id)})
+            etl_results[p.placeholder_name] = {
+                "success": bool(qres.get("success")),
+                "data": qres.get("data", []),
+                "metadata": qres.get("metadata", {}),
+                "execution_time_ms": int((qres.get("execution_time") or 0) * 1000),
+                "columns": (qres.get("metadata", {}) or {}).get("columns", []),
+                "row_count": (qres.get("metadata", {}) or {}).get("row_count", len(qres.get("data", []) or [])),
+                "placeholder": {
+                    "name": p.placeholder_name,
+                    "type": p.placeholder_type,
+                    "content_type": p.content_type,
+                },
+                "started_at": datetime.fromtimestamp(q_start).isoformat(),
+                "finished_at": datetime.utcnow().isoformat(),
+            }
+        etl_duration_ms = int((_time.time() - etl_start) * 1000)
+
+        # 5) 图表生成（简化：为content_type=chart生成基础柱状图）
+        chart_results: List[Dict[str, Any]] = []
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            _os.makedirs(f"/tmp/charts/{user_id}", exist_ok=True)
+
+            for p in placeholders:
+                if str(getattr(p, 'content_type', '')).lower() != 'chart':
+                    continue
+                pres = etl_results.get(p.placeholder_name)
+                if not pres or not pres.get("data"):
+                    continue
+                rows = pres["data"]
+                columns = pres.get("columns") or (list(rows[0].keys()) if isinstance(rows[0], dict) else None)
+                if not columns:
+                    continue
+                x_col = columns[0]
+                y_col = None
+                for c in columns[1:]:
+                    try:
+                        if any(isinstance(r.get(c), (int, float)) for r in rows if isinstance(r, dict)):
+                            y_col = c
+                            break
+                    except Exception:
+                        continue
+                if not y_col:
+                    continue
+
+                x_vals = [r.get(x_col) for r in rows if isinstance(r, dict)]
+                y_vals = [r.get(y_col) for r in rows if isinstance(r, dict)]
+                plt.figure(figsize=(8, 5))
+                try:
+                    plt.bar(x_vals, y_vals)
+                    plt.title(p.description or p.placeholder_name)
+                    plt.xticks(rotation=30, ha='right')
+                    plt.tight_layout()
+                    fname = f"/tmp/charts/{user_id}/chart_{p.placeholder_name}_{int(_time.time())}.png"
+                    plt.savefig(fname, dpi=150)
+                    chart_results.append({
+                        "success": True,
+                        "chart_type": "bar",
+                        "file_path": fname,
+                        "metadata": {"title": p.description or p.placeholder_name}
+                    })
+                finally:
+                    plt.close()
+        except Exception:
+            chart_results = []
+
+        # 6) 生成用于文本占位符的直接替换值（优先原值，其次单句改写）
+        direct_values: Dict[str, str] = {}
+        end_for_sentence = time_ctx.get("end_date") or time_ctx.get("execution_time") or "本期"
+        for p in placeholders:
+            # 跳过图表类占位符（由chart_results处理）
+            if str(getattr(p, 'content_type', '')).lower() == 'chart':
+                continue
+            name = p.placeholder_name
+            pres = etl_results.get(name)
+            if not pres:
+                # 无ETL结果，单句改写为提示
+                direct_values[name] = f"{p.description or name}暂无可用数据"
+                continue
+
+            rows = pres.get("data") or []
+            cols = pres.get("columns") or []
+            # 优先原始标量值
+            scalar_value = None
+            try:
+                if rows:
+                    first = rows[0]
+                    if isinstance(first, dict):
+                        # 若仅一列，直接取该列
+                        if len(cols) == 1 and cols[0] in first:
+                            scalar_value = first.get(cols[0])
+                        else:
+                            # 找第一个数值列，否则第一个非空值
+                            for c in cols:
+                                v = first.get(c)
+                                if isinstance(v, (int, float)):
+                                    scalar_value = v
+                                    break
+                            if scalar_value is None:
+                                for c in cols:
+                                    v = first.get(c)
+                                    if v not in (None, ""):
+                                        scalar_value = v
+                                        break
+                    elif isinstance(first, list) and first:
+                        scalar_value = first[0]
+            except Exception:
+                scalar_value = None
+
+            if scalar_value is not None:
+                direct_values[name] = str(scalar_value)
+            else:
+                # 单句改写（极简）：
+                if not rows:
+                    direct_values[name] = f"{p.description or name}在{end_for_sentence}无数据"
+                else:
+                    # 多行/无法提取标量时，取Top1摘要
+                    if isinstance(rows[0], dict) and cols:
+                        x = rows[0].get(cols[0])
+                        y = None
+                        for c in cols[1:]:
+                            v = rows[0].get(c)
+                            if isinstance(v, (int, float)):
+                                y = v
+                                break
+                        if y is not None:
+                            direct_values[name] = f"{p.description or name}（{str(x)}）：{y}"
+                        else:
+                            direct_values[name] = f"{p.description or name}（示例：{str(x)}）"
+                    else:
+                        direct_values[name] = f"{p.description or name}数据已更新"
+
+        # 7) 预览或生成文档
+        payload = {
+            "task": {"id": task.id, "name": task.name},
+            "template": {"id": str(task.template_id), "name": getattr(template, 'name', '模板')},
+            "time_context": time_ctx,
+            "validation": validation_summary,
+            "etl": {
+                "placeholders": list(etl_results.keys()),
+                "results": etl_results,
+                "duration_ms": etl_duration_ms,
+            },
+            "charts": chart_results,
+        }
+
+        if preview_only:
+            return APIResponse(success=True, data=payload, message="预览成功（未生成文档）")
+
+        word_service = create_word_export_service(str(user_id))
+        export_res = await word_service.export_report_document(
+            template_id=str(task.template_id),
+            placeholder_data={
+                **(validation_summary if isinstance(validation_summary, dict) else {"validation_results": []}),
+                "direct_values": direct_values,
+            },
+            etl_data={str(task.data_source_id): {"transform": {"success": True, "data": [v for v in etl_results.values()]}}},
+            chart_data={"data": chart_results},
+        )
+
+        payload["document"] = {
+            "success": export_res.success,
+            "document_path": export_res.document_path,
+            "file_size_bytes": export_res.file_size_bytes,
+            "page_count": export_res.page_count,
+            "export_time_seconds": export_res.export_time_seconds,
+            "error": export_res.error,
+            "meta": export_res.metadata,
+        }
+
+        return APIResponse(
+            success=bool(export_res.success),
+            data=payload,
+            message=("报告生成成功" if export_res.success else (export_res.error or "报告生成失败"))
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            error=str(e),
+            message="运行报告流水线失败"
+        )

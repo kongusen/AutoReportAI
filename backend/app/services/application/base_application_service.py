@@ -298,14 +298,17 @@ class TransactionalApplicationService(BaseApplicationService):
         """在事务中执行操作"""
         try:
             result = self.handle_domain_exceptions(operation, func, *args, **kwargs)
-            
+
             if result.success:
+                # 在 commit 之前准备事件数据，避免会话脱离问题
+                event_data = self._prepare_event_data(result.data)
+
                 db_session.commit()
                 # 发布领域事件
                 self.event_publisher.publish(f"{self.service_name}.{operation}.success", {
                     "service": self.service_name,
                     "operation": operation,
-                    "result": result.data,
+                    "result": event_data,
                     "timestamp": datetime.now().isoformat()
                 })
             else:
@@ -326,6 +329,29 @@ class TransactionalApplicationService(BaseApplicationService):
                 message=f"事务执行失败: {operation}",
                 errors=[str(e)]
             )
+
+    def _prepare_event_data(self, data):
+        """准备事件数据，避免 SQLAlchemy 会话脱离问题"""
+        if data is None:
+            return None
+
+        # 如果是 SQLAlchemy 模型对象，提取基本属性
+        if hasattr(data, '__table__'):
+            # 获取所有列的值，避免关系字段的延迟加载
+            result = {}
+            for column in data.__table__.columns:
+                try:
+                    value = getattr(data, column.name, None)
+                    # 处理特殊类型
+                    if hasattr(value, 'isoformat'):  # datetime 对象
+                        value = value.isoformat()
+                    result[column.name] = value
+                except:
+                    result[column.name] = None
+            return result
+
+        # 对于其他类型，直接返回
+        return data
 
 
 # 应用服务注册表

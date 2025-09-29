@@ -28,7 +28,8 @@ class ReportWorkflowService:
         period_type: str = "daily",
         output_format: str = "docx",
         execution_mode: str = "production",
-        use_agent_charts: bool = True
+        use_agent_charts: bool = True,
+        use_intelligent_text: bool = True
     ) -> Dict[str, Any]:
         """
         执行完整的报告生成工作流
@@ -40,6 +41,7 @@ class ReportWorkflowService:
             output_format: 输出格式
             execution_mode: 执行模式 (production/test)
             use_agent_charts: 是否使用Agent生成图表
+            use_intelligent_text: 是否使用智能文本处理
 
         Returns:
             执行结果
@@ -219,7 +221,8 @@ class ReportWorkflowService:
                     doc_result = await word_service.process_document_template_enhanced(
                         template_path=template_file_path,
                         placeholder_data=placeholder_data,
-                        output_path=output_file_path
+                        output_path=output_file_path,
+                        use_intelligent_text=use_intelligent_text
                     )
                 else:
                     # 使用传统Word服务
@@ -246,7 +249,8 @@ class ReportWorkflowService:
                         "placeholders_processed": doc_result["placeholders_processed"],
                         "chart_generation_method": doc_result.get("chart_generation_method", "unknown"),
                         "template_file": template_file_path,
-                        "agent_enhanced": use_agent_charts
+                        "agent_enhanced": use_agent_charts,
+                        "intelligent_text_used": doc_result.get("intelligent_text_used", False)
                     },
                     "message": f"报告生成完成: {output_file_path} ({'Agent' if use_agent_charts else '传统'}图表生成)"
                 }

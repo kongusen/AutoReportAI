@@ -600,15 +600,185 @@ class AgentEnhancedWordService(WordTemplateService):
         self,
         template_path: str,
         placeholder_data: Dict[str, Any],
-        output_path: str
+        output_path: str,
+        use_intelligent_text: bool = True
     ) -> Dict[str, Any]:
         """
-        增强版文档处理，默认使用Agent图表生成
+        增强版文档处理，默认使用Agent图表生成和智能文本处理
         """
-        return await self.process_document_template(
+        return await self.process_document_template_with_intelligence(
             template_path=template_path,
             placeholder_data=placeholder_data,
             output_path=output_path,
             container=self.container,
-            use_agent_charts=True
+            use_agent_charts=True,
+            use_intelligent_text=use_intelligent_text
         )
+
+    async def process_document_template_with_intelligence(
+        self,
+        template_path: str,
+        placeholder_data: Dict[str, Any],
+        output_path: str,
+        container=None,
+        use_agent_charts: bool = False,
+        use_intelligent_text: bool = True
+    ) -> Dict[str, Any]:
+        """
+        带智能文本处理的文档模板处理
+
+        Args:
+            template_path: 模板文件路径
+            placeholder_data: ETL返回的占位符数据
+            output_path: 输出文件路径
+            container: 服务容器
+            use_agent_charts: 是否使用Agent生成图表
+            use_intelligent_text: 是否使用智能文本处理
+
+        Returns:
+            处理结果
+        """
+        if not DOCX_AVAILABLE:
+            return {
+                "success": False,
+                "error": "python-docx未安装，无法处理Word文档",
+                "placeholders_processed": 0
+            }
+
+        try:
+            self.logger.info(f"📄 开始智能文档处理: {template_path} (智能文本: {use_intelligent_text})")
+
+            # 1. 检查模板文件
+            if not os.path.exists(template_path):
+                return {
+                    "success": False,
+                    "error": f"模板文件不存在: {template_path}",
+                    "placeholders_processed": 0
+                }
+
+            # 2. 打开文档
+            doc = Document(template_path)
+            self.logger.info(f"📄 Word文档加载成功，段落数: {len(doc.paragraphs)}")
+
+            # 3. 智能文本处理 (核心新功能)
+            processed_placeholder_data = placeholder_data
+            if use_intelligent_text and container:
+                processed_placeholder_data = await self._process_placeholder_data_intelligently(
+                    doc, placeholder_data, container
+                )
+
+            # 4. 替换文本占位符
+            self._replace_text_in_document(doc, processed_placeholder_data)
+
+            # 5. 处理图表占位符
+            if use_agent_charts and container:
+                await self._replace_chart_placeholders_with_agent(doc, placeholder_data, container)
+            else:
+                await self._replace_chart_placeholders_fallback(doc, placeholder_data)
+
+            # 6. 保存文档
+            doc.save(output_path)
+            self.logger.info(f"✅ Word文档保存成功: {output_path}")
+
+            return {
+                "success": True,
+                "output_path": output_path,
+                "placeholders_processed": len(placeholder_data),
+                "intelligent_text_used": use_intelligent_text and container,
+                "chart_generation_method": "agent" if use_agent_charts and container else "traditional",
+                "message": f"智能文档处理完成: {output_path}"
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ 智能文档处理失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "placeholders_processed": 0
+            }
+
+    async def _process_placeholder_data_intelligently(
+        self,
+        doc,
+        placeholder_data: Dict[str, Any],
+        container
+    ) -> Dict[str, Any]:
+        """
+        使用Agent智能处理占位符数据
+
+        这是核心的智能文本处理环节：
+        1. 提取Word文档的上下文信息
+        2. 对每个占位符进行智能文本生成
+        3. 返回优化后的文本映射
+
+        Args:
+            doc: Word文档对象
+            placeholder_data: ETL返回的原始数据 {placeholder_name: data_value}
+            container: 服务容器
+
+        Returns:
+            智能处理后的文本映射 {placeholder_name: "intelligent_text"}
+        """
+        try:
+            from app.services.infrastructure.agents.placeholder_intelligent_processor import create_placeholder_intelligent_processor
+
+            self.logger.info(f"🤖 开始智能文本处理 {len(placeholder_data)} 个占位符")
+
+            # 创建占位符智能处理器
+            processor = create_placeholder_intelligent_processor(container)
+
+            # 提取文档中的上下文信息
+            document_text = self._extract_document_text(doc)
+            template_context = processor.extract_template_context(document_text)
+
+            self.logger.debug(f"提取到 {len(template_context)} 个占位符的上下文信息")
+
+            # 智能处理占位符数据
+            processed_data = await processor.process_placeholder_data(
+                placeholder_data=placeholder_data,
+                template_context=template_context
+            )
+
+            # 记录处理结果
+            for name, original in placeholder_data.items():
+                processed = processed_data.get(name, str(original))
+                if str(original) != processed:
+                    self.logger.info(f"📝 占位符智能优化: {name}")
+                    self.logger.debug(f"   原始: {original}")
+                    self.logger.debug(f"   优化: {processed}")
+
+            self.logger.info(f"✅ 智能文本处理完成")
+            return processed_data
+
+        except Exception as e:
+            self.logger.error(f"❌ 智能文本处理失败: {e}")
+            # 降级到原始数据
+            return placeholder_data
+
+    def _extract_document_text(self, doc) -> str:
+        """提取Word文档的文本内容，用于上下文分析"""
+        if not DOCX_AVAILABLE:
+            return ""
+
+        try:
+            text_parts = []
+
+            # 提取段落文本
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_parts.append(paragraph.text)
+
+            # 提取表格文本
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            text_parts.append(cell.text)
+
+            document_text = "\n".join(text_parts)
+            self.logger.debug(f"提取文档文本长度: {len(document_text)} 字符")
+            return document_text
+
+        except Exception as e:
+            self.logger.warning(f"提取文档文本失败: {e}")
+            return ""

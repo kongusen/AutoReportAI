@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { BeakerIcon, ClockIcon } from '@heroicons/react/24/outline'
 
 interface InlineAnalysisProgressProps {
   isAnalyzing: boolean
@@ -7,11 +6,11 @@ interface InlineAnalysisProgressProps {
 }
 
 const progressStages = [
-  { message: '正在获取数据库Schema信息...', duration: 5000, icon: '🔍' },
-  { message: '正在生成SQL查询语句...', duration: 10000, icon: '⚙️' },
-  { message: '正在验证SQL语法和逻辑...', duration: 8000, icon: '✅' },
-  { message: '正在执行SQL测试...', duration: 7000, icon: '🚀' },
-  { message: '正在保存分析结果...', duration: 3000, icon: '💾' }
+  { message: '正在获取数据库Schema信息...', duration: 5000 },
+  { message: '正在生成SQL查询语句...', duration: 10000 },
+  { message: '正在验证SQL语法和逻辑...', duration: 8000 },
+  { message: '正在执行SQL测试...', duration: 7000 },
+  { message: '正在保存分析结果...', duration: 3000 }
 ]
 
 export const InlineAnalysisProgress: React.FC<InlineAnalysisProgressProps> = ({
@@ -68,44 +67,32 @@ export const InlineAnalysisProgress: React.FC<InlineAnalysisProgressProps> = ({
   const currentStageInfo = progressStages[currentStage]
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-      <div className="space-y-3">
+    <div className="bg-gray-50 border border-gray-200 rounded p-3">
+      <div className="space-y-2">
         {/* 标题和状态 */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <BeakerIcon className="w-4 h-4 text-blue-600 animate-bounce" />
-            <span className="text-sm font-medium text-blue-800">
-              正在分析占位符
-            </span>
-          </div>
-          <div className="flex items-center space-x-1 text-xs text-blue-600">
-            <ClockIcon className="w-3 h-3" />
-            <span>{Math.round(elapsedTime / 1000)}s</span>
-          </div>
+          <span className="text-sm text-gray-800">
+            正在分析占位符
+          </span>
+          <span className="text-xs text-gray-500">{Math.round(elapsedTime / 1000)}s</span>
         </div>
 
         {/* 当前阶段 */}
-        <div className="flex items-center space-x-2">
-          <span className="text-lg">{currentStageInfo?.icon || '⏳'}</span>
-          <span className="text-sm text-blue-700">
-            {currentStageInfo?.message || '处理中...'}
-          </span>
+        <div className="text-xs text-gray-600">
+          {currentStageInfo?.message || '处理中...'}
         </div>
 
         {/* 进度条 */}
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs text-blue-600">
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs text-gray-500">
             <span>进度</span>
             <span>{Math.round(progress)}%</span>
           </div>
-          <div className="w-full bg-blue-100 rounded-full h-2">
+          <div className="w-full bg-gray-200 rounded-full h-1.5">
             <div
-              className="bg-blue-600 h-2 rounded-full transition-all duration-500 relative overflow-hidden"
+              className="bg-black h-1.5 rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }}
-            >
-              {/* 动态光效 */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
-            </div>
+            ></div>
           </div>
         </div>
 
@@ -114,29 +101,20 @@ export const InlineAnalysisProgress: React.FC<InlineAnalysisProgressProps> = ({
           {progressStages.map((stage, index) => (
             <div
               key={index}
-              className={`flex flex-col items-center space-y-1 ${
-                index <= currentStage ? 'text-blue-600' : 'text-gray-400'
+              className={`w-1.5 h-1.5 rounded-full ${
+                index === currentStage
+                  ? 'bg-black'
+                  : index < currentStage
+                  ? 'bg-gray-600'
+                  : 'bg-gray-300'
               }`}
-            >
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  index === currentStage
-                    ? 'bg-blue-600 animate-pulse'
-                    : index < currentStage
-                    ? 'bg-blue-600'
-                    : 'bg-gray-300'
-                }`}
-              ></div>
-              <span className="text-xs hidden sm:block">
-                {stage.icon}
-              </span>
-            </div>
+            ></div>
           ))}
         </div>
 
         {/* 提示信息 */}
-        <div className="text-xs text-blue-600 text-center bg-blue-100 rounded px-2 py-1">
-          💡 这可能需要30-90秒，请耐心等待...
+        <div className="text-xs text-gray-500 text-center">
+          这可能需要30-90秒，请耐心等待
         </div>
       </div>
     </div>

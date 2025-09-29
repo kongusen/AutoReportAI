@@ -579,13 +579,15 @@ class StepExecutor:
         # 不再硬编码推荐时间列，让Agent从实际表结构中智能选择
         rec_time_col = None  # 不给默认值，让Agent自己判断
 
-        # 构建时间提示 - 让Agent智能选择时间字段
+        # 构建时间提示 - 强调使用占位符格式
         time_hint = ""
         if start_date and end_date:
             if start_date == end_date:
-                time_hint = f"时间范围: {start_date}（单日）。请从表结构中选择合适的时间字段，并使用适当的时间过滤条件。"
+                time_hint = f"参考时间范围: {start_date}（单日）。重要：SQL中必须使用占位符格式 {{{{start_date}}}} 和 {{{{end_date}}}} 而不是具体日期。"
             else:
-                time_hint = f"时间范围: {start_date} 到 {end_date}。请从表结构中选择合适的时间字段，并添加时间范围过滤条件。"
+                time_hint = f"参考时间范围: {start_date} 到 {end_date}。重要：SQL中必须使用占位符格式 {{{{start_date}}}} 和 {{{{end_date}}}} 而不是具体日期。"
+        else:
+            time_hint = "时间范围: 未指定具体日期。SQL中必须使用占位符格式 {{start_date}} 和 {{end_date}} 进行时间过滤。"
 
         # 构建语义类型指导
         type_guidance = ""
@@ -640,10 +642,10 @@ class StepExecutor:
 
 ## 输出要求（仅返回一个JSON对象，不要其他文本）
 {{
-  "sql": "以单行字符串返回完整SELECT语句",
+  "sql": "以单行字符串返回完整SELECT语句，时间过滤必须使用占位符格式",
   "time": {{
     "column": "实际使用的时间列名",
-    "range": {{"start_date": "{start_date}", "end_date": "{end_date}"}}
+    "range": {{"start_date": "{{{{start_date}}}}", "end_date": "{{{{end_date}}}}"}}
   }},
   "tables": ["涉及到的真实表名列表"],
   "measures": ["COUNT(*) as cnt", "可选其他度量"],
@@ -656,10 +658,13 @@ class StepExecutor:
 ## 重要规则
 1. **表名列名**: 严格使用上述数据库架构中的真实表名和列名，禁止虚构
 2. **时间字段选择**: 从表结构中智能选择合适的时间字段（通常是date、datetime或timestamp类型的字段）
-3. **时间过滤**: 根据选择的时间字段类型使用合适的过滤条件：
-   - date类型: `WHERE 时间列 = 'YYYY-MM-DD'`
-   - datetime/timestamp类型: `WHERE DATE(时间列) = 'YYYY-MM-DD'`
-4. **智能判断**: 通过字段名称、类型、注释来判断哪个是时间字段，不要硬编码
+3. **时间过滤格式（关键）**: 必须使用占位符格式，不要使用具体日期：
+   - ✅ 正确: `WHERE dt >= {{{{start_date}}}} AND dt <= {{{{end_date}}}}`
+   - ✅ 正确: `WHERE DATE(时间列) BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}`
+   - ❌ 错误: `WHERE dt >= '2025-09-27' AND dt <= '2025-09-27'`
+   - ❌ 错误: `WHERE DATE(时间列) = '2025-09-27'`
+4. **占位符格式**: 使用双大括号格式 {{{{start_date}}}} 和 {{{{end_date}}}}，这样生成的SQL模板可以后续替换为实际日期
+5. **智能判断**: 通过字段名称、类型、注释来判断哪个是时间字段，不要硬编码
 
 仅返回纯JSON，不要使用Markdown代码块。
         """

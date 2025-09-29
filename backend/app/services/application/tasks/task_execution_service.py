@@ -76,7 +76,9 @@ class TaskExecutionService:
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
         # Import TimeContextManager here to avoid circular imports
         from app.utils.time_context import TimeContextManager
+        from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
         self.time_context_manager = TimeContextManager()
+        self.sql_replacer = SqlPlaceholderReplacer()
         
     async def execute_task(self, request: TaskExecutionRequest) -> TaskExecutionResult:
         """
@@ -180,15 +182,24 @@ class TaskExecutionService:
         """使用 PlaceholderProcessingSystem 的 ReAct 流水线执行任务（新架构）"""
         task_id = request.task_id
         try:
-            # 时间窗口
-            period_start_date = request.time_context.get("period_start_date") if request.time_context else None
-            period_end_date = request.time_context.get("period_end_date") if request.time_context else None
-            if not (period_start_date and period_end_date):
-                time_ctx = self.time_context_manager.generate_time_context(
-                    report_period=request.execution_context.get("report_period", "monthly")
-                )
-                period_start_date = time_ctx.get("period_start_date")
-                period_end_date = time_ctx.get("period_end_date")
+            # 时间窗口 - 使用简化的时间上下文
+            if request.time_context and request.time_context.get("data_start_time") and request.time_context.get("data_end_time"):
+                # 使用请求中的时间上下文
+                period_start_date = request.time_context.get("data_start_time")
+                period_end_date = request.time_context.get("data_end_time")
+            else:
+                # 生成新的时间上下文
+                schedule = request.execution_context.get("schedule") if request.execution_context else None
+                if schedule:
+                    time_ctx = self.time_context_manager.build_task_time_context(cron_expression=schedule)
+                    period_start_date = time_ctx.get("data_start_time")
+                    period_end_date = time_ctx.get("data_end_time")
+                else:
+                    # 默认使用昨天
+                    yesterday = datetime.now() - timedelta(days=1)
+                    period_start_date = yesterday.strftime('%Y-%m-%d')
+                    period_end_date = yesterday.strftime('%Y-%m-%d')
+
             time_window = {"start": f"{period_start_date} 00:00:00", "end": f"{period_end_date} 23:59:59"}
 
             # 更新状态
@@ -720,25 +731,43 @@ class TaskExecutionService:
             logger.info(f"任务已取消: {task_id}")
             return True
         return False
-    
+
+    def replace_sql_placeholders_in_task(self, sql: str, time_context: Dict[str, Any]) -> str:
+        """
+        在任务执行中替换SQL占位符
+
+        Args:
+            sql: 包含占位符的SQL (如: "WHERE dt BETWEEN {{start_date}} AND {{end_date}}")
+            time_context: 时间上下文
+
+        Returns:
+            替换后的SQL (如: "WHERE dt BETWEEN '2025-09-27' AND '2025-09-27'")
+        """
+        try:
+            replaced_sql = self.sql_replacer.replace_time_placeholders(sql, time_context)
+            logger.info(f"SQL占位符替换完成，原SQL包含 {len(self.sql_replacer.extract_placeholders(sql))} 个占位符")
+            return replaced_sql
+        except Exception as e:
+            logger.error(f"SQL占位符替换失败: {e}")
+            return sql
+
     def generate_time_context_for_task(
         self,
         execution_params: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        为任务生成时间上下文
-        
+        为任务生成时间上下文 - 使用简化的占位符替换逻辑
+
         Args:
-            execution_params: 任务执行参数，包含report_period, schedule等
-            
+            execution_params: 任务执行参数，包含schedule (cron表达式)
+
         Returns:
-            生成的时间上下文
+            时间上下文字典，包含data_start_time和data_end_time用于占位符替换
         """
         try:
-            report_period = execution_params.get("report_period", "monthly")
             schedule = execution_params.get("schedule")
             execution_time = None
-            
+
             # 尝试解析执行时间
             if "execution_time" in execution_params:
                 exec_time_str = execution_params["execution_time"]
@@ -747,26 +776,33 @@ class TaskExecutionService:
                         execution_time = datetime.fromisoformat(exec_time_str.replace('Z', '+00:00'))
                     except ValueError:
                         logger.warning(f"Invalid execution_time format: {exec_time_str}")
-            
-            # 生成时间上下文
-            time_context = self.time_context_manager.generate_time_context(
-                report_period=report_period,
-                execution_time=execution_time,
-                schedule=schedule
-            )
-            
-            logger.info(f"Generated time context for {report_period} period")
+
+            # 使用简化的时间上下文生成 - 直接基于cron和执行时间
+            if schedule:
+                time_context = self.time_context_manager.build_task_time_context(
+                    cron_expression=schedule,
+                    execution_time=execution_time
+                )
+                logger.info(f"Generated simplified time context for cron: {schedule}")
+            else:
+                # 回退到默认的每日上下文
+                logger.warning("No schedule provided, using default daily context")
+                time_context = self.time_context_manager.build_task_time_context(
+                    cron_expression="0 0 * * *",  # 默认每日
+                    execution_time=execution_time
+                )
+
             return time_context
-            
+
         except Exception as e:
             logger.error(f"Failed to generate time context: {e}")
             # 返回基础的时间上下文
+            yesterday = datetime.now() - timedelta(days=1)
             return {
                 "execution_time": datetime.now().isoformat(),
-                "report_period": execution_params.get("report_period", "monthly"),
-                "period_start": (datetime.now() - timedelta(days=1)).isoformat(),
-                "period_end": (datetime.now() - timedelta(days=1)).isoformat(),
-                "sql_expressions": {"current_date": "CURDATE()"},
+                "data_start_time": yesterday.strftime('%Y-%m-%d'),
+                "data_end_time": yesterday.strftime('%Y-%m-%d'),
+                "period": "daily",
                 "fallback": True
             }
     

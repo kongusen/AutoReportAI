@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -60,9 +60,29 @@ async def get_tasks(
     # 应用分页并获取结果
     tasks = query.offset(skip).limit(limit).all()
     
-    # 转换为TaskResponse格式，保持向后兼容
+    # 转换为TaskResponse格式，保持向后兼容，并包含执行状态
     task_dicts = []
     for task in tasks:
+        # 获取最新的执行记录
+        from app.models.task import TaskExecution
+        latest_execution = db.query(TaskExecution).filter(
+            TaskExecution.task_id == task.id
+        ).order_by(TaskExecution.created_at.desc()).first()
+
+        # 确定当前执行状态
+        current_execution_status = None
+        current_progress = 0
+        current_step = None
+        execution_id = None
+        celery_task_id = None
+
+        if latest_execution:
+            current_execution_status = latest_execution.execution_status.value
+            current_progress = latest_execution.progress_percentage or 0
+            current_step = latest_execution.current_step
+            execution_id = str(latest_execution.execution_id)
+            celery_task_id = latest_execution.celery_task_id
+
         # 构建兼容的任务数据，包含新字段但有默认值
         task_dict = {
             # 原有字段
@@ -79,9 +99,19 @@ async def get_tasks(
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
             "unique_id": str(task.id),
-            
-            # 新增字段（可选，有默认值，保持前端兼容）
+
+            # 任务状态字段
             "status": task.status.value if hasattr(task, 'status') and task.status else "pending",
+
+            # 当前执行状态（重要：前端需要这些信息来判断任务是否在执行）
+            "current_execution_status": current_execution_status,
+            "current_execution_progress": current_progress,
+            "current_execution_step": current_step,
+            "current_execution_id": execution_id,
+            "current_celery_task_id": celery_task_id,
+            "is_executing": current_execution_status in ["processing", "pending"] if current_execution_status else False,
+
+            # 其他新增字段
             "processing_mode": task.processing_mode.value if hasattr(task, 'processing_mode') and task.processing_mode else "intelligent",
             "workflow_type": task.workflow_type.value if hasattr(task, 'workflow_type') and task.workflow_type else "simple_report",
             "execution_count": getattr(task, 'execution_count', 0),
@@ -123,7 +153,6 @@ async def create_task(
         name=task_in.name,
         template_id=str(task_in.template_id),
         data_source_id=str(task_in.data_source_id),
-        report_period=task_in.report_period,
         description=task_in.description,
         schedule=task_in.schedule,
         recipients=task_in.recipients,
@@ -171,7 +200,8 @@ async def update_task(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="任务更新失败"
         )
 
@@ -200,7 +230,7 @@ async def get_task(
     )
 
 
-@router.delete("/{task_id}", response_model=APIResponse[bool])
+@router.delete("/{task_id}", response_model=APIResponse[Dict[str, Any]])
 async def delete_task(
     task_id: int,
     db: Session = Depends(get_db),
@@ -210,23 +240,23 @@ async def delete_task(
     try:
         task_service = TaskApplicationService()
         user_id = str(current_user.id)
-        
+
         success = task_service.delete_task(
             db=db,
             task_id=task_id,
             user_id=user_id
         )
-        
+
         return APIResponse(
             success=True,
             data={"task_id": task_id, "deleted": success},
             message="任务删除成功"
         )
-        
+
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
             message="任务删除失败"
         )
 
@@ -269,7 +299,8 @@ async def execute_task(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="任务执行失败"
         )
 
@@ -303,7 +334,7 @@ async def pause_task(
     except HTTPException:
         raise
     except Exception as e:
-        return APIResponse(success=False, error=str(e), message="暂停任务失败")
+        return APIResponse(success=False, data=None, errors=[str(e)], message="暂停任务失败")
 
 
 @router.post("/{task_id}/resume", response_model=APIResponse[Dict[str, Any]])
@@ -335,7 +366,7 @@ async def resume_task(
     except HTTPException:
         raise
     except Exception as e:
-        return APIResponse(success=False, error=str(e), message="恢复任务失败")
+        return APIResponse(success=False, data=None, errors=[str(e)], message="恢复任务失败")
 
 
 @router.post("/{task_id}/run", response_model=APIResponse[Dict[str, Any]])
@@ -381,7 +412,8 @@ async def get_task_executions(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="获取执行历史失败"
         )
 
@@ -412,7 +444,8 @@ async def validate_task_configuration(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="任务配置验证失败"
         )
 
@@ -445,7 +478,8 @@ async def schedule_task(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="任务调度设置失败"
         )
 
@@ -460,24 +494,178 @@ async def get_task_status(
     try:
         task_service = TaskApplicationService()
         user_id = str(current_user.id)
-        
+
         status_data = task_service.get_task_status(
             db=db,
             task_id=task_id,
             user_id=user_id
         )
-        
+
         return APIResponse(
             success=True,
             data=status_data,
             message="获取任务状态成功"
         )
-        
+
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="获取任务状态失败"
+        )
+
+
+@router.get("/{task_id}/progress", response_model=APIResponse)
+async def get_task_progress(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """获取任务执行进度"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+
+        # 获取任务权限验证
+        task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在或无权限")
+
+        # 获取最新的执行记录
+        from app.models.task import TaskExecution
+        latest_execution = db.query(TaskExecution).filter(
+            TaskExecution.task_id == task_id
+        ).order_by(TaskExecution.created_at.desc()).first()
+
+        if not latest_execution:
+            return APIResponse(
+                success=True,
+                data={
+                    "task_id": task_id,
+                    "progress_percentage": 0,
+                    "current_step": "未开始执行",
+                    "execution_status": "pending",
+                    "started_at": None,
+                    "estimated_completion": None
+                },
+                message="获取任务进度成功"
+            )
+
+        # 估算完成时间
+        estimated_completion = None
+        if latest_execution.started_at and latest_execution.progress_percentage > 0:
+            elapsed_seconds = (datetime.utcnow() - latest_execution.started_at).total_seconds()
+            if latest_execution.progress_percentage > 0:
+                estimated_total_seconds = (elapsed_seconds / latest_execution.progress_percentage) * 100
+                estimated_remaining_seconds = estimated_total_seconds - elapsed_seconds
+                if estimated_remaining_seconds > 0:
+                    estimated_completion = (datetime.utcnow() + timedelta(seconds=estimated_remaining_seconds)).isoformat()
+
+        progress_data = {
+            "task_id": task_id,
+            "execution_id": str(latest_execution.execution_id),
+            "progress_percentage": latest_execution.progress_percentage,
+            "current_step": latest_execution.current_step or "执行中...",
+            "execution_status": latest_execution.execution_status.value,
+            "started_at": latest_execution.started_at.isoformat() if latest_execution.started_at else None,
+            "completed_at": latest_execution.completed_at.isoformat() if latest_execution.completed_at else None,
+            "estimated_completion": estimated_completion,
+            "celery_task_id": latest_execution.celery_task_id,
+            "error_details": latest_execution.error_details
+        }
+
+        return APIResponse(
+            success=True,
+            data=progress_data,
+            message="获取任务进度成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            data=None,
+            errors=[str(e)],
+            message="获取任务进度失败"
+        )
+
+
+@router.post("/{task_id}/cancel", response_model=APIResponse)
+async def cancel_task_execution(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """取消/暂停任务执行"""
+    try:
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+
+        # 获取任务权限验证
+        task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在或无权限")
+
+        # 获取最新的执行记录
+        from app.models.task import TaskExecution
+        latest_execution = db.query(TaskExecution).filter(
+            TaskExecution.task_id == task_id,
+            TaskExecution.execution_status.in_(['processing', 'pending'])
+        ).order_by(TaskExecution.created_at.desc()).first()
+
+        if not latest_execution:
+            return APIResponse(
+                success=False,
+                data=None,
+                message="没有正在执行的任务可以取消"
+            )
+
+        # 尝试取消Celery任务
+        if latest_execution.celery_task_id:
+            try:
+                from app.services.infrastructure.task_queue.celery_config import celery_app
+                celery_app.control.revoke(latest_execution.celery_task_id, terminate=True)
+                logger.info(f"Cancelled Celery task {latest_execution.celery_task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel Celery task: {e}")
+
+        # 更新执行状态
+        from app.models.task import TaskStatus
+        latest_execution.execution_status = TaskStatus.CANCELLED
+        latest_execution.current_step = "任务已被用户取消"
+        latest_execution.completed_at = datetime.utcnow()
+        latest_execution.total_duration = int(
+            (latest_execution.completed_at - latest_execution.started_at).total_seconds()
+        ) if latest_execution.started_at else 0
+
+        # 更新任务状态
+        task.status = TaskStatus.CANCELLED
+
+        db.commit()
+
+        return APIResponse(
+            success=True,
+            data={
+                "task_id": task_id,
+                "execution_id": str(latest_execution.execution_id),
+                "status": "cancelled",
+                "message": "任务已成功取消"
+            },
+            message="任务执行已取消"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            data=None,
+            errors=[str(e)],
+            message="取消任务失败"
         )
 
 
@@ -510,7 +698,8 @@ async def execute_task_with_claude_code(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="Claude Code任务执行失败"
         )
 
@@ -541,7 +730,8 @@ async def generate_sql_with_claude_code(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="SQL生成失败"
         )
 
@@ -572,7 +762,8 @@ async def analyze_data_with_claude_code(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="数据分析失败"
         )
 
@@ -866,6 +1057,7 @@ async def run_task_report_pipeline(
     except Exception as e:
         return APIResponse(
             success=False,
-            error=str(e),
+            data=None,
+            errors=[str(e)],
             message="运行报告流水线失败"
         )

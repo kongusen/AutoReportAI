@@ -49,8 +49,8 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_celery_app_initialization(self, mock_celery_app):
         """测试Celery应用初始化"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
-            from app.core.celery_app import celery_app
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
+            from app.services.infrastructure.task_queue.celery_config import celery_app
 
             assert celery_app is not None
             assert hasattr(celery_app, 'control')
@@ -61,7 +61,7 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_task_registration(self, mock_celery_app):
         """测试任务注册"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
             try:
                 # 测试占位符相关任务是否正确注册
                 from app.tasks.placeholder_tasks import (
@@ -82,7 +82,7 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_scheduled_task_creation(self, mock_db_session, mock_celery_app):
         """测试定时任务创建"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
             # Mock定时任务创建服务
             from app.services.application.scheduler.task_scheduler import TaskScheduler
 
@@ -120,7 +120,7 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_task_execution_flow(self, mock_db_session, mock_celery_app):
         """测试任务执行流程"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
 
             # Mock统一门面
             from app.services.application.facades.unified_service_facade import create_unified_service_facade
@@ -215,7 +215,7 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_task_error_handling(self, mock_db_session, mock_celery_app):
         """测试任务错误处理"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
 
             # Mock失败的任务执行
             from app.services.application.facades.unified_service_facade import create_unified_service_facade
@@ -250,7 +250,7 @@ class TestCelerySchedulerIntegration:
     @pytest.mark.asyncio
     async def test_worker_health_monitoring(self, mock_celery_app):
         """测试Worker健康监控"""
-        with patch('app.core.celery_app.celery_app', mock_celery_app):
+        with patch('app.services.infrastructure.task_queue.celery_config.celery_app', mock_celery_app):
             from app.services.application.health.pipeline_health_service import PipelineHealthService
 
             health_service = PipelineHealthService()

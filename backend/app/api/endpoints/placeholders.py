@@ -1674,6 +1674,112 @@ async def batch_analyze_with_agent_pipeline(
         raise HTTPException(status_code=500, detail=f"批量分析失败: {str(e)}")
 
 # ================================================================================
+# SQL验证服务 - 独立功能
+# ================================================================================
+
+@router.post("/validate-sql", response_model=APIResponse[Dict[str, Any]])
+async def validate_placeholder_sql(
+    request: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse[Dict[str, Any]]:
+    """验证存储的占位符SQL并返回真实数据 - 独立功能"""
+    try:
+        from app.crud.crud_data_source import crud_data_source
+        from app.services.data.validation.sql_validation_service import sql_validation_service
+
+        sql_template = request.get("sql_template")
+        data_source_id = request.get("data_source_id")
+        placeholder_name = request.get("placeholder_name", "SQL验证")
+        execution_mode = request.get("execution_mode", "test")
+        fixed_date = request.get("fixed_date")
+        days_offset = request.get("days_offset", -1)
+
+        if not sql_template:
+            raise HTTPException(status_code=400, detail="缺少sql_template参数")
+        if not data_source_id:
+            raise HTTPException(status_code=400, detail="缺少data_source_id参数")
+
+        # 验证数据源权限
+        ds = crud_data_source.get_user_data_source(db, data_source_id=data_source_id, user_id=current_user.id)
+        if not ds:
+            raise HTTPException(status_code=404, detail="数据源不存在或无权限访问")
+
+        logger.info(f"🔍 占位符SQL验证请求: {placeholder_name}")
+
+        # 执行验证
+        result = await sql_validation_service.validate_and_execute_placeholder_sql(
+            sql_template=sql_template,
+            data_source_id=str(data_source_id),
+            placeholder_name=placeholder_name,
+            execution_mode=execution_mode,
+            fixed_date=fixed_date,
+            days_offset=days_offset
+        )
+
+        return APIResponse(
+            success=result.get("success", False),
+            data=result,
+            message=f"占位符SQL验证完成: {placeholder_name}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 占位符SQL验证异常: {e}")
+        raise HTTPException(status_code=500, detail=f"验证过程异常: {str(e)}")
+
+
+@router.post("/batch-validate-sql", response_model=APIResponse[Dict[str, Any]])
+async def batch_validate_placeholder_sqls(
+    request: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse[Dict[str, Any]]:
+    """批量验证多个占位符SQL - 独立功能"""
+    try:
+        from app.crud.crud_data_source import crud_data_source
+        from app.services.data.validation.sql_validation_service import sql_validation_service
+
+        sql_templates = request.get("sql_templates", {})
+        data_source_id = request.get("data_source_id")
+        execution_mode = request.get("execution_mode", "test")
+        fixed_date = request.get("fixed_date")
+
+        if not sql_templates:
+            raise HTTPException(status_code=400, detail="缺少sql_templates参数")
+        if not data_source_id:
+            raise HTTPException(status_code=400, detail="缺少data_source_id参数")
+
+        # 验证数据源权限
+        ds = crud_data_source.get_user_data_source(db, data_source_id=data_source_id, user_id=current_user.id)
+        if not ds:
+            raise HTTPException(status_code=404, detail="数据源不存在或无权限访问")
+
+        logger.info(f"🔍 批量占位符SQL验证请求: {len(sql_templates)} 个")
+
+        # 执行批量验证
+        result = await sql_validation_service.batch_validate_placeholder_sqls(
+            sql_templates=sql_templates,
+            data_source_id=str(data_source_id),
+            execution_mode=execution_mode,
+            fixed_date=fixed_date
+        )
+
+        return APIResponse(
+            success=result.get("success", False),
+            data=result,
+            message=f"批量验证完成: {result.get('summary', {}).get('successful_count', 0)} 成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 批量占位符SQL验证异常: {e}")
+        raise HTTPException(status_code=500, detail=f"批量验证过程异常: {str(e)}")
+
+
+# ================================================================================
 # 兼容性接口 - 映射到Agent Pipeline
 # ================================================================================
 

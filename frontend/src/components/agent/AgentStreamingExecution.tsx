@@ -353,20 +353,21 @@ export default function AgentStreamingExecution({
             <div>
               <label className="block text-sm font-medium mb-2">协调模式</label>
               <Select
+                options={[
+                  { label: '智能模式', value: 'intelligent' },
+                  { label: '标准模式', value: 'standard' },
+                  { label: '简单模式', value: 'simple' }
+                ]}
                 value={coordinationMode}
-                onChange={setCoordinationMode}
+                onChange={(value) => setCoordinationMode(value as string)}
                 disabled={isExecuting}
-              >
-                <option value="intelligent">智能模式</option>
-                <option value="standard">标准模式</option>
-                <option value="simple">简单模式</option>
-              </Select>
+              />
             </div>
 
             <div className="flex items-center space-x-2">
               <Switch
                 checked={enableStreaming}
-                onCheckedChange={setEnableStreaming}
+                onChange={setEnableStreaming}
                 disabled={isExecuting}
               />
               <label className="text-sm font-medium">启用流式反馈</label>
@@ -375,7 +376,7 @@ export default function AgentStreamingExecution({
             <div className="flex items-center space-x-2">
               <Switch
                 checked={sqlPreview}
-                onCheckedChange={setSqlPreview}
+                onChange={setSqlPreview}
                 disabled={isExecuting}
               />
               <label className="text-sm font-medium">SQL预览</label>

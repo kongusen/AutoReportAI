@@ -336,15 +336,33 @@ class TimeContextManager:
     
     def replace_sql_time_placeholders(self, sql: str, time_context: Dict[str, Any]) -> str:
         """
-        替换SQL中的时间占位符
-        
+        替换SQL中的时间占位符 - 已废弃，请使用 SqlPlaceholderReplacer
+
+        ⚠️  DEPRECATED: 此方法过于复杂，请使用 app.utils.sql_placeholder_utils.SqlPlaceholderReplacer
+
         Args:
             sql: 原始SQL
             time_context: 时间上下文
-            
+
         Returns:
             str: 替换后的SQL
         """
+        # 发出废弃警告
+        import warnings
+        warnings.warn(
+            "replace_sql_time_placeholders 已废弃，请使用 SqlPlaceholderReplacer.replace_time_placeholders",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        # 如果可能，尝试使用新的简单替换方式
+        try:
+            from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
+            if 'data_start_time' in time_context and 'data_end_time' in time_context:
+                return SqlPlaceholderReplacer.replace_time_placeholders(sql, time_context)
+        except ImportError:
+            pass
+
         try:
             sql_expressions = time_context.get("sql_expressions", {})
             

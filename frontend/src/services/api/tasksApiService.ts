@@ -5,7 +5,7 @@
 
 import { AxiosResponse } from 'axios'
 import { BaseApiService, PaginatedApiService } from './baseApiService'
-import { apiClient } from '@/lib/api'
+import { apiClientV1 as apiClient } from '@/lib/api'
 import { APIResponse, PaginatedResponse } from '@/types/api'
 
 // 任务相关类型定义 - 与后端模型对齐

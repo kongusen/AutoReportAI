@@ -272,8 +272,8 @@ class Settings(BaseSettings):
         else:
             return "localhost:9000"  # 本地环境
     
-    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "autoreport_minio_admin") 
-    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "AutoReport2024Minio!Secure#Storage")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
     MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport-prod")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     

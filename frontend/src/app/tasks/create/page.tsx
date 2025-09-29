@@ -26,11 +26,9 @@ const taskSchema = z.object({
   template_id: z.string().min(1, '请选择模板'),
   data_source_id: z.string().min(1, '请选择数据源'),
   schedule: z.string().optional(),
-  // report_period 不再由用户选择，改为由 cron 表达式推断
-  report_period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional(),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
-  
+
 }).refine((data) => {
   if (data.schedule && !isValidCron(data.schedule)) {
     return false
@@ -53,12 +51,13 @@ type FormData = z.infer<typeof taskSchema>
 
 export default function CreateTaskPage() {
   const router = useRouter()
-  const { createTask, loading } = useTaskStore()
+  const { createTask, loading, fetchTasks } = useTaskStore()
   const { dataSources, fetchDataSources } = useDataSourceStore()
   const { templates, fetchTemplates } = useTemplateStore()
   const [recipientInput, setRecipientInput] = useState('')
   const [isDirty, setIsDirty] = useState(false)
   const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null)
+  const [isRedirecting, setIsRedirecting] = useState(false)
 
   const {
     register,
@@ -78,6 +77,8 @@ export default function CreateTaskPage() {
 
   const watchedRecipients = watch('recipients') || []
   const watchedSchedule = watch('schedule') || ''
+  const watchedTemplateId = watch('template_id') || ''
+  const watchedDataSourceId = watch('data_source_id') || ''
 
   useEffect(() => {
     fetchDataSources()
@@ -101,50 +102,48 @@ export default function CreateTaskPage() {
     }
   }, [fetchDataSources, fetchTemplates, setValue])
 
-  // 基于 cron 表达式推断报告周期
-  const inferReportPeriodFromCron = (cron?: string): ReportPeriod => {
-    if (!cron || typeof cron !== 'string') return 'monthly'
-    // 解析简单的 5 字段 cron: m h dom mon dow
-    const parts = cron.trim().split(/\s+/)
-    if (parts.length < 5) return 'monthly'
-    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
-
-    // 如果指定了星期几（非 *），判定为每周
-    if (dayOfWeek && dayOfWeek !== '*') return 'weekly'
-
-    // 如果指定了月份（非 *），通常为每年
-    if (month && month !== '*') return 'yearly'
-
-    // 如果指定了某一天（非 *），通常为每月
-    if (dayOfMonth && dayOfMonth !== '*') return 'monthly'
-
-    // 其余默认按每日
-    return 'daily'
-  }
 
   const onSubmit = async (data: FormData) => {
     try {
-      const inferredPeriod = inferReportPeriodFromCron(data.schedule)
+      console.log('开始创建任务:', data)
+
       const result = await createTask({
         ...data,
         template_id: data.template_id as any, // UUID类型转换
         data_source_id: data.data_source_id as any, // UUID类型转换
         schedule: data.schedule || undefined,
         recipients: data.recipients || [],
-        report_period: inferredPeriod,
       })
-      
+
       // 确保创建成功后才跳转
-      if (result) {
+      if (result && result.id) {
         console.log('任务创建成功，准备跳转到任务列表页:', result)
-        router.replace('/tasks')
-        router.refresh()
+
+        // 显示跳转状态
+        setIsRedirecting(true)
+
+        // 使用更可靠的跳转方式，确保页面能正确更新
+        setTimeout(async () => {
+          try {
+            // 先刷新任务列表数据，确保新任务出现在列表中
+            await fetchTasks()
+            // 然后跳转到任务列表页
+            router.push('/tasks')
+          } catch (error) {
+            console.error('跳转前刷新任务列表失败:', error)
+            // 即使刷新失败也要跳转
+            router.push('/tasks')
+          }
+        }, 1500) // 给toast通知1.5秒时间显示
+
       } else {
-        console.error('任务创建返回空结果')
-        throw new Error('任务创建失败：返回结果为空')
+        console.error('任务创建返回无效结果:', result)
+        throw new Error('任务创建失败：返回结果无效')
       }
     } catch (error) {
       console.error('创建任务时发生错误:', error)
+      // 重置跳转状态
+      setIsRedirecting(false)
       // 错误处理在store中已处理，这里不需要额外处理
     }
   }
@@ -203,6 +202,8 @@ export default function CreateTaskPage() {
           getValues={getValues}
           dataSourceOptions={dataSourceOptions}
           templateOptions={templateOptions}
+          watchedTemplateId={watchedTemplateId}
+          watchedDataSourceId={watchedDataSourceId}
         />
         
         <ExpandablePanel title="调度设置" defaultExpanded={false}>
@@ -237,8 +238,8 @@ export default function CreateTaskPage() {
         >
           取消
         </Button>
-        <Button type="submit" loading={loading}>
-          创建任务
+        <Button type="submit" loading={loading || isRedirecting}>
+          {isRedirecting ? '创建成功，跳转中...' : '创建任务'}
         </Button>
       </div>
     </form>
@@ -253,6 +254,8 @@ interface BasicInfoCardProps {
   getValues: any
   dataSourceOptions: Array<{ label: string; value: string }>
   templateOptions: Array<{ label: string; value: string }>
+  watchedTemplateId: string
+  watchedDataSourceId: string
 }
 
 function BasicInfoCard({
@@ -262,6 +265,8 @@ function BasicInfoCard({
   getValues,
   dataSourceOptions,
   templateOptions,
+  watchedTemplateId,
+  watchedDataSourceId,
 }: BasicInfoCardProps) {
   return (
     <Card>
@@ -318,6 +323,7 @@ function BasicInfoCard({
             <Select
               options={templateOptions}
               placeholder="选择报告模板"
+              value={watchedTemplateId}
               onChange={(value) => setValue('template_id', value)}
             />
             {errors.template_id && (
@@ -332,6 +338,7 @@ function BasicInfoCard({
             <Select
               options={dataSourceOptions}
               placeholder="选择数据源"
+              value={watchedDataSourceId}
               onChange={(value) => setValue('data_source_id', value)}
             />
             {errors.data_source_id && (
@@ -340,25 +347,14 @@ function BasicInfoCard({
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            报告周期 *
-          </label>
-          <Select
-            options={[
-              { value: 'daily', label: '每日' },
-              { value: 'weekly', label: '每周' },
-              { value: 'monthly', label: '每月' },
-              { value: 'yearly', label: '每年' }
-            ]}
-            onChange={(value) => setValue('report_period', value as ReportPeriod)}
-          />
-          {errors.report_period && (
-            <p className="mt-1 text-sm text-red-600">{errors.report_period.message}</p>
-          )}
-          <p className="mt-1 text-sm text-gray-500">
-            设置报告数据的时间范围，用于动态生成SQL时间参数
-          </p>
+        {/* 报告周期提示信息 */}
+        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+          <h4 className="text-sm font-medium text-blue-900 mb-2">报告周期说明</h4>
+          <div className="text-sm text-blue-800 space-y-1">
+            <p>• 报告周期将根据调度设置和任务执行时间自动推断</p>
+            <p>• 系统会根据 Cron 表达式确定数据的时间范围</p>
+            <p>• 可以在调度设置中修改执行频率</p>
+          </div>
         </div>
 
       </CardContent>

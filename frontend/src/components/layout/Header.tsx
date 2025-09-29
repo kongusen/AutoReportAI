@@ -11,7 +11,6 @@ import {
 import { Avatar } from '@/components/ui/Avatar'
 import { useAuthStore } from '@/features/auth/authStore'
 import { NotificationCenter } from '@/components/ui/NotificationCenter'
-import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 import { cn } from '@/utils'
 
 export function Header() {
@@ -150,8 +149,6 @@ export function Header() {
         </div>
       </div>
 
-      {/* WebSocket连接状态指示器 */}
-      <ConnectionStatusIndicator />
     </div>
   )
 }

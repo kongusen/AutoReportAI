@@ -322,7 +322,7 @@ export class AutoReportAPIClient {
         if (response.data && typeof response.data === 'object' && 'success' in response.data) {
           // 后端返回的是 ApiResponse[T] 格式
           if (response.data.success === false) {
-            throw new Error(response.data.error || response.data.message || '请求失败')
+            throw new Error((response.data as any).error || response.data.message || '请求失败')
           }
           result = response.data.data as T
         } else {

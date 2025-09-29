@@ -289,7 +289,7 @@ export class WebSocketPipelineAdapter {
           progress: result.data.progress,
           message: result.data.message,
           timestamp: new Date().toISOString(),
-          details: result.data
+          details: result.data as any
         }
       }
       return null

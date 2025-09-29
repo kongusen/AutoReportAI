@@ -149,7 +149,7 @@ export abstract class BaseApiService {
     }
     
     if (errors.length > 0) {
-      toast.warning(`Some operations failed: ${errors[0]}`)
+      toast.error(`Some operations failed: ${errors[0]}`)
     }
   }
 
@@ -171,7 +171,7 @@ export abstract class BaseApiService {
       console.warn(`${this.serviceName} warnings:`, warnings)
       
       // 在开发环境显示第一个警告
-      toast.warning(`Warning: ${warnings[0]}`)
+      toast(`Warning: ${warnings[0]}`)
     }
   }
 

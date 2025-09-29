@@ -123,7 +123,7 @@ export default function AgentWorkspacePage() {
             <div className="flex items-center space-x-2">
               <Switch
                 checked={workspaceState.integratedMode}
-                onCheckedChange={(checked) => 
+                onChange={(checked) =>
                   setWorkspaceState(prev => ({ ...prev, integratedMode: checked }))
                 }
               />
@@ -311,7 +311,13 @@ export default function AgentWorkspacePage() {
         </div>
       ) : (
         /* 分离模式：独立标签 */
-        <Tabs defaultValue="agent">
+        <Tabs
+          items={[
+            { key: 'agent', label: 'Agent执行' },
+            { key: 'sql', label: 'SQL处理' }
+          ]}
+          defaultActiveKey="agent"
+        >
           <div className="mb-6">
             <div className="flex space-x-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg w-fit">
               <TabButton

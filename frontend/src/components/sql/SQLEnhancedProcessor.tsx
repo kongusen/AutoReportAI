@@ -321,7 +321,7 @@ export default function SQLEnhancedProcessor({
       showToast(`SQL执行失败: ${error}`, 'error')
       setExecutionResults({
         success: false,
-        error: error.toString()
+        error: String(error)
       })
     } finally {
       setIsExecuting(false)
@@ -369,7 +369,7 @@ export default function SQLEnhancedProcessor({
       setAnalysisResults({
         success: false,
         syntax_valid: false,
-        error: error.toString()
+        error: String(error)
       })
     } finally {
       setIsAnalyzing(false)
@@ -430,37 +430,38 @@ export default function SQLEnhancedProcessor({
             <div>
               <label className="block text-sm font-medium mb-2">数据源</label>
               <Select
+                options={[
+                  { label: '选择数据源', value: '' },
+                  ...dataSources.map(ds => ({
+                    label: `${ds.name} (${ds.source_type})`,
+                    value: ds.id
+                  }))
+                ]}
                 value={selectedDataSource}
-                onChange={setSelectedDataSource}
+                onChange={(value) => setSelectedDataSource(value as string)}
                 disabled={isGenerating}
-              >
-                <option value="">选择数据源</option>
-                {dataSources.map(ds => (
-                  <option key={ds.id} value={ds.id}>
-                    {ds.name} ({ds.source_type})
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-2">优化级别</label>
               <Select
+                options={[
+                  { label: '基础', value: 'basic' },
+                  { label: '标准', value: 'standard' },
+                  { label: '高级', value: 'advanced' },
+                  { label: '专家', value: 'expert' }
+                ]}
                 value={optimizationLevel}
-                onChange={setOptimizationLevel}
+                onChange={(value) => setOptimizationLevel(value as string)}
                 disabled={isGenerating}
-              >
-                <option value="basic">基础</option>
-                <option value="standard">标准</option>
-                <option value="advanced">高级</option>
-                <option value="expert">专家</option>
-              </Select>
+              />
             </div>
 
             <div className="flex items-center space-x-2">
               <Switch
                 checked={includeComments}
-                onCheckedChange={setIncludeComments}
+                onChange={setIncludeComments}
                 disabled={isGenerating}
               />
               <label className="text-sm font-medium">包含注释</label>
@@ -469,7 +470,7 @@ export default function SQLEnhancedProcessor({
             <div className="flex items-center space-x-2">
               <Switch
                 checked={enableStreaming}
-                onCheckedChange={setEnableStreaming}
+                onChange={setEnableStreaming}
                 disabled={isGenerating}
               />
               <label className="text-sm font-medium">流式反馈</label>
@@ -551,7 +552,13 @@ export default function SQLEnhancedProcessor({
               </div>
             </div>
 
-            <Tabs defaultValue="formatted">
+            <Tabs
+              items={[
+                { key: 'formatted', label: '格式化' },
+                { key: 'raw', label: '原始' }
+              ]}
+              defaultActiveKey="formatted"
+            >
               <div className="mb-4">
                 <div className="flex space-x-1">
                   <button 
@@ -655,11 +662,11 @@ export default function SQLEnhancedProcessor({
                 </div>
 
                 <div className="overflow-x-auto">
-                  <Table>
+                  <table className="min-w-full border border-gray-200">
                     <thead>
                       <tr>
                         {executionResults.columns?.map((column, index) => (
-                          <th key={index} className="text-left">{column}</th>
+                          <th key={index} className="text-left p-2 border-b">{column}</th>
                         ))}
                       </tr>
                     </thead>
@@ -674,7 +681,7 @@ export default function SQLEnhancedProcessor({
                         </tr>
                       ))}
                     </tbody>
-                  </Table>
+                  </table>
                 </div>
 
                 {(executionResults.row_count || 0) > 10 && (

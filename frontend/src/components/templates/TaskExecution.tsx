@@ -111,7 +111,7 @@ export function TaskExecution({ templateId, dataSources, onTaskStart, onTaskComp
       setIsExecuting(true)
       
       // 构建请求参数
-      const requestData = {
+      const requestData: any = {
         template_id: templateId,
         data_source_ids: selectedDataSources,
         execution_context: {
@@ -243,40 +243,48 @@ export function TaskExecution({ templateId, dataSources, onTaskStart, onTaskComp
           {/* 数据源选择 */}
           <div>
             <label className="block text-sm font-medium mb-2">选择数据源</label>
-            <Select
-              multiple
-              value={selectedDataSources}
-              onValueChange={setSelectedDataSources}
-              placeholder="选择数据源"
-              disabled={isExecuting}
-            >
+            <div className="space-y-2">
               {dataSources.map((ds) => (
-                <option key={ds.id} value={ds.id}>
-                  {ds.name} ({ds.source_type})
-                </option>
+                <label key={ds.id} className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedDataSources.includes(ds.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedDataSources([...selectedDataSources, ds.id])
+                      } else {
+                        setSelectedDataSources(selectedDataSources.filter(id => id !== ds.id))
+                      }
+                    }}
+                    disabled={isExecuting}
+                    className="rounded border-gray-300 text-gray-900 focus:ring-gray-500"
+                  />
+                  <span className="text-sm">{ds.name} ({ds.source_type})</span>
+                </label>
               ))}
-            </Select>
+            </div>
           </div>
 
           {/* 输出格式 */}
           <div>
             <label className="block text-sm font-medium mb-2">输出格式</label>
             <Select
+              options={[
+                { label: 'Word文档 (.docx)', value: 'docx' },
+                { label: 'PDF文档 (.pdf)', value: 'pdf' },
+                { label: 'HTML文档 (.html)', value: 'html' }
+              ]}
               value={taskConfig.output_format}
-              onValueChange={(value) => setTaskConfig(prev => ({ ...prev, output_format: value }))}
+              onChange={(value) => setTaskConfig(prev => ({ ...prev, output_format: value as string }))}
               disabled={isExecuting}
-            >
-              <option value="docx">Word文档 (.docx)</option>
-              <option value="pdf">PDF文档 (.pdf)</option>
-              <option value="html">HTML文档 (.html)</option>
-            </Select>
+            />
           </div>
 
           {/* 强制修复占位符 */}
           <div className="flex items-center space-x-2">
             <Switch
               checked={taskConfig.force_repair}
-              onCheckedChange={(checked) => setTaskConfig(prev => ({ ...prev, force_repair: checked }))}
+              onChange={(checked) => setTaskConfig(prev => ({ ...prev, force_repair: checked }))}
               disabled={isExecuting}
             />
             <label className="text-sm">强制验证和修复占位符SQL</label>
@@ -287,7 +295,7 @@ export function TaskExecution({ templateId, dataSources, onTaskStart, onTaskComp
             <div className="flex items-center space-x-2">
               <Switch
                 checked={taskConfig.send_email}
-                onCheckedChange={(checked) => setTaskConfig(prev => ({ ...prev, send_email: checked }))}
+                onChange={(checked) => setTaskConfig(prev => ({ ...prev, send_email: checked }))}
                 disabled={isExecuting}
               />
               <label className="text-sm">发送邮件通知</label>
@@ -329,7 +337,7 @@ export function TaskExecution({ templateId, dataSources, onTaskStart, onTaskComp
                 <div className="flex items-center space-x-2">
                   <Switch
                     checked={taskConfig.attach_files}
-                    onCheckedChange={(checked) => setTaskConfig(prev => ({ ...prev, attach_files: checked }))}
+                    onChange={(checked) => setTaskConfig(prev => ({ ...prev, attach_files: checked }))}
                     disabled={isExecuting}
                   />
                   <label className="text-sm">附加报告文件</label>

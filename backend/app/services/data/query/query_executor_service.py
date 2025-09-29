@@ -10,6 +10,8 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
+from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,10 +30,56 @@ class QueryExecutorService:
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        
+        self.sql_replacer = SqlPlaceholderReplacer()
+
+    async def execute_query_with_placeholders(
+        self,
+        sql_query: str,
+        time_context: Dict[str, Any],
+        connection_params: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        执行包含占位符的SQL查询
+
+        Args:
+            sql_query: 包含占位符的SQL (如: "WHERE dt BETWEEN {{start_date}} AND {{end_date}}")
+            time_context: 时间上下文，用于替换占位符
+            connection_params: 连接参数
+
+        Returns:
+            查询结果字典
+        """
+        try:
+            # 替换SQL中的占位符
+            resolved_sql = self.sql_replacer.replace_time_placeholders(sql_query, time_context)
+
+            # 记录占位符替换信息
+            placeholders = self.sql_replacer.extract_placeholders(sql_query)
+            if placeholders:
+                self.logger.info(f"替换了 {len(placeholders)} 个占位符: {placeholders}")
+                self.logger.debug(f"原始SQL: {sql_query}")
+                self.logger.debug(f"替换后SQL: {resolved_sql}")
+
+            # 执行替换后的SQL
+            return await self.execute_query(resolved_sql, connection_params)
+
+        except Exception as e:
+            self.logger.error(f"执行占位符SQL查询失败: {e}")
+            return {
+                "success": False,
+                "data": [],
+                "metadata": {
+                    "error": f"占位符SQL执行失败: {str(e)}",
+                    "original_sql": sql_query,
+                    "time_context": time_context
+                },
+                "execution_time": 0.0,
+                "error": str(e)
+            }
+
     async def execute_query(
-        self, 
-        sql_query: str, 
+        self,
+        sql_query: str,
         connection_params: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """

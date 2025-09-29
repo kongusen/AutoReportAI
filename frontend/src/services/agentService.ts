@@ -134,11 +134,9 @@ export class AgentService {
   static createAsyncTaskStream(taskId: string, token: string): EventSource {
     const url = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'}${this.BASE_PATH}/run-async/${taskId}/stream`
 
-    return new EventSource(url, {
-      withCredentials: true,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      } as any
+    const urlWithAuth = `${url}?auth=${encodeURIComponent(token)}`
+    return new EventSource(urlWithAuth, {
+      withCredentials: true
     })
   }
 

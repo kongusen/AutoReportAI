@@ -5,7 +5,6 @@ import { Sidebar } from './Sidebar'
 import { useAuthStore } from '@/features/auth/authStore'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { ConnectionStatusIndicator } from './ConnectionStatusIndicator'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 interface AppLayoutProps {
@@ -38,11 +37,11 @@ export function AppLayout({ children }: AppLayoutProps) {
       <div className="min-h-screen bg-gray-50">
         {/* 侧边栏 */}
         <Sidebar />
-        
+
         {/* 主内容区域 */}
         <div className="lg:pl-64">
-          {/* 页面内容 */}
-          <main className="py-6">
+          {/* 页面内容 - 添加顶部边距以避免被移动端导航栏遮挡 */}
+          <main className="py-6 lg:pt-6 pt-6 lg:mt-0 mt-16">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <ErrorBoundary>
                 {children}
@@ -50,9 +49,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             </div>
           </main>
         </div>
-        
-        {/* 连接状态指示器 */}
-        <ConnectionStatusIndicator />
+
       </div>
     </ErrorBoundary>
   )

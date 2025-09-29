@@ -13,16 +13,19 @@ import {
   ClockIcon,
   CheckIcon,
   XMarkIcon,
+  StopIcon,
 } from '@heroicons/react/24/outline'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { apiClient as api } from '@/lib/api-client'
 import { Table } from '@/components/ui/Table'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Empty } from '@/components/ui/Empty'
 import { Progress } from '@/components/ui/Progress'
+import { TaskExecutionProgress } from '@/components/ui/TaskExecutionProgress'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTaskUpdates } from '@/hooks/useWebSocket'
@@ -66,11 +69,44 @@ export default function TasksPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [batchDeleteModalOpen, setBatchDeleteModalOpen] = useState(false)
+  const [executingTasks, setExecutingTasks] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     fetchTasks()
     fetchDataSources()
   }, [fetchTasks, fetchDataSources])
+
+  // 同步执行状态：当任务列表更新时，更新本地执行状态
+  useEffect(() => {
+    const currentlyExecuting = new Set<number>()
+    tasks.forEach(task => {
+      // 检查任务是否正在执行
+      if ((task as any).is_executing || (task as any).current_execution_status === 'processing') {
+        currentlyExecuting.add(task.id)
+      }
+    })
+
+    // 只有状态真正改变时才更新
+    if (currentlyExecuting.size !== executingTasks.size ||
+        !Array.from(currentlyExecuting).every(id => executingTasks.has(id))) {
+      setExecutingTasks(currentlyExecuting)
+    }
+  }, [tasks])
+
+  // 定期刷新任务状态，特别是在有任务执行时
+  useEffect(() => {
+    const hasExecutingTasks = executingTasks.size > 0 ||
+      tasks.some(task => (task as any).current_execution_status === 'processing')
+
+    if (!hasExecutingTasks) return
+
+    // 如果有任务在执行，每5秒刷新一次
+    const interval = setInterval(() => {
+      fetchTasks()
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [executingTasks.size > 0, tasks.some(task => (task as any).current_execution_status === 'processing'), fetchTasks])
 
   // 过滤任务
   const filteredTasks = tasks.filter(task => {
@@ -361,29 +397,58 @@ export default function TasksPage() {
     },
     {
       key: 'status',
-      title: '执行状态',
+      title: '当前状态',
       dataIndex: 'status',
       render: (status: TaskStatus, record: Task) => {
         const taskId = record.id.toString()
         const wsProgress = getTaskUpdate(taskId)
         const localProgress = getTaskProgress(taskId)
         const progress = wsProgress || localProgress
-        
-        if (progress) {
-          return <TaskProgressIndicator taskId={taskId} />
+        const isExecuting = executingTasks.has(record.id)
+
+        // 检查API返回的真实执行状态
+        const apiExecutionStatus = (record as any).current_execution_status
+        const apiProgress = (record as any).current_execution_progress || 0
+        const apiCurrentStep = (record as any).current_execution_step
+
+        // 如果API显示正在执行，显示进度条
+        if (apiExecutionStatus === 'processing' || progress || isExecuting) {
+          return (
+            <div className="space-y-1">
+              <Badge variant="info">执行中</Badge>
+              <div className="w-32">
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
+                    style={{ width: `${apiProgress || progress?.progress || 0}%` }}
+                  ></div>
+                </div>
+                <div className="text-xs text-gray-500 mt-1 truncate">
+                  {apiCurrentStep || progress?.message || '执行中...'}
+                </div>
+              </div>
+            </div>
+          )
         }
-        
+
         // 显示任务状态和激活状态
         const statusInfo = getTaskStatusInfo(status || 'pending')
-        
+
         return (
           <div className="space-y-1">
-            <Badge variant={statusInfo.color as any}>
-              {statusInfo.label}
-            </Badge>
-            <div className="text-xs text-gray-500">
-              {record.is_active ? '已启用' : '已停用'}
+            <div className="flex items-center gap-2">
+              <Badge variant={statusInfo.color as any}>
+                {statusInfo.label}
+              </Badge>
+              {!record.is_active && (
+                <Badge variant="secondary" className="text-xs">已停用</Badge>
+              )}
             </div>
+            {record.last_execution_at && (
+              <div className="text-xs text-gray-500">
+                上次执行: {formatRelativeTime(record.last_execution_at)}
+              </div>
+            )}
           </div>
         )
       },
@@ -433,61 +498,145 @@ export default function TasksPage() {
     {
       key: 'actions',
       title: '操作',
-      width: 200,
-      render: (_: any, record: Task) => (
-        <div className="flex items-center gap-1">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => router.push(`/tasks/${record.id}`)}
-          >
-            <EyeIcon className="w-3 h-3" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={async () => {
-              try {
-                await executeTask(record.id.toString())
-                // 执行成功后开始显示进度
-              } catch (error) {
-                // 错误处理已在store中处理
-              }
-            }}
-            disabled={!record.is_active || !!(getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString()))}
-            title={
-              !record.is_active ? '任务未启用' :
-              (getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString())) ? '任务执行中' : '执行任务'
-            }
-          >
-            <PlayIcon className="w-3 h-3" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => toggleTaskStatus(record.id.toString(), !record.is_active)}
-          >
-            {record.is_active ? <PauseIcon className="w-3 h-3" /> : <PlayIcon className="w-3 h-3" />}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => router.push(`/tasks/${record.id}/edit`)}
-          >
-            <PencilIcon className="w-3 h-3" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setSelectedTask(record)
-              setDeleteModalOpen(true)
-            }}
-          >
-            <TrashIcon className="w-3 h-3" />
-          </Button>
-        </div>
-      ),
+      width: 250,
+      render: (_: any, record: Task) => {
+        // 使用API返回的执行状态，而不是本地状态
+        const apiExecutionStatus = (record as any).current_execution_status
+        const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+        const isExecutingFromLocal = executingTasks.has(record.id) || !!(getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString()))
+        const isExecuting = isExecutingFromAPI || isExecutingFromLocal
+
+        const canExecute = record.is_active && !isExecuting
+        const canPause = record.is_active && !isExecuting
+        const canStart = !record.is_active && !isExecuting
+        const canDelete = !record.is_active && !isExecuting
+
+        return (
+          <div className="flex items-center gap-1">
+            {/* 查看详情 - 始终可用 */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => router.push(`/tasks/${record.id}`)}
+              title="查看详情"
+            >
+              <EyeIcon className="w-3 h-3" />
+            </Button>
+
+            {/* 立即执行 - 只在任务启用且未执行时显示 */}
+            {canExecute && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={async () => {
+                  try {
+                    setExecutingTasks(prev => new Set([...prev, record.id]))
+                    await executeTask(record.id.toString())
+                  } catch (error) {
+                    setExecutingTasks(prev => {
+                      const newSet = new Set(prev)
+                      newSet.delete(record.id)
+                      return newSet
+                    })
+                  }
+                }}
+                title="立即执行"
+                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+              >
+                <PlayIcon className="w-3 h-3" />
+              </Button>
+            )}
+
+            {/* 启用任务 - 只在任务停用时显示 */}
+            {canStart && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => toggleTaskStatus(record.id.toString(), true)}
+                title="启用任务"
+                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+              >
+                <CheckIcon className="w-3 h-3" />
+              </Button>
+            )}
+
+            {/* 暂停任务 - 只在任务启用且未执行时显示 */}
+            {canPause && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => toggleTaskStatus(record.id.toString(), false)}
+                title="暂停任务"
+                className="text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
+              >
+                <PauseIcon className="w-3 h-3" />
+              </Button>
+            )}
+
+            {/* 编辑 - 只在未执行时可用 */}
+            {!isExecuting && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => router.push(`/tasks/${record.id}/edit`)}
+                title="编辑任务"
+              >
+                <PencilIcon className="w-3 h-3" />
+              </Button>
+            )}
+
+            {/* 删除 - 只在任务停用且未执行时显示 */}
+            {canDelete && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setSelectedTask(record)
+                  setDeleteModalOpen(true)
+                }}
+                title="删除任务"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                <TrashIcon className="w-3 h-3" />
+              </Button>
+            )}
+
+            {/* 执行中状态指示和暂停按钮 */}
+            {isExecuting && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    try {
+                      const response = await api.post(`/tasks/${record.id}/cancel`) as any
+                      if (response.data?.success) {
+                        setExecutingTasks(prev => {
+                          const newSet = new Set(prev)
+                          newSet.delete(record.id)
+                          return newSet
+                        })
+                        // 刷新任务列表
+                        fetchTasks()
+                      }
+                    } catch (error: any) {
+                      console.error('Failed to cancel task:', error)
+                    }
+                  }}
+                  title="停止执行"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <StopIcon className="w-3 h-3" />
+                </Button>
+                <div className="flex items-center gap-1 text-xs text-gray-500">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  执行中
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      },
     },
   ]
 
@@ -601,6 +750,59 @@ export default function TasksPage() {
             columns={columns}
             dataSource={filteredTasks}
             rowKey="id"
+            expandable={{
+              expandedRowRender: (record: Task) => {
+                // 检查是否正在执行（优先使用API状态）
+                const apiExecutionStatus = (record as any).current_execution_status
+                const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+                const isExecutingFromLocal = executingTasks.has(record.id)
+                const isExecuting = isExecutingFromAPI || isExecutingFromLocal
+
+                if (isExecuting) {
+                  return (
+                    <div className="px-4 py-2 bg-gray-50">
+                      <TaskExecutionProgress
+                        taskId={record.id}
+                        isExecuting={true}
+                        onExecutionComplete={(result) => {
+                          setExecutingTasks(prev => {
+                            const newSet = new Set(prev)
+                            newSet.delete(record.id)
+                            return newSet
+                          })
+                          fetchTasks()
+                        }}
+                        onExecutionError={(error) => {
+                          setExecutingTasks(prev => {
+                            const newSet = new Set(prev)
+                            newSet.delete(record.id)
+                            return newSet
+                          })
+                        }}
+                        onCancel={() => {
+                          setExecutingTasks(prev => {
+                            const newSet = new Set(prev)
+                            newSet.delete(record.id)
+                            return newSet
+                          })
+                          fetchTasks()
+                        }}
+                      />
+                    </div>
+                  )
+                }
+                return null
+              },
+              rowExpandable: (record: Task) => {
+                const apiExecutionStatus = (record as any).current_execution_status
+                const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+                return isExecutingFromAPI || executingTasks.has(record.id)
+              },
+              expandedRowKeys: [...Array.from(executingTasks), ...filteredTasks.filter(task => {
+                const apiExecutionStatus = (task as any).current_execution_status
+                return apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+              }).map(task => task.id)],
+            }}
           />
         </div>
       )}

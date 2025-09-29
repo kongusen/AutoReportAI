@@ -30,6 +30,14 @@ interface TableProps<T = any> {
     y?: number | string
   }
   emptyText?: string
+  expandable?: {
+    expandedRowRender?: (record: T, index: number) => React.ReactNode
+    rowExpandable?: (record: T) => boolean
+    defaultExpandAllRows?: boolean
+    expandedRowKeys?: React.Key[]
+    onExpand?: (expanded: boolean, record: T) => void
+    onExpandedRowsChange?: (expandedKeys: React.Key[]) => void
+  }
 }
 
 export function Table<T = any>({
@@ -42,6 +50,7 @@ export function Table<T = any>({
   onRow,
   scroll,
   emptyText = '暂无数据',
+  expandable,
 }: TableProps<T>) {
   const getRowKey = (record: T, index: number): string => {
     if (typeof rowKey === 'function') {
@@ -49,6 +58,68 @@ export function Table<T = any>({
     }
     return (record as any)[rowKey] || index.toString()
   }
+
+  // 展开状态管理
+  const [internalExpandedKeys, setInternalExpandedKeys] = React.useState<React.Key[]>(
+    expandable?.defaultExpandAllRows ? dataSource.map((_, index) => getRowKey(_, index)) : []
+  )
+
+  const expandedKeys = expandable?.expandedRowKeys ?? internalExpandedKeys
+
+  const handleExpand = (record: T, index: number) => {
+    const key = getRowKey(record, index)
+    const isExpanded = expandedKeys.includes(key)
+    const newExpandedKeys = isExpanded
+      ? expandedKeys.filter(k => k !== key)
+      : [...expandedKeys, key]
+
+    if (!expandable?.expandedRowKeys) {
+      setInternalExpandedKeys(newExpandedKeys)
+    }
+
+    expandable?.onExpand?.(!isExpanded, record)
+    expandable?.onExpandedRowsChange?.(newExpandedKeys)
+  }
+
+  const isRowExpandable = (record: T): boolean => {
+    if (!expandable?.expandedRowRender) return false
+    return expandable?.rowExpandable ? expandable.rowExpandable(record) : true
+  }
+
+  // 如果有展开功能，添加展开按钮列
+  const expandColumn: Column<T> | null = expandable?.expandedRowRender ? {
+    key: '__expand__',
+    title: '',
+    width: 48,
+    render: (_, record: T, index: number) => {
+      if (!isRowExpandable(record)) {
+        return <div className="w-6 h-6" />
+      }
+
+      const key = getRowKey(record, index)
+      const isExpanded = expandedKeys.includes(key)
+
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            handleExpand(record, index)
+          }}
+          className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          <svg
+            className={cn("w-4 h-4 transition-transform", isExpanded && "rotate-90")}
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
+            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+          </svg>
+        </button>
+      )
+    }
+  } : null
+
+  const finalColumns = expandColumn ? [expandColumn, ...columns] : columns
 
   const getRowClassName = (record: T, index: number): string => {
     if (typeof rowClassName === 'function') {
@@ -83,7 +154,7 @@ export function Table<T = any>({
           {/* 表头 */}
           <thead className="bg-gray-50">
             <tr>
-              {columns.map((column) => (
+              {finalColumns.map((column) => (
                 <th
                   key={column.key}
                   className={cn(
@@ -113,7 +184,7 @@ export function Table<T = any>({
             {loading ? (
               <tr>
                 <td
-                  colSpan={columns.length}
+                  colSpan={finalColumns.length}
                   className="px-6 py-4 text-center text-gray-500"
                 >
                   <div className="flex items-center justify-center">
@@ -125,7 +196,7 @@ export function Table<T = any>({
             ) : dataSource.length === 0 ? (
               <tr>
                 <td
-                  colSpan={columns.length}
+                  colSpan={finalColumns.length}
                   className="px-6 py-8 text-center text-gray-500"
                 >
                   {emptyText}
@@ -134,28 +205,40 @@ export function Table<T = any>({
             ) : (
               dataSource.map((record, index) => {
                 const rowProps = onRow?.(record, index) || {}
+                const key = getRowKey(record, index)
+                const isExpanded = expandedKeys.includes(key)
+
                 return (
-                  <tr
-                    key={getRowKey(record, index)}
-                    className={cn(
-                      'hover:bg-gray-50 transition-colors',
-                      getRowClassName(record, index)
+                  <React.Fragment key={key}>
+                    <tr
+                      className={cn(
+                        'hover:bg-gray-50 transition-colors',
+                        getRowClassName(record, index)
+                      )}
+                      {...rowProps}
+                    >
+                      {finalColumns.map((column) => (
+                        <td
+                          key={column.key}
+                          className={cn(
+                            'px-6 py-4 whitespace-nowrap text-sm text-gray-900',
+                            getAlignClass(column.align),
+                            column.className
+                          )}
+                        >
+                          {getCellValue(record, column)}
+                        </td>
+                      ))}
+                    </tr>
+                    {/* 展开行 */}
+                    {isExpanded && expandable?.expandedRowRender && (
+                      <tr>
+                        <td colSpan={finalColumns.length} className="px-6 py-4 bg-gray-50">
+                          {expandable.expandedRowRender(record, index)}
+                        </td>
+                      </tr>
                     )}
-                    {...rowProps}
-                  >
-                    {columns.map((column) => (
-                      <td
-                        key={column.key}
-                        className={cn(
-                          'px-6 py-4 whitespace-nowrap text-sm text-gray-900',
-                          getAlignClass(column.align),
-                          column.className
-                        )}
-                      >
-                        {getCellValue(record, column)}
-                      </td>
-                    ))}
-                  </tr>
+                  </React.Fragment>
                 )
               })
             )}

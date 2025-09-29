@@ -186,10 +186,10 @@ export default function TestNewAPIPage() {
     }
 
     if (client.isConnected) {
-      toast.info('WebSocket已连接')
+      toast.success('WebSocket已连接')
       console.log('连接信息:', client.getStats())
     } else {
-      toast.info('正在连接WebSocket...')
+      toast('正在连接WebSocket...')
       try {
         await client.connect()
       } catch (error) {

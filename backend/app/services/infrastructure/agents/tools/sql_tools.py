@@ -425,6 +425,7 @@ class SQLValidateTool(Tool):
         针对真实数据库执行SQL验证 - Plan-Tool-Active-Validate核心机制
 
         这是真正的验证：通过实际执行SQL（带LIMIT保护）来确认SQL的正确性
+        重要：验证阶段将占位符替换为真实日期进行测试，但返回给前端的仍是占位符版本
         """
         try:
             self._logger.info(f"🔍 [数据库验证] 开始验证SQL: {sql[:100]}...")
@@ -438,8 +439,12 @@ class SQLValidateTool(Tool):
                     "warnings": []
                 }
 
+            # 🔄 关键修复：验证阶段需要将占位符替换为真实日期进行测试
+            validation_sql_with_dates = self._replace_placeholders_for_validation(sql, input_data)
+            self._logger.info(f"📅 [占位符替换] 验证用SQL: {validation_sql_with_dates[:100]}...")
+
             # 创建安全的验证SQL - 添加LIMIT保护
-            validation_sql = self._make_sql_safe_for_validation(sql)
+            validation_sql = self._make_sql_safe_for_validation(validation_sql_with_dates)
             self._logger.info(f"🛡️ [安全SQL] {validation_sql}")
 
             # 尝试执行SQL进行验证
@@ -563,6 +568,66 @@ class SQLValidateTool(Tool):
                 "issues": [f"数据库验证过程异常: {str(e)}"],
                 "warnings": []
             }
+
+    def _replace_placeholders_for_validation(self, sql: str, input_data: Dict[str, Any]) -> str:
+        """
+        为验证目的将占位符替换为真实日期
+
+        验证阶段需要执行真实的SQL查询，所以要将{{start_date}}和{{end_date}}替换为具体日期
+        但最终返回给前端的仍然是带占位符的版本
+        """
+        try:
+            validation_sql = sql
+
+            # 从input_data中获取时间窗口信息
+            window = input_data.get("window") or input_data.get("time_window")
+            if window and isinstance(window, dict):
+                start_date = window.get("start_date")
+                end_date = window.get("end_date")
+
+                if start_date:
+                    validation_sql = validation_sql.replace("{{start_date}}", f"'{start_date}'")
+                    self._logger.info(f"🔄 替换 {{{{start_date}}}} -> '{start_date}'")
+
+                if end_date:
+                    validation_sql = validation_sql.replace("{{end_date}}", f"'{end_date}'")
+                    self._logger.info(f"🔄 替换 {{{{end_date}}}} -> '{end_date}'")
+
+            # 如果没有从window获取到日期，尝试从其他字段获取
+            if "{{start_date}}" in validation_sql or "{{end_date}}" in validation_sql:
+                # 检查是否有直接的日期字段
+                start_date = input_data.get("start_date")
+                end_date = input_data.get("end_date")
+
+                if start_date and "{{start_date}}" in validation_sql:
+                    validation_sql = validation_sql.replace("{{start_date}}", f"'{start_date}'")
+                    self._logger.info(f"🔄 备用替换 {{{{start_date}}}} -> '{start_date}'")
+
+                if end_date and "{{end_date}}" in validation_sql:
+                    validation_sql = validation_sql.replace("{{end_date}}", f"'{end_date}'")
+                    self._logger.info(f"🔄 备用替换 {{{{end_date}}}} -> '{end_date}'")
+
+            # 如果仍有占位符未替换，使用默认测试日期
+            if "{{start_date}}" in validation_sql or "{{end_date}}" in validation_sql:
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                yesterday = today - timedelta(days=1)
+
+                default_date = yesterday.strftime('%Y-%m-%d')
+
+                if "{{start_date}}" in validation_sql:
+                    validation_sql = validation_sql.replace("{{start_date}}", f"'{default_date}'")
+                    self._logger.info(f"🔄 默认替换 {{{{start_date}}}} -> '{default_date}'")
+
+                if "{{end_date}}" in validation_sql:
+                    validation_sql = validation_sql.replace("{{end_date}}", f"'{default_date}'")
+                    self._logger.info(f"🔄 默认替换 {{{{end_date}}}} -> '{default_date}'")
+
+            return validation_sql
+
+        except Exception as e:
+            self._logger.error(f"❌ 占位符替换失败: {e}")
+            return sql  # 失败时返回原始SQL
 
     def _make_sql_safe_for_validation(self, sql: str) -> str:
         """为验证目的制作安全的SQL。
@@ -1316,6 +1381,11 @@ class SQLExecuteTool(Tool):
             if not sql:
                 return {"success": False, "error": "SQL语句为空"}
 
+            # 🔄 关键修复：执行前需要将占位符替换为真实日期
+            executable_sql = self._replace_placeholders_for_execution(sql, input_data)
+            self._logger.info(f"🚀 [SQL执行] 原始SQL: {sql[:100]}...")
+            self._logger.info(f"📅 [SQL执行] 执行SQL: {executable_sql[:100]}...")
+
             # 获取用户ID和数据源ID
             user_id = input_data.get("user_id") or auth_manager.get_current_user_id() or "system"
             data_source_config = input_data.get("data_source", {})
@@ -1345,8 +1415,8 @@ class SQLExecuteTool(Tool):
             if not data_source_service:
                 return {"success": False, "error": "Data source service not available"}
 
-            # 执行SQL (这里需要根据backup系统的实际接口调整)
-            result = await self._execute_sql(data_source_service, sql, input_data)
+            # 执行SQL (使用替换后的可执行SQL)
+            result = await self._execute_sql(data_source_service, executable_sql, input_data)
 
             return {
                 "success": True,
@@ -1405,6 +1475,64 @@ class SQLExecuteTool(Tool):
         except Exception as e:
             self._logger.error(f"SQL执行异常: {str(e)}")
             return {"rows": [], "columns": []}
+
+    def _replace_placeholders_for_execution(self, sql: str, input_data: Dict[str, Any]) -> str:
+        """
+        为执行目的将占位符替换为真实日期
+
+        执行阶段需要运行真实的SQL查询，所以要将{{start_date}}和{{end_date}}替换为具体日期
+        """
+        try:
+            executable_sql = sql
+
+            # 从input_data中获取时间窗口信息
+            window = input_data.get("window") or input_data.get("time_window")
+            if window and isinstance(window, dict):
+                start_date = window.get("start_date")
+                end_date = window.get("end_date")
+
+                if start_date:
+                    executable_sql = executable_sql.replace("{{start_date}}", f"'{start_date}'")
+                    self._logger.info(f"🔄 [执行替换] {{{{start_date}}}} -> '{start_date}'")
+
+                if end_date:
+                    executable_sql = executable_sql.replace("{{end_date}}", f"'{end_date}'")
+                    self._logger.info(f"🔄 [执行替换] {{{{end_date}}}} -> '{end_date}'")
+
+            # 如果没有从window获取到日期，尝试从其他字段获取
+            if "{{start_date}}" in executable_sql or "{{end_date}}" in executable_sql:
+                start_date = input_data.get("start_date")
+                end_date = input_data.get("end_date")
+
+                if start_date and "{{start_date}}" in executable_sql:
+                    executable_sql = executable_sql.replace("{{start_date}}", f"'{start_date}'")
+                    self._logger.info(f"🔄 [执行替换-备用] {{{{start_date}}}} -> '{start_date}'")
+
+                if end_date and "{{end_date}}" in executable_sql:
+                    executable_sql = executable_sql.replace("{{end_date}}", f"'{end_date}'")
+                    self._logger.info(f"🔄 [执行替换-备用] {{{{end_date}}}} -> '{end_date}'")
+
+            # 如果仍有占位符未替换，使用默认测试日期
+            if "{{start_date}}" in executable_sql or "{{end_date}}" in executable_sql:
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                yesterday = today - timedelta(days=1)
+
+                default_date = yesterday.strftime('%Y-%m-%d')
+
+                if "{{start_date}}" in executable_sql:
+                    executable_sql = executable_sql.replace("{{start_date}}", f"'{default_date}'")
+                    self._logger.info(f"🔄 [执行替换-默认] {{{{start_date}}}} -> '{default_date}'")
+
+                if "{{end_date}}" in executable_sql:
+                    executable_sql = executable_sql.replace("{{end_date}}", f"'{default_date}'")
+                    self._logger.info(f"🔄 [执行替换-默认] {{{{end_date}}}} -> '{default_date}'")
+
+            return executable_sql
+
+        except Exception as e:
+            self._logger.error(f"❌ [执行] 占位符替换失败: {e}")
+            return sql  # 失败时返回原始SQL
 
 
 class SQLRefineTool(Tool):

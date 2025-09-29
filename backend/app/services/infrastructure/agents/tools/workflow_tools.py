@@ -251,27 +251,56 @@ class StatBasicWorkflowTool(Tool):
                 }
             observations.append("✅ 生成SQL成功")
 
-            # 5) 验证 → 策略 → 执行
+            # 保存原始带占位符的SQL
+            placeholder_sql = sql
+
+            # 5) 验证阶段：将占位符替换为真实时间进行测试
+            # 使用时间窗口中的真实日期替换占位符
+            test_sql = sql
+            if window and window.get("start_date") and window.get("end_date"):
+                test_sql = test_sql.replace("{{start_date}}", f"'{window['start_date']}'")
+                test_sql = test_sql.replace("{{end_date}}", f"'{window['end_date']}'")
+                observations.append(f"✅ 替换占位符进行验证: {window['start_date']} ~ {window['end_date']}")
+
             v = await self._tools.sql_validate.execute({
-                "sql": sql,
+                "sql": test_sql,  # 使用替换后的SQL进行验证
                 "user_id": user_id,
                 "data_source": data_source,
                 "semantic_type": "statistical",
             })
             if not v.get("success") and not v.get("corrected_sql"):
-                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": sql}
-            sql = v.get("corrected_sql") or sql
+                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": placeholder_sql}
+
+            # 如果验证器修正了SQL，需要将修正应用到占位符版本
+            if v.get("corrected_sql") and v.get("corrected_sql") != test_sql:
+                # 将修正后的SQL转换回占位符格式
+                corrected_sql = v.get("corrected_sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    corrected_sql = corrected_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    corrected_sql = corrected_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = corrected_sql
+                test_sql = v.get("corrected_sql")
+
             observations.append("✅ SQL验证通过/已修正")
 
-            p = await self._tools.sql_policy.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            p = await self._tools.sql_policy.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not p.get("success"):
-                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": sql}
-            sql = p.get("sql") or sql
+                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": placeholder_sql}
+
+            # 策略修正也需要转换回占位符格式
+            if p.get("sql") and p.get("sql") != test_sql:
+                policy_sql = p.get("sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    policy_sql = policy_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    policy_sql = policy_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = policy_sql
+                test_sql = p.get("sql")
+
             observations.append("✅ 应用策略成功")
 
-            ex = await self._tools.sql_execute.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            ex = await self._tools.sql_execute.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not ex.get("success"):
-                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": sql}
+                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": placeholder_sql}
             rows = ex.get("rows", [])
             cols = ex.get("columns", [])
             count_value = None
@@ -283,12 +312,14 @@ class StatBasicWorkflowTool(Tool):
 
             return {
                 "success": True,
-                "sql": sql,
+                "sql": placeholder_sql,  # 返回带占位符的原始SQL
                 "rows": rows,
                 "columns": cols,
                 "metric": "count",
                 "value": count_value,
                 "observations": observations,
+                "test_sql": test_sql,  # 额外返回验证时使用的SQL，便于调试
+                "validation_passed": True
             }
 
         except Exception as e:
@@ -391,27 +422,54 @@ class StatRatioWorkflowTool(Tool):
                 return {"success": False, "error": "sql_generation_empty", "observations": observations, "sql_prompt": sql_prompt}
             observations.append("✅ 生成SQL成功")
 
-            # 5) 验证 → 策略 → 执行
+            # 保存原始带占位符的SQL
+            placeholder_sql = sql
+
+            # 5) 验证阶段：将占位符替换为真实时间进行测试
+            test_sql = sql
+            if window and window.get("start_date") and window.get("end_date"):
+                test_sql = test_sql.replace("{{start_date}}", f"'{window['start_date']}'")
+                test_sql = test_sql.replace("{{end_date}}", f"'{window['end_date']}'")
+                observations.append(f"✅ 替换占位符进行验证: {window['start_date']} ~ {window['end_date']}")
+
             v = await self._tools.sql_validate.execute({
-                "sql": sql,
+                "sql": test_sql,  # 使用替换后的SQL进行验证
                 "user_id": user_id,
                 "data_source": data_source,
                 "semantic_type": "statistical",
             })
             if not v.get("success") and not v.get("corrected_sql"):
-                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": sql}
-            sql = v.get("corrected_sql") or sql
+                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": placeholder_sql}
+
+            # 如果验证器修正了SQL，需要将修正应用到占位符版本
+            if v.get("corrected_sql") and v.get("corrected_sql") != test_sql:
+                corrected_sql = v.get("corrected_sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    corrected_sql = corrected_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    corrected_sql = corrected_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = corrected_sql
+                test_sql = v.get("corrected_sql")
+
             observations.append("✅ SQL验证通过/已修正")
 
-            p = await self._tools.sql_policy.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            p = await self._tools.sql_policy.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not p.get("success"):
-                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": sql}
-            sql = p.get("sql") or sql
+                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": placeholder_sql}
+
+            # 策略修正也需要转换回占位符格式
+            if p.get("sql") and p.get("sql") != test_sql:
+                policy_sql = p.get("sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    policy_sql = policy_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    policy_sql = policy_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = policy_sql
+                test_sql = p.get("sql")
+
             observations.append("✅ 应用策略成功")
 
-            ex = await self._tools.sql_execute.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            ex = await self._tools.sql_execute.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not ex.get("success"):
-                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": sql}
+                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": placeholder_sql}
             rows = ex.get("rows", [])
             cols = ex.get("columns", [])
 
@@ -444,11 +502,13 @@ class StatRatioWorkflowTool(Tool):
 
             return {
                 "success": True,
-                "sql": sql,
+                "sql": placeholder_sql,  # 返回带占位符的原始SQL
                 "rows": rows,
                 "columns": cols,
                 "metrics": metrics,
                 "observations": observations,
+                "test_sql": test_sql,  # 额外返回验证时使用的SQL，便于调试
+                "validation_passed": True
             }
 
         except Exception as e:
@@ -575,33 +635,60 @@ class StatCategoryMixWorkflowTool(Tool):
                 return {"success": False, "error": "sql_generation_empty", "observations": observations, "sql_prompt": sql_prompt}
             observations.append("✅ 生成SQL成功")
 
-            # 5) 验证 → 策略 → 执行
+            # 保存原始带占位符的SQL
+            placeholder_sql = sql
+
+            # 5) 验证阶段：将占位符替换为真实时间进行测试
+            test_sql = sql
+            if window and window.get("start_date") and window.get("end_date"):
+                test_sql = test_sql.replace("{{start_date}}", f"'{window['start_date']}'")
+                test_sql = test_sql.replace("{{end_date}}", f"'{window['end_date']}'")
+                observations.append(f"✅ 替换占位符进行验证: {window['start_date']} ~ {window['end_date']}")
+
             v = await self._tools.sql_validate.execute({
-                "sql": sql,
+                "sql": test_sql,  # 使用替换后的SQL进行验证
                 "user_id": user_id,
                 "data_source": data_source,
                 "semantic_type": "statistical",
             })
             if not v.get("success") and not v.get("corrected_sql"):
-                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": sql}
-            sql = v.get("corrected_sql") or sql
+                return {"success": False, "error": f"sql_validate_failed: {v.get('error')}", "issues": v.get("issues", []), "observations": observations, "sql": placeholder_sql}
+
+            # 如果验证器修正了SQL，需要将修正应用到占位符版本
+            if v.get("corrected_sql") and v.get("corrected_sql") != test_sql:
+                corrected_sql = v.get("corrected_sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    corrected_sql = corrected_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    corrected_sql = corrected_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = corrected_sql
+                test_sql = v.get("corrected_sql")
+
             observations.append("✅ SQL验证通过/已修正")
 
-            p = await self._tools.sql_policy.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            p = await self._tools.sql_policy.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not p.get("success"):
-                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": sql}
-            sql = p.get("sql") or sql
+                return {"success": False, "error": f"sql_policy_failed: {p.get('error')}", "observations": observations, "sql": placeholder_sql}
+
+            # 策略修正也需要转换回占位符格式
+            if p.get("sql") and p.get("sql") != test_sql:
+                policy_sql = p.get("sql")
+                if window and window.get("start_date") and window.get("end_date"):
+                    policy_sql = policy_sql.replace(f"'{window['start_date']}'", "{{start_date}}")
+                    policy_sql = policy_sql.replace(f"'{window['end_date']}'", "{{end_date}}")
+                placeholder_sql = policy_sql
+                test_sql = p.get("sql")
+
             observations.append("✅ 应用策略成功")
 
-            ex = await self._tools.sql_execute.execute({"sql": sql, "user_id": user_id, "data_source": data_source})
+            ex = await self._tools.sql_execute.execute({"sql": test_sql, "user_id": user_id, "data_source": data_source})
             if not ex.get("success"):
-                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": sql}
+                return {"success": False, "error": f"sql_execute_failed: {ex.get('error')}", "observations": observations, "sql": placeholder_sql}
             rows = ex.get("rows", [])
             cols = ex.get("columns", [])
 
             return {
                 "success": True,
-                "sql": sql,
+                "sql": placeholder_sql,  # 返回带占位符的原始SQL
                 "rows": rows,
                 "columns": cols,
                 "dimension": dimension,
@@ -610,6 +697,8 @@ class StatCategoryMixWorkflowTool(Tool):
                 "union_groups": union_groups,
                 "topn": topn,
                 "observations": observations,
+                "test_sql": test_sql,  # 额外返回验证时使用的SQL，便于调试
+                "validation_passed": True
             }
 
         except Exception as e:

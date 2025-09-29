@@ -59,14 +59,14 @@ export default function DebugAuthPage() {
 
       if (response.ok) {
         toast.success('Token验证成功')
-        setAuthInfo(prev => ({
+        setAuthInfo((prev: any) => ({
           ...prev,
           tokenValid: true,
           userInfo: data.data || data
         }))
       } else {
         toast.error(`Token验证失败: ${data.detail || data.message}`)
-        setAuthInfo(prev => ({
+        setAuthInfo((prev: any) => ({
           ...prev,
           tokenValid: false,
           tokenError: data.detail || data.message
@@ -74,7 +74,7 @@ export default function DebugAuthPage() {
       }
     } catch (error: any) {
       toast.error(`Token验证异常: ${error.message}`)
-      setAuthInfo(prev => ({
+      setAuthInfo((prev: any) => ({
         ...prev,
         tokenValid: false,
         tokenError: error.message

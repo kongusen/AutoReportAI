@@ -72,9 +72,9 @@ export function PageHeader({
       )}
 
       {/* Header content */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col space-y-4 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+          <h1 className="text-xl font-bold leading-7 text-gray-900 sm:text-2xl lg:text-3xl sm:truncate sm:tracking-tight">
             {title}
           </h1>
           {description && (
@@ -83,9 +83,9 @@ export function PageHeader({
             </div>
           )}
         </div>
-        
+
         {actions && (
-          <div className="flex items-center space-x-3 ml-4">
+          <div className="flex items-center space-x-3 sm:ml-4">
             {actions}
           </div>
         )}

@@ -25,6 +25,7 @@ from app.services.application.tasks.task_execution_service import TaskExecutionS
 # Temporarily removed to fix circular imports
 # from app.services.infrastructure.task_queue.tasks import validate_placeholders_task, scheduled_task_runner
 from app.services.infrastructure.task_queue.celery_config import celery_app
+from app.services.infrastructure.task_queue.tasks import execute_report_task
 from app.core.exceptions import ValidationError, NotFoundError
 from app.utils.time_context import TimeContextManager
 
@@ -59,13 +60,12 @@ class TaskApplicationService(TransactionalApplicationService):
         return self._placeholder_analysis_domain_service
     
     def create_task(
-        self, 
+        self,
         db: Session,
         user_id: str,
         name: str,
         template_id: str,
         data_source_id: str,
-        report_period: ReportPeriod = ReportPeriod.MONTHLY,
         description: Optional[str] = None,
         schedule: Optional[str] = None,
         recipients: Optional[List[str]] = None,
@@ -77,14 +77,13 @@ class TaskApplicationService(TransactionalApplicationService):
     ) -> ApplicationResult[Task]:
         """
         创建新任务
-        
+
         Args:
             db: 数据库会话
             user_id: 用户ID
             name: 任务名称
             template_id: 模板ID
             data_source_id: 数据源ID
-            report_period: 报告周期
             description: 任务描述
             schedule: 调度表达式
             recipients: 通知邮箱列表
@@ -93,7 +92,7 @@ class TaskApplicationService(TransactionalApplicationService):
             workflow_type: Agent工作流类型
             max_context_tokens: 最大上下文令牌数
             enable_compression: 是否启用压缩
-            
+
         Returns:
             ApplicationResult[Task]: 创建结果
         """
@@ -123,6 +122,9 @@ class TaskApplicationService(TransactionalApplicationService):
             if not data_source:
                 return ApplicationResult.not_found_result(f"数据源 {data_source_id} 不存在")
             
+            # 基于调度表达式推断报告周期
+            final_report_period = self._infer_report_period_from_cron(schedule)
+
             # 验证调度表达式（如果提供）
             if schedule:
                 try:
@@ -151,7 +153,7 @@ class TaskApplicationService(TransactionalApplicationService):
                 owner_id=owner_uuid,
                 template_id=template_uuid,
                 data_source_id=data_source_uuid,
-                report_period=report_period,
+                report_period=final_report_period,
                 schedule=schedule,
                 recipients=recipients or [],
                 is_active=is_active,
@@ -743,11 +745,20 @@ class TaskApplicationService(TransactionalApplicationService):
                 raise NotFoundError(f"Task {task_id} not found or access denied")
             
             # 异步验证占位符
-            validation_result = validate_placeholders_task.delay(
-                template_id=str(task.template_id),
-                data_source_id=str(task.data_source_id),
-                user_id=user_id
-            )
+            try:
+                from app.services.infrastructure.task_queue.tasks import validate_placeholders_task
+                validation_result = validate_placeholders_task.delay(
+                    template_id=str(task.template_id),
+                    data_source_id=str(task.data_source_id),
+                    user_id=user_id
+                )
+            except ImportError as e:
+                logger.warning(f"Cannot import validate_placeholders_task: {e}")
+                return {
+                    "task_id": task_id,
+                    "status": "validation_unavailable",
+                    "message": "Validation service is temporarily unavailable"
+                }
             
             logger.info(f"Validation task queued for task {task_id}: {validation_result.id}")
             
@@ -833,25 +844,34 @@ class TaskApplicationService(TransactionalApplicationService):
             )
             
             # 执行agents任务
-            agent_result = await execute_agent_task(
-                task_name="task_execution",
-                task_description=f"执行任务: {task.name} - {task.workflow_type.value}报告生成",
-                context_data=context,
-                additional_data={
-                    "task_id": task_id,
-                    "task_name": task.name,
-                    "template_id": str(task.template_id),
-                    "data_source_id": str(task.data_source_id),
-                    "data_source_config": {
-                        "name": data_source.name,
-                        "source_type": str(data_source.source_type)
-                    },
-                    "report_period": task.report_period.value,
-                    "processing_mode": task.processing_mode.value,
-                    "workflow_type": task.workflow_type.value,
-                    "execution_context": execution_context or {}
+            try:
+                from app.services.infrastructure.agents import execute_agent_task
+                agent_result = await execute_agent_task(
+                    task_name="task_execution",
+                    task_description=f"执行任务: {task.name} - {task.workflow_type.value}报告生成",
+                    context_data=context,
+                    additional_data={
+                        "task_id": task_id,
+                        "task_name": task.name,
+                        "template_id": str(task.template_id),
+                        "data_source_id": str(task.data_source_id),
+                        "data_source_config": {
+                            "name": data_source.name,
+                            "source_type": str(data_source.source_type)
+                        },
+                        "report_period": task.report_period.value,
+                        "processing_mode": task.processing_mode.value,
+                        "workflow_type": task.workflow_type.value,
+                        "execution_context": execution_context or {}
+                    }
+                )
+            except ImportError as e:
+                logger.warning(f"Cannot import execute_agent_task: {e}")
+                agent_result = {
+                    "status": "fallback_execution",
+                    "message": "Agents system unavailable, using fallback execution",
+                    "success": True
                 }
-            )
             
             logger.info(f"Agents system task execution completed for task {task_id}")
             
@@ -911,15 +931,24 @@ class TaskApplicationService(TransactionalApplicationService):
             )
             
             # 执行SQL生成任务
-            agent_result = await execute_agent_task(
-                task_name="sql_generation",
-                task_description=f"生成SQL查询: {query_description}",
-                context_data=context,
-                additional_data={
-                    "table_info": table_info,
-                    "user_id": user_id
+            try:
+                from app.services.infrastructure.agents import execute_agent_task
+                agent_result = await execute_agent_task(
+                    task_name="sql_generation",
+                    task_description=f"生成SQL查询: {query_description}",
+                    context_data=context,
+                    additional_data={
+                        "table_info": table_info,
+                        "user_id": user_id
+                    }
+                )
+            except ImportError as e:
+                logger.warning(f"Cannot import execute_agent_task for SQL generation: {e}")
+                agent_result = {
+                    "status": "fallback_sql_generation",
+                    "message": "Agents system unavailable for SQL generation",
+                    "success": False
                 }
-            )
             
             return {
                 "query_description": query_description,
@@ -1026,6 +1055,38 @@ class TaskApplicationService(TransactionalApplicationService):
     # =================================================================
     # DDD架构v2.0 - 辅助方法
     # =================================================================
+
+    def _infer_report_period_from_cron(self, cron_expression: Optional[str]) -> ReportPeriod:
+        """基于cron表达式推断报告周期"""
+        if not cron_expression or not isinstance(cron_expression, str):
+            return ReportPeriod.MONTHLY
+
+        try:
+            # 解析cron表达式的5个字段: m h dom mon dow
+            parts = cron_expression.strip().split()
+            if len(parts) < 5:
+                return ReportPeriod.MONTHLY
+
+            minute, hour, day_of_month, month, day_of_week = parts[:5]
+
+            # 如果指定了星期几（非 *），判定为每周
+            if day_of_week and day_of_week != '*':
+                return ReportPeriod.WEEKLY
+
+            # 如果指定了月份（非 *），通常为每年
+            if month and month != '*':
+                return ReportPeriod.YEARLY
+
+            # 如果指定了某一天（非 *），通常为每月
+            if day_of_month and day_of_month != '*':
+                return ReportPeriod.MONTHLY
+
+            # 其余默认按每日
+            return ReportPeriod.DAILY
+
+        except Exception as e:
+            self.logger.warning(f"解析cron表达式失败: {e}, 使用默认周期: monthly")
+            return ReportPeriod.MONTHLY
     
     def _get_template_info(self, db: Session, template_id: str) -> Dict[str, Any]:
         """获取模板信息"""

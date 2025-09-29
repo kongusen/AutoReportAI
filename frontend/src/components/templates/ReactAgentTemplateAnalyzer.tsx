@@ -71,7 +71,7 @@ export default function ReactAgentTemplateAnalyzer({
       const data = await response.json()
 
       if (data.success) {
-        const activeSources = data.data?.filter(ds => ds.is_active) || []
+        const activeSources = data.data?.filter((ds: any) => ds.is_active) || []
         setDataSources(activeSources)
 
         // 自动选择第一个数据源
@@ -162,6 +162,7 @@ export default function ReactAgentTemplateAnalyzer({
                   ...prev,
                   data: taskResult.total_placeholders ? {
                     ...prev.data,
+                    items: prev.data?.items || [],
                     stats: {
                       total: taskResult.total_placeholders,
                       need_reanalysis: taskResult.needs_reanalysis || 0,

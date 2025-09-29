@@ -20,7 +20,7 @@ class TaskBase(BaseModel):
     report_period: Optional[ReportPeriod] = ReportPeriod.MONTHLY
     recipients: Optional[List[str]] = []
     is_active: Optional[bool] = True
-    
+
     # 新增字段（可选，有默认值以保持向后兼容）
     processing_mode: Optional[ProcessingMode] = ProcessingMode.INTELLIGENT
     workflow_type: Optional[AgentWorkflowType] = AgentWorkflowType.SIMPLE_REPORT

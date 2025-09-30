@@ -10,6 +10,22 @@ from app.core.logging_config import setup_logging, RequestLoggingMiddleware
 from app.core.exception_handlers import setup_exception_handlers
 from app.websocket.router import router as websocket_router
 
+# 修复 bcrypt 兼容性问题
+def fix_bcrypt_compatibility():
+    """修复 bcrypt 兼容性问题"""
+    try:
+        import bcrypt
+        if not hasattr(bcrypt, '__about__'):
+            class About:
+                __version__ = getattr(bcrypt, '__version__', '4.0.0')
+            bcrypt.__about__ = About()
+            print("✅ bcrypt compatibility fixed")
+    except Exception as e:
+        print(f"⚠️ bcrypt compatibility fix failed: {e}")
+
+# 修复 bcrypt 兼容性
+fix_bcrypt_compatibility()
+
 # Setup logging as soon as the application starts
 setup_logging()
 

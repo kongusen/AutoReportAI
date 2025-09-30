@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -41,26 +42,27 @@ import { Task, TaskStatus } from '@/types'
 
 export default function TasksPage() {
   const router = useRouter()
-  const { 
-    tasks, 
-    loading, 
-    fetchTasks, 
-    deleteTask, 
-    toggleTaskStatus, 
+  const {
+    tasks,
+    loading,
+    fetchTasks,
+    deleteTask,
+    toggleTaskStatus,
     executeTask,
     batchUpdateStatus,
     batchDeleteTasks,
-    getTaskProgress
+    getTaskProgress,
+    clearTaskProgress
   } = useTaskStore()
   
   const { dataSources, fetchDataSources } = useDataSourceStore()
   
   // 启用WebSocket连接来接收实时任务更新
-  const { 
-    taskUpdates, 
-    hasTaskUpdate, 
+  const {
+    taskUpdates,
+    hasTaskUpdate,
     getTaskUpdate,
-    clearTaskUpdates 
+    clearTaskUpdates
   } = useTaskUpdates()
   
   const [searchTerm, setSearchTerm] = useState('')
@@ -70,11 +72,24 @@ export default function TasksPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [batchDeleteModalOpen, setBatchDeleteModalOpen] = useState(false)
   const [executingTasks, setExecutingTasks] = useState<Set<number>>(new Set())
+  const [isMobile, setIsMobile] = useState(false)
 
   useEffect(() => {
     fetchTasks()
     fetchDataSources()
   }, [fetchTasks, fetchDataSources])
+
+  // 检测屏幕尺寸变化
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // 同步执行状态：当任务列表更新时，更新本地执行状态
   useEffect(() => {
@@ -93,6 +108,35 @@ export default function TasksPage() {
     }
   }, [tasks])
 
+  // 当WebSocket接收到任务完成/失败消息时，自动刷新任务列表和清除执行状态
+  useEffect(() => {
+    let hasCompletedTasks = false
+    const completedTaskIds: number[] = []
+
+    for (const [taskId, update] of taskUpdates) {
+      if (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled') {
+        hasCompletedTasks = true
+        completedTaskIds.push(parseInt(taskId))
+      }
+    }
+
+    if (hasCompletedTasks) {
+      // 立即清除本地执行状态
+      setExecutingTasks(prev => {
+        const newSet = new Set(prev)
+        completedTaskIds.forEach(id => newSet.delete(id))
+        return newSet
+      })
+
+      // 延迟刷新，确保后端状态已更新
+      const refreshTimer = setTimeout(() => {
+        fetchTasks()
+      }, 2000)
+
+      return () => clearTimeout(refreshTimer)
+    }
+  }, [taskUpdates, fetchTasks])
+
   // 定期刷新任务状态，特别是在有任务执行时
   useEffect(() => {
     const hasExecutingTasks = executingTasks.size > 0 ||
@@ -100,10 +144,10 @@ export default function TasksPage() {
 
     if (!hasExecutingTasks) return
 
-    // 如果有任务在执行，每5秒刷新一次
+    // 如果有任务在执行，每10秒刷新一次（减少频率，因为有WebSocket更新）
     const interval = setInterval(() => {
       fetchTasks()
-    }, 5000)
+    }, 10000)
 
     return () => clearInterval(interval)
   }, [executingTasks.size > 0, tasks.some(task => (task as any).current_execution_status === 'processing'), fetchTasks])
@@ -315,11 +359,14 @@ export default function TasksPage() {
     {
       key: 'selection',
       title: '',
-      width: 50,
+      width: '24px',
+      className: 'w-6 p-0',
       render: (_: any, record: Task) => (
-        <Checkbox
+        <input
+          type="checkbox"
           checked={selectedTasks.includes(record.id.toString())}
           onChange={(e) => handleSelectTask(record.id.toString(), e)}
+          className="h-4 w-4 rounded border-gray-300 text-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
         />
       ),
     },
@@ -327,11 +374,12 @@ export default function TasksPage() {
       key: 'name',
       title: '任务名称',
       dataIndex: 'name',
+      className: 'min-w-0', // 允许内容收缩
       render: (name: string, record: Task) => (
-        <div>
-          <div className="font-medium text-gray-900">{name}</div>
+        <div className="min-w-0">
+          <div className="font-medium text-gray-900 truncate">{name}</div>
           {record.description && (
-            <div className="text-sm text-gray-500 truncate max-w-xs">
+            <div className="text-sm text-gray-500 truncate">
               {record.description}
             </div>
           )}
@@ -342,8 +390,9 @@ export default function TasksPage() {
       key: 'data_source',
       title: '数据源',
       dataIndex: 'data_source_id',
+      className: 'hidden sm:table-cell', // 小屏幕隐藏
       render: (dataSourceId: string) => (
-        <span className="text-sm text-gray-600">
+        <span className="text-sm text-gray-600 truncate block">
           {getDataSourceName(dataSourceId)}
         </span>
       ),
@@ -352,17 +401,18 @@ export default function TasksPage() {
       key: 'schedule',
       title: '调度',
       dataIndex: 'schedule',
+      className: 'hidden md:table-cell', // 中等屏幕以下隐藏
       render: (schedule: string, record: Task) => (
-        <div className="space-y-1">
-          <div className="flex items-center">
-            <ClockIcon className="w-4 h-4 text-gray-400 mr-1" />
-            <span className="text-sm font-mono text-gray-600">
+        <div className="space-y-1 min-w-0">
+          <div className="flex items-center min-w-0">
+            <ClockIcon className="w-4 h-4 text-gray-400 mr-1 flex-shrink-0" />
+            <span className="text-sm font-mono text-gray-600 truncate">
               {schedule || '手动执行'}
             </span>
           </div>
           {record.report_period && (
-            <div className="text-xs text-gray-500">
-              数据范围: {
+            <div className="text-xs text-gray-500 truncate">
+              {
                 record.report_period === 'daily' ? '每日' :
                 record.report_period === 'weekly' ? '每周' :
                 record.report_period === 'monthly' ? '每月' :
@@ -377,18 +427,17 @@ export default function TasksPage() {
       key: 'workflow_info',
       title: 'AI工作流',
       dataIndex: 'workflow_type',
+      className: 'hidden lg:table-cell', // 大屏幕才显示
       render: (workflowType: string, record: Task) => {
         const workflowInfo = getWorkflowTypeInfo(workflowType || 'simple_report')
         const modeInfo = getProcessingModeInfo(record.processing_mode || 'intelligent')
-        
+
         return (
           <div className="space-y-1">
-            <div className="flex items-center">
-              <Badge variant="outline" className={`text-${workflowInfo.color}-600 border-${workflowInfo.color}-200`}>
-                {workflowInfo.label}
-              </Badge>
-            </div>
-            <div className="text-xs text-gray-500">
+            <Badge variant="outline" className={`text-${workflowInfo.color}-600 border-${workflowInfo.color}-200 text-xs`}>
+              {workflowInfo.label}
+            </Badge>
+            <div className="text-xs text-gray-500 truncate">
               {modeInfo.label}
             </div>
           </div>
@@ -397,8 +446,9 @@ export default function TasksPage() {
     },
     {
       key: 'status',
-      title: '当前状态',
+      title: '状态',
       dataIndex: 'status',
+      className: 'min-w-0',
       render: (status: TaskStatus, record: Task) => {
         const taskId = record.id.toString()
         const wsProgress = getTaskUpdate(taskId)
@@ -414,9 +464,9 @@ export default function TasksPage() {
         // 如果API显示正在执行，显示进度条
         if (apiExecutionStatus === 'processing' || progress || isExecuting) {
           return (
-            <div className="space-y-1">
-              <Badge variant="info">执行中</Badge>
-              <div className="w-32">
+            <div className="space-y-1 min-w-0">
+              <Badge variant="info" className="text-xs">执行中</Badge>
+              <div className="w-full max-w-24">
                 <div className="w-full bg-gray-200 rounded-full h-1.5">
                   <div
                     className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
@@ -435,18 +485,18 @@ export default function TasksPage() {
         const statusInfo = getTaskStatusInfo(status || 'pending')
 
         return (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Badge variant={statusInfo.color as any}>
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-1 flex-wrap">
+              <Badge variant={statusInfo.color as any} className="text-xs">
                 {statusInfo.label}
               </Badge>
               {!record.is_active && (
-                <Badge variant="secondary" className="text-xs">已停用</Badge>
+                <Badge variant="secondary" className="text-xs">停用</Badge>
               )}
             </div>
             {record.last_execution_at && (
-              <div className="text-xs text-gray-500">
-                上次执行: {formatRelativeTime(record.last_execution_at)}
+              <div className="text-xs text-gray-500 truncate">
+                {formatRelativeTime(record.last_execution_at)}
               </div>
             )}
           </div>
@@ -455,27 +505,28 @@ export default function TasksPage() {
     },
     {
       key: 'execution_stats',
-      title: '执行统计',
+      title: '统计',
       dataIndex: 'execution_count',
+      className: 'hidden xl:table-cell', // 超大屏幕才显示
       render: (executionCount: number, record: Task) => {
         const successRate = record.success_rate || 0
         const avgTime = record.average_execution_time || 0
-        
+
         return (
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center gap-2">
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center gap-1">
               <span className="text-gray-600">执行:</span>
-              <span className="font-medium">{executionCount || 0}次</span>
+              <span className="font-medium">{executionCount || 0}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-gray-600">成功率:</span>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-600">成功:</span>
               <span className={`font-medium ${successRate >= 0.8 ? 'text-green-600' : successRate >= 0.5 ? 'text-yellow-600' : 'text-red-600'}`}>
                 {formatSuccessRate(successRate)}
               </span>
             </div>
             {avgTime > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-gray-600">平均:</span>
+              <div className="flex items-center gap-1">
+                <span className="text-gray-600">耗时:</span>
                 <span className="font-medium text-blue-600">
                   {formatExecutionTime(avgTime)}
                 </span>
@@ -489,6 +540,7 @@ export default function TasksPage() {
       key: 'created_at',
       title: '创建时间',
       dataIndex: 'created_at',
+      className: 'hidden lg:table-cell', // 大屏幕才显示
       render: (createdAt: string) => (
         <span className="text-sm text-gray-500">
           {formatRelativeTime(createdAt)}
@@ -498,27 +550,41 @@ export default function TasksPage() {
     {
       key: 'actions',
       title: '操作',
-      width: 250,
+      width: '120px',
+      className: 'w-30 min-w-0',
       render: (_: any, record: Task) => {
-        // 使用API返回的执行状态，而不是本地状态
+        // 使用多种状态源来判断执行状态
         const apiExecutionStatus = (record as any).current_execution_status
         const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-        const isExecutingFromLocal = executingTasks.has(record.id) || !!(getTaskUpdate(record.id.toString()) || getTaskProgress(record.id.toString()))
-        const isExecuting = isExecutingFromAPI || isExecutingFromLocal
+        const isExecutingFromLocal = executingTasks.has(record.id)
 
+        // 检查WebSocket任务更新状态
+        const wsTaskUpdate = getTaskUpdate(record.id.toString())
+        const isExecutingFromWS = wsTaskUpdate &&
+          !['completed', 'failed', 'cancelled'].includes(wsTaskUpdate.status)
+
+        // 检查本地任务进度状态
+        const localProgress = getTaskProgress(record.id.toString())
+        const isExecutingFromProgress = localProgress &&
+          !['completed', 'failed', 'cancelled'].includes(localProgress.status)
+
+        const isExecuting = isExecutingFromAPI || isExecutingFromLocal || isExecutingFromWS || isExecutingFromProgress
+
+        // 按钮可用性判断
         const canExecute = record.is_active && !isExecuting
         const canPause = record.is_active && !isExecuting
         const canStart = !record.is_active && !isExecuting
         const canDelete = !record.is_active && !isExecuting
 
         return (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5 min-w-0">
             {/* 查看详情 - 始终可用 */}
             <Button
               size="sm"
               variant="ghost"
               onClick={() => router.push(`/tasks/${record.id}`)}
               title="查看详情"
+              className="h-8 w-8 p-0 flex-shrink-0"
             >
               <EyeIcon className="w-3 h-3" />
             </Button>
@@ -541,7 +607,7 @@ export default function TasksPage() {
                   }
                 }}
                 title="立即执行"
-                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                className="text-green-600 hover:text-green-700 hover:bg-green-50 h-8 w-8 p-0 flex-shrink-0"
               >
                 <PlayIcon className="w-3 h-3" />
               </Button>
@@ -554,7 +620,7 @@ export default function TasksPage() {
                 variant="ghost"
                 onClick={() => toggleTaskStatus(record.id.toString(), true)}
                 title="启用任务"
-                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 h-8 w-8 p-0 flex-shrink-0"
               >
                 <CheckIcon className="w-3 h-3" />
               </Button>
@@ -567,25 +633,26 @@ export default function TasksPage() {
                 variant="ghost"
                 onClick={() => toggleTaskStatus(record.id.toString(), false)}
                 title="暂停任务"
-                className="text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
+                className="text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 h-8 w-8 p-0 flex-shrink-0"
               >
                 <PauseIcon className="w-3 h-3" />
               </Button>
             )}
 
-            {/* 编辑 - 只在未执行时可用 */}
+            {/* 编辑 - 只在未执行时可用，中等屏幕以上显示 */}
             {!isExecuting && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => router.push(`/tasks/${record.id}/edit`)}
                 title="编辑任务"
+                className="hidden md:inline-flex h-8 w-8 p-0 flex-shrink-0"
               >
                 <PencilIcon className="w-3 h-3" />
               </Button>
             )}
 
-            {/* 删除 - 只在任务停用且未执行时显示 */}
+            {/* 删除 - 只在任务停用且未执行时显示，大屏幕才显示 */}
             {canDelete && (
               <Button
                 size="sm"
@@ -595,7 +662,7 @@ export default function TasksPage() {
                   setDeleteModalOpen(true)
                 }}
                 title="删除任务"
-                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50 hidden lg:inline-flex h-8 w-8 p-0 flex-shrink-0"
               >
                 <TrashIcon className="w-3 h-3" />
               </Button>
@@ -603,34 +670,49 @@ export default function TasksPage() {
 
             {/* 执行中状态指示和暂停按钮 */}
             {isExecuting && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 min-w-0">
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={async () => {
                     try {
                       const response = await api.post(`/tasks/${record.id}/cancel`) as any
+
+                      setExecutingTasks(prev => {
+                        const newSet = new Set(prev)
+                        newSet.delete(record.id)
+                        return newSet
+                      })
+
+                      clearTaskProgress(record.id.toString())
+                      fetchTasks()
+
                       if (response.data?.success) {
-                        setExecutingTasks(prev => {
-                          const newSet = new Set(prev)
-                          newSet.delete(record.id)
-                          return newSet
-                        })
-                        // 刷新任务列表
-                        fetchTasks()
+                        toast.success('任务已取消')
+                      } else {
+                        toast.info(response.data?.message || '任务已结束')
                       }
                     } catch (error: any) {
                       console.error('Failed to cancel task:', error)
+
+                      setExecutingTasks(prev => {
+                        const newSet = new Set(prev)
+                        newSet.delete(record.id)
+                        return newSet
+                      })
+                      clearTaskProgress(record.id.toString())
+
+                      toast.error('取消任务失败')
                     }
                   }}
                   title="停止执行"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0 flex-shrink-0"
                 >
                   <StopIcon className="w-3 h-3" />
                 </Button>
-                <div className="flex items-center gap-1 text-xs text-gray-500">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                  执行中
+                <div className="hidden sm:flex items-center gap-1 text-xs text-gray-500 min-w-0">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse flex-shrink-0"></div>
+                  <span className="truncate">执行中</span>
                 </div>
               </div>
             )}
@@ -746,64 +828,115 @@ export default function TasksPage() {
               </span>
             )}
           </div>
-          <Table
-            columns={columns}
-            dataSource={filteredTasks}
-            rowKey="id"
-            expandable={{
-              expandedRowRender: (record: Task) => {
-                // 检查是否正在执行（优先使用API状态）
-                const apiExecutionStatus = (record as any).current_execution_status
-                const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-                const isExecutingFromLocal = executingTasks.has(record.id)
-                const isExecuting = isExecutingFromAPI || isExecutingFromLocal
+          <div className="overflow-hidden">
+            <Table
+              columns={columns}
+              dataSource={filteredTasks}
+              rowKey="id"
+              className="table-fixed"
+              scroll={{ x: '100%' }}
+              expandable={{
+                expandedRowRender: (record: Task) => {
+                  // 检查是否正在执行（优先使用API状态）
+                  const apiExecutionStatus = (record as any).current_execution_status
+                  const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+                  const isExecutingFromLocal = executingTasks.has(record.id)
+                  const isExecuting = isExecutingFromAPI || isExecutingFromLocal
 
-                if (isExecuting) {
+                  if (isExecuting) {
+                    return (
+                      <div className="py-2 bg-gray-50">
+                        <TaskExecutionProgress
+                          taskId={record.id}
+                          isExecuting={true}
+                          onExecutionComplete={(result) => {
+                            setExecutingTasks(prev => {
+                              const newSet = new Set(prev)
+                              newSet.delete(record.id)
+                              return newSet
+                            })
+                            fetchTasks()
+                          }}
+                          onExecutionError={(error) => {
+                            setExecutingTasks(prev => {
+                              const newSet = new Set(prev)
+                              newSet.delete(record.id)
+                              return newSet
+                            })
+                          }}
+                          onCancel={() => {
+                            setExecutingTasks(prev => {
+                              const newSet = new Set(prev)
+                              newSet.delete(record.id)
+                              return newSet
+                            })
+                            fetchTasks()
+                          }}
+                        />
+                      </div>
+                    )
+                  }
+
+                  // 在小屏幕上显示隐藏的信息
                   return (
-                    <div className="px-4 py-2 bg-gray-50">
-                      <TaskExecutionProgress
-                        taskId={record.id}
-                        isExecuting={true}
-                        onExecutionComplete={(result) => {
-                          setExecutingTasks(prev => {
-                            const newSet = new Set(prev)
-                            newSet.delete(record.id)
-                            return newSet
-                          })
-                          fetchTasks()
-                        }}
-                        onExecutionError={(error) => {
-                          setExecutingTasks(prev => {
-                            const newSet = new Set(prev)
-                            newSet.delete(record.id)
-                            return newSet
-                          })
-                        }}
-                        onCancel={() => {
-                          setExecutingTasks(prev => {
-                            const newSet = new Set(prev)
-                            newSet.delete(record.id)
-                            return newSet
-                          })
-                          fetchTasks()
-                        }}
-                      />
+                    <div className="py-2 bg-gray-50 space-y-2 md:hidden">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-500">数据源:</span>
+                          <span className="ml-2 text-gray-900">{getDataSourceName(record.data_source_id)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">调度:</span>
+                          <span className="ml-2 text-gray-900">{record.schedule || '手动执行'}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">创建时间:</span>
+                          <span className="ml-2 text-gray-900">{formatRelativeTime(record.created_at)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">执行次数:</span>
+                          <span className="ml-2 text-gray-900">{record.execution_count || 0}次</span>
+                        </div>
+                      </div>
+                      {/* 移动端操作按钮 */}
+                      <div className="flex gap-2 pt-2 border-t border-gray-200">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => router.push(`/tasks/${record.id}/edit`)}
+                        >
+                          <PencilIcon className="w-3 h-3 mr-1" />
+                          编辑
+                        </Button>
+                        {!record.is_active && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => {
+                              setSelectedTask(record)
+                              setDeleteModalOpen(true)
+                            }}
+                          >
+                            <TrashIcon className="w-3 h-3 mr-1" />
+                            删除
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   )
-                }
-                return null
-              },
-              rowExpandable: (record: Task) => {
-                const apiExecutionStatus = (record as any).current_execution_status
-                const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-                return isExecutingFromAPI || executingTasks.has(record.id)
-              },
-              expandedRowKeys: [...Array.from(executingTasks), ...filteredTasks.filter(task => {
-                const apiExecutionStatus = (task as any).current_execution_status
-                return apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-              }).map(task => task.id)],
-            }}
-          />
+                },
+                rowExpandable: (record: Task) => {
+                  const apiExecutionStatus = (record as any).current_execution_status
+                  const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+                  return isExecutingFromAPI || executingTasks.has(record.id) || isMobile
+                },
+                expandedRowKeys: [...Array.from(executingTasks), ...filteredTasks.filter(task => {
+                  const apiExecutionStatus = (task as any).current_execution_status
+                  return apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending' || isMobile
+                }).map(task => task.id)],
+              }}
+            />
+          </div>
         </div>
       )}
 

@@ -57,7 +57,6 @@ export default function CreateTaskPage() {
   const [recipientInput, setRecipientInput] = useState('')
   const [isDirty, setIsDirty] = useState(false)
   const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null)
-  const [isRedirecting, setIsRedirecting] = useState(false)
 
   const {
     register,
@@ -119,22 +118,8 @@ export default function CreateTaskPage() {
       if (result && result.id) {
         console.log('任务创建成功，准备跳转到任务列表页:', result)
 
-        // 显示跳转状态
-        setIsRedirecting(true)
-
-        // 使用更可靠的跳转方式，确保页面能正确更新
-        setTimeout(async () => {
-          try {
-            // 先刷新任务列表数据，确保新任务出现在列表中
-            await fetchTasks()
-            // 然后跳转到任务列表页
-            router.push('/tasks')
-          } catch (error) {
-            console.error('跳转前刷新任务列表失败:', error)
-            // 即使刷新失败也要跳转
-            router.push('/tasks')
-          }
-        }, 1500) // 给toast通知1.5秒时间显示
+        // 立即跳转，依赖任务列表页面的自动刷新
+        router.replace('/tasks')
 
       } else {
         console.error('任务创建返回无效结果:', result)
@@ -142,8 +127,6 @@ export default function CreateTaskPage() {
       }
     } catch (error) {
       console.error('创建任务时发生错误:', error)
-      // 重置跳转状态
-      setIsRedirecting(false)
       // 错误处理在store中已处理，这里不需要额外处理
     }
   }
@@ -238,8 +221,8 @@ export default function CreateTaskPage() {
         >
           取消
         </Button>
-        <Button type="submit" loading={loading || isRedirecting}>
-          {isRedirecting ? '创建成功，跳转中...' : '创建任务'}
+        <Button type="submit" loading={loading}>
+          创建任务
         </Button>
       </div>
     </form>
@@ -389,7 +372,7 @@ function ScheduleConfiguration({
           <p>• <strong>示例</strong>：可以设置"月报"数据但"每周"执行一次，获取最新的月度数据</p>
         </div>
       </div>
-      
+
       <CronEditor
         value={watchedSchedule}
         onChange={(cron) => {

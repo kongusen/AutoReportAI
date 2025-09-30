@@ -23,6 +23,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { Modal } from '@/components/ui/Modal'
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
+import { useTaskUpdates } from '@/hooks/useWebSocket'
 import { formatRelativeTime } from '@/utils'
 import { Task } from '@/types'
 
@@ -42,7 +43,10 @@ export default function TaskDetailPage() {
   } = useTaskStore()
   
   const { dataSources, fetchDataSources } = useDataSourceStore()
-  
+
+  // WebSocket实时更新
+  const { getTaskUpdate } = useTaskUpdates()
+
   const [task, setTask] = useState<Task | null>(null)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [taskLoading, setTaskLoading] = useState(true)
@@ -108,7 +112,11 @@ export default function TaskDetailPage() {
     )
   }
 
+  // 综合判断任务执行状态
   const progress = getTaskProgress(task.id.toString())
+  const wsTaskUpdate = getTaskUpdate(task.id.toString())
+  const isExecuting = (progress && !['completed', 'failed', 'cancelled'].includes(progress.status)) ||
+    (wsTaskUpdate && !['completed', 'failed', 'cancelled'].includes(wsTaskUpdate.status))
 
   return (
     <>
@@ -124,14 +132,15 @@ export default function TaskDetailPage() {
             <Button
               variant="outline"
               onClick={() => executeTask(task.id.toString())}
-              disabled={!task.is_active || !!progress}
+              disabled={!task.is_active || !!isExecuting}
             >
               <PlayIcon className="w-4 h-4 mr-2" />
-              {progress ? '执行中...' : '立即执行'}
+              {isExecuting ? '执行中...' : '立即执行'}
             </Button>
             <Button
               variant="outline"
               onClick={() => toggleTaskStatus(task.id.toString(), !task.is_active)}
+              disabled={!!isExecuting}
             >
               {task.is_active ? (
                 <>
@@ -268,21 +277,21 @@ export default function TaskDetailPage() {
         {/* 执行状态 */}
         <div className="space-y-6">
           {/* 当前执行进度 */}
-          {progress && (
+          {(progress || wsTaskUpdate) && (
             <Card>
               <CardHeader>
                 <CardTitle>执行进度</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  <Progress 
-                    value={progress.progress} 
-                    status={progress.status as any}
-                    message={progress.message}
+                  <Progress
+                    value={wsTaskUpdate?.progress || progress?.progress || 0}
+                    status={(wsTaskUpdate?.status || progress?.status) as any}
+                    message={wsTaskUpdate?.message || progress?.message}
                     showPercent={true}
                     showMessage={true}
                     size="default"
-                    onRetry={progress.status === 'failed' ? async () => {
+                    onRetry={(wsTaskUpdate?.status === 'failed' || progress?.status === 'failed') ? async () => {
                       try {
                         await executeTask(task.id.toString())
                       } catch (error) {
@@ -301,19 +310,20 @@ export default function TaskDetailPage() {
               <CardTitle>快捷操作</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button 
+              <Button
                 className="w-full justify-start"
                 variant="ghost"
                 onClick={() => executeTask(task.id.toString())}
-                disabled={!task.is_active || !!progress}
+                disabled={!task.is_active || !!isExecuting}
               >
                 <PlayIcon className="w-4 h-4 mr-2" />
-                {progress ? '执行中...' : '立即执行'}
+                {isExecuting ? '执行中...' : '立即执行'}
               </Button>
-              <Button 
+              <Button
                 className="w-full justify-start"
                 variant="ghost"
                 onClick={() => toggleTaskStatus(task.id.toString(), !task.is_active)}
+                disabled={!!isExecuting}
               >
                 {task.is_active ? (
                   <>

@@ -187,10 +187,11 @@ HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
     CMD bash /usr/local/bin/healthcheck_worker.sh
 
 # 启动Celery Worker with React Agent support
-CMD ["celery", "-A", "app.core.celery_scheduler", "worker", \
+CMD ["celery", "-A", "app.services.infrastructure.task_queue.celery_config", "worker", \
      "--loglevel=info", \
      "--concurrency=4", \
      "--max-tasks-per-child=1000", \
+     "--queues=celery,infrastructure_queue,domain_queue,application_queue,data_queue,default", \
      "--without-gossip", \
      "--without-mingle", \
      "--without-heartbeat"]

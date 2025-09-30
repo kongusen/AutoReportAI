@@ -98,25 +98,34 @@ class CRUDTemplate:
         try:
             db_obj = db.query(Template).filter(Template.id == id).first()
             if db_obj:
-                # 先手动删除关联的占位符值，避免外键约束问题
+                # 检查是否有关联的任务，如果有则不允许删除
+                from app.models.task import Task
+                related_tasks = db.query(Task).filter(Task.template_id == id).all()
+                if related_tasks:
+                    task_names = [task.name for task in related_tasks[:3]]  # 最多显示3个任务名
+                    if len(related_tasks) > 3:
+                        task_names.append(f"等{len(related_tasks)}个任务")
+                    raise ValueError(f"无法删除模板：存在关联的任务 ({', '.join(task_names)})。请先删除或重新分配相关任务。")
+
+                # 删除关联的占位符值，避免外键约束问题
                 from app.models.template_placeholder import TemplatePlaceholder, PlaceholderValue
-                
+
                 # 获取所有相关的占位符ID
                 placeholder_ids = db.query(TemplatePlaceholder.id).filter(
                     TemplatePlaceholder.template_id == id
                 ).all()
-                
+
                 # 删除所有占位符值
                 for (placeholder_id,) in placeholder_ids:
                     db.query(PlaceholderValue).filter(
                         PlaceholderValue.placeholder_id == placeholder_id
                     ).delete()
-                
+
                 # 删除所有占位符
                 db.query(TemplatePlaceholder).filter(
                     TemplatePlaceholder.template_id == id
                 ).delete()
-                
+
                 # 最后删除模板
                 db.delete(db_obj)
                 db.commit()

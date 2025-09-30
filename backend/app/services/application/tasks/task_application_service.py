@@ -501,19 +501,35 @@ class TaskApplicationService(TransactionalApplicationService):
                 except Exception as e:
                     logger.warning(f"Failed to get Celery status for task {latest_execution.celery_task_id}: {e}")
             
+            # 确保所有字段都可以序列化
+            def safe_serialize(value):
+                """安全序列化，避免TypeError"""
+                if value is None:
+                    return None
+                if isinstance(value, (str, int, float, bool)):
+                    return value
+                if isinstance(value, dict):
+                    return {k: safe_serialize(v) for k, v in value.items()}
+                if isinstance(value, list):
+                    return [safe_serialize(item) for item in value]
+                try:
+                    return str(value)
+                except Exception:
+                    return None
+
             return {
                 "task_id": task_id,
-                "execution_id": str(latest_execution.execution_id),
-                "status": latest_execution.execution_status.value,
-                "progress": latest_execution.progress_percentage,
-                "current_step": latest_execution.current_step,
+                "execution_id": str(latest_execution.execution_id) if latest_execution.execution_id else None,
+                "status": latest_execution.execution_status.value if latest_execution.execution_status else "unknown",
+                "progress": latest_execution.progress_percentage or 0,
+                "current_step": latest_execution.current_step or "",
                 "started_at": latest_execution.started_at.isoformat() if latest_execution.started_at else None,
                 "completed_at": latest_execution.completed_at.isoformat() if latest_execution.completed_at else None,
-                "duration": latest_execution.total_duration,
-                "error_details": latest_execution.error_details,
+                "duration": latest_execution.total_duration or 0,
+                "error_details": safe_serialize(latest_execution.error_details),
                 "celery_status": celery_status,
-                "celery_info": celery_info,
-                "execution_result": latest_execution.execution_result
+                "celery_info": safe_serialize(celery_info),
+                "execution_result": safe_serialize(latest_execution.execution_result)
             }
             
         except Exception as e:

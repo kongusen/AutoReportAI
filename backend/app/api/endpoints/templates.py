@@ -186,6 +186,63 @@ async def update_template(
         )
 
 
+@router.get("/{template_id}/dependencies", response_model=ApiResponse[Dict])
+async def get_template_dependencies(
+    request: Request,
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取模板依赖信息"""
+    try:
+        template = crud_template.get_by_id_and_user(
+            db=db,
+            id=template_id,
+            user_id=current_user.id
+        )
+
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="模板不存在"
+            )
+
+        # 检查关联的任务
+        from app.models.task import Task
+        related_tasks = db.query(Task).filter(Task.template_id == template_id).all()
+
+        dependencies = {
+            "template_id": template_id,
+            "template_name": template.name,
+            "can_delete": len(related_tasks) == 0,
+            "related_tasks": [
+                {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
+                    "is_active": task.is_active,
+                    "created_at": task.created_at.isoformat() if task.created_at else None
+                } for task in related_tasks
+            ],
+            "related_tasks_count": len(related_tasks)
+        }
+
+        return ApiResponse(
+            success=True,
+            data=dependencies,
+            message="模板依赖信息获取成功"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取模板依赖信息失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取模板依赖信息失败"
+        )
+
+
 @router.delete("/{template_id}", response_model=ApiResponse[Dict])
 async def delete_template(
     request: Request,
@@ -209,9 +266,9 @@ async def delete_template(
         
         # 删除模板
         crud_template.remove(db=db, id=template_id)
-        
+
         logger.info(f"用户 {current_user.id} 删除了模板 {template_id}")
-        
+
         return ApiResponse(
             success=True,
             data={"deleted_id": template_id},
@@ -219,6 +276,13 @@ async def delete_template(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        # 处理业务逻辑错误（如存在关联任务）
+        logger.warning(f"删除模板失败 - 业务逻辑错误: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"删除模板失败: {e}")
         raise HTTPException(

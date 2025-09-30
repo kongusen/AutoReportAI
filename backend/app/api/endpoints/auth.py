@@ -68,7 +68,7 @@ async def login(
     if not user_obj:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="邮箱或密码错误",
+            detail="用户名或密码错误",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user_obj.is_active:

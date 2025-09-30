@@ -158,7 +158,11 @@ export function Table<T = any>({
                 <th
                   key={column.key}
                   className={cn(
-                    'px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider',
+                    'py-3 text-xs font-medium text-gray-500 uppercase tracking-wider',
+                    // 特殊处理选择列和操作列的padding
+                    column.key === 'selection' ? 'px-1' :
+                    column.key === 'actions' ? 'px-1 sm:px-2' :
+                    'px-2 sm:px-4 lg:px-6',
                     getAlignClass(column.align),
                     column.className
                   )}
@@ -221,9 +225,15 @@ export function Table<T = any>({
                         <td
                           key={column.key}
                           className={cn(
-                            'px-6 py-4 whitespace-nowrap text-sm text-gray-900',
+                            'py-4 text-sm text-gray-900',
+                            // 特殊处理选择列和操作列的padding
+                            column.key === 'selection' ? 'px-1 text-center' :
+                            column.key === 'actions' ? 'px-1 sm:px-2' :
+                            'px-2 sm:px-4 lg:px-6',
                             getAlignClass(column.align),
-                            column.className
+                            column.className,
+                            // 动态调整whitespace行为
+                            column.className?.includes('min-w-0') ? '' : 'whitespace-nowrap'
                           )}
                         >
                           {getCellValue(record, column)}
@@ -233,7 +243,7 @@ export function Table<T = any>({
                     {/* 展开行 */}
                     {isExpanded && expandable?.expandedRowRender && (
                       <tr>
-                        <td colSpan={finalColumns.length} className="px-6 py-4 bg-gray-50">
+                        <td colSpan={finalColumns.length} className="px-2 sm:px-4 lg:px-6 py-4 bg-gray-50">
                           {expandable.expandedRowRender(record, index)}
                         </td>
                       </tr>

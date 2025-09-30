@@ -67,10 +67,20 @@ celery_app.conf.update(
 # 自动发现任务
 celery_app.autodiscover_tasks([
     'app.services.domain.tasks',
-    'app.services.application.tasks', 
-    'app.services.infrastructure.tasks',
+    'app.services.application.tasks',
+    'app.services.infrastructure.task_queue.tasks',
     'app.services.data.tasks',
 ])
+
+# 手动导入关键任务以确保正确加载
+try:
+    from app.services.infrastructure.task_queue.tasks import (
+        execute_report_task,
+        scheduled_task_runner
+    )
+    logger.info("✅ Critical tasks imported successfully")
+except ImportError as e:
+    logger.warning(f"⚠️ Failed to import some tasks: {e}")
 
 # 健康检查任务
 @celery_app.task(name='infrastructure.health.ping')

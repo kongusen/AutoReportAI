@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.task import Task, TaskExecution, TaskStatus
-from app.services.application.placeholder import PlaceholderApplicationService as PlaceholderProcessingSystem
+from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService as PlaceholderProcessingSystem
 from app.utils.time_context import TimeContextManager
 from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
@@ -102,7 +102,8 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         task.last_execution_at = datetime.utcnow()
         db.commit()
         
-        # 4. 初始化新Agent系统与时间上下文
+        # 4. 初始化时间上下文
+        # Initialize placeholder processing system
         system = PlaceholderProcessingSystem(user_id=str(task.owner_id))
         time_ctx_mgr = TimeContextManager()
         
@@ -139,17 +140,75 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
         update_progress(20, "正在检查占位符状态...")
 
-        # 检查已有占位符，避免重复分析
+        # 智能增量占位符解析策略
         placeholders_need_analysis = []
         placeholders_ready = []
 
         try:
             from app.crud import template_placeholder as crud_template_placeholder
-            placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
+            from app.models.template import Template
+            from app.services.domain.template.services.template_domain_service import TemplateParser
+            import re
+
+            # 获取模板内容
+            template = db.query(Template).filter(Template.id == task.template_id).first()
+            template_content = template.content if template else ""
+
+            # 获取数据库中已有的占位符
+            existing_placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
+            existing_placeholder_names = {ph.placeholder_name for ph in existing_placeholders or []}
+
+            # 从模板内容中提取占位符
+            content_placeholders = set()
+            if template_content:
+                # 提取 {{...}} 格式的占位符
+                placeholder_pattern = r'\{\{([^}]+)\}\}'
+                matches = re.findall(placeholder_pattern, template_content)
+                content_placeholders = {match.strip() for match in matches}
+
+            total_content_placeholders = len(content_placeholders)
+            total_existing_placeholders = len(existing_placeholders or [])
+
+            logger.info(f"模板内容中发现 {total_content_placeholders} 个占位符，数据库中已有 {total_existing_placeholders} 个占位符记录")
+
+            # 找出需要新建的占位符（在内容中但不在数据库中）
+            new_placeholders_to_create = content_placeholders - existing_placeholder_names
+
+            # 创建新发现的占位符记录
+            if new_placeholders_to_create:
+                update_progress(22, f"发现 {len(new_placeholders_to_create)} 个新占位符，正在创建记录...")
+                logger.info(f"Creating {len(new_placeholders_to_create)} new placeholder records")
+
+                from app.models.template_placeholder import TemplatePlaceholder
+                import uuid
+                for placeholder_name in new_placeholders_to_create:
+                    new_placeholder = TemplatePlaceholder(
+                        id=uuid.uuid4(),
+                        template_id=task.template_id,
+                        placeholder_name=placeholder_name,
+                        placeholder_text=placeholder_name,  # 使用占位符名称作为默认文本
+                        placeholder_type="text",  # 默认类型，后续分析时会更新
+                        content_type="data",  # 默认为数据类型
+                        agent_analyzed=False,  # 尚未分析
+                        generated_sql=None,
+                        sql_validated=False,
+                        execution_order=0,  # 默认顺序
+                        cache_ttl_hours=24,  # 默认缓存24小时
+                        is_required=True,  # 默认为必需
+                        is_active=True,  # 默认激活
+                        confidence_score=0.0,  # 初始置信度
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(new_placeholder)
+                db.commit()
+
+                # 重新获取所有占位符
+                existing_placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
 
             required_fields: set[str] = set()
 
-            for ph in placeholders or []:
+            # 检查所有占位符的分析状态
+            for ph in existing_placeholders or []:
                 # 检查占位符是否需要重新分析
                 needs_analysis = (
                     not ph.generated_sql or  # 没有生成的SQL
@@ -159,10 +218,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                 if needs_analysis:
                     placeholders_need_analysis.append(ph)
-                    logger.info(f"Placeholder {ph.placeholder_name} needs analysis: no_sql={not ph.generated_sql}, not_validated={not ph.sql_validated}")
+                    logger.info(f"Placeholder '{ph.placeholder_name}' needs analysis: no_sql={not ph.generated_sql}, not_validated={not ph.sql_validated}")
                 else:
                     placeholders_ready.append(ph)
-                    logger.info(f"Placeholder {ph.placeholder_name} is ready: has valid SQL")
+                    logger.info(f"Placeholder '{ph.placeholder_name}' is ready with valid SQL")
 
                 # 收集所有required_fields
                 rf = getattr(ph, 'required_fields', None)
@@ -190,15 +249,20 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
             required_fields = sorted(required_fields)
 
+            total_placeholders = len(existing_placeholders) if existing_placeholders else 0
             if placeholders_need_analysis:
-                update_progress(25, f"需要分析 {len(placeholders_need_analysis)} 个占位符...")
+                update_progress(25, f"需要分析 {len(placeholders_need_analysis)} 个占位符（共 {total_placeholders} 个）...")
                 logger.info(f"Found {len(placeholders_need_analysis)} placeholders needing analysis, {len(placeholders_ready)} ready")
             else:
-                update_progress(35, "所有占位符已就绪，跳过分析阶段...")
-                logger.info(f"All {len(placeholders_ready)} placeholders are ready, skipping analysis")
+                if total_placeholders == 0:
+                    update_progress(35, "模板无占位符，跳过分析阶段...")
+                    logger.info(f"Template has no placeholders, skipping analysis phase")
+                else:
+                    update_progress(35, f"所有 {len(placeholders_ready)} 个占位符已就绪，跳过分析阶段...")
+                    logger.info(f"All {len(placeholders_ready)} placeholders are ready, skipping analysis")
 
         except Exception as e:
-            logger.warning(f"Failed to load placeholders: {e}")
+            logger.warning(f"Failed to load/parse placeholders: {e}")
             required_fields = []
 
         success_criteria = {

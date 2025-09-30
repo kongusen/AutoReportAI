@@ -102,15 +102,16 @@ export default function DebugAuthPage() {
 
   const tryQuickLogin = async () => {
     try {
+      const formData = new URLSearchParams()
+      formData.append('username', 'admin')
+      formData.append('password', 'password')
+
       const response = await fetch('http://localhost:8000/api/v1/auth/login', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: JSON.stringify({
-          username: 'admin', // 替换为实际的测试账号
-          password: 'admin123' // 替换为实际的测试密码
-        })
+        body: formData
       })
 
       const data = await response.json()

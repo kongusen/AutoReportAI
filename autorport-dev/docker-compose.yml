@@ -329,6 +329,7 @@ services:
         HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
     container_name: autoreport-celery-beat-dev
     restart: unless-stopped
+    user: "1000:1000"
     environment:
       # 基础配置
       - NODE_ENV=development
@@ -370,7 +371,7 @@ services:
       
     volumes:
       - ./data/backend/logs:/app/logs
-      - ./data/celery/beat:/tmp/celerybeat
+      - ./data/celery/beat:/tmp/celerybeat:rw
       # 时区配置挂载
       - /etc/localtime:/etc/localtime:ro
       - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro

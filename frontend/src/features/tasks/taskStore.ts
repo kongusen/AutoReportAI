@@ -165,16 +165,31 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 切换任务状态
   toggleTaskStatus: async (id: string, isActive: boolean) => {
     try {
+      // 立即更新本地状态以提供即时反馈
+      const { tasks } = get()
+      const optimisticTasks = tasks.map(task =>
+        task.id.toString() === id ? { ...task, is_active: isActive } : task
+      )
+      set({ tasks: optimisticTasks })
+
       // 对齐后端：启用 -> POST /tasks/{id}/resume；停用 -> POST /tasks/{id}/pause
       const response = isActive
         ? await api.post(`/tasks/${id}/resume`)
         : await api.post(`/tasks/${id}/pause`)
       const updatedTask = response.data || response
-      
+
       get().updateTaskInList(updatedTask)
       toast.success(`任务已${isActive ? '启用' : '停用'}`)
     } catch (error: any) {
       console.error('Failed to toggle task status:', error)
+
+      // 如果失败，回滚本地状态
+      const { tasks } = get()
+      const revertedTasks = tasks.map(task =>
+        task.id.toString() === id ? { ...task, is_active: !isActive } : task
+      )
+      set({ tasks: revertedTasks })
+
       toast.error('更新任务状态失败')
       throw error
     }
@@ -262,10 +277,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         toast.error(`任务 #${task_id} 执行失败: ${errorMessage}`, {
           duration: 10000,
         })
-        
+
         console.error('Task failed via WebSocket:', {
           task_id,
           error: errorMessage,
+          message
+        })
+      } else if (status === 'cancelled') {
+        toast.info(`任务 #${task_id} 已取消`)
+
+        console.log('Task cancelled via WebSocket:', {
+          task_id,
           message
         })
       }
@@ -300,23 +322,34 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   batchUpdateStatus: async (ids: string[], isActive: boolean) => {
     try {
       set({ loading: true })
-      await api.patch('/tasks/batch/status', { 
-        task_ids: ids.map(id => parseInt(id)), 
-        is_active: isActive 
-      })
-      
-      // 更新本地状态
+
+      // 立即更新本地状态以提供即时反馈
       const { tasks } = get()
-      const updatedTasks = tasks.map(task => 
-        ids.includes(task.id.toString()) 
+      const optimisticTasks = tasks.map(task =>
+        ids.includes(task.id.toString())
           ? { ...task, is_active: isActive }
           : task
       )
-      set({ tasks: updatedTasks })
-      
+      set({ tasks: optimisticTasks })
+
+      await api.patch('/tasks/batch/status', {
+        task_ids: ids.map(id => parseInt(id)),
+        is_active: isActive
+      })
+
       toast.success(`批量${isActive ? '启用' : '停用'}任务成功`)
     } catch (error: any) {
       console.error('Failed to batch update task status:', error)
+
+      // 如果失败，回滚本地状态
+      const { tasks } = get()
+      const revertedTasks = tasks.map(task =>
+        ids.includes(task.id.toString())
+          ? { ...task, is_active: !isActive }
+          : task
+      )
+      set({ tasks: revertedTasks })
+
       toast.error('批量更新任务状态失败')
       throw error
     } finally {

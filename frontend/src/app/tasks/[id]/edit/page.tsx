@@ -26,10 +26,9 @@ const taskSchema = z.object({
   template_id: z.string().min(1, '请选择模板'),
   data_source_id: z.string().min(1, '请选择数据源'),
   schedule: z.string().optional(),
-  report_period: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('monthly'),
   recipients: z.array(z.string()).optional(),
   is_active: z.boolean().default(true),
-  
+
 }).refine((data) => {
   if (data.schedule && !isValidCron(data.schedule)) {
     return false
@@ -81,7 +80,6 @@ export default function EditTaskPage() {
 
   const watchedRecipients = watch('recipients') || []
   const watchedSchedule = watch('schedule') || ''
-  const watchedReportPeriod = watch('report_period') || 'monthly'
 
   useEffect(() => {
     const loadData = async () => {
@@ -99,7 +97,6 @@ export default function EditTaskPage() {
             template_id: task.template_id,
             data_source_id: task.data_source_id,
             schedule: task.schedule || '',
-            report_period: task.report_period || 'monthly',
             recipients: task.recipients || [],
             is_active: task.is_active,
           })
@@ -212,7 +209,6 @@ export default function EditTaskPage() {
         <ExpandablePanel title="调度设置" defaultExpanded={false}>
           <ScheduleConfiguration
             watchedSchedule={watchedSchedule}
-            watchedReportPeriod={watchedReportPeriod}
             setValue={setValue}
             errors={errors}
             isDirty={isDirty}
@@ -347,26 +343,14 @@ function BasicInfoCard({
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            报告周期 *
-          </label>
-          <Select
-            options={[
-              { value: 'daily', label: '每日' },
-              { value: 'weekly', label: '每周' },
-              { value: 'monthly', label: '每月' },
-              { value: 'yearly', label: '每年' }
-            ]}
-            value={getValues('report_period')}
-            onChange={(value) => setValue('report_period', value as ReportPeriod)}
-          />
-          {errors.report_period && (
-            <p className="mt-1 text-sm text-red-600">{errors.report_period.message}</p>
-          )}
-          <p className="mt-1 text-sm text-gray-500">
-            设置报告数据的时间范围，用于动态生成SQL时间参数
-          </p>
+        {/* 报告周期提示信息 */}
+        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+          <h4 className="text-sm font-medium text-blue-900 mb-2">报告周期说明</h4>
+          <div className="text-sm text-blue-800 space-y-1">
+            <p>• 报告周期将根据调度设置和任务执行时间自动推断</p>
+            <p>• 系统会根据 Cron 表达式确定数据的时间范围</p>
+            <p>• 可以在调度设置中修改执行频率</p>
+          </div>
         </div>
 
       </CardContent>
@@ -376,7 +360,6 @@ function BasicInfoCard({
 
 interface ScheduleConfigurationProps {
   watchedSchedule: string
-  watchedReportPeriod: string
   setValue: any
   errors: any
   isDirty: boolean
@@ -386,7 +369,6 @@ interface ScheduleConfigurationProps {
 
 function ScheduleConfiguration({
   watchedSchedule,
-  watchedReportPeriod,
   setValue,
   errors,
   isDirty,
@@ -403,21 +385,7 @@ function ScheduleConfiguration({
           <p>• <strong>示例</strong>：可以设置"月报"数据但"每周"执行一次，获取最新的月度数据</p>
         </div>
       </div>
-      
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          当前报告周期：{{
-            'daily': '每日',
-            'weekly': '每周', 
-            'monthly': '每月',
-            'yearly': '每年'
-          }[watchedReportPeriod] || '月报'}
-        </label>
-        <p className="text-xs text-gray-500 mb-4">
-          报告周期在基本信息中设置，这里显示当前配置以便参考
-        </p>
-      </div>
-      
+
       <CronEditor
         value={watchedSchedule}
         onChange={(cron) => {

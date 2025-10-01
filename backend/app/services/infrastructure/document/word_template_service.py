@@ -7,6 +7,7 @@ Word文档模板处理服务
 import logging
 import re
 import io
+import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -518,6 +519,65 @@ class WordTemplateService:
         except Exception as e:
             self.logger.error(f"❌ 提取占位符失败: {e}")
             return []
+
+    async def process_template_with_data(
+        self,
+        template_path: str,
+        output_path: str,
+        placeholder_data: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """
+        处理模板并替换占位符数据
+
+        这是DocAssemblerTool需要的主要接口方法
+
+        Args:
+            template_path: 模板文件路径
+            output_path: 输出文件路径
+            placeholder_data: 占位符数据字典 {placeholder_name: processed_text}
+
+        Returns:
+            处理结果
+        """
+        try:
+            if not DOCX_AVAILABLE:
+                return {
+                    "success": False,
+                    "error": "python-docx 未安装，无法处理Word文档",
+                    "output_path": None
+                }
+
+            self.logger.info(f"开始处理Word模板: {template_path} -> {output_path}")
+            self.logger.info(f"占位符数量: {len(placeholder_data)}")
+
+            # 加载文档
+            doc = Document(template_path)
+
+            # 替换文本占位符
+            self._replace_text_in_document(doc, placeholder_data)
+
+            # 替换图表占位符（使用传统方法，因为这时已经是处理后的文本数据）
+            await self._replace_chart_placeholders_fallback(doc, placeholder_data)
+
+            # 保存文档
+            doc.save(output_path)
+
+            self.logger.info(f"✅ Word文档处理完成: {output_path}")
+
+            return {
+                "success": True,
+                "output_path": output_path,
+                "placeholders_processed": len(placeholder_data),
+                "message": "Word文档处理成功"
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Word文档处理失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "output_path": None
+            }
 
     def validate_template_format(self, template_path: str) -> Dict[str, Any]:
         """

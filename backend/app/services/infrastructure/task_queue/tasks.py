@@ -273,28 +273,73 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         }
         # 根据是否需要分析决定执行路径
         if placeholders_need_analysis:
-            # 需要分析占位符，执行Agent分析流水线
-            objective = f"执行任务[{task.name}]的占位符分析与数据准备"
-            update_progress(30, f"正在分析 {len(placeholders_need_analysis)} 个占位符...")
+            # 使用PlaceholderApplicationService单个处理每个占位符
+            update_progress(30, f"正在逐个分析 {len(placeholders_need_analysis)} 个占位符...")
 
-            async def _run():
-                async for ev in system.run_task_with_agent(
-                    task_objective=objective,
-                    success_criteria=success_criteria,
-                    data_source_id=str(task.data_source_id),
-                    time_window=time_window,
-                    time_column=None,  # 让系统自动检测
-                    max_attempts=3,
-                    template_id=str(task.template_id)  # 传递模板ID
-                ):
-                    events.append(ev)
-                    # 根据事件类型更新进度
-                    if ev.get("type") == "sql_generated":
-                        update_progress(45, "SQL生成完成，正在执行查询...")
-                    elif ev.get("type") == "data_extracted":
-                        update_progress(60, "数据提取完成，正在处理...")
-            asyncio.run(_run())
-            update_progress(65, "占位符分析完成")
+            async def _process_placeholders_individually():
+                """单个循环处理占位符，确保质量稳定"""
+                processed_count = 0
+                total_count = len(placeholders_need_analysis)
+
+                for ph in placeholders_need_analysis:
+                    try:
+                        update_progress(
+                            30 + int(30 * processed_count / total_count),
+                            f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})"
+                        )
+
+                        # 使用PlaceholderApplicationService的单个处理方法
+                        sql_result = await system._generate_sql_with_agent(
+                            placeholder=ph,
+                            data_source_id=str(task.data_source_id),
+                            task_objective=f"为占位符 {ph.placeholder_name} 生成SQL",
+                            success_criteria=success_criteria,
+                            db=db
+                        )
+
+                        if sql_result.get("success"):
+                            # 更新占位符SQL
+                            ph.generated_sql = sql_result["sql"]
+                            ph.sql_validated = True
+                            ph.agent_analyzed = True
+                            ph.analyzed_at = datetime.utcnow()
+                            db.commit()
+
+                            events.append({
+                                "type": "placeholder_sql_generated",
+                                "placeholder_name": ph.placeholder_name,
+                                "sql": sql_result["sql"],
+                                "confidence": sql_result.get("confidence", 0.0),
+                                "timestamp": datetime.utcnow().isoformat()
+                            })
+
+                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功")
+                        else:
+                            error_msg = sql_result.get("error", "SQL生成失败")
+                            logger.error(f"❌ 占位符 {ph.placeholder_name} SQL生成失败: {error_msg}")
+
+                            events.append({
+                                "type": "placeholder_sql_failed",
+                                "placeholder_name": ph.placeholder_name,
+                                "error": error_msg,
+                                "timestamp": datetime.utcnow().isoformat()
+                            })
+
+                    except Exception as e:
+                        logger.error(f"❌ 处理占位符 {ph.placeholder_name} 时异常: {e}")
+                        events.append({
+                            "type": "placeholder_processing_error",
+                            "placeholder_name": ph.placeholder_name,
+                            "error": str(e),
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+
+                    processed_count += 1
+
+                return processed_count
+
+            processed_count = asyncio.run(_process_placeholders_individually())
+            update_progress(65, f"占位符分析完成，成功处理 {processed_count} 个占位符")
         else:
             # 所有占位符已就绪，直接执行ETL
             update_progress(40, "占位符已就绪，直接执行ETL...")
@@ -314,24 +359,47 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
             etl_results = {}
 
-            update_progress(75, "正在执行占位符SQL查询...")
+            # 导入SQL占位符替换器
+            from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
+            sql_replacer = SqlPlaceholderReplacer()
 
-            # 对每个有效的占位符执行SQL
+            update_progress(75, "正在处理SQL占位符替换和执行查询...")
+
+            # 对每个有效的占位符进行单个处理
             for i, ph in enumerate(placeholders or []):
                 if not ph.generated_sql or not ph.sql_validated:
-                    logger.warning(f"Skipping placeholder {ph.placeholder_name}: no valid SQL")
+                    logger.warning(f"跳过占位符 {ph.placeholder_name}: 无有效SQL")
+                    etl_results[ph.placeholder_name] = {
+                        "success": False,
+                        "error": "无有效SQL",
+                        "data": [],
+                        "metadata": {},
+                        "execution_time": 0,
+                        "row_count": 0
+                    }
                     continue
 
                 try:
-                    # 这里应该调用真实的查询执行服务
-                    # 注意：这里使用同步方式执行查询，因为Celery任务是同步的
-                    # TODO: 如果需要异步执行，需要使用asyncio.run()包装
+                    # 1. 首先进行SQL占位符替换（时间参数等）
+                    final_sql = ph.generated_sql
+                    sql_placeholders = sql_replacer.extract_placeholders(ph.generated_sql)
 
+                    if sql_placeholders:
+                        logger.info(f"占位符 {ph.placeholder_name} 需要SQL参数替换: {sql_placeholders}")
+                        final_sql = sql_replacer.replace_placeholders(
+                            ph.generated_sql,
+                            time_window,
+                            time_column="created_at"  # 默认时间字段，可以从数据源配置中获取
+                        )
+                        logger.info(f"替换后SQL: {final_sql[:100]}...")
+
+                    # 2. 执行最终的SQL查询
+                    # TODO: 这里应该调用真实的查询执行服务
                     # 暂时使用简化的查询结果，避免复杂的异步调用
                     query_result = {
                         "success": True,
-                        "data": [{"placeholder_name": ph.placeholder_name, "executed": True}],
-                        "metadata": {"sql": ph.generated_sql},
+                        "data": [{"placeholder_name": ph.placeholder_name, "executed": True, "final_sql": final_sql}],
+                        "metadata": {"original_sql": ph.generated_sql, "final_sql": final_sql},
                         "execution_time": 0.1,
                         "row_count": 1
                     }
@@ -392,43 +460,94 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             # 仅在有模板文件时生成
             if getattr(task, 'template_id', None):
                 tpl_meta = resolve_docx_template_path(db, str(task.template_id))
-                assembler = DocAssemblerTool()
-                # 简单内容块（可改为基于 events 的摘要/指标）
-                context_blocks = [
-                    {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
-                ]
-                safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
-                docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
-                assemble_res = asyncio.run(assembler.execute({
-                    "format": "docx",
-                    "template_path": tpl_meta['path'],
-                    "context_blocks": context_blocks,
-                    "charts": [],
-                    "output_path": docx_out,
-                }))
-                if assemble_res.get('success') and assemble_res.get('output_path'):
-                    # 上传到存储
-                    storage = get_hybrid_storage_service()
-                    with open(assemble_res['output_path'], 'rb') as f:
-                        file_bytes = f.read()
-                    # 采用对象键: reports/{tenant_id}/{task_name}/report_{timestamp}.docx
-                    ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                    # 获取租户（若无租户字段，则使用用户ID代替）
+
+                # 检查是否使用直接存储模式（优化版本）
+                use_direct_storage = getattr(settings, 'USE_DIRECT_STORAGE', True)
+
+                if use_direct_storage:
+                    # 新模式：直接存储到MinIO
+                    assembler = DocAssemblerTool(container=None, use_storage=True)
+
+                    # 准备任务信息用于存储键生成
                     from app.models.user import User
                     user = db.query(User).filter(User.id == task.owner_id).first()
                     tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
-                    # 任务名slug
-                    import re
-                    slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
-                    object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
-                    update_progress(92, "正在上传文档到存储...")
-                    upload = storage.upload_with_key(BytesIO(file_bytes), object_name, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-                    execution_result["report"] = {
-                        "storage_path": upload.get("file_path"),
-                        "backend": upload.get("backend"),
-                        "friendly_name": f"{slug}_{ts}.docx",
-                    }
-                    update_progress(95, "文档生成完成")
+
+                    safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
+                    docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
+
+                    assemble_res = asyncio.run(assembler.execute({
+                        "format": "docx",
+                        "template_path": tpl_meta['path'],
+                        "context_blocks": [
+                            {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
+                        ],
+                        "charts": [],
+                        "output_path": docx_out,
+                        "etl_results": etl_results,
+                        # 任务信息用于存储键生成
+                        "task_id": task.id,
+                        "task_name": task.name,
+                        "tenant_id": tenant_id,
+                    }))
+
+                    if assemble_res.get('success'):
+                        execution_result["report"] = {
+                            "storage_path": assemble_res.get("storage_info", {}).get("storage_path"),
+                            "backend": assemble_res.get("storage_info", {}).get("backend"),
+                            "size": assemble_res.get("storage_info", {}).get("size"),
+                            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "generation_mode": "direct_storage"
+                        }
+                        logger.info(f"✅ 报告直接存储完成: {execution_result['report']['storage_path']}")
+                    else:
+                        logger.error(f"直接存储模式失败: {assemble_res.get('error')}")
+                        execution_result["report"] = {"error": "直接存储失败", "generation_mode": "direct_storage"}
+
+                else:
+                    # 传统模式：本地生成后上传
+                    assembler = DocAssemblerTool()
+                    context_blocks = [
+                        {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
+                    ]
+                    safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
+                    docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
+                    assemble_res = asyncio.run(assembler.execute({
+                        "format": "docx",
+                        "template_path": tpl_meta['path'],
+                        "context_blocks": context_blocks,
+                        "charts": [],
+                        "output_path": docx_out,
+                        "etl_results": etl_results,  # 传递ETL结果
+                    }))
+
+                    if assemble_res.get('success') and assemble_res.get('output_path'):
+                        # 上传到存储
+                        storage = get_hybrid_storage_service()
+                        with open(assemble_res['output_path'], 'rb') as f:
+                            file_bytes = f.read()
+                        # 采用对象键: reports/{tenant_id}/{task_name}/report_{timestamp}.docx
+                        ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                        # 获取租户（若无租户字段，则使用用户ID代替）
+                        from app.models.user import User
+                        user = db.query(User).filter(User.id == task.owner_id).first()
+                        tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
+                        # 任务名slug
+                        import re
+                        slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
+                        object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
+                        update_progress(92, "正在上传文档到存储...")
+                        upload = storage.upload_with_key(BytesIO(file_bytes), object_name, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        execution_result["report"] = {
+                            "storage_path": upload.get("file_path"),
+                            "backend": upload.get("backend"),
+                            "friendly_name": f"{slug}_{ts}.docx",
+                            "generation_mode": "traditional_upload"
+                        }
+                        update_progress(95, "文档生成完成")
+                    else:
+                        logger.error(f"传统模式文档生成失败: {assemble_res.get('error')}")
+                        execution_result["report"] = {"error": "传统模式生成失败", "generation_mode": "traditional_upload"}
         except Exception as e:
             logger.error(f"Document assembly failed: {e}")
         

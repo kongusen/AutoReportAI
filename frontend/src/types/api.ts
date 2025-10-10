@@ -533,23 +533,8 @@ export type TaskType = 'report_generation' | 'data_sync' | 'backup' | 'cleanup' 
 /**
  * 任务信息
  */
-export interface Task {
-  id: string
-  name: string
-  task_type: TaskType
-  description?: string
-  status: TaskStatus
-  cron_expression?: string
-  parameters?: Record<string, any>
-  next_run_time?: string
-  last_run_time?: string
-  last_run_status?: TaskStatus
-  error_message?: string
-  created_at: string
-  updated_at?: string
-  user_id: string
-  is_active: boolean
-}
+import type { Task as CoreTask, TaskProgress as CoreTaskProgress } from './index'
+export type Task = CoreTask
 
 /**
  * 创建任务请求
@@ -579,14 +564,7 @@ export interface TaskExecutionResult {
 /**
  * 任务进度信息
  */
-export interface TaskProgress {
-  task_id: string
-  progress: number
-  status: TaskStatus
-  message?: string
-  current_step?: string
-  updated_at: string
-}
+export type TaskProgress = CoreTaskProgress
 
 // ============================================================================
 // 系统监控

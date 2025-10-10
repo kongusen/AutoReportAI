@@ -173,12 +173,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       set({ tasks: optimisticTasks })
 
       // 对齐后端：启用 -> POST /tasks/{id}/resume；停用 -> POST /tasks/{id}/pause
-      const response = isActive
-        ? await api.post(`/tasks/${id}/resume`)
-        : await api.post(`/tasks/${id}/pause`)
-      const updatedTask = response.data || response
-
-      get().updateTaskInList(updatedTask)
+      // 后端返回的是通用API响应且data为精简信息，随后拉取最新任务详情以保持前端一致性
+      if (isActive) {
+        await api.post(`/tasks/${id}/resume`)
+      } else {
+        await api.post(`/tasks/${id}/pause`)
+      }
+      // 拉取最新任务并更新列表
+      const taskResp: any = await api.get(`/tasks/${id}`)
+      const freshTask = (taskResp?.data ?? taskResp)
+      if (freshTask && freshTask.id) {
+        get().updateTaskInList(freshTask)
+      }
       toast.success(`任务已${isActive ? '启用' : '停用'}`)
     } catch (error: any) {
       console.error('Failed to toggle task status:', error)
@@ -244,9 +250,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const { task_id, progress, status, current_step, message: progressMessage } = message.data || message
     
     if (task_id) {
+      // WebSocket流水线progress为0.0-1.0，转为百分比0-100
+      const normalizedProgress = typeof progress === 'number'
+        ? (progress <= 1 ? Math.round(progress * 100) : Math.round(progress))
+        : 0
+
       const taskProgress: TaskProgress = {
         task_id: task_id.toString(),
-        progress: parseInt(progress) || 0,
+        progress: normalizedProgress,
         status: status || 'pending',
         message: current_step || progressMessage || ''
       }
@@ -332,10 +343,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       )
       set({ tasks: optimisticTasks })
 
-      await api.patch('/tasks/batch/status', {
-        task_ids: ids.map(id => parseInt(id)),
-        is_active: isActive
-      })
+      // 后端无批量状态更新端点，逐个调用启停接口
+      await Promise.all(
+        ids.map(async (id) => {
+          if (isActive) {
+            await api.post(`/tasks/${id}/resume`)
+          } else {
+            await api.post(`/tasks/${id}/pause`)
+          }
+        })
+      )
 
       toast.success(`批量${isActive ? '启用' : '停用'}任务成功`)
     } catch (error: any) {
@@ -361,9 +378,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   batchDeleteTasks: async (ids: string[]) => {
     try {
       set({ loading: true })
-      await api.delete('/tasks/batch', {
-        data: { task_ids: ids.map(id => parseInt(id)) }
-      })
+      // 后端无批量删除端点，逐个删除
+      await Promise.all(
+        ids.map(async (id) => api.delete(`/tasks/${id}`))
+      )
       
       get().removeTasks(ids)
       toast.success('批量删除任务成功')

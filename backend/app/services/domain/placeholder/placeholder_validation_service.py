@@ -10,6 +10,7 @@
 
 import logging
 import asyncio
+import os
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -17,6 +18,9 @@ from .ports.sql_execution_port import SqlExecutionPort
 from app.utils.time_context import TimeContextManager
 
 logger = logging.getLogger(__name__)
+
+# 单用户并发限流：全局信号量注册表（进程内生效）
+_USER_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
 
 
 @dataclass
@@ -68,6 +72,17 @@ class PlaceholderValidationService:
         self.time_context_manager = TimeContextManager()
         self._ai_sql_repair_port = ai_sql_repair_port
         self._sql_execution_port = sql_execution_port
+        # 单用户限流（默认2，可通过环境变量 PLACEHOLDER_USER_CONCURRENCY 覆盖）
+        try:
+            limit = int(os.getenv("PLACEHOLDER_USER_CONCURRENCY", "2"))
+            if limit < 1:
+                limit = 1
+        except Exception:
+            limit = 2
+        # 进程内对同一 user_id 复用同一个信号量，确保跨实例限流
+        if self.user_id not in _USER_SEMAPHORES:
+            _USER_SEMAPHORES[self.user_id] = asyncio.BoundedSemaphore(limit)
+        self._user_semaphore = _USER_SEMAPHORES[self.user_id]
         
     async def validate_and_repair_placeholders(
         self,
@@ -91,18 +106,21 @@ class PlaceholderValidationService:
         logger.info(f"开始验证和修复占位符: template_id={template_id}, count={len(placeholders)}")
         
         validation_results = []
-        
-        # 并发验证所有占位符
-        validation_tasks = []
-        for placeholder in placeholders:
-            task = self._validate_single_placeholder(
-                placeholder=placeholder,
-                data_source_info=data_source_info,
-                time_context=time_context
-            )
-            validation_tasks.append(task)
-        
-        # 等待所有验证任务完成
+
+        # 受限并发验证（单用户限流），默认并发度=2
+        async def _guarded_validate(ph: Dict[str, Any]):
+            async with self._user_semaphore:
+                try:
+                    return await self._validate_single_placeholder(
+                        placeholder=ph,
+                        data_source_info=data_source_info,
+                        time_context=time_context
+                    )
+                except Exception as e:
+                    return e
+
+        validation_tasks = [_guarded_validate(p) for p in placeholders]
+        # 使用 gather 收集结果，但由于信号量限制，实际并发度受控
         results = await asyncio.gather(*validation_tasks, return_exceptions=True)
         
         # 处理验证结果

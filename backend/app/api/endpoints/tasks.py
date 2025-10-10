@@ -825,10 +825,10 @@ async def run_task_report_pipeline(
             tc = tcm.build_task_time_context(cron_expression, exec_dt)
             time_ctx = {
                 "cron_expression": cron_expression,
-                "execution_time": (exec_dt.isoformat() if exec_dt else tc.execution_time),
-                "start_date": tc.data_start_time,
-                "end_date": tc.data_end_time,
-                "period_description": tc.period_description,
+                "execution_time": (exec_dt.isoformat() if exec_dt else tc.get("execution_time")),
+                "start_date": tc.get("data_start_time"),
+                "end_date": tc.get("data_end_time"),
+                "period_description": tc.get("period_description"),
             }
         else:
             # 无cron时，使用近7天窗口

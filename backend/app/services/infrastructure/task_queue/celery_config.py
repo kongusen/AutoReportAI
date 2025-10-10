@@ -35,6 +35,7 @@ celery_app.conf.update(
     worker_max_tasks_per_child=1000,
     
     # 队列路由 - 按DDD层次划分
+    task_default_queue='default',
     task_routes={
         # Domain层任务队列
         'tasks.domain.*': {'queue': 'domain_queue'},

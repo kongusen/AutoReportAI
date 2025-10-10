@@ -19,7 +19,9 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { TaskService, ReportService } from '@/services/apiService'
 import { apiClient } from '@/lib/api-client'
 import { formatRelativeTime, formatNumber, formatDateTime } from '@/utils'
-import { DashboardStats, Task, Report } from '@/types/api'
+import { DashboardStats } from '@/types/api'
+import { Report } from '@/types'
+import { Task } from '@/types'
 
 interface StatsCardProps {
   title: string

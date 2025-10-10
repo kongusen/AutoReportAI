@@ -3,12 +3,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import uuid
 import os
 from pathlib import Path
 from uuid import UUID
 from datetime import datetime
+import io
+import zipfile
+import csv
+import re
 
 from app.core.architecture import ApiResponse, PaginatedResponse
 from app.core.permissions import require_permission, ResourceType, PermissionLevel
@@ -112,6 +116,167 @@ async def get_reports(
             has_prev=skip > 0
         )
     )
+
+
+@router.post("/batch/zip", response_model=ApiResponse)
+async def download_reports_as_zip(
+    request: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """批量打包下载报告为ZIP，并包含清单CSV。
+
+    请求体:
+      - report_ids: List[int]
+      - filename: Optional[str] 自定义zip文件名（不含扩展名）
+      - expires: Optional[int] 预签名链接有效期(秒)，默认86400
+
+    返回:
+      ApiResponse: 包含zip文件的预签名下载URL等信息
+    """
+    try:
+        report_ids: List[int] = request.get("report_ids", []) or []
+        if not isinstance(report_ids, list) or not report_ids:
+            raise HTTPException(status_code=400, detail="请提供要打包的报告ID列表")
+
+        # 限制单次批量数量，避免内存压力
+        MAX_BUNDLE = 100
+        if len(report_ids) > MAX_BUNDLE:
+            raise HTTPException(status_code=400, detail=f"单次最多支持 {MAX_BUNDLE} 个报告")
+
+        expires: int = int(request.get("expires", 86400))
+        custom_filename: Optional[str] = request.get("filename")
+
+        # 查询用户有权限的报告
+        user_id = current_user.id
+        if isinstance(user_id, str):
+            user_id = UUID(user_id)
+
+        reports = db.query(ReportHistory).join(
+            ReportHistory.task
+        ).filter(
+            ReportHistory.id.in_(report_ids),
+            ReportHistory.task.has(owner_id=user_id)
+        ).all()
+
+        if not reports:
+            raise HTTPException(status_code=404, detail="未找到可下载的报告或无权限访问")
+
+        # 存储服务
+        from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+        storage = get_hybrid_storage_service()
+
+        # 准备zip与清单
+        zip_buffer = io.BytesIO()
+        manifest_rows: List[Tuple[int, str, str]] = []  # (序号, 日期, 报告名称)
+        included_ids: List[int] = []
+        skipped_ids: List[int] = []
+
+        def safe_filename(name: str) -> str:
+            # 去除非法字符，保留中英文、数字、-_.和空格
+            return re.sub(r'[^\w\-\.\u4e00-\u9fa5\s]', '_', name).strip()
+
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            idx = 1
+            for rep in reports:
+                # 确保有文件可下载；若无file_path但有内容，生成临时报告文件并上传
+                file_path = rep.file_path
+                if not file_path:
+                    report_content = rep.result
+                    if report_content:
+                        filename = f"report_{rep.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        try:
+                            upload_info = storage.upload_file(
+                                file_data=io.BytesIO(report_content.encode('utf-8')),
+                                original_filename=filename,
+                                file_type="reports",
+                                content_type="text/markdown"
+                            )
+                            file_path = upload_info.get("file_path")
+                            # 更新记录
+                            rep.file_path = file_path
+                            db.add(rep)
+                            db.commit()
+                        except Exception as e:
+                            logger.error(f"生成报告文件失败: report_id={rep.id}, error={e}")
+                            skipped_ids.append(rep.id)
+                            continue
+                    else:
+                        skipped_ids.append(rep.id)
+                        continue
+
+                # 下载文件数据
+                try:
+                    file_data, backend_type = storage.download_file(file_path)
+                except Exception as e:
+                    logger.error(f"下载报告文件失败: report_id={rep.id}, path={file_path}, error={e}")
+                    skipped_ids.append(rep.id)
+                    continue
+
+                # 友好文件名
+                base = os.path.basename(file_path)
+                # 保留原始扩展名
+                if '.' in base:
+                    name_wo_ext = base.rsplit('.', 1)[0]
+                    ext = '.' + base.rsplit('.', 1)[1]
+                else:
+                    name_wo_ext = base
+                    ext = ''
+
+                # 报告生成日期（yyyy-mm-dd）
+                gen_dt = rep.generated_at or rep.created_at or datetime.utcnow()
+                date_str = gen_dt.strftime('%Y-%m-%d')
+
+                # 压缩内的文件名
+                zipped_filename = safe_filename(f"{name_wo_ext}{ext}") or f"report_{rep.id}{ext}"
+                # 写入zip，放在reports/目录下
+                zf.writestr(f"reports/{zipped_filename}", file_data)
+
+                # 清单行：序号、日期、报告名称（不含扩展名）
+                manifest_rows.append((idx, date_str, name_wo_ext))
+                included_ids.append(rep.id)
+                idx += 1
+
+            # 生成manifest.csv（UTF-8）
+            manifest_io = io.StringIO()
+            writer = csv.writer(manifest_io)
+            writer.writerow(["序号", "日期", "报告名称"])  # 表头
+            for row in manifest_rows:
+                writer.writerow(list(row))
+            zf.writestr("manifest.csv", manifest_io.getvalue().encode('utf-8'))
+
+        # 上传ZIP到存储
+        ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        zip_name = custom_filename.strip() if isinstance(custom_filename, str) and custom_filename.strip() else f"reports_bundle_{ts}"
+        zip_name = safe_filename(zip_name) + ".zip"
+        zip_buffer.seek(0)
+        upload_info = storage.upload_file(
+            file_data=zip_buffer,
+            original_filename=zip_name,
+            file_type="reports",
+            content_type="application/zip"
+        )
+        zip_path = upload_info.get("file_path")
+        download_url = storage.get_download_url(zip_path, expires=expires)
+
+        return ApiResponse(
+            success=True,
+            data={
+                "zip_file_path": zip_path,
+                "download_url": download_url,
+                "included_count": len(included_ids),
+                "included_report_ids": included_ids,
+                "skipped_report_ids": skipped_ids,
+                "expires": expires,
+                "filename": zip_name
+            },
+            message=f"打包完成，包含 {len(included_ids)} 个报告"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"批量打包下载失败: {e}")
+        raise HTTPException(status_code=500, detail="批量打包失败")
 
 
 @router.get("/{task_id}/download-url", response_model=ApiResponse)

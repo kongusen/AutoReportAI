@@ -97,7 +97,7 @@ class LLMHealthService:
                         # 更新模型状态
                         model.is_healthy = True
                         model.last_health_check = datetime.utcnow()
-                        model.health_check_error = None
+                        model.health_check_message = None
                         db.commit()
                         
                         # 释放速率限制器
@@ -125,7 +125,7 @@ class LLMHealthService:
             
             # 更新模型状态
             model.is_healthy = False
-            model.health_check_error = error_message
+            model.health_check_message = error_message
             model.last_health_check = datetime.utcnow()
             db.commit()
             

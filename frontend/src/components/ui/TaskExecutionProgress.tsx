@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { StopIcon } from '@heroicons/react/24/outline'
 import { apiClient as api } from '@/lib/api-client'
+import useTaskProgress from '@/hooks/useTaskProgress'
 
 interface TaskExecutionProgressProps {
   taskId: number
@@ -46,65 +47,36 @@ export const TaskExecutionProgress: React.FC<TaskExecutionProgressProps> = ({
   onExecutionError,
   onCancel
 }) => {
-  const [progressData, setProgressData] = useState<ProgressData | null>(null)
+  const { data: progressData, error } = useTaskProgress(taskId, isExecuting, 2000)
   const [elapsedTime, setElapsedTime] = useState(0)
-  const [polling, setPolling] = useState(false)
   const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     if (!isExecuting) {
-      setProgressData(null)
       setElapsedTime(0)
-      setPolling(false)
       return
     }
-
-    setPolling(true)
     const startTime = Date.now()
-
-    // 立即获取一次进度
-    fetchProgress()
-
-    // 设置轮询
-    const progressInterval = setInterval(fetchProgress, 2000) // 每2秒轮询一次
-
-    // 设置计时器
     const timeInterval = setInterval(() => {
       setElapsedTime(Date.now() - startTime)
     }, 1000)
-
-    return () => {
-      clearInterval(progressInterval)
-      clearInterval(timeInterval)
-    }
+    return () => clearInterval(timeInterval)
   }, [isExecuting, taskId])
 
-  const fetchProgress = async () => {
-    try {
-      const response = await api.get(`/tasks/${taskId}/progress`) as any
-      if (response.data?.success) {
-        const data = response.data.data as ProgressData
-        setProgressData(data)
-
-        // 检查是否完成或失败
-        if (data.execution_status === 'completed') {
-          setPolling(false)
-          onExecutionComplete?.(data)
-        } else if (data.execution_status === 'failed') {
-          setPolling(false)
-          onExecutionError?.(data.error_details || '任务执行失败')
-        }
-      }
-    } catch (error: any) {
-      console.error('Failed to fetch task progress:', error)
-      if (error.response?.status === 404) {
-        // 任务不存在，可能还没有开始
-        return
-      }
-      setPolling(false)
-      onExecutionError?.('获取任务进度失败')
+  useEffect(() => {
+    if (error) {
+      onExecutionError?.(error)
     }
-  }
+  }, [error, onExecutionError])
+
+  useEffect(() => {
+    if (!progressData) return
+    if (progressData.execution_status === 'completed') {
+      onExecutionComplete?.(progressData)
+    } else if (progressData.execution_status === 'failed') {
+      onExecutionError?.(progressData.error_details || '任务执行失败')
+    }
+  }, [progressData, onExecutionComplete, onExecutionError])
 
   if (!isExecuting && !progressData) return null
 
@@ -139,7 +111,6 @@ export const TaskExecutionProgress: React.FC<TaskExecutionProgressProps> = ({
     try {
       const response = await api.post(`/tasks/${taskId}/cancel`) as any
       if (response.data?.success) {
-        setPolling(false)
         onCancel?.()
       }
     } catch (error: any) {

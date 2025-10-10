@@ -46,6 +46,10 @@ class LLMStrategyManager:
         """初始化策略管理器"""
         self.logger = logging.getLogger(self.__class__.__name__)
 
+        # 请求级缓存（避免同一请求中重复查询数据库）
+        self._user_config_cache: Dict[str, Dict[str, Any]] = {}
+        self._user_policy_cache: Dict[str, Dict[str, Any]] = {}
+
         # 默认策略矩阵
         self.default_strategy_matrix = {
             # 计划阶段：使用THINK模型确保可靠的JSON输出
@@ -114,6 +118,58 @@ class LLMStrategyManager:
                 ComplexityLevel.HIGH: "think"
             }
         }
+
+    def clear_cache(self):
+        """
+        清除请求级缓存
+
+        应在每次新的报告生成请求开始时调用，确保不同请求之间不会复用缓存
+        """
+        self._user_config_cache.clear()
+        self._user_policy_cache.clear()
+        self.logger.debug("已清除LLM策略管理器的请求级缓存")
+
+    def _get_cached_user_config(self, user_id: str) -> Dict[str, Any]:
+        """
+        带缓存的用户配置获取
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            用户配置字典
+        """
+        if user_id not in self._user_config_cache:
+            self.logger.debug(f"缓存未命中，从数据库获取用户配置: user_id={user_id}")
+            self._user_config_cache[user_id] = production_config_provider.get_user_config(user_id)
+        else:
+            self.logger.debug(f"缓存命中，使用已缓存的用户配置: user_id={user_id}")
+
+        return self._user_config_cache[user_id]
+
+    def _get_cached_user_policy(self, user_id: str, stage: str, complexity: str) -> Dict[str, Any]:
+        """
+        带缓存的用户LLM策略获取
+
+        Args:
+            user_id: 用户ID
+            stage: 阶段
+            complexity: 复杂度
+
+        Returns:
+            用户LLM策略字典
+        """
+        cache_key = f"{user_id}:{stage}:{complexity}"
+
+        if cache_key not in self._user_policy_cache:
+            self.logger.debug(f"缓存未命中，从数据库获取LLM策略: {cache_key}")
+            self._user_policy_cache[cache_key] = production_config_provider.get_llm_policy_config(
+                user_id, stage, complexity
+            )
+        else:
+            self.logger.debug(f"缓存命中，使用已缓存的LLM策略: {cache_key}")
+
+        return self._user_policy_cache[cache_key]
 
     def get_recommended_model_type(
         self,
@@ -296,7 +352,8 @@ class LLMStrategyManager:
             最终推荐（考虑用户偏好）
         """
         try:
-            user_config = production_config_provider.get_user_config(user_id)
+            # 使用缓存获取用户配置，避免重复DB查询
+            user_config = self._get_cached_user_config(user_id)
             model_preferences = user_config.get("model_preferences", {})
 
             # 检查工具特定偏好
@@ -354,11 +411,9 @@ class LLMStrategyManager:
             user_id=user_id
         )
 
-        # 获取用户配置
+        # 获取用户配置（使用缓存）
         try:
-            user_llm_policy = production_config_provider.get_llm_policy_config(
-                user_id, stage, complexity
-            )
+            user_llm_policy = self._get_cached_user_policy(user_id, stage, complexity)
         except Exception as e:
             self.logger.warning(f"获取用户LLM策略失败: {e}")
             user_llm_policy = {}

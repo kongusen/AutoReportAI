@@ -23,7 +23,6 @@ import type {
   CreateTemplateRequest,
   UpdateTemplateRequest,
   TemplatePreview,
-  Report,
   GenerateReportRequest,
   Task,
   CreateTaskRequest,
@@ -35,6 +34,7 @@ import type {
   FileUploadResponse,
   WebSocketConnectionInfo
 } from '@/types/api'
+import type { Report } from '@/types'
 
 // ============================================================================
 // 配置和接口定义
@@ -315,19 +315,37 @@ export class AutoReportAPIClient {
     let lastError: any
     for (let attempt = 1; attempt <= retryCount; attempt++) {
       try {
-        const response = await this.axiosInstance.request<APIResponse<T>>(requestConfig)
-        
-        // 处理后端 ApiResponse[T] 格式
+        const response = await this.axiosInstance.request<APIResponse<T> | any>(requestConfig)
+
+        // 统一适配 ApiResponse 与 PaginatedAPIResponse
         let result: T
-        if (response.data && typeof response.data === 'object' && 'success' in response.data) {
-          // 后端返回的是 ApiResponse[T] 格式
-          if (response.data.success === false) {
-            throw new Error((response.data as any).error || response.data.message || '请求失败')
+        const payload = response.data
+        if (payload && typeof payload === 'object' && 'success' in payload) {
+          if (payload.success === false) {
+            throw new Error(payload.error || payload.message || '请求失败')
           }
-          result = response.data.data as T
+
+          // PaginatedAPIResponse: { success, data: T[], pagination: {...} }
+          if (Array.isArray(payload.data) && payload.pagination && typeof payload.pagination === 'object') {
+            const p = payload.pagination
+            // 规范化为前端通用的 PaginatedResponse<T>
+            const paginated = {
+              items: payload.data,
+              total: p.total,
+              page: p.page,
+              size: p.size,
+              pages: p.pages,
+              has_next: p.has_next,
+              has_prev: p.has_prev
+            }
+            result = paginated as unknown as T
+          } else {
+            // 常规 ApiResponse[T]
+            result = payload.data as T
+          }
         } else {
-          // 直接返回数据（用于某些特殊端点）
-          result = response.data as T
+          // 直接返回数据（用于特殊端点或非统一响应）
+          result = payload as T
         }
 
         // 缓存响应（仅GET请求）
@@ -642,6 +660,16 @@ export class AutoReportAPIClient {
 
   async regenerateReport(id: string): Promise<Report> {
     return this.request<Report>('POST', `/reports/${id}/regenerate`)
+  }
+
+  async batchZipReports(reportIds: Array<string | number>, options?: { filename?: string; expires?: number }): Promise<{ download_url: string; filename: string; zip_file_path: string; included_report_ids: number[]; skipped_report_ids: number[]; expires: number }> {
+    return this.request('POST', '/reports/batch/zip', {
+      data: {
+        report_ids: reportIds,
+        filename: options?.filename,
+        expires: options?.expires ?? 86400,
+      },
+    })
   }
 
   // ============================================================================

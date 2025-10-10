@@ -102,13 +102,22 @@ async def execute_agent_task(
                     task_time=int(datetime.now().timestamp()),
                     timezone=all_context.get("timezone", "Asia/Shanghai")
                 ),
-                task_driven_context={
+                task_driven_context=(lambda _ad=additional_data: (lambda _ctx: (
+                    _ctx.update({
+                        # 扁平化数据源信息，便于执行器自动加载连接配置
+                        "data_source_info": (_ad.get('data_source_info') if isinstance(_ad, dict) else None),
+                        "data_source_id": (
+                            (_ad.get('data_source_info') or {}).get('id') if isinstance(_ad, dict) and isinstance(_ad.get('data_source_info'), dict) and (_ad.get('data_source_info') or {}).get('id') else
+                            ((_ad.get('data_source_info') or {}).get('data_source_id') if isinstance(_ad, dict) and isinstance(_ad.get('data_source_info'), dict) else None)
+                        )
+                    }) or _ctx
+                ))({
                     "task_name": task_name,
                     "current_sql": existing_sql,
                     "context_data": context_data,
                     "additional_data": additional_data,
                     "execution_mode": "compatibility_interface"
-                },
+                })),
                 user_id=user_id
             )
 
@@ -150,21 +159,32 @@ async def execute_agent_task(
             # 🎯 使用任务验证智能模式
             result = await facade.execute_task_validation(agent_input)
 
+        # 统一提取文本结果（AgentOutput 使用 result 字段）
+        try:
+            text_result = getattr(result, 'result', None)
+            if text_result is None:
+                # 兼容极少数历史路径
+                text_result = getattr(result, 'content', None)
+            if text_result is None:
+                text_result = ""
+        except Exception:
+            text_result = ""
+
         # 返回兼容的结果格式
         return {
-            "success": result.success,
-            "result": result.content,
-            "sql": result.content if result.success else None,
-            "response": result.content,  # 新接口兼容
-            "metadata": result.metadata,
-            "generation_method": result.metadata.get('generation_method', 'validation') if result.metadata else 'validation',
-            "time_updated": result.metadata.get('time_updated', False) if result.metadata else False,
-            "fallback_reason": result.metadata.get('fallback_reason') if result.metadata else None,
+            "success": bool(getattr(result, 'success', False)),
+            "result": text_result,
+            "sql": text_result if getattr(result, 'success', False) else None,
+            "response": text_result,  # 新接口兼容
+            "metadata": getattr(result, 'metadata', {}) or {},
+            "generation_method": (result.metadata.get('generation_method', 'validation') if getattr(result, 'metadata', None) else 'validation'),
+            "time_updated": (result.metadata.get('time_updated', False) if getattr(result, 'metadata', None) else False),
+            "fallback_reason": (result.metadata.get('fallback_reason') if getattr(result, 'metadata', None) else None),
             "conversation_time": 0.1,  # 模拟执行时间
             "agent_response": {
-                "success": result.success,
-                "content": result.content,
-                "reasoning": result.metadata.get("reasoning") if result.metadata else None
+                "success": bool(getattr(result, 'success', False)),
+                "content": text_result,
+                "reasoning": (result.metadata.get("reasoning") if getattr(result, 'metadata', None) else None)
             }
         }
 

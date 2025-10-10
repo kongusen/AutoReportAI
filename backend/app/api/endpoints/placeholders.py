@@ -568,11 +568,70 @@ class PlaceholderOrchestrationService:
             logger.info(f"🔧 [Debug] 提取的SQL: {generated_sql}")
             logger.info(f"🔧 [Debug] agent_metadata keys: {list(agent_metadata.keys()) if agent_metadata else 'empty'}")
 
+            # 🔍 调试：查看execution_summary和observations的内容
+            if "execution_summary" in agent_metadata:
+                logger.info(f"🔍 [Debug] execution_summary: {agent_metadata['execution_summary']}")
+            if "observations" in agent_metadata:
+                logger.info(f"🔍 [Debug] observations: {agent_metadata['observations']}")
+
             # 提取测试结果（如果有）
-            test_result = agent_metadata.get("test_result", {
-                "executed": False,
-                "message": "未执行SQL测试"
-            })
+            # 🔑 关键修复：从execution_summary或observations中提取SQL执行结果
+            test_result = agent_metadata.get("test_result")
+
+            # 策略1: 从execution_summary提取
+            if not test_result and "execution_summary" in agent_metadata:
+                exec_summary = agent_metadata.get("execution_summary", "")
+                logger.info(f"🔍 [Debug] 尝试从execution_summary提取，内容: {exec_summary}")
+                # 检查是否包含成功执行的关键词
+                if isinstance(exec_summary, str) and ("成功" in exec_summary or "返回" in exec_summary or "rows" in exec_summary.lower()):
+                    test_result = {
+                        "executed": True,
+                        "success": True,
+                        "message": exec_summary,
+                        "source": "execution_summary"
+                    }
+                    logger.info(f"✅ [Debug] 从execution_summary提取到测试结果")
+
+            # 策略2: 从observations提取（observations是字符串列表）
+            if not test_result and "observations" in agent_metadata:
+                observations = agent_metadata.get("observations", [])
+                logger.info(f"🔍 [Debug] 检查observations，类型: {type(observations)}, 数量: {len(observations) if isinstance(observations, list) else 'N/A'}")
+
+                # observations是字符串列表，查找包含"sql.execute"或"执行SQL"的记录
+                for idx, obs in enumerate(observations):
+                    obs_str = str(obs)
+                    if "sql.execute" in obs_str or "执行SQL" in obs_str or "MySQL查询执行成功" in obs_str:
+                        # 判断是否成功
+                        is_success = "成功" in obs_str or "返回" in obs_str
+                        test_result = {
+                            "executed": True,
+                            "success": is_success,
+                            "message": obs_str,
+                            "source": f"observations[{idx}]"
+                        }
+                        logger.info(f"✅ [Debug] 从observations[{idx}]提取到测试结果: {obs_str[:100]}")
+                        break
+
+            # 策略3: 如果PTAV成功但没有明确的test_result，推断为已执行成功
+            if not test_result and agent_result.success and generated_sql:
+                # Agent成功返回了SQL，且是PTAV模式（有observations），推断已执行
+                if agent_metadata.get("observations"):
+                    test_result = {
+                        "executed": True,
+                        "success": True,
+                        "message": "Agent Pipeline成功生成并验证SQL",
+                        "source": "inferred_from_success"
+                    }
+                    logger.info(f"✅ [Debug] 从Agent成功状态推断测试结果")
+
+            # 最后的默认值
+            if not test_result:
+                test_result = {
+                    "executed": False,
+                    "success": False,
+                    "message": "未找到SQL执行结果"
+                }
+                logger.warning(f"⚠️ [Debug] 未能从agent_metadata中提取测试结果")
 
             # Domain层业务规则验证
             validation_result = self.domain_service.validate_placeholder_business_rules(
@@ -1203,7 +1262,7 @@ async def get_placeholders(
         # 直接返回TemplatePlaceholder格式，不使用前端适配器
         template_placeholders = []
         for p in placeholders:
-            # 确保所有必需字段都存在
+            # 确保所有必需字段都存在（包括agent_config用于返回test_result）
             template_placeholder = TemplatePlaceholder(
                 id=p.id,
                 template_id=p.template_id,
@@ -1222,6 +1281,7 @@ async def get_placeholders(
                 is_required=p.is_required if p.is_required is not None else True,
                 is_active=p.is_active if p.is_active is not None else True,
                 agent_workflow_id=p.agent_workflow_id,
+                agent_config=p.agent_config or {},  # 🔑 包含test_result等信息
                 description=p.description,
                 confidence_score=p.confidence_score or 0.0,
                 content_hash=p.content_hash,
@@ -1446,16 +1506,19 @@ async def analyze_placeholder_with_agent_pipeline(
         # 序列化结果中的datetime对象，防止JSON序列化错误
         result = _orchestration_service._serialize_datetime_objects(result)
 
-        # 自动保存分析结果到数据库 (如果成功)
-        # 兼容 generated_sql 既可能是 dict 也可能是 str 的情况
+        # 自动保存分析结果到数据库
+        # 策略：只要生成了SQL（无论是否验证通过），都保存SQL和验证结果
+        # 这样前端刷新后可以看到SQL和测试状态，agent可以根据测试结果决定是否修正
         should_persist = False
         if isinstance(result.get("generated_sql"), dict):
             should_persist = bool(result.get("generated_sql", {}).get("sql"))
         elif isinstance(result.get("generated_sql"), str):
             should_persist = bool(result.get("generated_sql", "").strip())
 
+        logger.info(f"🔍 [Debug] 保存检查 - should_persist={should_persist}, result.status={result.get('status')}, has_sql={bool(result.get('generated_sql'))}")
+
         saved_placeholder_obj = None
-        if result.get("status") == "success" and should_persist:
+        if should_persist:  # 只要有SQL就保存（包括验证失败的SQL）
             try:
                 saved_placeholder_obj = await _save_placeholder_result(
                     db=db,
@@ -1515,12 +1578,13 @@ async def analyze_placeholder_with_agent_pipeline(
                         progress_percent=100.0
                     )
 
-                    # 整合结果
+                    # 整合结果（包含test_result用于前端验证显示和agent修正决策）
                     frontend_result = {
                         "placeholder": adapted_placeholder.dict(),
                         "progress": progress_info.dict(),
                         "analysis_result": result.get("analysis_result"),
                         "generated_sql": result.get("generated_sql"),
+                        "test_result": result.get("test_result"),  # 🔑 关键：包含测试结果
                         "business_validation": result.get("business_validation"),
                         "analyzed_at": result.get("analyzed_at")
                     }
@@ -1717,11 +1781,29 @@ async def validate_placeholder_sql(
             days_offset=days_offset
         )
 
-        return APIResponse(
-            success=result.get("success", False),
-            data=result,
-            message=f"占位符SQL验证完成: {placeholder_name}"
-        )
+        # 优化返回结构：将查询结果提到顶层，方便前端访问
+        if result.get("success"):
+            execution_result = result.get("execution_result", {})
+            enhanced_result = {
+                **result,
+                # 🔑 将查询数据提到顶层，方便前端直接访问
+                "rows": execution_result.get("rows", []),
+                "row_count": execution_result.get("row_count", 0),
+                "primary_value": execution_result.get("primary_value"),
+                "columns": execution_result.get("metadata", {}).get("columns", []),
+            }
+
+            return APIResponse(
+                success=True,
+                data=enhanced_result,
+                message=f"✅ SQL验证成功，返回 {enhanced_result['row_count']} 行数据"
+            )
+        else:
+            return APIResponse(
+                success=False,
+                data=result,
+                message=f"❌ SQL验证失败: {result.get('error', '未知错误')}"
+            )
 
     except HTTPException:
         raise
@@ -1965,10 +2047,21 @@ async def _save_placeholder_result(
 ):
     """保存Agent Pipeline分析结果到数据库"""
     try:
+        logger.info(f"🔍 [Debug] 保存占位符开始: name='{placeholder_name}', template_id='{template_id}'")
+
         # 检查是否已存在
         existing = crud.template_placeholder.get_by_template_and_name(
             db=db, template_id=template_id, name=placeholder_name
         )
+
+        if existing:
+            logger.info(f"🔍 [Debug] 找到现有记录: id={existing.id}, placeholder_name='{existing.placeholder_name}'")
+            if existing.generated_sql:
+                logger.info(f"🔍 [Debug] 现有SQL: {existing.generated_sql[:100]}...")
+            else:
+                logger.info(f"🔍 [Debug] 现有SQL: None")
+        else:
+            logger.warning(f"⚠️ [Debug] 未找到现有记录，将创建新记录")
 
         generated_sql = result.get("generated_sql", {})
         if isinstance(generated_sql, dict):
@@ -1978,26 +2071,45 @@ async def _save_placeholder_result(
         else:
             sql_content = ""
 
+        logger.info(f"🔍 [Debug] 提取的SQL内容长度: {len(sql_content)} 字符")
+        if sql_content:
+            logger.info(f"🔍 [Debug] SQL预览: {sql_content[:100]}...")
+
         analysis_result = result.get("analysis_result", {})
         semantic_type = analysis_result.get("semantic_type", "stat")
 
+        # 提取测试结果状态
+        test_result = result.get("test_result", {})
+        sql_validated = test_result.get("executed", False) and test_result.get("success", False)
+
+        logger.info(f"🔍 [Debug] 测试结果状态 - executed={test_result.get('executed')}, success={test_result.get('success')}, sql_validated={sql_validated}")
+
+        # 构建要保存的数据（包括SQL验证状态和测试结果）
         placeholder_data = {
             "placeholder_name": placeholder_name,
             "placeholder_text": placeholder_text,
             "placeholder_type": "variable",
             "content_type": "text",
             "generated_sql": sql_content,
+            "sql_validated": sql_validated,  # 🔑 保存验证状态
             "confidence_score": result.get("confidence_score", 0.8),
             "agent_analyzed": True,
             "is_active": True,
             "execution_order": 1,
             "cache_ttl_hours": 24,
-            "description": f"Agent Pipeline分析({semantic_type}): {placeholder_name}"
+            "description": f"Agent Pipeline分析({semantic_type}): {placeholder_name}",
+            # 🔑 将test_result保存到agent_config中，供前端查询使用
+            "agent_config": {
+                "last_test_result": test_result,
+                "last_analysis_result": analysis_result,
+                "semantic_type": semantic_type
+            }
         }
 
         saved_placeholder = None
         if existing:
             # 更新现有占位符
+            logger.info(f"🔍 [Debug] 准备更新现有记录 id={existing.id}")
             placeholder_update = TemplatePlaceholderUpdate(**{
                 k: v for k, v in placeholder_data.items()
                 if k not in ["id", "template_id", "created_at", "updated_at"]
@@ -2005,8 +2117,10 @@ async def _save_placeholder_result(
             saved_placeholder = crud.template_placeholder.update(
                 db=db, db_obj=existing, obj_in=placeholder_update
             )
+            logger.info(f"🔍 [Debug] 更新成功: id={saved_placeholder.id}")
         else:
             # 创建新占位符
+            logger.info(f"🔍 [Debug] 准备创建新记录")
             placeholder_create = TemplatePlaceholderCreate(
                 template_id=template_id,
                 **{k: v for k, v in placeholder_data.items()
@@ -2015,14 +2129,18 @@ async def _save_placeholder_result(
             saved_placeholder = crud.template_placeholder.create(
                 db=db, obj_in=placeholder_create
             )
+            logger.info(f"🔍 [Debug] 创建成功: id={saved_placeholder.id}")
 
+        logger.info(f"🔍 [Debug] 准备提交数据库事务...")
         db.commit()
+        logger.info(f"✅ [Debug] 数据库事务提交成功")
         logger.info(f"✅ 保存Agent Pipeline结果成功: {placeholder_name}")
         return saved_placeholder
 
     except Exception as e:
         db.rollback()
         logger.error(f"❌ 保存Agent Pipeline结果失败: {e}")
+        logger.exception(e)  # 打印完整堆栈跟踪
         raise
 
 

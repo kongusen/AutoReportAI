@@ -31,7 +31,8 @@ export default function ReportsPage() {
     fetchReports, 
     deleteReport, 
     downloadReport,
-    batchDeleteReports
+    batchDeleteReports,
+    batchDownloadReports
   } = useReportStore()
   
   const [searchTerm, setSearchTerm] = useState('')
@@ -306,6 +307,14 @@ export default function ReportsPage() {
             已选择 {selectedReports.length} 个报告
           </span>
           <div className="flex items-center gap-2">
+            <Button 
+              size="sm"
+              variant="outline"
+              onClick={() => batchDownloadReports(selectedReports)}
+            >
+              <ArrowDownTrayIcon className="w-3 h-3 mr-1" />
+              批量下载
+            </Button>
             <Button 
               size="sm" 
               variant="destructive" 

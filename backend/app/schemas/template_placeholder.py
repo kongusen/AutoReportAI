@@ -31,10 +31,10 @@ class TemplatePlaceholderBase(BaseModel):
     is_required: bool = True
     is_active: bool = True
     
-    # Agent配置 (已简化，不再需要复杂配置)
+    # Agent配置
     agent_workflow_id: Optional[str] = Field(None, max_length=100)
-    # agent_config 字段已移除，现在使用统一的分析流程
-    
+    agent_config: Optional[Dict[str, Any]] = Field(None, description="Agent配置信息（包含last_test_result）")
+
     # 元数据
     description: Optional[str] = None
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -72,10 +72,10 @@ class TemplatePlaceholderUpdate(BaseModel):
     is_required: Optional[bool] = None
     is_active: Optional[bool] = None
     
-    # Agent配置 (已简化，不再需要复杂配置)
+    # Agent配置
     agent_workflow_id: Optional[str] = Field(None, max_length=100)
-    # agent_config 字段已移除，现在使用统一的分析流程
-    
+    agent_config: Optional[Dict[str, Any]] = Field(None, description="Agent配置信息（包含last_test_result）")
+
     # 元数据
     description: Optional[str] = None
     confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)

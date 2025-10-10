@@ -81,9 +81,28 @@ class SQLValidationService:
                 metadata = query_result.get("metadata", {})
 
                 # 提取第一行第一列作为主要结果（适用于COUNT等聚合查询）
+                # 🔑 安全提取，兼容多种数据格式
                 primary_value = None
-                if rows and len(rows) > 0 and len(rows[0]) > 0:
-                    primary_value = rows[0][0]
+                try:
+                    if rows and len(rows) > 0:
+                        first_row = rows[0]
+                        # 兼容不同的数据格式
+                        if isinstance(first_row, (list, tuple)):
+                            # 列表/元组格式
+                            primary_value = first_row[0] if len(first_row) > 0 else None
+                        elif isinstance(first_row, dict):
+                            # 字典格式（如HTTP API返回的{column: value}）
+                            primary_value = list(first_row.values())[0] if first_row else None
+                        else:
+                            # 其他格式，直接使用
+                            primary_value = first_row
+
+                        if primary_value is not None:
+                            self.logger.info(f"📊 成功提取主要结果值: {primary_value} (数据类型: {type(first_row).__name__})")
+                except Exception as extract_error:
+                    self.logger.warning(f"⚠️ 提取primary_value失败: {extract_error}")
+                    self.logger.warning(f"   rows类型: {type(rows)}, 第一行: {rows[0] if rows else 'N/A'}")
+                    # 不影响主流程，primary_value保持为None
 
                 validation_result = {
                     "success": True,
@@ -103,8 +122,6 @@ class SQLValidationService:
                 }
 
                 self.logger.info(f"✅ SQL验证成功: {placeholder_name}, 返回 {len(rows)} 行数据")
-                if primary_value is not None:
-                    self.logger.info(f"📊 主要结果值: {primary_value}")
 
                 return validation_result
 

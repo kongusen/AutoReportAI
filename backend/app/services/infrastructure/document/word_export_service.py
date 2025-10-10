@@ -151,7 +151,8 @@ class WordExportService:
             
             # 获取文档信息
             file_size = os.path.getsize(document_path) if document_path and os.path.exists(document_path) else 0
-            page_count = len(template_doc.element.body.xpath('.//w:p', namespaces={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}))
+            # 简单计算段落数作为页数估算基础（避免xpath的namespaces兼容性问题）
+            page_count = len(template_doc.paragraphs)
             
             logger.info(f"文档导出完成: {document_path}, 大小: {file_size} bytes, 页数: {page_count}")
             
@@ -455,14 +456,20 @@ class WordExportService:
             if document_path.endswith('.docx') and self.Document:
                 try:
                     doc = self.Document(document_path)
+                    # 简化图片检测，避免xpath的namespaces兼容性问题
+                    has_images = False
+                    try:
+                        for rel in doc.part.rels.values():
+                            if "image" in rel.target_ref:
+                                has_images = True
+                                break
+                    except:
+                        pass
+
                     preview_info.update({
                         "paragraph_count": len(doc.paragraphs),
                         "table_count": len(doc.tables),
-                        "has_images": any(
-                            len(paragraph._element.xpath('.//pic:pic', 
-                                namespaces={'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture'})) > 0
-                            for paragraph in doc.paragraphs
-                        )
+                        "has_images": has_images
                     })
                 except Exception:
                     pass

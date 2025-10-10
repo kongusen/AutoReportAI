@@ -7,35 +7,8 @@ import { AxiosResponse } from 'axios'
 import { BaseApiService, PaginatedApiService } from './baseApiService'
 import { apiClientV1 as apiClient } from '@/lib/api'
 import { APIResponse, PaginatedResponse } from '@/types/api'
-
-// 任务相关类型定义 - 与后端模型对齐
-export interface Task {
-  id: number
-  name: string
-  description?: string
-  template_id: string
-  data_source_id: string
-  schedule?: string
-  report_period: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly'
-  recipients: string[]
-  owner_id: string
-  is_active: boolean
-  created_at: string
-  updated_at: string
-  
-  // DDD架构v2.0 新增字段
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
-  processing_mode: 'simple' | 'intelligent' | 'advanced'
-  workflow_type: 'simple_report' | 'multi_step_report' | 'complex_analysis'
-  execution_count: number
-  success_count: number
-  failure_count: number
-  success_rate: number
-  last_execution_at?: string
-  average_execution_time: number
-  max_context_tokens: number
-  enable_compression: boolean
-}
+// 统一使用与后端一致的Task类型定义
+import { Task, ProcessingMode, AgentWorkflowType, ReportPeriod } from '@/types'
 
 export interface TaskCreateRequest {
   name: string
@@ -43,11 +16,11 @@ export interface TaskCreateRequest {
   template_id: string
   data_source_id: string
   schedule?: string
-  report_period: Task['report_period']
+  report_period?: ReportPeriod
   recipients?: string[]
   is_active?: boolean
-  processing_mode?: Task['processing_mode']
-  workflow_type?: Task['workflow_type']
+  processing_mode?: ProcessingMode
+  workflow_type?: AgentWorkflowType
   max_context_tokens?: number
   enable_compression?: boolean
 }
@@ -138,11 +111,28 @@ export class TasksApiService extends PaginatedApiService {
         }
       )
 
-      const response: AxiosResponse<APIResponse<PaginatedResponse<Task>>> = 
-        await apiClient.get('/tasks', { params: queryParams })
+      const response: AxiosResponse<any> = await apiClient.get('/tasks', { params: queryParams })
+      // 后端返回 PaginatedAPIResponse: { success, data: Task[], pagination }
+      const payload = response.data
+      if (payload && payload.success && Array.isArray(payload.data) && payload.pagination) {
+        const p = payload.pagination
+        return {
+          items: payload.data as Task[],
+          total: p.total,
+          page: p.page,
+          size: p.size,
+          pages: p.pages,
+          has_next: p.has_next,
+          has_prev: p.has_prev
+        }
+      }
 
-      const apiResponse = this.handleApiResponse(response)
-      return apiResponse.data || { items: [], total: 0, page: 1, size: 20, pages: 0, has_next: false, has_prev: false }
+      // 兼容旧格式或异常情况
+      if (Array.isArray(payload?.data)) {
+        return { items: payload.data as Task[], total: payload.data.length, page: 1, size: payload.data.length, pages: 1, has_next: false, has_prev: false }
+      }
+
+      return { items: [], total: 0, page: 1, size: 20, pages: 0, has_next: false, has_prev: false }
     } catch (error) {
       this.handleNetworkError(error)
     }
@@ -252,52 +242,18 @@ export class TasksApiService extends PaginatedApiService {
    * 使用领域服务分析任务 - DDD架构v2.0新功能
    * @param taskId 任务ID
    */
-  async analyzeTaskWithDomainServices(taskId: number): Promise<TaskAnalysisResult> {
-    try {
-      this.logOperation('analyzeTaskWithDomainServices', { taskId })
-      
-      this.validateRequiredParams({ taskId })
-
-      const response: AxiosResponse<APIResponse<TaskAnalysisResult>> = 
-        await apiClient.post(`/tasks/${taskId}/analyze`)
-
-      const apiResponse = this.handleApiResponse(response)
-      
-      if (!apiResponse.data) {
-        throw new Error('No analysis data returned from server')
-      }
-
-      return apiResponse.data
-    } catch (error) {
-      this.handleNetworkError(error)
-    }
+  async analyzeTaskWithDomainServices(_taskId: number): Promise<TaskAnalysisResult> {
+    // 后端未实现 /tasks/{id}/analyze，标记为未实现，避免误用
+    throw new Error('analyzeTaskWithDomainServices is not available: backend endpoint is not implemented')
   }
 
   /**
    * 通过agents执行任务 - DDD架构v2.0新功能
    * @param executionData 执行数据
    */
-  async executeTaskThroughAgents(executionData: TaskExecutionRequest): Promise<TaskExecutionResult> {
-    try {
-      this.logOperation('executeTaskThroughAgents', { taskId: executionData.task_id })
-      
-      this.validateRequiredParams({ task_id: executionData.task_id })
-
-      const response: AxiosResponse<APIResponse<TaskExecutionResult>> = 
-        await apiClient.post(`/tasks/${executionData.task_id}/execute-agents`, {
-          execution_context: executionData.execution_context
-        })
-
-      const apiResponse = this.handleApiResponse(response)
-      
-      if (!apiResponse.data) {
-        throw new Error('No execution data returned from server')
-      }
-
-      return apiResponse.data
-    } catch (error) {
-      this.handleNetworkError(error)
-    }
+  async executeTaskThroughAgents(_executionData: TaskExecutionRequest): Promise<TaskExecutionResult> {
+    // 后端未实现 /tasks/{id}/execute-agents，标记为未实现，避免误用
+    throw new Error('executeTaskThroughAgents is not available: backend endpoint is not implemented')
   }
 
   /**
@@ -353,8 +309,9 @@ export class TasksApiService extends PaginatedApiService {
       
       this.validateRequiredParams({ taskId, schedule })
 
+      // 后端使用 Query 参数接收 schedule，需放在 params 中
       const response: AxiosResponse<APIResponse<any>> = 
-        await apiClient.post(`/tasks/${taskId}/schedule`, { schedule })
+        await apiClient.post(`/tasks/${taskId}/schedule`, undefined as any, { params: { schedule } })
 
       const apiResponse = this.handleApiResponse(response)
       return apiResponse.data

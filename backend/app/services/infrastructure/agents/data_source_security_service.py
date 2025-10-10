@@ -52,8 +52,10 @@ class DataSourceSecurityService:
         Returns:
             权限验证结果
         """
-        db: Session = SessionLocal()
+        db: Optional[Session] = None
         try:
+            db = SessionLocal()
+
             # 获取数据源
             data_source = crud_data_source.get(db, id=data_source_id)
             if not data_source:
@@ -134,7 +136,8 @@ class DataSourceSecurityService:
                 "error": str(e)
             }
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def apply_sql_security_policy(
         self,

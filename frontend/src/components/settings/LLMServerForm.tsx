@@ -37,8 +37,9 @@ export function LLMServerForm({ server, onSubmit, onCancel, mode = 'create' }: L
     description: server?.description || '',
     base_url: server?.base_url || '',
     provider: server?.provider || 'openai',
-    api_key: '',
-    is_active: server?.is_active ?? true
+    api_key: server?.api_key || '',
+    is_active: server?.is_active ?? true,
+    auth_enabled: server?.auth_enabled ?? true  // 默认启用认证
   })
 
   const providerOptions = [

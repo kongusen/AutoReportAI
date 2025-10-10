@@ -349,14 +349,16 @@ export default function TemplatePlaceholdersPage() {
       if (response.data?.success) {
         const validationResult = response.data.data
         const testResult = {
-          success: validationResult.execution_success || false,
-          error: validationResult.error_message || '',
-          data: validationResult.result_data || [],
+          success: validationResult.validation_passed || validationResult.success || false,
+          error: validationResult.error || '',
+          data: validationResult.rows || [],  // 🔑 使用正确的字段 rows
           columns: validationResult.columns || [],
           row_count: validationResult.row_count || 0,
-          execution_time_ms: validationResult.execution_time_ms || 0,
-          sql_after_substitution: validationResult.sql_after_substitution || sql
+          execution_time_ms: validationResult.execution_result?.metadata?.execution_time_ms || 0,
+          sql_after_substitution: validationResult.executable_sql || sql,  // 🔑 使用 executable_sql
+          primary_value: validationResult.primary_value  // 🔑 添加主要值
         }
+        console.log('✅ [SQL验证结果]', testResult)
         setTestResults(prev => ({ ...prev, [validationKey]: testResult }))
         
         // 更新占位符状态

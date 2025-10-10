@@ -59,8 +59,10 @@ class ProductionAuthProvider:
         Returns:
             UserAuthContext或None
         """
-        db: Session = SessionLocal()
+        db: Optional[Session] = None
         try:
+            db = SessionLocal()
+
             # 从数据库获取用户信息
             user = crud_user.get(db, id=user_id)
             if not user or not user.is_active:
@@ -91,7 +93,8 @@ class ProductionAuthProvider:
             self.logger.error(f"获取用户认证上下文失败 (user_id: {user_id}): {e}")
             return None
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def get_auth_context_by_session(self, session_id: str) -> Optional[UserAuthContext]:
         """

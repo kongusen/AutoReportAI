@@ -55,8 +55,10 @@ class ProductionConfigProvider:
         Returns:
             用户配置字典
         """
-        db: Session = SessionLocal()
+        db: Optional[Session] = None
         try:
+            db = SessionLocal()
+
             # 获取用户LLM偏好
             preference = crud_user_llm_preference.get_by_user_id(db, user_id)
 
@@ -77,7 +79,8 @@ class ProductionConfigProvider:
             # 返回默认配置作为后备
             return self._config_to_dict(self.default_config)
         finally:
-            db.close()
+            if db is not None:
+                db.close()
 
     def _build_user_config(self, preference) -> Dict[str, Any]:
         """

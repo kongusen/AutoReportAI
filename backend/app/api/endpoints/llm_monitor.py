@@ -149,7 +149,10 @@ async def llm_health_check(
         pool_stats = {
             "status": "migrated_to_agents",
             "agents_healthy": True,
-            "migration_complete": True
+            "migration_complete": True,
+            "total_instances": 0,  # 已迁移，无活跃实例
+            "max_instances": 0,    # 已迁移，无最大实例限制
+            "active_references": 0 # 已迁移，无活跃引用
         }
         
         # 综合健康状态
@@ -160,9 +163,10 @@ async def llm_health_check(
             overall_status = limiter_health['status']
             issues.extend(limiter_health.get('issues', []))
         
-        if pool_stats['total_instances'] == 0:
-            issues.append("AI服务连接池无活跃实例")
-            overall_status = "warning"
+        # 由于已迁移到agents系统，不再检查连接池实例
+        # if pool_stats['total_instances'] == 0:
+        #     issues.append("AI服务连接池无活跃实例")
+        #     overall_status = "warning"
         
         health_data = {
             "overall_status": overall_status,

@@ -68,6 +68,10 @@ class UnifiedOrchestrator:
         """
         self._logger.info(f"🚀 开始Agent执行 [模式: {mode}]: {ai.user_prompt}")
 
+        # 清除LLM策略管理器的请求级缓存，避免跨请求数据污染
+        llm_strategy_manager.clear_cache()
+        self._logger.debug("已清除LLM策略管理器缓存")
+
         try:
             if mode == "ptof":
                 return await self._execute_ptof(ai)

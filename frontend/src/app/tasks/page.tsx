@@ -26,7 +26,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Empty } from '@/components/ui/Empty'
 import { Progress } from '@/components/ui/Progress'
-import { TaskExecutionProgress } from '@/components/ui/TaskExecutionProgress'
+// 移除列表页任务执行抽屉组件展示
 import { useTaskStore } from '@/features/tasks/taskStore'
 import { useDataSourceStore } from '@/features/data-sources/dataSourceStore'
 import { useTaskUpdates } from '@/hooks/useWebSocket'
@@ -837,47 +837,7 @@ export default function TasksPage() {
               scroll={{ x: '100%' }}
               expandable={{
                 expandedRowRender: (record: Task) => {
-                  // 检查是否正在执行（优先使用API状态）
-                  const apiExecutionStatus = (record as any).current_execution_status
-                  const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-                  const isExecutingFromLocal = executingTasks.has(record.id)
-                  const isExecuting = isExecutingFromAPI || isExecutingFromLocal
-
-                  if (isExecuting) {
-                    return (
-                      <div className="py-2 bg-gray-50">
-                        <TaskExecutionProgress
-                          taskId={record.id}
-                          isExecuting={true}
-                          onExecutionComplete={(result) => {
-                            setExecutingTasks(prev => {
-                              const newSet = new Set(prev)
-                              newSet.delete(record.id)
-                              return newSet
-                            })
-                            fetchTasks()
-                          }}
-                          onExecutionError={(error) => {
-                            setExecutingTasks(prev => {
-                              const newSet = new Set(prev)
-                              newSet.delete(record.id)
-                              return newSet
-                            })
-                          }}
-                          onCancel={() => {
-                            setExecutingTasks(prev => {
-                              const newSet = new Set(prev)
-                              newSet.delete(record.id)
-                              return newSet
-                            })
-                            fetchTasks()
-                          }}
-                        />
-                      </div>
-                    )
-                  }
-
-                  // 在小屏幕上显示隐藏的信息
+                  // 只在小屏幕上显示隐藏的信息，不展示执行抽屉
                   return (
                     <div className="py-2 bg-gray-50 space-y-2 md:hidden">
                       <div className="grid grid-cols-2 gap-4 text-sm">
@@ -925,15 +885,7 @@ export default function TasksPage() {
                     </div>
                   )
                 },
-                rowExpandable: (record: Task) => {
-                  const apiExecutionStatus = (record as any).current_execution_status
-                  const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
-                  return isExecutingFromAPI || executingTasks.has(record.id) || isMobile
-                },
-                expandedRowKeys: [...Array.from(executingTasks), ...filteredTasks.filter(task => {
-                  const apiExecutionStatus = (task as any).current_execution_status
-                  return apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending' || isMobile
-                }).map(task => task.id)],
+                rowExpandable: (_record: Task) => isMobile,
               }}
             />
           </div>

@@ -110,6 +110,29 @@ class StepExecutor:
         except Exception:
             pass
 
+        # 如果未提供连接配置，尝试基于 user_id + data_source_id 自动加载
+        try:
+            if (not isinstance(ds, dict)) or (not ds) or ("source_type" not in ds and "connection_string" not in ds and "fe_hosts" not in ds):
+                tdc = getattr(ai, 'task_driven_context', None)
+                ds_id = None
+                if isinstance(tdc, dict):
+                    # 支持多种位置：顶层 data_source_id 或 data_source_info 内
+                    ds_id = tdc.get("data_source_id")
+                    if not ds_id:
+                        dsi = tdc.get("data_source_info") or tdc.get("data_source") or {}
+                        if isinstance(dsi, dict):
+                            ds_id = dsi.get("id") or dsi.get("data_source_id")
+                if ds_id and hasattr(self.container, 'user_data_source_service'):
+                    try:
+                        uds = await self.container.user_data_source_service.get_user_data_source(str(user_id), str(ds_id))
+                        if uds and getattr(uds, 'connection_config', None):
+                            ds = uds.connection_config
+                            self._logger.info(f"🔌 [Executor] 已根据 data_source_id={ds_id} 加载连接配置")
+                    except Exception as e:
+                        self._logger.warning(f"⚠️ [Executor] 自动加载数据源配置失败: {e}")
+        except Exception:
+            pass
+
         # 构建执行上下文
         context = {
             "user_prompt": ai.user_prompt,

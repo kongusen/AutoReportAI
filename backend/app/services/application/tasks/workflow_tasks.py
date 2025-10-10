@@ -11,7 +11,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, name='generate_report_workflow')
+@celery_app.task(bind=True, name='tasks.application.workflow.generate_report_workflow')
 def generate_report_workflow(
     self,
     task_id: str,

@@ -474,7 +474,7 @@ case "$1" in
             echo "🚀 Starting Celery worker..."
             exec celery -A app.core.celery_scheduler worker \
                 --loglevel=info \
-                --queues=${CELERY_QUEUES:-default} \
+                --queues=${CELERY_QUEUES:-default,infrastructure_queue,application_queue,domain_queue,data_queue} \
                 --concurrency=${CELERY_CONCURRENCY:-4} \
                 --max-tasks-per-child=${CELERY_MAX_TASKS:-100}
         else

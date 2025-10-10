@@ -21,7 +21,6 @@ import type {
   CreateTemplateRequest,
   UpdateTemplateRequest,
   TemplatePreview,
-  Report,
   GenerateReportRequest,
   Task,
   CreateTaskRequest,
@@ -32,6 +31,7 @@ import type {
   UserLLMPreferences,
   ETLJob
 } from '@/types/api'
+import type { Report } from '@/types'
 
 // ============================================================================
 // 认证服务
@@ -372,6 +372,14 @@ class ReportService {
   }
 
   /**
+   * 批量打包下载报告（ZIP）
+   */
+  static async batchZip(reportIds: string[], filename?: string): Promise<{ download_url: string; filename: string }> {
+    const data = await apiClient.batchZipReports(reportIds, { filename })
+    return { download_url: data.download_url, filename: data.filename }
+  }
+
+  /**
    * 获取报告历史记录
    */
   static async getHistory(params?: QueryParams): Promise<PaginatedResponse<any>> {
@@ -451,15 +459,17 @@ class TaskService {
    * 获取任务调度信息
    */
   static async getSchedule(): Promise<any[]> {
-    return apiClient.request('GET', '/scheduler/tasks')
+    // 对齐后端 celery_monitor: GET /v1/celery-monitor/tasks/scheduled
+    return apiClient.request('GET', '/celery-monitor/tasks/scheduled')
   }
 
   /**
    * 更新任务调度
    */
   static async updateSchedule(id: string, cronExpression: string): Promise<void> {
-    return apiClient.request('POST', `/celery/tasks/${id}/schedule`, {
-      data: { cron_expression: cronExpression }
+    // 对齐后端任务调度：POST /v1/tasks/{task_id}/schedule?schedule=cron
+    return apiClient.request('POST', `/tasks/${id}/schedule`, {
+      params: { schedule: cronExpression }
     })
   }
 }

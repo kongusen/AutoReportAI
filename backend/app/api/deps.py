@@ -603,8 +603,10 @@ def check_service_dependencies() -> Dict[str, Any]:
         # Test database connection
         from app.db.session import SessionLocal
         db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        try:
+            db.execute("SELECT 1")
+        finally:
+            db.close()
     except Exception as e:
         dependencies["database"] = {"status": "unhealthy", "message": f"Database error: {str(e)}"}
 

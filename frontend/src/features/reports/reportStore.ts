@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { Report } from '@/types'
 import { api } from '@/lib/api'
+import { ReportService } from '@/services/apiService'
 import toast from 'react-hot-toast'
 
 interface ReportState {
@@ -16,6 +17,7 @@ interface ReportState {
   deleteReport: (id: string) => Promise<void>
   downloadReport: (id: string) => Promise<void>
   batchDeleteReports: (ids: string[]) => Promise<void>
+  batchDownloadReports: (ids: string[], filename?: string) => Promise<void>
   
   // Real-time updates
   addReport: (report: Report) => void
@@ -179,6 +181,30 @@ export const useReportStore = create<ReportState>((set, get) => ({
       throw error
     } finally {
       set({ loading: false })
+    }
+  },
+
+  // 批量打包下载报告
+  batchDownloadReports: async (ids: string[], filename?: string) => {
+    try {
+      if (!ids || ids.length === 0) return
+      const ts = new Date()
+      const defaultName = filename || `reports_${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`
+      const { download_url, filename: zipName } = await ReportService.batchZip(ids, defaultName)
+
+      // 触发浏览器下载
+      const link = document.createElement('a')
+      link.href = download_url
+      link.download = zipName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      toast.success('已开始下载打包文件')
+    } catch (error: any) {
+      console.error('Failed to batch download reports:', error)
+      toast.error('批量下载失败')
+      throw error
     }
   },
 

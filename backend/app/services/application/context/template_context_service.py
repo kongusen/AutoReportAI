@@ -95,13 +95,6 @@ class TemplateContextBuilder:
 
     def __init__(self, container=None):
         self.container = container
-        # 尝试获取数据库session
-        self._db_session = None
-        if container and hasattr(container, 'get_db'):
-            try:
-                self._db_session = next(container.get_db())
-            except Exception as e:
-                logger.warning(f"Could not get database session from container: {e}")
 
         # 导入实际的模型
         try:
@@ -138,30 +131,17 @@ class TemplateContextBuilder:
             if not self.Template:
                 return {"success": False, "error": "template_models_unavailable"}
 
-            # 获取数据库会话
-            db = self._db_session
-            if not db and self.container and hasattr(self.container, 'get_db'):
-                try:
-                    db = next(self.container.get_db())
-                except Exception as e:
-                    logger.warning(f"Failed to acquire DB session: {e}")
-
-            if not db:
-                return {"success": False, "error": "db_session_unavailable"}
-
-            # 查询模板与占位符
-            from sqlalchemy.orm import Session
+            # 查询模板与占位符（上下文管理器，防止会话泄漏）
+            from app.db.session import get_db_session
             from app.crud.crud_template import crud_template
             from app.crud.crud_template_placeholder import template_placeholder as crud_tpl_ph
 
-            if not isinstance(db, Session):
-                return {"success": False, "error": "invalid_db_session"}
+            with get_db_session() as db:
+                tpl = crud_template.get(db, id=template_id)
+                if not tpl:
+                    return {"success": False, "error": "template_not_found"}
 
-            tpl = crud_template.get(db, id=template_id)
-            if not tpl:
-                return {"success": False, "error": "template_not_found"}
-
-            placeholders = crud_tpl_ph.get_by_template(db, template_id=template_id, include_inactive=False)
+                placeholders = crud_tpl_ph.get_by_template(db, template_id=template_id, include_inactive=False)
 
             # 2) 生成占位符上下文（若无法解析文档，仅提供名称与类型，段落留空）
             placeholder_contexts: List[PlaceholderContext] = []

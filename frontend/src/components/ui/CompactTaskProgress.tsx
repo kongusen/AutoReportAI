@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { apiClient as api } from '@/lib/api-client'
+import useTaskProgress from '@/hooks/useTaskProgress'
 
 interface CompactTaskProgressProps {
   taskId: number
@@ -27,56 +27,33 @@ export const CompactTaskProgress: React.FC<CompactTaskProgressProps> = ({
   onExecutionComplete,
   onExecutionError
 }) => {
-  const [progressData, setProgressData] = useState<ProgressData | null>(null)
+  const { data: progressData, error } = useTaskProgress(taskId, isExecuting, 3000)
   const [elapsedTime, setElapsedTime] = useState(0)
 
   useEffect(() => {
     if (!isExecuting) {
-      setProgressData(null)
       setElapsedTime(0)
       return
     }
-
     const startTime = Date.now()
-
-    // 立即获取一次进度
-    fetchProgress()
-
-    // 设置轮询
-    const progressInterval = setInterval(fetchProgress, 3000) // 每3秒轮询一次
-
-    // 设置计时器
-    const timeInterval = setInterval(() => {
-      setElapsedTime(Date.now() - startTime)
-    }, 1000)
-
-    return () => {
-      clearInterval(progressInterval)
-      clearInterval(timeInterval)
-    }
+    const timeInterval = setInterval(() => setElapsedTime(Date.now() - startTime), 1000)
+    return () => clearInterval(timeInterval)
   }, [isExecuting, taskId])
 
-  const fetchProgress = async () => {
-    try {
-      const response = await api.get(`/tasks/${taskId}/progress`) as any
-      if (response.data?.success) {
-        const data = response.data.data as ProgressData
-        setProgressData(data)
-
-        // 检查是否完成或失败
-        if (data.execution_status === 'completed') {
-          onExecutionComplete?.(data)
-        } else if (data.execution_status === 'failed') {
-          onExecutionError?.(data.error_details || '任务执行失败')
-        }
-      }
-    } catch (error: any) {
-      console.error('Failed to fetch task progress:', error)
-      if (error.response?.status !== 404) {
-        onExecutionError?.('获取任务进度失败')
-      }
+  useEffect(() => {
+    if (!progressData) return
+    if (progressData.execution_status === 'completed') {
+      onExecutionComplete?.(progressData)
+    } else if (progressData.execution_status === 'failed') {
+      onExecutionError?.(progressData.error_details || '任务执行失败')
     }
-  }
+  }, [progressData, onExecutionComplete, onExecutionError])
+
+  useEffect(() => {
+    if (error) {
+      onExecutionError?.(error)
+    }
+  }, [error, onExecutionError])
 
   if (!isExecuting && !progressData) return null
 

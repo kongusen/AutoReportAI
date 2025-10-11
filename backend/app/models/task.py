@@ -88,7 +88,7 @@ class Task(Base):
     owner = relationship("User", back_populates="tasks", foreign_keys=[owner_id])
     data_source = relationship("DataSource")
     template = relationship("Template", back_populates="tasks")
-    executions = relationship("TaskExecution", back_populates="task")
+    executions = relationship("TaskExecution", back_populates="task", cascade="all, delete-orphan")
     report_histories = relationship("ReportHistory", back_populates="task", cascade="all, delete-orphan")
 
     @property

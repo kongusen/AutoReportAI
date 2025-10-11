@@ -391,6 +391,7 @@ tramp
 # Visual Studio Code
 .vscode/
 *.code-workspace
+.claude/
 
 # Local development databases
 local.db

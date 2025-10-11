@@ -179,7 +179,8 @@ class SQLValidateTool(Tool):
 
             return {
                 "success": final_decision["success"],
-                "sql": sql,
+                "sql": sql,  # ⚠️ 关键修复：返回原始带占位符的SQL，不是验证用的SQL
+                "validated_sql": validation_sql_with_dates if database_validation_done else None,  # 新增：实际验证执行的SQL
                 "issues": final_decision.get("issues", []),
                 "warnings": final_decision.get("warnings", []),
                 "error": final_decision.get("error"),

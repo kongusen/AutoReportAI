@@ -346,11 +346,21 @@ class SchemaListTablesTool(Tool):
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
+            # 🔍 [Debug] 检查数据源配置
+            conn_cfg = input_data.get("data_source", {})
+            self._logger.info(f"🔍 [SchemaListTables Debug] input_data keys: {list(input_data.keys())}")
+            self._logger.info(f"🔍 [SchemaListTables Debug] data_source存在: {bool(conn_cfg)}")
+            if conn_cfg:
+                self._logger.info(f"🔍 [SchemaListTables Debug] data_source keys: {list(conn_cfg.keys())}")
+                self._logger.info(f"🔍 [SchemaListTables Debug] host: {conn_cfg.get('host', 'N/A')}")
+            else:
+                self._logger.warning(f"❌ [SchemaListTables Debug] 缺少data_source配置！")
+
             if not (hasattr(self.container, 'data_source') and hasattr(self.container.data_source, 'run_query')):
                 return {"success": False, "error": "Data source service not available"}
 
             result = await self.container.data_source.run_query(
-                connection_config=input_data.get("data_source", {}),
+                connection_config=conn_cfg,
                 sql="SHOW TABLES",
                 limit=10000
             )

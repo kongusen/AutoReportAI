@@ -169,12 +169,26 @@ async def startup():
     try:
         from app.services.infrastructure.llm.monitor_integration import start_llm_monitoring
         from app.db.session import get_db
-        
+
         await start_llm_monitoring(get_db)
         print("🤖 LLM监控服务启动成功")
-        
+
     except Exception as e:
         print(f"⚠️ LLM监控服务启动失败: {e}")
+
+    # 启动 APScheduler 调度器
+    try:
+        from app.core.apscheduler_config import apscheduler_manager
+
+        # 启动调度器
+        apscheduler_manager.start()
+
+        # 从数据库加载所有活跃任务
+        result = apscheduler_manager.load_tasks_from_database()
+        print(f"📅 APScheduler 已启动，加载了 {result['loaded']} 个任务")
+
+    except Exception as e:
+        print(f"⚠️ APScheduler 启动失败: {e}")
 
     # 启动时打印关键配置
     print_startup_config()
@@ -183,11 +197,19 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     """应用关闭处理"""
+    # 先关闭 APScheduler
+    try:
+        from app.core.apscheduler_config import apscheduler_manager
+        apscheduler_manager.shutdown(wait=True)
+        print("✅ APScheduler 已停止")
+    except Exception as e:
+        print(f"⚠️ 停止 APScheduler 失败: {e}")
+
     shutdown_tasks = [
         ("LLM监控服务", "app.services.infrastructure.llm.monitor_integration", "stop_llm_monitoring"),
         ("WebSocket管理器", "app.websocket.manager", "websocket_manager")
     ]
-    
+
     for service_name, module_path, service_attr in shutdown_tasks:
         try:
             if service_attr == "websocket_manager":
@@ -200,7 +222,7 @@ async def shutdown():
             print(f"✅ {service_name}已停止")
         except Exception as e:
             print(f"⚠️ 停止{service_name}失败: {e}")
-    
+
     print("👋 应用已安全关闭")
 
 

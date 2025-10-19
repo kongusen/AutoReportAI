@@ -112,19 +112,32 @@ class PureDatabaseLLMManager:
 
         # 查询 DB 中活跃且健康的模型，优先当前用户的服务器
         with get_db_session() as db:
-            # 先找该用户的健康服务器上的健康模型
-            models = db.query(LLMModel).join(LLMModel.server).filter(
-                LLMModel.is_active == True,
-                LLMModel.is_healthy == True,
-                LLMModel.model_type == desired_type,
-                LLMModel.server.has(is_active=True, is_healthy=True, user_id=user_id)
-            ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
+            # 如果user_id为None或"system"，直接查询全局健康模型，避免UUID转换错误
+            if not user_id or user_id == "system":
+                logger.info("🔄 [ModelSelection] 未提供用户ID或系统模式，直接查询全局健康模型")
+                models = db.query(LLMModel).join(LLMModel.server).filter(
+                    LLMModel.is_active == True,
+                    LLMModel.is_healthy == True,
+                    LLMModel.model_type == desired_type,
+                    LLMModel.server.has(is_active=True, is_healthy=True)
+                ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
 
-            # 记录初始查询结果
-            user_models_count = len(models)
-            if models:
-                logger.info(f"🔍 [ModelSelection] 用户专属模型找到 {user_models_count} 个")
+                user_models_count = 0  # 无用户ID时没有专属模型
             else:
+                # 先找该用户的健康服务器上的健康模型
+                models = db.query(LLMModel).join(LLMModel.server).filter(
+                    LLMModel.is_active == True,
+                    LLMModel.is_healthy == True,
+                    LLMModel.model_type == desired_type,
+                    LLMModel.server.has(is_active=True, is_healthy=True, user_id=user_id)
+                ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
+
+                # 记录初始查询结果
+                user_models_count = len(models)
+
+            if models and user_id and user_id != "system":
+                logger.info(f"🔍 [ModelSelection] 用户专属模型找到 {user_models_count} 个")
+            elif not models and user_id and user_id != "system":
                 logger.info("🔄 [ModelSelection] 用户专属模型未找到，回退到全局健康模型")
 
             # 若该用户无可用模型，回退到任意健康服务器

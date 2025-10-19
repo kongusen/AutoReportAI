@@ -9,6 +9,7 @@
 import time
 import logging
 from typing import Any, Dict, List
+import structlog
 
 from .types import AgentInput
 from .tools.registry import ToolRegistry
@@ -27,11 +28,20 @@ class StepExecutor:
         """
         self.container = container
         self._logger = logging.getLogger(self.__class__.__name__)
+        # 结构化日志记录器
+        self._struct_logger = structlog.get_logger(self.__class__.__name__)
         self.registry = ToolRegistry()
         self._setup_tools()
         # 高可用：工具调用重试配置
         self.max_tool_retries = 2
         self.retry_backoff_base = 0.5  # seconds
+        # 性能统计
+        self._execution_stats = {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "total_execution_time_ms": 0
+        }
 
     def _setup_tools(self) -> None:
         """设置和注册工具"""
@@ -63,24 +73,114 @@ class StepExecutor:
 
         self._logger.info(f"已注册 {len(self.registry._tools)} 个工具")
 
-    async def execute(self, plan: Dict[str, Any], ai: AgentInput) -> Dict[str, Any]:
+    async def _load_data_source_config(
+        self,
+        ai: AgentInput,
+        user_id: str,
+        initial_ds: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
         """
-        执行单步骤计划 - Plan-Tool-Active-Validate循环
+        统一的数据源配置加载逻辑
 
         Args:
-            plan: 单步骤执行计划
-            ai: Agent输入上下文
+            ai: Agent输入
+            user_id: 用户ID
+            initial_ds: 初始数据源字典
 
         Returns:
-            Dict: 执行结果，支持Agent继续决策
+            Dict: 数据源连接配置
         """
-        steps = plan.get("steps", [])
-        if not steps:
-            return {"success": False, "error": "no_steps", "context": {}}
+        ds = initial_ds or {}
 
-        # 只执行第一个步骤 - 单步骤循环原则
-        step = steps[0]
-        observations = []
+        # 规范化数据源（兼容 data_source_id → id）
+        try:
+            if ds and isinstance(ds, dict) and ("data_source_id" in ds) and ("id" not in ds):
+                ds = {**ds, "id": ds.get("data_source_id")}
+        except Exception:
+            pass
+
+        # 如果未提供连接配置，尝试基于 user_id + data_source_id 自动加载
+        try:
+            if (not isinstance(ds, dict)) or (not ds) or ("source_type" not in ds and "connection_string" not in ds and "fe_hosts" not in ds):
+                # 🔍 优先从传入的 ds 中提取 data_source_id
+                ds_id = None
+                if isinstance(ds, dict):
+                    ds_id = ds.get("data_source_id") or ds.get("id")
+
+                # 如果传入的 ds 中没有，再从 task_driven_context 中提取
+                if not ds_id:
+                    tdc = getattr(ai, 'task_driven_context', None)
+                    if isinstance(tdc, dict):
+                        # 支持多种位置：顶层 data_source_id 或 data_source_info 内
+                        ds_id = tdc.get("data_source_id")
+                        if not ds_id:
+                            dsi = tdc.get("data_source_info") or tdc.get("data_source") or {}
+                            if isinstance(dsi, dict):
+                                ds_id = dsi.get("id") or dsi.get("data_source_id")
+
+                if ds_id:
+                    self._logger.info(f"🔍 [Executor] 尝试加载 data_source_id={ds_id}")
+                    try:
+                        # 🔧 使用container的get_user_data_source方法，确保密码解密和配置完整性
+                        has_container_method = hasattr(self.container, 'get_user_data_source')
+                        self._logger.info(f"🔍 [Executor] Container有get_user_data_source方法: {has_container_method}")
+
+                        if has_container_method:
+                            # 使用Container提供的方法（包含密码解密）
+                            ds_obj = await self.container.get_user_data_source(str(user_id), str(ds_id))
+                            if ds_obj and hasattr(ds_obj, 'connection_config'):
+                                ds = ds_obj.connection_config
+                                self._logger.info(f"🔌 [Executor] 已根据 data_source_id={ds_id} 加载连接配置 (via Container, 密码已解密)")
+                                self._logger.info(f"🔍 [Executor] 加载的配置键: {list(ds.keys()) if isinstance(ds, dict) else 'Not dict'}")
+                                self._logger.info(f"🔍 [Executor] source_type={ds.get('source_type') if isinstance(ds, dict) else 'N/A'}")
+                        elif hasattr(self.container, 'user_data_source_service'):
+                            # 回退到直接使用service（但注意密码可能未解密）
+                            self._logger.info(f"🔍 [Executor] 使用user_data_source_service回退方式")
+                            uds = await self.container.user_data_source_service.get_user_data_source(str(user_id), str(ds_id))
+                            if uds and getattr(uds, 'connection_config', None):
+                                ds = uds.connection_config
+                                self._logger.warning(f"⚠️ [Executor] 使用模型属性加载配置，密码可能未解密")
+                    except Exception as e:
+                        self._logger.warning(f"⚠️ [Executor] 自动加载数据源配置失败: {e}")
+                        import traceback
+                        self._logger.warning(f"⚠️ [Executor] 异常堆栈: {traceback.format_exc()}")
+        except Exception as e2:
+            self._logger.warning(f"⚠️ [Executor] 外层异常: {e2}")
+            import traceback
+            self._logger.warning(f"⚠️ [Executor] 外层异常堆栈: {traceback.format_exc()}")
+
+        # 最终检查返回值
+        if isinstance(ds, dict):
+            self._logger.info(f"🔍 [Executor] 最终返回配置键: {list(ds.keys())}")
+            has_source_type = "source_type" in ds or "connection_string" in ds or "fe_hosts" in ds
+            self._logger.info(f"🔍 [Executor] 包含连接信息: {has_source_type}")
+        else:
+            self._logger.warning(f"⚠️ [Executor] 返回值不是字典: {type(ds)}")
+
+        return ds
+
+    async def _build_execution_context(
+        self,
+        ai: AgentInput,
+        user_id: str,
+        ds: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        构建执行上下文
+
+        Args:
+            ai: Agent输入
+            user_id: 用户ID
+            ds: 数据源配置
+
+        Returns:
+            Dict: 执行上下文
+        """
+        # 🔍 调试：检查传入的数据源配置
+        self._logger.info(f"🔍 [BuildContext] 接收到的ds类型: {type(ds)}")
+        if isinstance(ds, dict):
+            self._logger.info(f"🔍 [BuildContext] ds键: {list(ds.keys())}")
+            self._logger.info(f"🔍 [BuildContext] source_type存在: {'source_type' in ds}")
 
         # 从任务上下文中提取可选的语义与参数
         semantic_info = self._extract_semantic_info(ai)
@@ -99,41 +199,7 @@ class StepExecutor:
         except Exception:
             constraints_dict = None
 
-        # 获取 user_id
-        user_id = ai.user_id or auth_manager.get_current_user_id() or "system"
-
-        # 规范化数据源（兼容 data_source_id → id）
-        ds = ai.data_source if isinstance(ai.data_source, dict) else (ai.data_source or {})
-        try:
-            if ds and isinstance(ds, dict) and ("data_source_id" in ds) and ("id" not in ds):
-                ds = {**ds, "id": ds.get("data_source_id")}
-        except Exception:
-            pass
-
-        # 如果未提供连接配置，尝试基于 user_id + data_source_id 自动加载
-        try:
-            if (not isinstance(ds, dict)) or (not ds) or ("source_type" not in ds and "connection_string" not in ds and "fe_hosts" not in ds):
-                tdc = getattr(ai, 'task_driven_context', None)
-                ds_id = None
-                if isinstance(tdc, dict):
-                    # 支持多种位置：顶层 data_source_id 或 data_source_info 内
-                    ds_id = tdc.get("data_source_id")
-                    if not ds_id:
-                        dsi = tdc.get("data_source_info") or tdc.get("data_source") or {}
-                        if isinstance(dsi, dict):
-                            ds_id = dsi.get("id") or dsi.get("data_source_id")
-                if ds_id and hasattr(self.container, 'user_data_source_service'):
-                    try:
-                        uds = await self.container.user_data_source_service.get_user_data_source(str(user_id), str(ds_id))
-                        if uds and getattr(uds, 'connection_config', None):
-                            ds = uds.connection_config
-                            self._logger.info(f"🔌 [Executor] 已根据 data_source_id={ds_id} 加载连接配置")
-                    except Exception as e:
-                        self._logger.warning(f"⚠️ [Executor] 自动加载数据源配置失败: {e}")
-        except Exception:
-            pass
-
-        # 构建执行上下文
+        # 构建基础上下文
         context = {
             "user_prompt": ai.user_prompt,
             "placeholder_description": ai.placeholder.description,
@@ -147,33 +213,92 @@ class StepExecutor:
             "top_n": semantic_info.get("top_n"),
             "template_context": None,
         }
-        # 注入模板上下文和累积的schema信息（如可用）
+
+        # 🗄️ [ResourcePool模式] 从ContextMemory读取状态，而不是直接读取完整数据
         try:
             tdc = ai.task_driven_context or {}
             if isinstance(tdc, dict):
-                # 优先使用 snippet，其次使用完整 template_context（dict 用于调度）
+                self._logger.debug(f"📋 [构建上下文] task_driven_context包含的键: {list(tdc.keys())}")
+
+                # template_context: 直接传递（轻量级）
                 if tdc.get("template_context_snippet"):
                     context["template_context"] = tdc.get("template_context_snippet")
                 elif tdc.get("template_context"):
                     context["template_context"] = tdc.get("template_context")
 
-                # 从task_driven_context获取累积的schema信息
-                if tdc.get("column_details"):
-                    context["column_details"] = tdc["column_details"]
-                    self._logger.info(f"📋 [Executor] 从task_driven_context获取column_details: {len(tdc['column_details'])}张表")
-                if tdc.get("schema_summary"):
-                    context["schema_summary"] = tdc["schema_summary"]
-                    self._logger.info(f"📋 [Executor] 从task_driven_context获取schema_summary: {len(tdc['schema_summary'])}字符")
-                if tdc.get("recommended_time_column"):
-                    context["recommended_time_column"] = tdc["recommended_time_column"]
-                    self._logger.info(f"📋 [Executor] 从task_driven_context获取推荐时间列: {tdc['recommended_time_column']}")
-                # 覆盖基础的tables和columns如果task_driven_context有更新的版本
-                if tdc.get("tables"):
-                    context["tables"] = tdc["tables"]
-                if tdc.get("columns"):
-                    context["columns"] = tdc["columns"]
-        except Exception:
-            pass
+                # 🗄️ [ResourcePool模式] 从ContextMemory读取状态
+                context_memory_dict = tdc.get("context_memory")
+                if context_memory_dict and isinstance(context_memory_dict, dict):
+                    from .resource_pool import ContextMemory
+                    context_memory = ContextMemory.from_dict(context_memory_dict)
+
+                    # 存储ContextMemory到context（用于后续判断）
+                    context["context_memory"] = context_memory
+
+                    # 记录状态日志
+                    self._logger.info(
+                        f"🗄️ [Executor] ContextMemory状态: "
+                        f"has_sql={context_memory.has_sql}, "
+                        f"schema_available={context_memory.schema_available}, "
+                        f"tables={len(context_memory.available_tables)}"
+                    )
+
+                    # 注意：不再从tdc直接获取column_details
+                    # 详细信息存储在ResourcePool中，需要时通过_extract_from_resource_pool按需提取
+                else:
+                    self._logger.warning("⚠️ [Executor] task_driven_context中没有context_memory")
+
+        except Exception as e:
+            self._logger.error(f"❌ [Executor] 处理task_driven_context失败: {e}")
+
+        return context
+
+    async def execute(self, plan: Dict[str, Any], ai: AgentInput) -> Dict[str, Any]:
+        """
+        执行单步骤计划 - Plan-Tool-Active-Validate循环
+
+        Args:
+            plan: 单步骤执行计划
+            ai: Agent输入上下文
+
+        Returns:
+            Dict: 执行结果，支持Agent继续决策
+        """
+        steps = plan.get("steps", [])
+        if not steps:
+            return {"success": False, "error": "no_steps", "context": {}}
+
+        # 只执行第一个步骤 - 单步骤循环原则
+        step = steps[0]
+
+        # 🚨 防御性检查：确保step是字典
+        if not isinstance(step, dict):
+            self._logger.error(f"🚨 [Executor] step不是字典类型: {type(step)}, 内容: {step}")
+            return {"success": False, "error": "invalid_step_type", "context": {}, "observations": ["❌ Step格式错误：不是字典类型"]}
+
+        observations = []
+
+        # 获取 user_id
+        user_id = ai.user_id or auth_manager.get_current_user_id()
+        if not user_id:
+            self._logger.warning("⚠️ [Executor] 未提供user_id，将使用全局模型配置")
+
+        # 加载数据源配置（统一方法）
+        initial_ds = ai.data_source if isinstance(ai.data_source, dict) else (ai.data_source or {})
+        ds = await self._load_data_source_config(ai, user_id, initial_ds)
+
+        # 构建执行上下文（统一方法）
+        context = await self._build_execution_context(ai, user_id, ds)
+
+        # 🗄️ [ResourcePool模式] 将ResourcePool引用存储到context中（用于_update_context_state和_reduce_context）
+        try:
+            if hasattr(ai, 'task_driven_context') and isinstance(ai.task_driven_context, dict):
+                resource_pool = ai.task_driven_context.get("resource_pool")
+                if resource_pool:
+                    context["_resource_pool"] = resource_pool
+                    self._logger.info("🗄️ [Executor] ResourcePool已加载到context中")
+        except Exception as e:
+            self._logger.error(f"❌ [Executor] 加载ResourcePool失败: {e}")
 
         self._logger.info(f"🔄 [单步骤执行] 开始执行: {step.get('action', 'tool_call')}")
 
@@ -185,19 +310,52 @@ class StepExecutor:
             if step_action == "sql_generation":
                 reason = step.get("reason", "Agent生成SQL")
                 self._logger.info(f"🧠 [Agent思考] {reason}")
+                self._logger.info("=== 🆕🆕🆕 立即测试日志：进入sql_generation分支！ ===")
 
-                # 构建SQL生成的完整上下文
-                # 先做硬性前置条件检查（gating）
+                # 🗄️ [ResourcePool模式] **优先**从ResourcePool提取详细信息（必须在所有检查之前）
+                # 调试：检查task_driven_context
+                self._logger.info(f"🔍 [Debug] hasattr task_driven_context: {hasattr(ai, 'task_driven_context')}")
+                if hasattr(ai, 'task_driven_context'):
+                    tdc = ai.task_driven_context
+                    self._logger.info(f"🔍 [Debug] task_driven_context type: {type(tdc)}")
+                    self._logger.info(f"🔍 [Debug] task_driven_context keys: {list(tdc.keys()) if isinstance(tdc, dict) else 'Not a dict'}")
+                    if isinstance(tdc, dict) and "resource_pool" in tdc:
+                        rp = tdc["resource_pool"]
+                        self._logger.info(f"🔍 [Debug] resource_pool type: {type(rp)}")
+                        self._logger.info(f"🔍 [Debug] resource_pool has extract_for_step: {hasattr(rp, 'extract_for_step')}")
+
+                resource_pool = ai.task_driven_context.get("resource_pool") if hasattr(ai, 'task_driven_context') and isinstance(ai.task_driven_context, dict) else None
+                if resource_pool:
+                    # 使用ResourcePool的extract_for_step方法提取SQL生成所需的数据
+                    extracted = resource_pool.extract_for_step("sql_generation", context)
+                    context.update(extracted)
+
+                    if extracted.get("column_details"):
+                        self._logger.info(
+                            f"🗄️ [SQL生成前提取] 从ResourcePool提取column_details: "
+                            f"{len(extracted['column_details'])}张表"
+                        )
+                else:
+                    self._logger.warning("⚠️ [SQL生成] ResourcePool不可用，无法提取详细信息")
+
+                # 🗄️ [ResourcePool模式] 从ContextMemory判断schema状态
+                context_memory = context.get("context_memory")
                 missing_time = not (context.get("start_date") or (isinstance(context.get("window"), dict) and context.get("window", {}).get("start_date")))
-                missing_schema = not context.get("schema_summary") and not (context.get("columns") and len(context.get("columns")) > 0)
 
-                # 🔍 调试：检查schema信息状态
-                self._logger.debug(f"🔍 [Schema检查] schema_summary存在: {bool(context.get('schema_summary'))}")
-                self._logger.debug(f"🔍 [Schema检查] columns存在: {bool(context.get('columns'))}")
-                if context.get("columns"):
-                    self._logger.debug(f"🔍 [Schema检查] columns数量: {len(context.get('columns'))}")
-                    self._logger.debug(f"🔍 [Schema检查] columns内容: {list(context.get('columns').keys()) if isinstance(context.get('columns'), dict) else context.get('columns')}")
-                self._logger.info(f"🔍 [Schema检查] missing_schema判定: {missing_schema}")
+                # 从ContextMemory判断schema可用性
+                if context_memory:
+                    missing_schema = not context_memory.schema_available
+                    self._logger.info(
+                        f"🗄️ [Gating检查] ContextMemory: "
+                        f"schema_available={context_memory.schema_available}"
+                    )
+                else:
+                    # 回退：如果没有ContextMemory，使用传统检查
+                    missing_schema = (
+                        not context.get("schema_summary") and
+                        not (context.get("columns") and len(context.get("columns")) > 0)
+                    )
+                    self._logger.warning("⚠️ [Gating检查] 没有ContextMemory，使用传统检查")
                 if missing_time:
                     observations.append("⚠️ 缺少时间范围，建议先计算时间窗口 time.window")
                     decision = {
@@ -222,39 +380,91 @@ class StepExecutor:
                     }
 
                 if missing_schema:
-                    observations.append("⚠️ 缺少表列信息，建议先获取列信息 schema.get_columns")
+                    observations.append("⚠️ 缺少表列信息，主动获取schema信息")
+                    self._logger.info("🔍 [Gating] 检测到缺少字段详情，主动调用schema.get_columns获取")
 
-                    # 预选一批最相关的表，便于下一步直接传入 schema.get_columns
+                    # 预选一批最相关的表
                     try:
                         suggested_tables = self._suggest_tables_from_names(
                             context.get("tables") or [],
                             context.get("placeholder_description") or ""
                         )
-                        if suggested_tables:
-                            context["suggested_tables"] = suggested_tables
+                        if not suggested_tables and context.get("tables"):
+                            # 如果智能选择失败，取前5张表作为兜底
+                            suggested_tables = context.get("tables")[:5]
                     except Exception:
-                        suggested_tables = []
+                        suggested_tables = context.get("tables", [])[:5] if context.get("tables") else []
 
-                    decision = {
-                        "success": True,
-                        "action": "gating",
-                        "gating_redirect": "schema.get_columns",
-                        "message": "缺少表列信息，已建议先执行 schema.get_columns",
-                        "next_step_hint": "请先调用 schema.get_columns 获取目标表列信息",
-                        "suggested_tables": suggested_tables
-                    }
-                    return {
-                        "success": True,
-                        "step_result": decision,
-                        "context": context,
-                        "observations": observations,
-                        "decision_info": {
-                            "step_completed": "gating",
-                            "step_reason": "缺少表列信息",
-                            "next_recommendations": ([f"调用 schema.get_columns(tables={suggested_tables}) 获取列信息"] if suggested_tables else ["调用 schema.get_columns 获取列信息"]) 
-                        },
-                        "execution_time": int((time.time() - step_start) * 1000)
-                    }
+                    if not suggested_tables:
+                        # 如果连表列表都没有，需要先list_tables
+                        self._logger.warning("🔍 [Gating] 连表列表都没有，需要先调用schema.list_tables")
+                        decision = {
+                            "success": True,
+                            "action": "gating",
+                            "gating_redirect": "schema.list_tables",
+                            "message": "缺少表列表，需要先执行 schema.list_tables",
+                            "next_step_hint": "请先调用 schema.list_tables 获取所有表"
+                        }
+                        return {
+                            "success": True,
+                            "step_result": decision,
+                            "context": context,
+                            "observations": observations,
+                            "decision_info": {
+                                "step_completed": "gating",
+                                "step_reason": "缺少表列表",
+                                "next_recommendations": ["调用 schema.list_tables 获取表列表"]
+                            },
+                            "execution_time": int((time.time() - step_start) * 1000)
+                        }
+
+                    # 主动调用schema.get_columns获取字段信息
+                    try:
+                        self._logger.info(f"🔧 [Gating主动获取] 调用schema.get_columns获取表字段: {suggested_tables}")
+
+                        # 获取schema.get_columns工具
+                        schema_tool = self.registry.get("schema.get_columns")
+                        if not schema_tool:
+                            raise ValueError("schema.get_columns工具未找到")
+
+                        # 准备工具输入
+                        schema_input = {
+                            "tables": suggested_tables,
+                            "data_source": ds,
+                            "connection_config": ds,
+                            "user_id": user_id
+                        }
+
+                        # 执行工具
+                        schema_result = await self._execute_tool_with_retry("schema.get_columns", schema_tool, schema_input)
+
+                        if schema_result.get("success") and schema_result.get("column_details"):
+                            # 成功获取字段信息，更新上下文
+                            self._update_context_state(context, schema_result, "schema.get_columns")
+                            observations.append(f"✅ 已主动获取{len(schema_result.get('column_details', {}))}张表的字段信息")
+                            self._logger.info(f"✅ [Gating主动获取] 成功获取{len(schema_result.get('column_details', {}))}张表的字段信息")
+
+                            # 继续执行SQL生成（不返回，继续往下走）
+                        else:
+                            # 获取失败，返回错误
+                            error_msg = schema_result.get("error", "未知错误")
+                            self._logger.error(f"❌ [Gating主动获取] schema.get_columns失败: {error_msg}")
+                            return {
+                                "success": False,
+                                "error": f"auto_schema_fetch_failed: {error_msg}",
+                                "context": context,
+                                "observations": observations + [f"❌ 主动获取schema失败: {error_msg}"],
+                                "execution_time": int((time.time() - step_start) * 1000)
+                            }
+                    except Exception as e:
+                        self._logger.error(f"❌ [Gating主动获取] 异常: {str(e)}")
+                        return {
+                            "success": False,
+                            "error": f"auto_schema_fetch_exception: {str(e)}",
+                            "context": context,
+                            "observations": observations + [f"❌ 主动获取schema异常: {str(e)}"],
+                            "execution_time": int((time.time() - step_start) * 1000)
+                        }
 
                 # 前置综合分析（表/列/模板/时间/占位符），指导SQL生成
                 if not context.get("pre_sql_analysis"):
@@ -347,34 +557,14 @@ class StepExecutor:
                 enriched_input = {**tool_input, **context}
 
                 # 🔧 为可能访问数据库的工具添加数据源连接配置
-                if tool_name in ("schema.list_columns", "schema.get_columns", "sql.validate", "sql.execute",
-                                 "workflow.stat_basic", "workflow.stat_ratio", "workflow.stat_category_mix") and ai.data_source:
-                    data_source_id = ai.data_source.get("data_source_id")
-                    user_id = ai.user_id
-
-                    if data_source_id and user_id:
-                        try:
-                            # 获取用户数据源配置
-                            if hasattr(self.container, 'user_data_source_service'):
-                                data_source = await self.container.user_data_source_service.get_user_data_source(
-                                    user_id=user_id,
-                                    data_source_id=data_source_id
-                                )
-
-                                if data_source and hasattr(data_source, 'connection_config'):
-                                    # 将连接配置添加到工具输入（统一使用 data_source 字段承载）
-                                    # 兼容：保留原始 ai.data_source 供上游使用
-                                    enriched_input["data_source"] = data_source.connection_config
-                                    enriched_input["connection_config"] = data_source.connection_config
-                                    self._logger.info(f"📋 [Executor] 为{tool_name}添加数据源连接配置: {data_source_id}")
-                                else:
-                                    self._logger.warning(f"📋 [Executor] 未找到数据源或连接配置: {data_source_id}")
-                            else:
-                                self._logger.warning(f"📋 [Executor] user_data_source_service不可用，无法获取连接配置")
-                        except Exception as e:
-                            self._logger.error(f"📋 [Executor] 获取数据源连接配置失败: {e}")
-                    else:
-                        self._logger.debug(f"📋 [Executor] 缺少data_source_id或user_id，跳过连接配置获取")
+                if tool_name in ("schema.list_tables", "schema.list_columns", "schema.get_columns", "sql.validate", "sql.execute",
+                                 "workflow.stat_basic", "workflow.stat_ratio", "workflow.stat_category_mix"):
+                    # 使用统一的数据源加载方法
+                    tool_ds = await self._load_data_source_config(ai, user_id, enriched_input.get("data_source"))
+                    if tool_ds:
+                        enriched_input["data_source"] = tool_ds
+                        enriched_input["connection_config"] = tool_ds
+                        self._logger.info(f"📋 [Executor] 为{tool_name}添加数据源连接配置")
 
                 # 🚨 额外保护：检查工具输入中的SQL字段是否为描述性文本
                 for sql_field in ["current_sql", "sql"]:
@@ -398,13 +588,21 @@ class StepExecutor:
                                         "observations": observations + [f"❌ {tool_name}.{sql_field} 参数错误"]
                                     }
 
-                # 智能补全 - 选择目标表：
-                # - 当调用 schema.list_columns 或 schema.get_columns 且未显式传入 tables 时，
-                #   基于占位符与已发现表名自动选择目标表
+                # ⚠️ 表选择逻辑（遵循PTAV原则）：
+                # - 优先使用Plan阶段Agent明确指定的tables参数
+                # - 只有当Plan未指定tables时，才使用兜底策略智能选择
+                # - 表选择应该是Plan阶段的决策责任，Tool只负责执行
                 if tool_name in ("schema.list_columns", "schema.get_columns"):
                     try:
                         tables_input = enriched_input.get("tables") or []
+                        if tables_input:
+                            # Plan阶段已明确指定tables - 这是正确的PTAV架构
+                            self._logger.info(f"✅ [PTAV-Tool] 使用Plan指定的tables: {tables_input}")
                         if not tables_input:
+                            # ⚠️ 兜底策略：Plan阶段未指定tables，Tool阶段被迫智能选择
+                            # 这不是最佳实践，应该在Plan提示词中强调Agent必须明确指定tables
+                            self._logger.warning(f"⚠️ [PTAV-违规] Plan未指定tables，Tool阶段被迫使用兜底策略智能选择")
+
                             candidates = []
                             # 已在上下文中的表名（第一步发现）
                             if isinstance(context.get("tables"), list):
@@ -454,7 +652,7 @@ class StepExecutor:
 
                             if selected:
                                 enriched_input["tables"] = selected
-                                self._logger.info(f"🧭 [Schema批次选择] 选择表: {selected}")
+                                self._logger.info(f"🔧 [兜底策略] 自动选择表: {selected} (建议在Plan阶段明确指定)")
                     except Exception:
                         pass
 
@@ -564,11 +762,17 @@ class StepExecutor:
         except Exception as e:
             step_duration = int((time.time() - step_start) * 1000)
             error_msg = f"执行异常: {str(e)}"
+
+            # 添加详细的错误堆栈信息
+            import traceback
+            error_traceback = traceback.format_exc()
             self._logger.error(f"🚨 [执行异常] {error_msg}")
+            self._logger.error(f"🔍 [错误堆栈]\n{error_traceback}")
 
             return {
                 "success": False,
                 "error": f"execution_exception: {str(e)}",
+                "error_traceback": error_traceback,
                 "context": context,
                 "observations": [f"❌ 执行异常: {error_msg} ({step_duration}ms)"],
                 "execution_time": step_duration
@@ -578,7 +782,15 @@ class StepExecutor:
         """构建SQL生成的完整提示词（JSON输出）"""
 
         # 提取上下文信息
-        placeholder_desc = step_input.get("placeholder", {}).get("description", "")
+        # 🔧 修复：placeholder 可能是字符串或字典
+        placeholder_val = step_input.get("placeholder", {})
+        if isinstance(placeholder_val, dict):
+            placeholder_desc = placeholder_val.get("description", "")
+        elif isinstance(placeholder_val, str):
+            placeholder_desc = placeholder_val
+        else:
+            placeholder_desc = ""
+
         if not placeholder_desc:
             placeholder_desc = context.get("placeholder_description", "")
 
@@ -625,18 +837,38 @@ class StepExecutor:
         if not schema_summary:
             tables = context.get("tables") or []
             columns = context.get("columns") or {}
+            column_details = context.get("column_details") or {}
 
             if tables:
                 preview = ", ".join(tables[:15]) + ("..." if len(tables) > 15 else "")
                 schema_summary = f"可用数据表(部分): {preview}"
 
-                # 如果有列信息，添加到schema摘要中
-                if isinstance(columns, dict) and columns:
+                # 🔧 关键修复：优先使用column_details提供完整字段信息
+                if isinstance(column_details, dict) and column_details:
+                    schema_details = []
+                    for table, cols_data in column_details.items():
+                        if isinstance(cols_data, dict):
+                            # 显示所有字段，带类型和注释
+                            field_descs = []
+                            for field_name, field_info in cols_data.items():
+                                desc = field_name
+                                if field_info.get("type"):
+                                    desc += f"({field_info['type']})"
+                                if field_info.get("comment"):
+                                    desc += f" - {field_info['comment']}"
+                                field_descs.append(desc)
+                            fields_text = "\n    ".join(field_descs)
+                            schema_details.append(f"**{table}** ({len(cols_data)}列):\n    {fields_text}")
+                    if schema_details:
+                        schema_summary += "\n\n详细表结构（所有字段）:\n" + "\n".join(schema_details)
+                # 回退：如果没有column_details，使用columns但显示所有字段
+                elif isinstance(columns, dict) and columns:
                     schema_details = []
                     for table, cols in columns.items():
                         if isinstance(cols, list) and cols:
-                            cols_preview = ", ".join(cols[:10]) + ("..." if len(cols) > 10 else "")
-                            schema_details.append(f"**{table}** ({len(cols)}列): {cols_preview}")
+                            # 🔧 关键修复：显示所有列，不再限制为10个
+                            cols_all = ", ".join(cols)
+                            schema_details.append(f"**{table}** ({len(cols)}列): {cols_all}")
                     if schema_details:
                         schema_summary += "\n\n详细表结构:\n" + "\n".join(schema_details)
 
@@ -857,6 +1089,106 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
                 break
 
         return last_result or {"success": False, "error": "unknown_error"}
+
+    def _extract_tables_from_sql(self, sql: str) -> List[str]:
+        """使用sqlparse从SQL语句中提取表名（更准确，支持复杂SQL）
+
+        Args:
+            sql: SQL语句
+
+        Returns:
+            List[str]: 提取到的表名列表
+        """
+        try:
+            import sqlparse
+            from sqlparse.sql import IdentifierList, Identifier
+            from sqlparse.tokens import Keyword, DML
+
+            if not sql or not isinstance(sql, str):
+                return []
+
+            tables = []
+
+            # 解析SQL
+            parsed = sqlparse.parse(sql)
+            if not parsed:
+                return []
+
+            stmt = parsed[0]
+
+            from_seen = False
+            for token in stmt.tokens:
+                # 跳过注释和空白
+                if token.is_whitespace:
+                    continue
+
+                # 找到FROM/JOIN关键字
+                if token.ttype is Keyword and token.value.upper() in ('FROM', 'JOIN', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN'):
+                    from_seen = True
+                    continue
+
+                # FROM之后的标识符就是表名
+                if from_seen:
+                    if isinstance(token, IdentifierList):
+                        # 多个表名（逗号分隔）
+                        for identifier in token.get_identifiers():
+                            table_name = self._get_real_name(identifier)
+                            if table_name:
+                                tables.append(table_name)
+                        from_seen = False
+                    elif isinstance(token, Identifier):
+                        # 单个表名
+                        table_name = self._get_real_name(token)
+                        if table_name:
+                            tables.append(table_name)
+                        from_seen = False
+                    elif token.ttype is Keyword:
+                        # 遇到下一个关键字，停止
+                        from_seen = False
+
+            # 去重并保持顺序
+            seen = set()
+            unique_tables = []
+            for t in tables:
+                if t and t not in seen:
+                    unique_tables.append(t)
+                    seen.add(t)
+
+            return unique_tables
+
+        except Exception as e:
+            self._logger.debug(f"sqlparse提取表名失败: {e}，回退到正则表达式")
+            # 回退到简单正则表达式
+            try:
+                import re
+                matches = re.findall(r'\bFROM\s+(\w+)|\bJOIN\s+(\w+)', sql, re.IGNORECASE)
+                tables = []
+                for match in matches:
+                    for t in match:
+                        if t:
+                            tables.append(t)
+                return tables
+            except Exception:
+                return []
+
+    def _get_real_name(self, identifier) -> str:
+        """从sqlparse的Identifier中提取真实表名（去掉别名）
+
+        Args:
+            identifier: sqlparse的Identifier对象
+
+        Returns:
+            str: 真实表名
+        """
+        try:
+            # 获取真实名称（去掉别名）
+            name = identifier.get_real_name()
+            if name:
+                return name
+            # 如果没有real_name，使用第一个token
+            return identifier.get_name()
+        except Exception:
+            return str(identifier).strip().split()[0] if identifier else ""
 
     def _infer_table_keywords(self, description: str) -> List[str]:
         """从占位符描述中推断用于匹配表名的关键词。"""
@@ -1110,8 +1442,14 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
                 self._logger.info(f"📋 [Executor] 存储schema.list_columns详细字段信息: {len(result['column_details'])}张表")
 
         elif tool_name == "schema.get_columns":
+            # 🔍 [调试1] schema.get_columns工具返回值检查
             self._logger.info(f"📋 [Executor] 处理schema.get_columns结果: success={result.get('success')}")
             self._logger.info(f"📋 [Executor] 结果包含的键: {list(result.keys()) if isinstance(result, dict) else 'Not dict'}")
+            self._logger.info(f"📋 [调试1] column_details是否存在: {bool(result.get('column_details'))}")
+            if result.get('column_details'):
+                self._logger.info(f"📋 [调试1] column_details类型: {type(result['column_details'])}")
+                self._logger.info(f"📋 [调试1] column_details表数量: {len(result['column_details'])}")
+                self._logger.info(f"📋 [调试1] column_details表名: {list(result['column_details'].keys())}")
 
             if result.get("schema_summary"):
                 context["schema_summary"] = result["schema_summary"]
@@ -1127,6 +1465,10 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
                     first_table = list(result['column_details'].keys())[0]
                     first_columns = result['column_details'][first_table]
                     self._logger.info(f"📋 [Executor] 样例表{first_table}的字段: {list(first_columns.keys())}")
+                # 🔍 [调试1] 确认column_details已存入context
+                self._logger.info(f"📋 [调试1] 确认context.column_details已设置: {bool(context.get('column_details'))}")
+                if context.get('column_details'):
+                    self._logger.info(f"📋 [调试1] context.column_details表名: {list(context['column_details'].keys())}")
             # 不再硬编码推荐时间列，让Agent通过查看实际数据来智能判断
             # Agent比我们的算法聪明，直接查5行数据就知道哪个是时间字段了
             try:
@@ -1177,6 +1519,46 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
         elif tool_name == "word_chart_generator":
             if result.get("chart_image_path"):
                 context["chart_image_path"] = result["chart_image_path"]
+
+        # 🗄️ [ResourcePool模式] 同步重要状态到ResourcePool
+        # 如果启用了ResourcePool，同步关键状态变更
+        try:
+            resource_pool = context.get("_resource_pool")
+            if resource_pool:
+                # 收集需要同步的状态
+                updates_to_sync = {}
+
+                # 1. 同步 column_details
+                if result.get("column_details"):
+                    updates_to_sync["column_details"] = result["column_details"]
+
+                # 2. 同步 current_sql（如果context中有）
+                if context.get("current_sql"):
+                    updates_to_sync["current_sql"] = context["current_sql"]
+
+                # 3. 同步执行状态
+                if context.get("sql_executed_successfully"):
+                    updates_to_sync["sql_executed_successfully"] = True
+
+                # 执行同步
+                if updates_to_sync:
+                    resource_pool.update(updates_to_sync)
+                    self._logger.info(
+                        f"🗄️ [_update_context_state] 已同步到ResourcePool: "
+                        f"{', '.join(updates_to_sync.keys())}"
+                    )
+
+                    # 🔄 同步更新ContextMemory（保持状态一致）
+                    context_memory = resource_pool.build_context_memory()
+                    context["context_memory"] = context_memory
+                    self._logger.info(
+                        f"🔄 [_update_context_state] 已更新ContextMemory: "
+                        f"has_sql={context_memory.has_sql}, "
+                        f"schema_available={context_memory.schema_available}, "
+                        f"tables={len(context_memory.available_tables)}"
+                    )
+        except Exception as e:
+            self._logger.error(f"❌ [_update_context_state] 同步到ResourcePool失败: {e}")
 
     def _build_decision_info(self, result: Dict[str, Any], step: Dict[str, Any]) -> Dict[str, Any]:
         """构建Agent决策支持信息"""
@@ -1399,38 +1781,99 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
                 er["row_count"] = er.get("row_count", len(rows))
             context["execution_result"] = er
 
-        # column_details 仅保留命中的表且限制每表列数
-        if isinstance(context.get("column_details"), dict):
+        # 🗄️ [ResourcePool模式] 不要在context中保留column_details
+        # column_details应该只存在于ResourcePool中，从那里按需提取
+        # 保持context轻量，避免token消耗
+        # 注意：这里检查是否存在 _resource_pool 或 context_memory 来判断是否启用ResourcePool模式
+        resource_pool_enabled = bool(context.get("_resource_pool") or context.get("context_memory"))
+
+        if resource_pool_enabled and "column_details" in context:
+            # ResourcePool模式：删除column_details，让它只存在于ResourcePool中
+            column_details_count = len(context.get("column_details", {}))
+            context.pop("column_details", None)
+            self._logger.info(
+                f"🗄️ [_reduce_context] ResourcePool模式：移除context中的column_details "
+                f"({column_details_count}张表，已存储在ResourcePool中）"
+            )
+        elif isinstance(context.get("column_details"), dict):
+            # 传统模式：保留并裁剪column_details
             details = context["column_details"]
-            selected_tables = []
-            # 从 result 或 context 中推断命中的表
+            # 🔍 [调试2] _reduce_context开始处理column_details
+            self._logger.info(f"🔍 [_reduce_context开始] 当前column_details: {len(details)}张表 - {list(details.keys())}")
+            selected_tables = set()
+
+            # 从多个来源收集需要保留的表
+            # 1. 从 result 中获取当前工具返回的表
             if isinstance(result, dict):
                 if isinstance(result.get("tables"), list):
-                    selected_tables = result.get("tables")
+                    selected_tables.update(result.get("tables"))
+
+            # 2. 从 context.selected_tables 获取已选中的表
+            if isinstance(context.get("selected_tables"), list):
+                selected_tables.update(context.get("selected_tables"))
+
+            # 3. 从 context.tables 获取前5个表作为备选
             if not selected_tables and isinstance(context.get("tables"), list):
-                selected_tables = context.get("tables")[:3]
+                selected_tables.update(context.get("tables")[:5])
+
+            # 4. 如果当前SQL中引用了某些表，也保留这些表
+            try:
+                current_sql = context.get("current_sql", "")
+                if current_sql:
+                    # 使用sqlparse从SQL中提取表名（更准确）
+                    sql_tables = self._extract_tables_from_sql(current_sql)
+                    for t in sql_tables:
+                        if t in details:
+                            selected_tables.add(t)
+            except Exception:
+                pass
+
+            # 🔧 修复：如果仍然没有选中表，保留 column_details 中已有的所有表
+            # 避免误删已获取的字段信息（特别是在 sql_generation 等不返回 tables 的动作后）
+            if not selected_tables:
+                selected_tables.update(details.keys())
+                self._logger.debug(f"🔍 [_reduce_context] 未找到指定表，保留column_details中的所有表: {list(selected_tables)}")
 
             new_details = {}
             for t in selected_tables:
                 cols = details.get(t)
                 if isinstance(cols, dict):
-                    # 每表最多保留20列的元信息
+                    # 每表最多保留100列的元信息
                     limited = {}
                     for i, (col, meta) in enumerate(cols.items()):
-                        if i >= 20:
+                        if i >= 100:
                             break
                         limited[col] = meta
                     new_details[t] = limited
+
+            # 🔧 关键修复：只要有column_details，就保留它
+            # PTAV循环需要在多轮迭代中持续访问column_details
+            # 不能因为某一轮（如sql_generation）不返回tables就删除它
             if new_details:
                 context["column_details"] = new_details
+                self._logger.debug(f"🔍 [_reduce_context] 保留column_details: {len(new_details)}张表 - {list(new_details.keys())}")
+                # 🔍 [调试2] _reduce_context结束 - 保留new_details
+                self._logger.info(f"🔍 [_reduce_context结束] 保留new_details: {len(new_details)}张表 - {list(new_details.keys())}")
+            elif details:
+                # 即使new_details为空，如果原始details存在，也保留它
+                # 这确保column_details在整个PTAV循环中持久存在
+                context["column_details"] = details
+                self._logger.debug(f"🔍 [_reduce_context] 保留原始column_details（未裁剪）: {len(details)}张表")
+                # 🔍 [调试2] _reduce_context结束 - 保留原始details
+                self._logger.info(f"🔍 [_reduce_context结束] 保留原始details: {len(details)}张表 - {list(details.keys())}")
             else:
-                # 无命中则删除，避免过大
-                context.pop("column_details", None)
+                # 🔍 [调试2] _reduce_context结束 - column_details被清空
+                self._logger.warning(f"❌ [_reduce_context结束] column_details被清空！")
 
         # 删除不必要的临时/大型键
         for k in ["agent_analysis", "llm_raw", "schema_scan_offset", "sql_generation_candidates"]:
             if k in context:
                 context.pop(k, None)
+
+        # 🗄️ [ResourcePool模式] 将 _resource_pool 重命名为 resource_pool（供 Orchestrator 使用）
+        if "_resource_pool" in context:
+            context["resource_pool"] = context.pop("_resource_pool")
+            self._logger.debug("🗄️ [_reduce_context] 已恢复resource_pool引用供Orchestrator使用")
 
         # 严格保留白名单（避免误删已有关键键）
         keys = list(context.keys())

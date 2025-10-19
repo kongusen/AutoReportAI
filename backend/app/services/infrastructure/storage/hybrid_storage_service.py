@@ -159,34 +159,49 @@ class HybridStorageService:
             logger.error(f"upload_with_key failed: {e}")
             raise
     
+    def _normalize_path(self, file_path: str) -> str:
+        """标准化文件路径 - 去掉minio://前缀"""
+        if file_path.startswith("minio://"):
+            return file_path[8:]  # 去掉 "minio://" 前缀
+        return file_path
+
     def file_exists(self, file_path: str) -> bool:
         """检查文件是否存在"""
         try:
-            return self.storage_service.file_exists(file_path)
+            normalized_path = self._normalize_path(file_path)
+            return self.storage_service.file_exists(normalized_path)
         except Exception:
-            return self.fallback_service.file_exists(file_path)
-    
+            normalized_path = self._normalize_path(file_path)
+            return self.fallback_service.file_exists(normalized_path)
+
     def download_file(self, file_path: str) -> Tuple[bytes, str]:
         """下载文件"""
         try:
-            return self.storage_service.download_file(file_path)
+            normalized_path = self._normalize_path(file_path)
+            logger.info(f"下载文件: {file_path} -> 标准化路径: {normalized_path}")
+            return self.storage_service.download_file(normalized_path)
         except Exception as e:
             logger.warning(f"{self.backend_type}下载失败，使用本地存储: {e}")
-            return self.fallback_service.download_file(file_path)
+            normalized_path = self._normalize_path(file_path)
+            return self.fallback_service.download_file(normalized_path)
     
     def get_download_url(self, file_path: str, expires: int = 3600) -> str:
         """获取文件下载URL"""
         try:
-            return self.storage_service.get_download_url(file_path, expires)
+            normalized_path = self._normalize_path(file_path)
+            return self.storage_service.get_download_url(normalized_path, expires)
         except Exception:
-            return self.fallback_service.get_download_url(file_path, expires)
-    
+            normalized_path = self._normalize_path(file_path)
+            return self.fallback_service.get_download_url(normalized_path, expires)
+
     def delete_file(self, file_path: str) -> bool:
         """删除文件"""
         try:
-            return self.storage_service.delete_file(file_path)
+            normalized_path = self._normalize_path(file_path)
+            return self.storage_service.delete_file(normalized_path)
         except Exception:
-            return self.fallback_service.delete_file(file_path)
+            normalized_path = self._normalize_path(file_path)
+            return self.fallback_service.delete_file(normalized_path)
     
     def list_files(self, file_type: str = "", limit: int = 100) -> List[Dict[str, Any]]:
         """列出文件"""

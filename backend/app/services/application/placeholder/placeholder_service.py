@@ -12,7 +12,7 @@ from datetime import datetime
 
 # 业务层导入
 from app.services.domain.placeholder.types import (
-    PlaceholderType, ChartType, 
+    PlaceholderType, ChartType,
     PlaceholderInfo, PlaceholderAnalysisRequest, PlaceholderUpdateRequest, PlaceholderCompletionRequest,
     SQLGenerationResult, PlaceholderUpdateResult, PlaceholderCompletionResult, ChartGenerationResult,
     PlaceholderAgent
@@ -91,7 +91,7 @@ class PlaceholderApplicationService:
 
         try:
             # 1. 构建Agent输入
-            from app.services.infrastructure.agents.types import AgentInput, PlaceholderInfo, SchemaInfo, TaskContext
+            from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext
 
             # 提取数据源信息构建Schema
             schema_info = SchemaInfo()
@@ -103,10 +103,21 @@ class PlaceholderApplicationService:
                 schema_info.password = request.data_source_info.get('password')
 
             # 构建占位符信息
-            placeholder_info = PlaceholderInfo(
+            placeholder_info = PlaceholderSpec(
                 description=f"{request.business_command} - {request.requirements}",
                 type="placeholder_analysis"
             )
+
+            # 构建数据源配置 - 确保包含ID让executor能加载完整配置
+            data_source_config = None
+            if request.data_source_info:
+                # 如果有ID，传递ID让executor加载完整配置
+                ds_id = request.data_source_info.get('id') or request.data_source_info.get('data_source_id')
+                if ds_id:
+                    data_source_config = {"data_source_id": str(ds_id), "id": str(ds_id)}
+                else:
+                    # 否则直接使用提供的配置
+                    data_source_config = request.data_source_info
 
             agent_input = AgentInput(
                 user_prompt=f"占位符分析: {request.business_command}\n需求: {request.requirements}\n目标: {request.target_objective}",
@@ -116,6 +127,7 @@ class PlaceholderApplicationService:
                     task_time=int(datetime.now().timestamp()),
                     timezone="Asia/Shanghai"
                 ),
+                data_source=data_source_config,
                 task_driven_context={
                     "placeholder_id": request.placeholder_id,
                     "business_command": request.business_command,
@@ -124,7 +136,8 @@ class PlaceholderApplicationService:
                     "context": request.context,
                     "data_source_info": request.data_source_info,
                     "analysis_type": "placeholder_service"
-                }
+                },
+                user_id=self.user_id  # 🔧 添加 user_id
             )
 
             yield {
@@ -590,20 +603,37 @@ class PlaceholderApplicationService:
         data_source_id: str,
         task_objective: str,
         success_criteria: Dict[str, Any],
-        db
+        db,
+        task_context: Optional[Dict[str, Any]] = None  # 👈 新增：任务上下文参数
     ) -> Dict[str, Any]:
-        """使用Agent生成占位符的SQL"""
+        """
+        使用Agent生成占位符的SQL
+
+        Args:
+            placeholder: 占位符对象
+            data_source_id: 数据源ID
+            task_objective: 任务目标
+            success_criteria: 成功标准
+            db: 数据库会话
+            task_context: 任务上下文（可选）
+                - 单占位符API：None（使用默认值）
+                - 任务中多占位符：真实的任务信息
+        """
         try:
+            # 👇 构建增强的 context（统一处理逻辑）
+            context = self._build_unified_context(
+                placeholder=placeholder,
+                data_source_id=data_source_id,
+                success_criteria=success_criteria,
+                task_context=task_context
+            )
+
             # 构建Agent输入
             agent_request = PlaceholderAnalysisRequest(
                 placeholder_id=str(placeholder.id),
                 business_command=placeholder.placeholder_text,
                 requirements=placeholder.description or task_objective,
-                context={
-                    "data_source_id": data_source_id,
-                    "placeholder_type": placeholder.placeholder_type,
-                    "content_type": placeholder.content_type
-                },
+                context=context,  # 👈 使用统一构建的 context
                 target_objective=task_objective,
                 data_source_info=await self._get_data_source_info(data_source_id)
             )
@@ -638,6 +668,93 @@ class PlaceholderApplicationService:
                 "success": False,
                 "error": str(e)
             }
+
+    def _build_unified_context(
+        self,
+        placeholder,
+        data_source_id: str,
+        success_criteria: Dict[str, Any],
+        task_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        构建统一的 context（区分真实值 vs 默认值）
+
+        Args:
+            placeholder: 占位符对象
+            data_source_id: 数据源ID
+            success_criteria: 成功标准
+            task_context: 任务上下文（可选）
+                - None：单占位符API场景，使用默认值
+                - Dict：任务场景，使用真实值
+
+        Returns:
+            统一的 context 字典
+        """
+        # 🔹 基础字段（两种场景都有）
+        context = {
+            "data_source_id": data_source_id,
+            "placeholder_type": placeholder.placeholder_type,
+            "content_type": placeholder.content_type,
+        }
+
+        # 🔹 从 success_criteria 提取信息
+        context["required_fields"] = success_criteria.get("required_fields", [])
+        context["quality_threshold"] = success_criteria.get("quality_threshold", 0.6)
+
+        # 🔹 从 placeholder 对象提取更多信息
+        context["execution_order"] = getattr(placeholder, "execution_order", 0)
+        context["is_required"] = getattr(placeholder, "is_required", True)
+        context["confidence_score"] = getattr(placeholder, "confidence_score", 0.0)
+
+        # 提取解析元数据
+        parsing_metadata = getattr(placeholder, "parsing_metadata", None)
+        if isinstance(parsing_metadata, dict):
+            context["parsing_metadata"] = parsing_metadata
+
+        # 🔹 任务上下文处理（区分真实值 vs 默认值）
+        if task_context:
+            # ✅ 任务场景：使用真实的任务信息
+            logger.info(f"📦 使用真实任务上下文: task_id={task_context.get('task_id')}")
+
+            context["template_id"] = task_context.get("template_id")
+            context["task_id"] = task_context.get("task_id")
+            context["task_name"] = task_context.get("task_name")
+            context["report_period"] = task_context.get("report_period")
+
+            # 时间信息（真实值）
+            context["schedule"] = task_context.get("schedule")  # 真实 cron 表达式
+            context["time_window"] = task_context.get("time_window")  # 真实时间窗口
+            context["time_context"] = task_context.get("time_context")  # 完整时间上下文
+
+            # 执行上下文（真实值）
+            context["execution_trigger"] = task_context.get("execution_trigger", "scheduled")
+            context["execution_id"] = task_context.get("execution_id")
+
+        else:
+            # ⚠️ API场景：构造默认值
+            logger.info("📦 使用默认上下文（单占位符API场景）")
+
+            context["template_id"] = str(placeholder.template_id) if hasattr(placeholder, "template_id") else None
+            context["execution_trigger"] = "manual"  # API 手动触发
+
+            # 时间信息（默认值）
+            from datetime import datetime
+            from app.utils.time_context import TimeContextManager
+
+            # 构造默认的时间上下文（每天 9点，查询昨天的数据）
+            default_cron = "0 9 * * *"
+            time_manager = TimeContextManager()
+            default_time_ctx = time_manager.build_task_time_context(default_cron, datetime.now())
+
+            context["schedule"] = default_cron  # 默认 cron
+            context["time_window"] = {
+                "start": f"{default_time_ctx.get('data_start_time')} 00:00:00",
+                "end": f"{default_time_ctx.get('data_end_time')} 23:59:59"
+            }
+            context["time_context"] = default_time_ctx
+            logger.info(f"🕒 使用默认时间窗口: {context['time_window']}")
+
+        return context
 
     async def _get_data_source_info(self, data_source_id: str) -> Dict[str, Any]:
         """获取数据源信息"""

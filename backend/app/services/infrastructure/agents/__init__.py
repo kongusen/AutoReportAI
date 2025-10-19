@@ -77,9 +77,9 @@ async def execute_agent_task(
                               additional_data.get('current_sql') or
                               additional_data.get('template_sql'))
 
-            # 构建PlaceholderInfo
-            from .types import PlaceholderInfo
-            placeholder_info = PlaceholderInfo(
+            # 构建PlaceholderSpec
+            from .types import PlaceholderSpec
+            placeholder_info = PlaceholderSpec(
                 description=task_description or task_name or "Agent任务",
                 type=all_context.get("task_type", "general")
             )

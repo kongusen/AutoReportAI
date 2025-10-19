@@ -63,7 +63,9 @@ class AgentPlanner:
             if not llm_service:
                 raise ValueError("LLM service not found in container")
 
-            user_id = ai.user_id or auth_manager.get_current_user_id() or "system"
+            user_id = ai.user_id or auth_manager.get_current_user_id()
+            if not user_id:
+                self._logger.warning("⚠️ [Planner] 未提供user_id，将使用全局模型配置")
 
             # 使用策略管理器构建plan阶段的LLM策略
             plan_llm_policy = llm_strategy_manager.build_llm_policy(

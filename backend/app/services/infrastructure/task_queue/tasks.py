@@ -277,9 +277,18 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             update_progress(30, f"正在逐个分析 {len(placeholders_need_analysis)} 个占位符...")
 
             async def _process_placeholders_individually():
-                """单个循环处理占位符，确保质量稳定"""
+                """
+                单个循环处理占位符 + 批量持久化（方案1优化）
+
+                优化策略:
+                - 保持串行处理确保质量稳定
+                - 每5个占位符批量提交一次，减少数据库压力
+                - 支持断点续传（定期保存进度）
+                """
                 processed_count = 0
                 total_count = len(placeholders_need_analysis)
+                batch_updates = []  # 👈 收集批量更新
+                BATCH_SIZE = 5  # 👈 批量大小配置
 
                 for ph in placeholders_need_analysis:
                     try:
@@ -288,22 +297,36 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})"
                         )
 
+                        # 👇 构建真实的任务上下文
+                        real_task_context = {
+                            "task_id": task_id,
+                            "task_name": task.name,
+                            "template_id": str(task.template_id),
+                            "report_period": task.report_period.value if task.report_period else "monthly",
+                            "schedule": task.schedule,  # 真实 cron 表达式
+                            "time_window": time_window,  # 真实时间窗口
+                            "time_context": time_ctx,  # 完整时间上下文
+                            "execution_trigger": execution_context.get("trigger", "scheduled") if execution_context else "scheduled",
+                            "execution_id": str(task_execution.execution_id),
+                        }
+
                         # 使用PlaceholderApplicationService的单个处理方法
                         sql_result = await system._generate_sql_with_agent(
                             placeholder=ph,
                             data_source_id=str(task.data_source_id),
                             task_objective=f"为占位符 {ph.placeholder_name} 生成SQL",
                             success_criteria=success_criteria,
-                            db=db
+                            db=db,
+                            task_context=real_task_context  # 👈 传递真实的任务上下文
                         )
 
                         if sql_result.get("success"):
-                            # 更新占位符SQL
+                            # 👇 更新占位符SQL（不立即提交）
                             ph.generated_sql = sql_result["sql"]
                             ph.sql_validated = True
                             ph.agent_analyzed = True
                             ph.analyzed_at = datetime.utcnow()
-                            db.commit()
+                            batch_updates.append(ph)  # 👈 添加到批次
 
                             events.append({
                                 "type": "placeholder_sql_generated",
@@ -313,7 +336,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 "timestamp": datetime.utcnow().isoformat()
                             })
 
-                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功")
+                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功 (批次: {len(batch_updates)}/{BATCH_SIZE})")
+
+                            # 👇 达到批量大小时提交
+                            if len(batch_updates) >= BATCH_SIZE:
+                                db.commit()
+                                logger.info(f"📦 批量提交 {len(batch_updates)} 个占位符到数据库")
+                                batch_updates.clear()
+
                         else:
                             error_msg = sql_result.get("error", "SQL生成失败")
                             logger.error(f"❌ 占位符 {ph.placeholder_name} SQL生成失败: {error_msg}")
@@ -335,6 +365,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         })
 
                     processed_count += 1
+
+                # 👇 提交剩余的占位符
+                if batch_updates:
+                    db.commit()
+                    logger.info(f"📦 最终批量提交 {len(batch_updates)} 个占位符到数据库")
+                    batch_updates.clear()
 
                 return processed_count
 
@@ -451,8 +487,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
         # 8. 生成文档（使用模板 + doc_assembler）
         update_progress(87, "正在生成报告文档...")
+        tpl_meta = None  # 初始化模板元数据，用于后续清理
         try:
-            from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path
+            from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path, cleanup_template_temp_dir
             from app.services.infrastructure.agents.tools.doc_assembler import DocAssemblerTool
             from io import BytesIO
             from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
@@ -550,6 +587,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         execution_result["report"] = {"error": "传统模式生成失败", "generation_mode": "traditional_upload"}
         except Exception as e:
             logger.error(f"Document assembly failed: {e}")
+        finally:
+            # 清理模板临时文件
+            if tpl_meta:
+                try:
+                    cleanup_template_temp_dir(tpl_meta)
+                    logger.info("✅ 模板临时文件已清理")
+                except Exception as cleanup_error:
+                    logger.warning(f"清理模板临时文件失败: {cleanup_error}")
         
         # 7. 更新执行结果
         task_execution.execution_status = TaskStatus.COMPLETED

@@ -785,65 +785,55 @@ rebuild_services() {
     echo -e "${YELLOW}${PACKAGE} 重建并重启服务 (代码更新后)${NC}"
     echo -e "${CYAN}选择要重建的服务:${NC}"
     echo "1) 重建所有服务 (完整重建)"
-    echo "2) 重建后端服务 (API + Worker + Beat)"
+    echo "2) 重建后端服务 (Backend + Worker)"
     echo "3) 重建前端服务 (Next.js)"
-    echo "4) 重建并重启所有服务"
+    echo "4) 快速重建后端 (推荐，使用缓存)"
     echo ""
     read -p "请选择 (1-4): " rebuild_choice
-    
+
     local compose_cmd=$(get_docker_compose_cmd)
     if [ -z "$compose_cmd" ]; then
         echo -e "${RED}${CROSS} Docker Compose 未找到${NC}"
         return 1
     fi
-    
+
     # 确定使用的compose文件
     local compose_file_arg=""
     if [ -n "$COMPOSE_FILE" ] && [ "$COMPOSE_FILE" != "docker-compose.yml" ]; then
         compose_file_arg="-f $COMPOSE_FILE"
     fi
-    
+
     case $rebuild_choice in
         1)
-            echo -e "${YELLOW}停止所有服务...${NC}"
-            eval "$compose_cmd $compose_file_arg down"
-            echo -e "${YELLOW}重建所有镜像...${NC}"
-            eval "$compose_cmd $compose_file_arg build --no-cache"
-            echo -e "${GREEN}启动所有服务...${NC}"
-            eval "$compose_cmd $compose_file_arg up -d"
+            echo -e "${YELLOW}重建所有服务 (使用 --build --force-recreate)...${NC}"
+            eval "$compose_cmd $compose_file_arg up -d --build --force-recreate"
             ;;
         2)
-            echo -e "${YELLOW}停止后端服务...${NC}"
-            eval "$compose_cmd $compose_file_arg stop backend celery-worker celery-beat"
-            echo -e "${YELLOW}重建后端镜像...${NC}"
-            eval "$compose_cmd $compose_file_arg build --no-cache backend"
-            echo -e "${GREEN}启动后端服务...${NC}"
-            eval "$compose_cmd $compose_file_arg up -d backend celery-worker celery-beat"
+            echo -e "${YELLOW}重建后端服务 (无缓存)...${NC}"
+            echo -e "${CYAN}步骤 1/4: 停止服务${NC}"
+            eval "$compose_cmd $compose_file_arg stop backend celery-worker"
+            echo -e "${CYAN}步骤 2/4: 删除容器${NC}"
+            eval "$compose_cmd $compose_file_arg rm -f backend celery-worker"
+            echo -e "${CYAN}步骤 3/4: 重建镜像 (--no-cache)${NC}"
+            eval "$compose_cmd $compose_file_arg build --no-cache backend celery-worker"
+            echo -e "${CYAN}步骤 4/4: 启动服务${NC}"
+            eval "$compose_cmd $compose_file_arg up -d backend celery-worker"
             ;;
         3)
-            echo -e "${YELLOW}停止前端服务...${NC}"
-            eval "$compose_cmd $compose_file_arg stop frontend"
-            echo -e "${YELLOW}重建前端镜像...${NC}"
-            eval "$compose_cmd $compose_file_arg build --no-cache frontend"
-            echo -e "${GREEN}启动前端服务...${NC}"
-            eval "$compose_cmd $compose_file_arg up -d frontend"
+            echo -e "${YELLOW}重建前端服务 (使用 --build --force-recreate)...${NC}"
+            eval "$compose_cmd $compose_file_arg up -d --build --force-recreate frontend"
             ;;
         4)
-            echo -e "${YELLOW}停止所有服务...${NC}"
-            eval "$compose_cmd $compose_file_arg down"
-            echo -e "${YELLOW}清理旧镜像...${NC}"
-            eval "$compose_cmd $compose_file_arg build --no-cache"
-            echo -e "${YELLOW}清理未使用的镜像...${NC}"
-            docker image prune -f
-            echo -e "${GREEN}启动所有服务...${NC}"
-            eval "$compose_cmd $compose_file_arg up -d"
+            echo -e "${YELLOW}快速重建后端服务 (使用 --build --force-recreate)...${NC}"
+            echo -e "${CYAN}这将使用Docker缓存加速构建，适合代码小改动${NC}"
+            eval "$compose_cmd $compose_file_arg up -d --build --force-recreate backend celery-worker"
             ;;
         *)
             echo -e "${RED}无效选择${NC}"
             return
             ;;
     esac
-    
+
     echo -e "${GREEN}${CHECKMARK} 重建完成${NC}"
     echo ""
     show_services_status

@@ -28,6 +28,7 @@ from .context_prompt_controller import ContextPromptController
 from .executor import StepExecutor
 from .auth_context import auth_manager
 from .config_context import config_manager
+from .resource_pool import ResourcePool, ContextMemory
 from .llm_strategy_manager import llm_strategy_manager
 
 
@@ -140,7 +141,9 @@ class UnifiedOrchestrator:
                 raise ValueError("LLM service not found in container")
 
             # 调用LLM生成最终决策
-            user_id = ai.user_id or auth_manager.get_current_user_id() or "system"
+            user_id = ai.user_id or auth_manager.get_current_user_id()
+            if not user_id:
+                self._logger.warning("⚠️ [Orchestrator] 未提供user_id，将使用全局模型配置")
 
             # 使用策略管理器构建finalize阶段的LLM策略
             finalize_llm_policy = llm_strategy_manager.build_llm_policy(
@@ -193,6 +196,10 @@ class UnifiedOrchestrator:
 
         self._logger.info(f"🔄 [PTAV循环] 开始会话 {session_id}")
 
+        # 🗄️ [ResourcePool模式] 初始化资源池 - 精简记忆，减少token消耗
+        resource_pool = ResourcePool()
+        self._logger.info(f"🗄️ [PTAV循环] 使用ResourcePool模式（精简记忆，适用于大型数据库）")
+
         # 初始化执行上下文 - 在循环中维护状态
         execution_context = {
             "session_id": session_id,
@@ -201,7 +208,8 @@ class UnifiedOrchestrator:
             "execution_history": [],
             "goal_achieved": False,
             "last_error": None,
-            "accumulated_observations": []
+            "accumulated_observations": [],
+            "resource_pool": resource_pool
         }
 
         try:
@@ -230,6 +238,16 @@ class UnifiedOrchestrator:
                 exec_result = await self.executor.execute(plan, ai)
                 execution_time = int((time.time() - iteration_start) * 1000)
 
+                # 🚨 防御性检查：确保exec_result是字典
+                if not isinstance(exec_result, dict):
+                    self._logger.error(f"🚨 [PTAV循环] exec_result不是字典类型: {type(exec_result)}, 内容: {exec_result}")
+                    exec_result = {
+                        "success": False,
+                        "error": "invalid_exec_result_type",
+                        "context": {},
+                        "observations": [f"❌ Executor返回了非字典类型: {type(exec_result)}"]
+                    }
+
                 # 更新执行上下文
                 execution_context["execution_history"].append({
                     "iteration": iteration,
@@ -242,22 +260,9 @@ class UnifiedOrchestrator:
                 if exec_result.get("observations"):
                     execution_context["accumulated_observations"].extend(exec_result["observations"])
 
-                # 更新执行上下文状态 - 包括SQL和schema信息
+                # 🔧 [统一Context管理] 使用统一方法更新execution_context
                 context = exec_result.get("context", {})
-                if context.get("current_sql"):
-                    execution_context["current_sql"] = context["current_sql"]
-
-                # 传递schema信息到下一轮
-                if context.get("column_details"):
-                    execution_context["column_details"] = context["column_details"]
-                    self._logger.info(f"📋 [PTAV循环] 传递column_details到execution_context: {len(context['column_details'])}张表")
-                if context.get("schema_summary"):
-                    execution_context["schema_summary"] = context["schema_summary"]
-                if context.get("columns"):
-                    execution_context["columns"] = context["columns"]
-                if context.get("recommended_time_column"):
-                    execution_context["recommended_time_column"] = context["recommended_time_column"]
-                    self._logger.info(f"📋 [PTAV循环] 传递推荐时间列: {context['recommended_time_column']}")
+                self._update_execution_context(execution_context, context)
 
                 # Phase 3: Active - Agent分析工具执行结果
                 self._logger.info(f"🧠 [PTAV循环] 第{iteration}轮分析结果: 成功={exec_result.get('success')}")
@@ -447,6 +452,60 @@ class UnifiedOrchestrator:
             "reason": "需要更多步骤完成目标"
         }
 
+    def _update_execution_context(self, execution_context: Dict[str, Any], context: Dict[str, Any]) -> None:
+        """🗄️ ResourcePool模式的execution_context更新逻辑
+
+        将详细信息存入ResourcePool，execution_context保持轻量。
+
+        Args:
+            execution_context: PTAV循环的执行上下文
+            context: 单轮执行返回的context
+        """
+        resource_pool = execution_context.get("resource_pool")
+        if not resource_pool:
+            self._logger.error("⚠️ ResourcePool未初始化")
+            return
+
+        # 准备更新数据
+        updates = {}
+
+        # current_sql: 既存入ResourcePool，也保留在execution_context（用于快速访问）
+        if context.get("current_sql"):
+            execution_context["current_sql"] = context["current_sql"]
+            updates["current_sql"] = context["current_sql"]
+
+        # column_details: 存入ResourcePool（完整数据）
+        if context.get("column_details"):
+            updates["column_details"] = context["column_details"]
+            table_count = len(context["column_details"])
+            table_names = list(context["column_details"].keys())
+            self._logger.info(
+                f"🗄️ [ResourcePool] 存储column_details: "
+                f"{table_count}张表 - {table_names}"
+            )
+
+        # schema_summary: 存入ResourcePool
+        if context.get("schema_summary"):
+            updates["schema_summary"] = context["schema_summary"]
+
+        # recommended_time_column: 存入ResourcePool
+        if context.get("recommended_time_column"):
+            updates["recommended_time_column"] = context["recommended_time_column"]
+            self._logger.info(
+                f"🗄️ [ResourcePool] 存储推荐时间列: "
+                f"{context['recommended_time_column']}"
+            )
+
+        # template_context: 存入ResourcePool（用于SQL生成）
+        if context.get("template_context"):
+            updates["template_context"] = context["template_context"]
+
+        # 批量更新ResourcePool
+        if updates:
+            resource_pool.update(updates)
+            stats = resource_pool.get_stats()
+            self._logger.debug(f"🗄️ [ResourcePool] 当前状态: {stats}")
+
     def _update_ai_with_context(self, ai: AgentInput, execution_context: Dict[str, Any]) -> AgentInput:
         """使用执行上下文更新AI输入
 
@@ -488,32 +547,28 @@ class UnifiedOrchestrator:
             tdc = dict(getattr(ai, 'task_driven_context', {}) or {})
             tdc["planning_hints"] = planning_hints
 
-            # 传递SQL信息 - 优先使用execution_context的累积信息
-            current_sql = execution_context.get("current_sql") or last_ctx.get("current_sql")
-            if current_sql:
-                tdc["current_sql"] = current_sql
-                self._logger.info(f"📋 [Orchestrator] 传递current_sql到task_driven_context: {current_sql}")
+            # 🗄️ [ResourcePool模式] 传递轻量级ContextMemory和ResourcePool引用
+            resource_pool = execution_context.get("resource_pool")
+
+            if resource_pool:
+                # 从ResourcePool构建ContextMemory
+                context_memory = resource_pool.build_context_memory()
+                tdc["context_memory"] = context_memory.to_dict()
+
+                # 🔧 传递ResourcePool引用给Executor（Executor需要按需提取详细信息）
+                tdc["resource_pool"] = resource_pool
+
+                self._logger.info(
+                    f"🗄️ [AI Context] 传递ContextMemory + ResourcePool引用: "
+                    f"has_sql={context_memory.has_sql}, "
+                    f"schema_available={context_memory.schema_available}, "
+                    f"tables={len(context_memory.available_tables)}"
+                )
+
+                # 注意：不再传递完整的column_details到AI Context
+                # Executor通过ContextMemory了解状态，需要详细信息时从ResourcePool按需提取
             else:
-                self._logger.warning(f"📋 [Orchestrator] 没有找到current_sql")
-
-            # 传递schema信息 - 优先使用execution_context的累积信息
-            if execution_context.get("column_details"):
-                tdc["column_details"] = execution_context["column_details"]
-                self._logger.info(f"📋 [Orchestrator] 从execution_context传递column_details: {len(execution_context['column_details'])}张表")
-            elif last_ctx.get("column_details"):
-                tdc["column_details"] = last_ctx["column_details"]
-                self._logger.info(f"📋 [Orchestrator] 从last_ctx传递column_details: {len(last_ctx['column_details'])}张表")
-
-            if execution_context.get("schema_summary"):
-                tdc["schema_summary"] = execution_context["schema_summary"]
-            elif last_ctx.get("schema_summary"):
-                tdc["schema_summary"] = last_ctx["schema_summary"]
-
-            if execution_context.get("recommended_time_column"):
-                tdc["recommended_time_column"] = execution_context["recommended_time_column"]
-                self._logger.info(f"📋 [Orchestrator] 传递推荐时间列到task_driven_context: {execution_context['recommended_time_column']}")
-            elif last_ctx.get("recommended_time_column"):
-                tdc["recommended_time_column"] = last_ctx["recommended_time_column"]
+                self._logger.warning("⚠️ [AI Context] ResourcePool未初始化，无法传递ContextMemory")
 
             # 更新schema
             new_schema = SchemaInfo(tables=new_tables, columns=new_columns)

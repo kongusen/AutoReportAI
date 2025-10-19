@@ -441,6 +441,7 @@ class UnifiedServiceFacade:
         assembled = await pipeline.assemble_report(
             template_id,
             data_source_id,
+            user_id=self.user_id,  # 传递用户ID到pipeline
             start_date=start_date,
             end_date=end_date,
             schedule=schedule,

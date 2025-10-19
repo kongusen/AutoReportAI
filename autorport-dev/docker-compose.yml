@@ -318,76 +318,9 @@ services:
       - "architecture=ddd_v2"
 
   # ==========================================
-  # Celery Beat调度器
+  # 注意: 调度功能已迁移到 APScheduler（在 backend 服务中）
+  # Celery Beat 已被移除，使用数据库持久化的 APScheduler
   # ==========================================
-  celery-beat:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-      target: beat
-      args:
-        HTTP_PROXY: ${BUILD_HTTP_PROXY:-}
-        HTTPS_PROXY: ${BUILD_HTTPS_PROXY:-}
-    container_name: autoreport-celery-beat-dev
-    restart: unless-stopped
-    user: "1000:1000"
-    environment:
-      # 基础配置
-      - NODE_ENV=development
-      - ENVIRONMENT=development
-      - DEBUG=true
-      - DOCKER_ENV=true
-      
-      # 数据库配置
-      - POSTGRES_HOST=db
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres123}
-      - POSTGRES_DB=${POSTGRES_DB:-autoreport}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@db:5432/${POSTGRES_DB:-autoreport}
-      
-      # Redis配置
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_URL=redis://redis:6379/0
-      
-      # Celery配置
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - CELERY_BEAT_LOGLEVEL=info
-      - CELERY_TIMEZONE=${CELERY_TIMEZONE:-Asia/Shanghai}
-      
-      # 时区配置
-      - TZ=${TZ:-Asia/Shanghai}
-      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
-      
-      # 安全配置
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-react-agent}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-xfNJzed14NcnhR3P3m_qVxzGRdsRcmLRpE5IAXTGWhE=}
-      
-      # 初始用户配置
-      - FIRST_SUPERUSER=${FIRST_SUPERUSER:-admin}
-      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL:-admin@example.com}
-      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:-password}
-      
-    volumes:
-      - ./data/backend/logs:/app/logs
-      - ./data/celery/beat:/tmp/celerybeat:rw
-      # 时区配置挂载
-      - /etc/localtime:/etc/localtime:ro
-      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - autoreport_network
-    labels:
-      - "project=autoreportai"
-      - "environment=development"
-      - "service=celery-beat"
-      - "architecture=ddd_v2"
 
   # ==========================================
   # 前端服务 - DDD架构 UI

@@ -135,6 +135,7 @@ class SqlGenerationAdapter(SqlGenerationPort):
                         }
                     ]
                 },
+                user_id=business_ctx.get("user_id") if business_ctx else None,  # 传递用户ID
             )
 
             print(f"🤖 AgentInput构建完成: semantic_type={semantic_type}, top_n={top_n}")

@@ -311,7 +311,7 @@ async def pause_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """暂停任务（将 is_active 置为 False）"""
+    """暂停任务（将 is_active 置为 False 并从调度器移除）"""
     try:
         user_id = current_user.id
         if isinstance(user_id, str):
@@ -324,16 +324,78 @@ async def pause_task(
         if task.is_active is False:
             return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已处于暂停状态")
 
+        # 1. 更新数据库状态
         task.is_active = False
         task.updated_at = datetime.utcnow()
         db.add(task)
         db.commit()
         db.refresh(task)
 
-        return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已暂停")
+        # 2. 从调度器移除（如果有调度）
+        scheduler_result = {"scheduler_removed": False, "message": ""}
+        if task.schedule:
+            try:
+                from app.core.unified_scheduler import get_scheduler
+                scheduler = await get_scheduler()
+                await scheduler.remove_task(task_id)
+                scheduler_result = {
+                    "scheduler_removed": True,
+                    "message": f"已从调度器移除任务 {task_id}"
+                }
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"✅ 任务 {task_id} 已从调度器移除")
+            except Exception as scheduler_error:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"⚠️ 从调度器移除任务 {task_id} 失败: {scheduler_error}")
+                scheduler_result = {
+                    "scheduler_removed": False,
+                    "message": f"调度器操作失败: {str(scheduler_error)}"
+                }
+
+        # 3. 可选：取消正在执行的任务
+        cancelled_execution = None
+        try:
+            from app.models.task import TaskExecution, TaskStatus
+            ongoing_execution = db.query(TaskExecution).filter(
+                TaskExecution.task_id == task_id,
+                TaskExecution.execution_status.in_([TaskStatus.PENDING, TaskStatus.PROCESSING])
+            ).first()
+
+            if ongoing_execution and ongoing_execution.celery_task_id:
+                from app.services.infrastructure.task_queue.celery_config import celery_app
+                celery_app.control.revoke(ongoing_execution.celery_task_id, terminate=True)
+                ongoing_execution.execution_status = TaskStatus.CANCELLED
+                ongoing_execution.current_step = "任务已被暂停操作取消"
+                ongoing_execution.completed_at = datetime.utcnow()
+                db.commit()
+                cancelled_execution = str(ongoing_execution.execution_id)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"✅ 取消了正在执行的任务: {ongoing_execution.celery_task_id}")
+        except Exception as cancel_error:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"⚠️ 取消执行任务失败: {cancel_error}")
+
+        return APIResponse(
+            success=True,
+            data={
+                "task_id": task_id,
+                "is_active": task.is_active,
+                "scheduler_status": scheduler_result,
+                "cancelled_execution_id": cancelled_execution
+            },
+            message="任务已暂停"
+        )
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ 暂停任务失败: {e}")
+        db.rollback()
         return APIResponse(success=False, data=None, errors=[str(e)], message="暂停任务失败")
 
 
@@ -343,7 +405,7 @@ async def resume_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """恢复任务（将 is_active 置为 True）"""
+    """恢复任务（将 is_active 置为 True 并重新添加到调度器）"""
     try:
         user_id = current_user.id
         if isinstance(user_id, str):
@@ -356,16 +418,63 @@ async def resume_task(
         if task.is_active is True:
             return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已处于启用状态")
 
+        # 1. 更新数据库状态
         task.is_active = True
         task.updated_at = datetime.utcnow()
         db.add(task)
         db.commit()
         db.refresh(task)
 
-        return APIResponse(success=True, data={"task_id": task_id, "is_active": task.is_active}, message="任务已恢复")
+        # 2. 添加到调度器（如果有调度）
+        scheduler_result = {"scheduler_added": False, "message": ""}
+        if task.schedule:
+            try:
+                from app.core.unified_scheduler import get_scheduler
+                scheduler = await get_scheduler()
+                await scheduler.add_or_update_task(task_id, task.schedule)
+
+                # 获取下次执行时间
+                task_status = await scheduler.get_task_status(task_id)
+                next_run_time = task_status.get("next_run_time")
+
+                scheduler_result = {
+                    "scheduler_added": True,
+                    "message": f"已添加到调度器",
+                    "next_run_time": next_run_time
+                }
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"✅ 任务 {task_id} 已添加到调度器，下次执行: {next_run_time}")
+            except Exception as scheduler_error:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"⚠️ 添加任务 {task_id} 到调度器失败: {scheduler_error}")
+                scheduler_result = {
+                    "scheduler_added": False,
+                    "message": f"调度器操作失败: {str(scheduler_error)}"
+                }
+        else:
+            scheduler_result = {
+                "scheduler_added": False,
+                "message": "任务未设置调度表达式，无需添加到调度器"
+            }
+
+        return APIResponse(
+            success=True,
+            data={
+                "task_id": task_id,
+                "is_active": task.is_active,
+                "scheduler_status": scheduler_result
+            },
+            message="任务已恢复"
+        )
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ 恢复任务失败: {e}")
+        db.rollback()
         return APIResponse(success=False, data=None, errors=[str(e)], message="恢复任务失败")
 
 

@@ -51,8 +51,10 @@ class DataSourceAdapter:
                 should_skip_limit = any(sql_upper.startswith(pattern) for pattern in skip_limit_patterns)
 
                 if limit and "LIMIT" not in sql_upper and not should_skip_limit:
-                    q = f"{sql.strip()} LIMIT {limit}"
-                    logger.debug(f"添加LIMIT到查询: {sql.strip()[:50]}...")
+                    # 🔧 修复：移除尾部分号再添加 LIMIT，避免语法错误
+                    sql_trimmed = sql.strip().rstrip(';')
+                    q = f"{sql_trimmed} LIMIT {limit}"
+                    logger.debug(f"添加LIMIT到查询: {sql_trimmed[:50]}...")
                 elif should_skip_limit:
                     logger.debug(f"跳过LIMIT (Doris兼容): {sql.strip()[:50]}...")
                 result = await connector.execute_query(q, cfg)

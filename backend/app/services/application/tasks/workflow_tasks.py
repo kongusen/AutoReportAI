@@ -132,7 +132,7 @@ def analyze_placeholder_workflow(
         # 使用Agent系统进行占位符分析
         import asyncio
         from app.services.infrastructure.agents.facade import AgentFacade
-        from app.services.infrastructure.agents.types import AgentInput, PlaceholderInfo, SchemaInfo, TaskContext
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext
         from app.core.container import Container
         from app.db.session import get_db_session
 
@@ -164,10 +164,22 @@ def analyze_placeholder_workflow(
                 }
             )
 
+            # 构建数据源连接配置
+            data_source_config = {
+                "id": str(data_source_id),
+                "data_source_id": str(data_source_id),
+                "source_type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
+                "database": getattr(data_source, 'doris_database', 'default_db'),
+                "host": data_source.doris_fe_hosts[0] if data_source.doris_fe_hosts else None,
+                "port": getattr(data_source, 'doris_fe_http_port', 8030),
+                "username": getattr(data_source, 'username', None),
+                "password": getattr(data_source, 'password', None)
+            }
+
             # 构建Agent输入
             agent_input = AgentInput(
                 user_prompt=f"分析模板 {template.name} 的占位符，生成或验证对应的数据查询SQL",
-                placeholder=PlaceholderInfo(
+                placeholder=PlaceholderSpec(
                     description=f"模板占位符分析 - {template.name}",
                     type="template_analysis"
                 ),
@@ -182,6 +194,7 @@ def analyze_placeholder_workflow(
                     task_time=int(datetime.now().timestamp()),
                     timezone="Asia/Shanghai"
                 ),
+                data_source=data_source_config,
                 task_driven_context={
                     "template_id": template_id,
                     "template_name": template.name,

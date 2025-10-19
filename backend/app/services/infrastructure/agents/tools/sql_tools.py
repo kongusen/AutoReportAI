@@ -134,11 +134,14 @@ class SQLValidateTool(Tool):
             # 第三阶段：真实数据源验证（核心验证）
             database_validation_done = False
             database_validation = {"success": True, "issues": [], "warnings": []}
+            validation_sql_with_dates = None  # 🔧 初始化变量
 
             # 如果基础验证通过，进行真实数据库验证
             if validation_result.get("valid", True):
                 database_validation = await self._validate_sql_against_database(sql, input_data)
                 database_validation_done = True
+                # 🔧 提取验证用的SQL
+                validation_sql_with_dates = database_validation.get("validation_sql_with_dates")
 
                 # 数据库验证失败时，更新整体验证状态
                 if not database_validation.get("success", True):
@@ -303,10 +306,14 @@ class SQLValidateTool(Tool):
             issues.append("SQL必须包含FROM子句")
             self._logger.warning(f"[SQL验证] FROM检查失败，SQL内容: {sql_upper}")
 
-        # 检查危险操作 - 优化UPDATE检测，避免误报
+        # 检查危险操作 - 使用词边界匹配，避免误报字段名
         dangerous_keywords = ["DROP", "DELETE", "TRUNCATE", "INSERT", "ALTER"]
+        import re
         for keyword in dangerous_keywords:
-            if keyword in sql_upper:
+            # 使用词边界匹配，确保只匹配完整的SQL关键词，不匹配字段名中的子串
+            # 例如：匹配 "DELETE FROM" 但不匹配 "e_is_deleted"
+            pattern = r'\b' + keyword + r'\b'
+            if re.search(pattern, sql_upper):
                 issues.append(f"SQL包含危险关键词: {keyword}")
 
         # 特殊处理UPDATE - 检查是否在合法上下文中（如字段名update_time）
@@ -428,6 +435,8 @@ class SQLValidateTool(Tool):
         这是真正的验证：通过实际执行SQL（带LIMIT保护）来确认SQL的正确性
         重要：验证阶段将占位符替换为真实日期进行测试，但返回给前端的仍是占位符版本
         """
+        validation_sql_with_dates = None  # 🔧 初始化变量，确保在所有返回路径中都可用
+
         try:
             self._logger.info(f"🔍 [数据库验证] 开始验证SQL: {sql[:100]}...")
 
@@ -437,7 +446,8 @@ class SQLValidateTool(Tool):
                 return {
                     "success": False,
                     "issues": ["数据源信息缺失，无法进行数据库验证"],
-                    "warnings": []
+                    "warnings": [],
+                    "validation_sql_with_dates": None
                 }
 
             # 🔄 关键修复：验证阶段需要将占位符替换为真实日期进行测试
@@ -473,7 +483,8 @@ class SQLValidateTool(Tool):
                             return {
                                 "success": False,
                                 "issues": ["数据源适配器不可用"],
-                                "warnings": []
+                                "warnings": [],
+                                "validation_sql_with_dates": validation_sql_with_dates  # 🔧 添加验证用的SQL
                             }
                         result = await adapter.run_query(conn_cfg, validation_sql, limit=10)
                     else:
@@ -483,7 +494,8 @@ class SQLValidateTool(Tool):
                             return {
                                 "success": False,
                                 "issues": ["数据库服务不可用"],
-                                "warnings": []
+                                "warnings": [],
+                                "validation_sql_with_dates": validation_sql_with_dates  # 🔧 添加验证用的SQL
                             }
 
                         user_id = input_data.get("user_id", "system")
@@ -521,6 +533,7 @@ class SQLValidateTool(Tool):
                         "success": True,
                         "issues": [],
                         "warnings": quality_issues,  # 质量问题作为警告而非错误
+                        "validation_sql_with_dates": validation_sql_with_dates,  # 🔧 添加验证用的SQL
                         "validation_result": {
                             "row_count": len(rows or []),
                             "column_count": len(columns or []),
@@ -535,6 +548,7 @@ class SQLValidateTool(Tool):
                         "success": True,
                         "issues": [],
                         "warnings": ["SQL执行成功但未返回数据，请检查查询条件"],
+                        "validation_sql_with_dates": validation_sql_with_dates,  # 🔧 添加验证用的SQL
                         "validation_result": {
                             "row_count": 0,
                             "column_count": 0,
@@ -555,6 +569,7 @@ class SQLValidateTool(Tool):
                     "success": False,
                     "issues": [f"数据库执行错误: {error_analysis['error_message']}"],
                     "warnings": error_analysis.get("suggestions", []),
+                    "validation_sql_with_dates": validation_sql_with_dates,  # 🔧 添加验证用的SQL
                     "database_error": {
                         "original_error": str(exec_error),
                         "error_type": error_analysis["error_type"],
@@ -567,7 +582,8 @@ class SQLValidateTool(Tool):
             return {
                 "success": False,
                 "issues": [f"数据库验证过程异常: {str(e)}"],
-                "warnings": []
+                "warnings": [],
+                "validation_sql_with_dates": validation_sql_with_dates  # 🔧 即使异常也返回（可能为None）
             }
 
     def _replace_placeholders_for_validation(self, sql: str, input_data: Dict[str, Any]) -> str:

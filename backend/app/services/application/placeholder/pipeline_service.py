@@ -48,7 +48,7 @@ class PlaceholderPipelineService:
         }
         return {"success": True, "items": [i.__dict__ for i in items], "stats": stats}
 
-    async def assemble_report(self, template_id: str, data_source_id: str, *, start_date: Optional[str] = None, end_date: Optional[str] = None, schedule: Optional[Dict[str, Any]] = None, execution_time: Optional[str] = None) -> Dict[str, Any]:
+    async def assemble_report(self, template_id: str, data_source_id: str, *, user_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, schedule: Optional[Dict[str, Any]] = None, execution_time: Optional[str] = None) -> Dict[str, Any]:
         content = self._load_template_content(template_id)
         # 时间上下文：优先使用调度表达式生成周期
         from app.utils.time_context import TimeContextManager
@@ -90,8 +90,8 @@ class PlaceholderPipelineService:
             # build query spec and time window
             q = QuerySpec(intent=name)
             tw = TimeWindow(start_date=start_date, end_date=end_date, granularity="daily")
-            # generate SQL (pass ds id to business ctx for fallback introspect)
-            gen = await self._sql_gen.generate_sql(q, schema_ctx, tw, business_ctx={"data_source_id": data_source_id, "template_id": template_id})
+            # generate SQL (pass ds id and user_id to business ctx for fallback introspect)
+            gen = await self._sql_gen.generate_sql(q, schema_ctx, tw, business_ctx={"data_source_id": data_source_id, "template_id": template_id, "user_id": user_id})
             sql = gen.sql or "SELECT 1 AS stub"
             exec_res = await self._sql_exec.execute(sql, data_source_id)
             if kind == "chart":

@@ -464,6 +464,12 @@ CREATE TABLE IF NOT EXISTS template_placeholders (
     -- Metadata
     description TEXT,
     confidence_score REAL NOT NULL DEFAULT 0.0,
+    content_hash VARCHAR(16),
+    -- Parsing metadata
+    original_type VARCHAR(50),
+    extracted_description TEXT,
+    parsing_metadata JSONB DEFAULT '{}'::jsonb,
+    -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE,
     analyzed_at TIMESTAMP WITH TIME ZONE,
@@ -965,6 +971,7 @@ CREATE INDEX IF NOT EXISTS ix_task_executions_id ON task_executions (id);
 CREATE INDEX IF NOT EXISTS ix_template_placeholders_template_id ON template_placeholders (template_id);
 CREATE INDEX IF NOT EXISTS ix_template_placeholders_analyzed ON template_placeholders (agent_analyzed, is_active);
 CREATE INDEX IF NOT EXISTS ix_template_placeholders_execution_order ON template_placeholders (template_id, execution_order);
+CREATE INDEX IF NOT EXISTS ix_template_placeholders_content_hash ON template_placeholders (content_hash);
 
 -- Placeholder Values table indexes
 CREATE INDEX IF NOT EXISTS ix_placeholder_values_cache_key ON placeholder_values (cache_key);

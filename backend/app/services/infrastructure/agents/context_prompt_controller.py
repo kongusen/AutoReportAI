@@ -169,7 +169,7 @@ class ContextPromptController:
     "current_state": "描述当前掌握的信息状况",
     "next_action": {{
         "action": "tool_call|sql_generation|complete",
-        "tool": "工具名称（如果是tool_call）",
+        "tool": "工具名称（仅当action=tool_call时需要，从上面的'可用工具'列表中选择）",
         "reason": "为什么选择这个行动",
         "input": {{
             "参数名": "参数值"
@@ -177,6 +177,11 @@ class ContextPromptController:
     }},
     "goal_progress": "离最终SQL生成目标还差什么"
 }}
+
+**动作类型说明**：
+- **tool_call**: 调用上面列出的工具（必须在tool字段指定工具名称，如schema.get_columns、sql.validate等）
+- **sql_generation**: 基于已有信息直接生成SQL（这是一个动作类型，不是工具名称，无需指定tool字段）
+- **complete**: 任务已完成
 
 **重要：工具输入示例**
 - sql.validate调用示例：
@@ -189,6 +194,12 @@ class ContextPromptController:
   ```json
   "input": {{"tables": ["table1", "table2"]}}
   ```
+  🎯 **表选择决策原则（PTAV - Plan阶段必须明确指定）**：
+  1. 分析占位符描述中的关键词（如"退货"→查找包含refund/return的表）
+  2. 基于"可用数据表"列表，优先选择表名与需求最匹配的2-3张表
+  3. 如果已有column_details（见上方🔍标记），优先选择包含时间字段的表
+  4. 避免选择过多表（建议2-5张），可分批获取
+  ⚠️ **PTAV关键原则**：表选择是Plan阶段的决策责任，必须在input中明确指定tables参数！
 
 **单步骤决策原则**:
 1. **分析当前掌握的信息是否足够生成SQL**

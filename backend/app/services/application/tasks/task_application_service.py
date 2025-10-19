@@ -594,44 +594,177 @@ class TaskApplicationService(TransactionalApplicationService):
         **update_data
     ) -> Task:
         """
-        更新任务
-        
+        更新任务（带完整验证）
+
         Args:
             db: 数据库会话
             task_id: 任务ID
             user_id: 用户ID
             **update_data: 更新数据
-            
+
         Returns:
             Task: 更新后的任务对象
         """
         try:
-            # 验证任务存在和权限
+            # 1. 验证任务存在和权限
             task = db.query(Task).filter(Task.id == task_id, Task.owner_id == user_id).first()
             if not task:
                 raise NotFoundError(f"Task {task_id} not found or access denied")
-            
-            # 过滤允许更新的字段
+
+            # 2. 字段白名单
             allowed_fields = {
-                'name', 'description', 'schedule', 'report_period', 
-                'recipients', 'is_active'
+                'name', 'description', 'schedule', 'report_period',
+                'recipients', 'is_active', 'processing_mode', 'workflow_type',
+                'max_context_tokens', 'enable_compression'
             }
-            
+
+            # 3. 验证和应用更新
+            validated_updates = {}
+            scheduler_needs_update = False
+
             for field, value in update_data.items():
-                if field in allowed_fields:
-                    setattr(task, field, value)
-            
+                if field not in allowed_fields:
+                    logger.warning(f"❌ 字段 {field} 不允许更新")
+                    continue
+
+                # === 字段特定验证 ===
+
+                # 3.1 验证任务名称
+                if field == 'name':
+                    if not value or not isinstance(value, str):
+                        raise ValidationError("任务名称不能为空")
+                    if len(value) > 200:
+                        raise ValidationError("任务名称不能超过200个字符")
+                    # 检查同名任务
+                    existing = db.query(Task).filter(
+                        Task.owner_id == user_id,
+                        Task.name == value,
+                        Task.id != task_id
+                    ).first()
+                    if existing:
+                        raise ValidationError(f"任务名称 '{value}' 已存在")
+                    validated_updates[field] = value
+
+                # 3.2 验证 Cron 表达式
+                elif field == 'schedule':
+                    if value is not None:
+                        try:
+                            from croniter import croniter
+                            if not croniter.is_valid(value):
+                                raise ValidationError(f"无效的Cron表达式: {value}")
+                            # 验证表达式格式
+                            if len(value.split()) != 5:
+                                raise ValidationError("Cron表达式必须包含5个字段 (分 时 日 月 周)")
+                        except ImportError:
+                            logger.warning("croniter 不可用，跳过 cron 验证")
+
+                        # 推断报告周期
+                        inferred_period = self._infer_report_period_from_cron(value)
+                        validated_updates['report_period'] = inferred_period
+                        scheduler_needs_update = True
+                        logger.info(f"🔄 根据 cron 表达式推断报告周期: {inferred_period.value}")
+
+                    validated_updates[field] = value
+
+                # 3.3 验证收件人列表
+                elif field == 'recipients':
+                    if value is not None:
+                        if not isinstance(value, list):
+                            raise ValidationError("recipients 必须是列表")
+                        # 验证邮箱格式
+                        import re
+                        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+                        for email in value:
+                            if not re.match(email_pattern, email):
+                                raise ValidationError(f"无效的邮箱地址: {email}")
+                    validated_updates[field] = value
+
+                # 3.4 验证处理模式
+                elif field == 'processing_mode':
+                    if value not in [mode.value for mode in ProcessingMode]:
+                        raise ValidationError(f"无效的处理模式: {value}，可选值: {[m.value for m in ProcessingMode]}")
+                    # 转换为枚举
+                    validated_updates[field] = ProcessingMode(value)
+
+                # 3.5 验证工作流类型
+                elif field == 'workflow_type':
+                    if value not in [wf.value for wf in AgentWorkflowType]:
+                        raise ValidationError(f"无效的工作流类型: {value}，可选值: {[w.value for w in AgentWorkflowType]}")
+                    validated_updates[field] = AgentWorkflowType(value)
+
+                # 3.6 验证报告周期
+                elif field == 'report_period':
+                    if value not in [period.value for period in ReportPeriod]:
+                        raise ValidationError(f"无效的报告周期: {value}，可选值: {[p.value for p in ReportPeriod]}")
+                    validated_updates[field] = ReportPeriod(value)
+
+                # 3.7 验证上下文令牌数
+                elif field == 'max_context_tokens':
+                    if not isinstance(value, int) or value < 1000 or value > 128000:
+                        raise ValidationError("max_context_tokens 必须在 1000-128000 之间")
+                    validated_updates[field] = value
+
+                # 3.8 验证布尔值字段
+                elif field in ('is_active', 'enable_compression'):
+                    if not isinstance(value, bool):
+                        raise ValidationError(f"{field} 必须是布尔值")
+                    validated_updates[field] = value
+
+                    # is_active 变更需要更新调度器
+                    if field == 'is_active':
+                        scheduler_needs_update = True
+
+                # 其他字段直接应用
+                else:
+                    validated_updates[field] = value
+
+            # 4. 应用验证后的更新
+            for field, value in validated_updates.items():
+                setattr(task, field, value)
+
             task.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(task)
-            
-            logger.info(f"Task {task_id} updated successfully")
+
+            # 5. 同步调度器（如果需要）
+            if scheduler_needs_update:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self._sync_task_to_scheduler(task))
+                    else:
+                        loop.run_until_complete(self._sync_task_to_scheduler(task))
+                except RuntimeError:
+                    # 如果没有事件循环，创建一个新的
+                    asyncio.run(self._sync_task_to_scheduler(task))
+
+            logger.info(f"✅ 任务 {task_id} 更新成功，更新了 {len(validated_updates)} 个字段")
             return task
-            
+
+        except (ValidationError, NotFoundError):
+            raise
         except Exception as e:
-            logger.error(f"Failed to update task {task_id}: {str(e)}")
+            logger.error(f"❌ 更新任务 {task_id} 失败: {str(e)}")
             db.rollback()
             raise
+
+    async def _sync_task_to_scheduler(self, task: Task):
+        """同步任务到调度器"""
+        try:
+            from app.core.unified_scheduler import get_scheduler
+            scheduler = await get_scheduler()
+
+            if task.is_active and task.schedule:
+                # 添加或更新调度
+                await scheduler.add_or_update_task(task.id, task.schedule)
+                logger.info(f"✅ 任务 {task.id} 已同步到调度器")
+            elif not task.is_active:
+                # 从调度器移除
+                await scheduler.remove_task(task.id)
+                logger.info(f"✅ 任务 {task.id} 已从调度器移除")
+        except Exception as e:
+            logger.error(f"⚠️ 同步任务 {task.id} 到调度器失败: {e}")
     
     def delete_task(
         self,

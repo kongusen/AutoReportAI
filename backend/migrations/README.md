@@ -21,6 +21,15 @@ This directory contains database migration scripts for AutoReportAI.
 executions = relationship("TaskExecution", back_populates="task", cascade="all, delete-orphan")
 ```
 
+### 3. Template Placeholder Parsing Fields Missing
+**Error**: `column template_placeholders.content_hash does not exist`
+
+**Cause**: The `TemplatePlaceholder` model (`backend/app/models/template_placeholder.py:50-56`) defines parsing-related fields (`content_hash`, `original_type`, `extracted_description`, `parsing_metadata`) that were missing from the actual database table.
+
+**Fix**:
+- Migration `002_add_placeholder_parsing_fields.sql` adds the missing columns
+- Updated `backend/scripts/init-db.sql` to include these fields in the initial schema
+
 ## How to Apply Migrations
 
 ### Option 1: Using Docker (Recommended)
@@ -58,5 +67,15 @@ After applying the migrations and restarting your services:
 
 ## Migration Files
 
-- `001_add_comment_column_to_column_schemas.sql` - Adds missing comment column
+- `001_add_comment_column_to_column_schemas.sql` - Adds missing comment column to column_schemas
+- `002_add_placeholder_parsing_fields.sql` - Adds missing parsing fields to template_placeholders
 - `apply_migration.py` - Python helper script to apply migrations
+
+## Quick Apply All Migrations
+
+```bash
+# Apply all migrations in order
+cd autorport-dev
+docker exec -i autoreport-db-dev psql -U postgres -d autoreport < backend/migrations/001_add_comment_column_to_column_schemas.sql
+docker exec -i autoreport-db-dev psql -U postgres -d autoreport < backend/migrations/002_add_placeholder_parsing_fields.sql
+```

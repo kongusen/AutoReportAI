@@ -191,12 +191,17 @@ class Settings(BaseSettings):
     # ===========================================
     # React Agent 系统配置
     # ===========================================
-    
+
     # React Agent 基础配置
     REACT_AGENT_ENABLED: bool = os.getenv("REACT_AGENT_ENABLED", "true").lower() == "true"
     REACT_AGENT_MAX_ITERATIONS: int = int(os.getenv("REACT_AGENT_MAX_ITERATIONS", "15"))
     REACT_AGENT_TIMEOUT: int = int(os.getenv("REACT_AGENT_TIMEOUT", "300"))
     REACT_AGENT_VERBOSE: bool = os.getenv("REACT_AGENT_VERBOSE", "false").lower() == "true"
+
+    # 🆕 [T050] Agent上下文管理配置 - 启用ResourcePool精简记忆模式
+    # True: 使用ResourcePool模式（轻量级ContextMemory，减少token使用）
+    # False: 使用传统模式（完整schema累积传递）
+    ENABLE_CONTEXT_CURATION: bool = os.getenv("ENABLE_CONTEXT_CURATION", "true").lower() == "true"
     
     # React Agent LlamaIndex配置
     REACT_AGENT_CACHE_DIR: str = os.getenv("REACT_AGENT_CACHE_DIR", "cache/llamaindex")

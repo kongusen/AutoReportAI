@@ -586,6 +586,94 @@ class SchemaGetColumnsTool(Tool):
         self.container = container
         self._logger = logging.getLogger(self.__class__.__name__)
 
+    async def _resolve_connection_config(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """解析或补全数据源连接配置，便于在独立测试时自动加载密钥。"""
+        try:
+            raw_cfg = input_data.get("connection_config")
+            if not isinstance(raw_cfg, dict):
+                raw_cfg = input_data.get("data_source")
+            conn_cfg = dict(raw_cfg or {})
+            user_overrides = dict(conn_cfg)
+
+            def _normalize(cfg: Dict[str, Any]) -> None:
+                src_type = cfg.get("source_type") or cfg.get("type") or cfg.get("database_type")
+                if src_type:
+                    cfg["source_type"] = src_type
+                db = cfg.get("database") or cfg.get("schema") or cfg.get("database_name")
+                if db:
+                    cfg["database"] = db
+
+            def _is_ready(cfg: Dict[str, Any]) -> bool:
+                if not cfg:
+                    return False
+                st = (cfg.get("source_type") or "").lower()
+                if not st:
+                    return False
+                if st == "sql":
+                    return bool(cfg.get("connection_string"))
+                if st == "doris":
+                    return bool(cfg.get("fe_hosts") or cfg.get("host"))
+                if st == "api":
+                    return bool(cfg.get("api_url"))
+                if st == "csv":
+                    return bool(cfg.get("file_path"))
+                return True
+
+            _normalize(conn_cfg)
+            needs_fetch = not _is_ready(conn_cfg)
+
+            if needs_fetch:
+                ds_id = (
+                    input_data.get("data_source_id")
+                    or conn_cfg.get("data_source_id")
+                    or conn_cfg.get("id")
+                )
+                if not ds_id:
+                    info = input_data.get("data_source_info") or {}
+                    if isinstance(info, dict):
+                        ds_id = info.get("id") or info.get("data_source_id")
+                if not ds_id:
+                    tdc = input_data.get("task_driven_context")
+                    if isinstance(tdc, dict):
+                        ds_id = tdc.get("data_source_id")
+                        if not ds_id:
+                            sub = tdc.get("data_source_info") or tdc.get("data_source") or {}
+                            if isinstance(sub, dict):
+                                ds_id = sub.get("id") or sub.get("data_source_id")
+
+                if ds_id:
+                    user_id = input_data.get("user_id") or input_data.get("current_user_id") or "system"
+                    self._logger.info(f"📡 [SchemaGetColumns] 自动加载数据源配置: user_id={user_id}, data_source_id={ds_id}")
+                    try:
+                        if hasattr(self.container, "get_user_data_source"):
+                            ds_obj = await self.container.get_user_data_source(str(user_id), str(ds_id))
+                            if ds_obj and hasattr(ds_obj, "connection_config"):
+                                conn_cfg = dict(ds_obj.connection_config or {})
+                                needs_fetch = False
+                        elif hasattr(self.container, "user_data_source_service"):
+                            uds = await self.container.user_data_source_service.get_user_data_source(str(user_id), str(ds_id))
+                            if uds and getattr(uds, "connection_config", None):
+                                conn_cfg = dict(uds.connection_config)
+                                needs_fetch = False
+                    except Exception as fetch_err:
+                        self._logger.warning(f"⚠️ [SchemaGetColumns] 自动加载数据源配置失败: {fetch_err}")
+
+                    if conn_cfg:
+                        overrides = {
+                            k: v for k, v in user_overrides.items()
+                            if v not in (None, "", [], {})
+                        }
+                        overrides.pop("type", None)
+                        overrides.pop("database_type", None)
+                        if overrides:
+                            conn_cfg.update(overrides)
+
+            _normalize(conn_cfg)
+            return conn_cfg
+        except Exception as err:
+            self._logger.warning(f"⚠️ [SchemaGetColumns] 解析数据源配置异常: {err}")
+            return dict(input_data.get("data_source") or {})
+
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             tables = input_data.get("tables")
@@ -599,7 +687,10 @@ class SchemaGetColumnsTool(Tool):
 
             columns_map: Dict[str, List[str]] = {}
             details_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
-            conn_cfg = input_data.get("data_source", {})
+            conn_cfg = await self._resolve_connection_config(input_data)
+            if conn_cfg:
+                input_data["data_source"] = conn_cfg
+                input_data["connection_config"] = conn_cfg
             db_name = conn_cfg.get("database") or conn_cfg.get("db") or conn_cfg.get("schema")
 
             # 详细检查连接配置

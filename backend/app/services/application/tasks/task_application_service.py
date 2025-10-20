@@ -529,7 +529,8 @@ class TaskApplicationService(TransactionalApplicationService):
                 "error_details": safe_serialize(latest_execution.error_details),
                 "celery_status": celery_status,
                 "celery_info": safe_serialize(celery_info),
-                "execution_result": safe_serialize(latest_execution.execution_result)
+                "execution_result": safe_serialize(latest_execution.execution_result),
+                "progress_details": safe_serialize(latest_execution.progress_details),
             }
             
         except Exception as e:
@@ -577,7 +578,8 @@ class TaskApplicationService(TransactionalApplicationService):
                     "error_details": execution.error_details,
                     "current_step": execution.current_step,
                     "workflow_type": execution.workflow_type.value if execution.workflow_type else None,
-                    "created_at": execution.created_at.isoformat()
+                    "created_at": execution.created_at.isoformat(),
+                    "progress_details": execution.progress_details,
                 }
                 for execution in executions
             ]

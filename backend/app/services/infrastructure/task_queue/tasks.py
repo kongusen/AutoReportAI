@@ -4,22 +4,34 @@ Infrastructure层 - Celery任务定义
 基于DDD架构的Celery任务定义，使用新的TaskExecutionService能力
 """
 
-import logging
 import asyncio
+import logging
 import os
-from typing import Any, Dict, Optional, List
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
 from celery import Task as CeleryTask
+from celery.schedules import crontab
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
+from app.core.config import settings
 from app.models.task import Task, TaskExecution, TaskStatus
-from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService as PlaceholderProcessingSystem
-from app.utils.time_context import TimeContextManager
-from app.services.infrastructure.task_queue.celery_config import celery_app
-from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+from app.models.report_history import ReportHistory
+from app.services.application.placeholder.placeholder_service import (
+    PlaceholderApplicationService as PlaceholderProcessingSystem,
+)
 from app.services.infrastructure.notification.notification_service import NotificationService
-from celery.schedules import crontab
+from app.services.infrastructure.storage.hybrid_storage_service import (
+    get_hybrid_storage_service,
+)
+from app.services.infrastructure.task_queue.celery_config import celery_app
+from app.services.infrastructure.task_queue.progress_recorder import TaskProgressRecorder
+from app.services.infrastructure.websocket.pipeline_notifications import (
+    PipelineTaskStatus,
+)
+from app.utils.time_context import TimeContextManager
 
 logger = logging.getLogger(__name__)
 
@@ -74,27 +86,45 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         db.commit()
         task_execution_id = task_execution.id
 
-        # 定义进度更新函数
-        def update_progress(percentage: int, message: str = ""):
-            try:
-                # 检查任务是否被取消
-                db.refresh(task_execution)
-                if task_execution.execution_status == TaskStatus.CANCELLED:
-                    logger.info(f"Task {task_id} was cancelled, stopping execution")
-                    raise Exception("任务已被用户取消")
+        progress_recorder = TaskProgressRecorder(
+            db=db,
+            task=task,
+            task_execution=task_execution,
+        )
+        progress_recorder.start("任务开始")
 
-                task_execution.progress_percentage = percentage
-                task_execution.current_step = message
-                db.commit()
-                logger.info(f"Task {task_id} progress: {percentage}% - {message}")
-            except Exception as e:
-                logger.warning(f"Failed to update progress: {e}")
-                # 如果是取消异常，重新抛出以停止执行
-                if "取消" in str(e):
-                    raise
+        # 定义进度更新函数
+        def update_progress(
+            percentage: int,
+            message: str = "",
+            *,
+            stage: Optional[str] = None,
+            pipeline_status: PipelineTaskStatus = PipelineTaskStatus.ANALYZING,
+            status: str = "running",
+            placeholder: Optional[str] = None,
+            details: Optional[Dict[str, Any]] = None,
+            error: Optional[str] = None,
+            record_only: bool = False,
+        ):
+            progress_recorder.update(
+                percentage,
+                message,
+                stage=stage,
+                pipeline_status=pipeline_status,
+                status=status,
+                placeholder=placeholder,
+                details=details,
+                error=error,
+                record_only=record_only,
+            )
 
         # 初始化阶段
-        update_progress(5, "任务初始化完成")
+        update_progress(
+            5,
+            "任务初始化完成",
+            stage="initialization",
+            pipeline_status=PipelineTaskStatus.SCANNING,
+        )
         
         # 3. 更新任务状态
         task.status = TaskStatus.PROCESSING
@@ -122,7 +152,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         logger.info(f"Starting task execution for task {task_id} with Agents pipeline")
 
         # 5. 生成时间窗口（基于任务报告周期）
-        update_progress(10, "正在生成时间上下文...")
+        update_progress(
+            10,
+            "正在生成时间上下文...",
+            stage="time_context",
+            pipeline_status=PipelineTaskStatus.SCANNING,
+        )
         time_ctx = time_ctx_mgr.generate_time_context(
             report_period=task.report_period.value if task.report_period else "monthly",
             execution_time=datetime.utcnow(),
@@ -134,11 +169,19 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         }
 
         # 6. 运行ReAct流水线（生成SQL→注入时间→执行→自修正）
-        update_progress(15, "正在初始化Agent系统...")
+        update_progress(
+            15,
+            "正在初始化Agent系统...",
+            stage="agent_initialization",
+        )
         asyncio.run(system.initialize())
         events = []
 
-        update_progress(20, "正在检查占位符状态...")
+        update_progress(
+            20,
+            "正在检查占位符状态...",
+            stage="placeholder_precheck",
+        )
 
         # 智能增量占位符解析策略
         placeholders_need_analysis = []
@@ -176,7 +219,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
             # 创建新发现的占位符记录
             if new_placeholders_to_create:
-                update_progress(22, f"发现 {len(new_placeholders_to_create)} 个新占位符，正在创建记录...")
+                update_progress(
+                    22,
+                    f"发现 {len(new_placeholders_to_create)} 个新占位符，正在创建记录...",
+                    stage="placeholder_precheck",
+                    details={"new_placeholders": len(new_placeholders_to_create)},
+                )
                 logger.info(f"Creating {len(new_placeholders_to_create)} new placeholder records")
 
                 from app.models.template_placeholder import TemplatePlaceholder
@@ -251,14 +299,35 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
             total_placeholders = len(existing_placeholders) if existing_placeholders else 0
             if placeholders_need_analysis:
-                update_progress(25, f"需要分析 {len(placeholders_need_analysis)} 个占位符（共 {total_placeholders} 个）...")
+                update_progress(
+                    25,
+                    f"需要分析 {len(placeholders_need_analysis)} 个占位符（共 {total_placeholders} 个）...",
+                    stage="placeholder_analysis",
+                    details={
+                        "pending": len(placeholders_need_analysis),
+                        "total": total_placeholders,
+                    },
+                )
                 logger.info(f"Found {len(placeholders_need_analysis)} placeholders needing analysis, {len(placeholders_ready)} ready")
             else:
                 if total_placeholders == 0:
-                    update_progress(35, "模板无占位符，跳过分析阶段...")
+                    update_progress(
+                        35,
+                        "模板无占位符，跳过分析阶段...",
+                        stage="placeholder_analysis",
+                        details={"total": 0},
+                    )
                     logger.info(f"Template has no placeholders, skipping analysis phase")
                 else:
-                    update_progress(35, f"所有 {len(placeholders_ready)} 个占位符已就绪，跳过分析阶段...")
+                    update_progress(
+                        35,
+                        f"所有 {len(placeholders_ready)} 个占位符已就绪，跳过分析阶段...",
+                        stage="placeholder_analysis",
+                        details={
+                            "ready": len(placeholders_ready),
+                            "total": total_placeholders,
+                        },
+                    )
                     logger.info(f"All {len(placeholders_ready)} placeholders are ready, skipping analysis")
 
         except Exception as e:
@@ -274,7 +343,15 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         # 根据是否需要分析决定执行路径
         if placeholders_need_analysis:
             # 使用PlaceholderApplicationService单个处理每个占位符
-            update_progress(30, f"正在逐个分析 {len(placeholders_need_analysis)} 个占位符...")
+            update_progress(
+                30,
+                f"正在逐个分析 {len(placeholders_need_analysis)} 个占位符...",
+                stage="placeholder_analysis",
+                details={
+                    "pending": len(placeholders_need_analysis),
+                    "total": len(existing_placeholders or []),
+                },
+            )
 
             async def _process_placeholders_individually():
                 """
@@ -294,7 +371,13 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     try:
                         update_progress(
                             30 + int(30 * processed_count / total_count),
-                            f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})"
+                            f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})",
+                            stage="placeholder_analysis",
+                            placeholder=ph.placeholder_name,
+                            details={
+                                "current": processed_count + 1,
+                                "total": total_count,
+                            },
                         )
 
                         # 👇 构建真实的任务上下文
@@ -302,6 +385,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             "task_id": task_id,
                             "task_name": task.name,
                             "template_id": str(task.template_id),
+                            "user_id": str(task.owner_id),
                             "report_period": task.report_period.value if task.report_period else "monthly",
                             "schedule": task.schedule,  # 真实 cron 表达式
                             "time_window": time_window,  # 真实时间窗口
@@ -355,6 +439,20 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 "timestamp": datetime.utcnow().isoformat()
                             })
 
+                            update_progress(
+                                task_execution.progress_percentage or 30,
+                                f"占位符 {ph.placeholder_name} SQL生成失败",
+                                stage="placeholder_analysis",
+                                status="failed",
+                                placeholder=ph.placeholder_name,
+                                details={
+                                    "current": processed_count + 1,
+                                    "total": total_count,
+                                },
+                                error=error_msg,
+                                record_only=True,
+                            )
+
                     except Exception as e:
                         logger.error(f"❌ 处理占位符 {ph.placeholder_name} 时异常: {e}")
                         events.append({
@@ -363,6 +461,20 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             "error": str(e),
                             "timestamp": datetime.utcnow().isoformat()
                         })
+
+                        update_progress(
+                            task_execution.progress_percentage or 30,
+                            f"占位符 {ph.placeholder_name} 处理异常",
+                            stage="placeholder_analysis",
+                            status="failed",
+                            placeholder=ph.placeholder_name,
+                            details={
+                                "current": processed_count + 1,
+                                "total": total_count,
+                            },
+                            error=str(e),
+                            record_only=True,
+                        )
 
                     processed_count += 1
 
@@ -375,10 +487,20 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 return processed_count
 
             processed_count = asyncio.run(_process_placeholders_individually())
-            update_progress(65, f"占位符分析完成，成功处理 {processed_count} 个占位符")
+            update_progress(
+                65,
+                f"占位符分析完成，成功处理 {processed_count} 个占位符",
+                stage="placeholder_analysis",
+                details={"processed": processed_count},
+            )
         else:
             # 所有占位符已就绪，直接执行ETL
-            update_progress(40, "占位符已就绪，直接执行ETL...")
+            update_progress(
+                40,
+                "占位符已就绪，直接执行ETL...",
+                stage="placeholder_analysis",
+                details={"ready": len(placeholders_ready)},
+            )
             # 记录跳过分析的事件
             events.append({
                 "type": "analysis_skipped",
@@ -388,7 +510,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             })
 
         # 7. 执行真实的ETL数据处理流程
-        update_progress(70, "开始ETL数据处理...")
+        update_progress(
+            70,
+            "开始ETL数据处理...",
+            stage="etl_processing",
+        )
 
         try:
             # 重新加载最新的占位符数据（可能在Agent分析后有更新）
@@ -399,9 +525,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
             sql_replacer = SqlPlaceholderReplacer()
 
-            update_progress(75, "正在处理SQL占位符替换和执行查询...")
+            update_progress(
+                75,
+                "正在处理SQL占位符替换和执行查询...",
+                stage="etl_processing",
+            )
 
             # 对每个有效的占位符进行单个处理
+            total_placeholders_count = len(placeholders or [])
             for i, ph in enumerate(placeholders or []):
                 if not ph.generated_sql or not ph.sql_validated:
                     logger.warning(f"跳过占位符 {ph.placeholder_name}: 无有效SQL")
@@ -413,6 +544,19 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         "execution_time": 0,
                         "row_count": 0
                     }
+                    update_progress(
+                        task_execution.progress_percentage or 75,
+                        f"跳过占位符 {ph.placeholder_name}: 无有效SQL",
+                        stage="etl_processing",
+                        status="failed",
+                        placeholder=ph.placeholder_name,
+                        details={
+                            "current": i + 1,
+                            "total": total_placeholders_count,
+                        },
+                        error="无有效SQL",
+                        record_only=True,
+                    )
                     continue
 
                 try:
@@ -449,9 +593,18 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     }
 
                     # 更新进度
-                    progress_increment = 10 / len(placeholders) if placeholders else 0
+                    progress_increment = 10 / total_placeholders_count if total_placeholders_count else 0
                     current_progress = 75 + (i + 1) * progress_increment
-                    update_progress(int(current_progress), f"已处理 {i + 1}/{len(placeholders)} 个占位符")
+                    update_progress(
+                        int(current_progress),
+                        f"已处理 {i + 1}/{total_placeholders_count} 个占位符",
+                        stage="etl_processing",
+                        placeholder=ph.placeholder_name,
+                        details={
+                            "current": i + 1,
+                            "total": total_placeholders_count,
+                        },
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to execute SQL for placeholder {ph.placeholder_name}: {e}")
@@ -464,7 +617,25 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         "row_count": 0
                     }
 
-            update_progress(85, "ETL数据处理完成")
+                    update_progress(
+                        task_execution.progress_percentage or int(current_progress),
+                        f"执行占位符 {ph.placeholder_name} SQL 失败",
+                        stage="etl_processing",
+                        status="failed",
+                        placeholder=ph.placeholder_name,
+                        details={
+                            "current": i + 1,
+                            "total": total_placeholders_count,
+                        },
+                        error=str(e),
+                        record_only=True,
+                    )
+
+            update_progress(
+                85,
+                "ETL数据处理完成",
+                stage="etl_processing",
+            )
 
             # 构建执行结果
             execution_result = {
@@ -486,8 +657,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             }
 
         # 8. 生成文档（使用模板 + doc_assembler）
-        update_progress(87, "正在生成报告文档...")
+        update_progress(
+            87,
+            "正在生成报告文档...",
+            stage="document_generation",
+            pipeline_status=PipelineTaskStatus.ASSEMBLING,
+        )
         tpl_meta = None  # 初始化模板元数据，用于后续清理
+        report_generation_error: Optional[str] = None
         try:
             from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path, cleanup_template_temp_dir
             from app.services.infrastructure.agents.tools.doc_assembler import DocAssemblerTool
@@ -538,8 +715,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         }
                         logger.info(f"✅ 报告直接存储完成: {execution_result['report']['storage_path']}")
                     else:
-                        logger.error(f"直接存储模式失败: {assemble_res.get('error')}")
-                        execution_result["report"] = {"error": "直接存储失败", "generation_mode": "direct_storage"}
+                        report_generation_error = assemble_res.get('error') or "直接存储失败"
+                        logger.error(f"直接存储模式失败: {report_generation_error}")
+                        execution_result["report"] = {
+                            "error": report_generation_error,
+                            "generation_mode": "direct_storage"
+                        }
 
                 else:
                     # 传统模式：本地生成后上传
@@ -573,7 +754,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         import re
                         slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
                         object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
-                        update_progress(92, "正在上传文档到存储...")
+                        update_progress(
+                            92,
+                            "正在上传文档到存储...",
+                            stage="document_generation",
+                            pipeline_status=PipelineTaskStatus.ASSEMBLING,
+                        )
                         upload = storage.upload_with_key(BytesIO(file_bytes), object_name, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                         execution_result["report"] = {
                             "storage_path": upload.get("file_path"),
@@ -581,12 +767,34 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             "friendly_name": f"{slug}_{ts}.docx",
                             "generation_mode": "traditional_upload"
                         }
-                        update_progress(95, "文档生成完成")
+                        update_progress(
+                            95,
+                            "文档生成完成",
+                            stage="document_generation",
+                            pipeline_status=PipelineTaskStatus.ASSEMBLING,
+                        )
                     else:
-                        logger.error(f"传统模式文档生成失败: {assemble_res.get('error')}")
-                        execution_result["report"] = {"error": "传统模式生成失败", "generation_mode": "traditional_upload"}
+                        report_generation_error = assemble_res.get('error') or "传统模式生成失败"
+                        logger.error(f"传统模式文档生成失败: {report_generation_error}")
+                        execution_result["report"] = {
+                            "error": report_generation_error,
+                            "generation_mode": "traditional_upload"
+                        }
+            else:
+                report_generation_error = "任务未配置模板，跳过文档生成"
+                logger.warning(report_generation_error)
+                execution_result["report"] = {
+                    "error": report_generation_error,
+                    "generation_mode": "skipped"
+                }
         except Exception as e:
+            report_generation_error = str(e)
             logger.error(f"Document assembly failed: {e}")
+            existing_mode = (execution_result.get("report") or {}).get("generation_mode")
+            execution_result["report"] = {
+                "error": report_generation_error,
+                "generation_mode": existing_mode or "assembly_error"
+            }
         finally:
             # 清理模板临时文件
             if tpl_meta:
@@ -596,75 +804,162 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 except Exception as cleanup_error:
                     logger.warning(f"清理模板临时文件失败: {cleanup_error}")
         
+        report_info = execution_result.get("report") or {}
+        if not report_info:
+            report_info = {}
+            execution_result["report"] = report_info
+
+        report_generated = bool(report_info.get("storage_path"))
+        if report_generated:
+            report_generation_error = None
+            report_info.pop("error", None)
+        else:
+            if not report_info.get("error"):
+                report_info["error"] = report_generation_error or "报告文档未生成"
+
+        etl_success = execution_result.get("success", False)
+        execution_result["etl_success"] = etl_success
+        overall_success = etl_success and report_generated
+        execution_result["success"] = overall_success
+        report_info["generated"] = report_generated
+        
         # 7. 更新执行结果
-        task_execution.execution_status = TaskStatus.COMPLETED
+        final_status = TaskStatus.COMPLETED if overall_success else TaskStatus.FAILED
+        task_execution.execution_status = final_status
         task_execution.completed_at = datetime.utcnow()
         task_execution.total_duration = int((task_execution.completed_at - task_execution.started_at).total_seconds())
-        task_execution.execution_result = execution_result
         task_execution.progress_percentage = 100
+
+        owner_id = task.owner_id
+        if isinstance(owner_id, str):
+            owner_id = UUID(owner_id)
+
+        history_metadata: Dict[str, Any] = {
+            "execution_id": str(task_execution.execution_id),
+            "generation_mode": report_info.get("generation_mode"),
+            "storage_backend": report_info.get("backend"),
+            "placeholders": {
+                "processed": execution_result.get("placeholders_processed"),
+                "success": execution_result.get("placeholders_success"),
+            },
+            "etl_success": etl_success,
+            "report_generated": report_generated,
+            "time_window": time_window,
+        }
+        if report_info.get("error"):
+            history_metadata["error"] = report_info.get("error")
+
+        report_history_record = ReportHistory(
+            task_id=task.id,
+            user_id=owner_id,
+            status="completed" if final_status == TaskStatus.COMPLETED else "failed",
+            file_path=report_info.get("storage_path"),
+            error_message=report_info.get("error") if not overall_success else None,
+            result=None,
+            processing_metadata=history_metadata,
+        )
+        db.add(report_history_record)
+        db.flush()
+        report_info["history_id"] = report_history_record.id
+
+        task_execution.execution_result = execution_result
         
         # 更新任务统计
-        task.status = TaskStatus.COMPLETED
-        task.success_count += 1
+        task.status = final_status
+        if final_status == TaskStatus.COMPLETED:
+            task.success_count += 1
+        else:
+            task.failure_count += 1
         task.last_execution_duration = task_execution.total_duration
         
-        # 更新平均执行时间
-        if task.average_execution_time == 0:
-            task.average_execution_time = task_execution.total_duration
-        else:
-            task.average_execution_time = (task.average_execution_time + task_execution.total_duration) / 2
+        # 更新平均执行时间（仅在成功时更新）
+        if final_status == TaskStatus.COMPLETED:
+            if task.average_execution_time == 0:
+                task.average_execution_time = task_execution.total_duration
+            else:
+                task.average_execution_time = (task.average_execution_time + task_execution.total_duration) / 2
         
         db.commit()
         
-        # 9. 发送成功通知（携带下载链接）
-        update_progress(97, "正在发送通知...")
-        if task.recipients:
-            try:
-                # 生成下载URL（若有report）
-                download_url = None
+        if overall_success:
+            update_progress(
+                97,
+                "正在发送通知...",
+                stage="notification",
+                pipeline_status=PipelineTaskStatus.ASSEMBLING,
+            )
+            if task.recipients:
                 try:
-                    if execution_result.get("report", {}).get("storage_path"):
-                        storage = get_hybrid_storage_service()
-                        download_url = storage.get_download_url(execution_result["report"]["storage_path"], expires=86400)
-                except Exception as e:
-                    logger.warning(f"Failed to generate download URL: {e}")
+                    # 生成下载URL（若有report）
+                    download_url = None
+                    try:
+                        if execution_result.get("report", {}).get("storage_path"):
+                            storage = get_hybrid_storage_service()
+                            download_url = storage.get_download_url(execution_result["report"]["storage_path"], expires=86400)
+                    except Exception as e:
+                        logger.warning(f"Failed to generate download URL: {e}")
 
-                # 使用DeliveryService 发送邮件（若可用）或通知服务
-                from app.services.infrastructure.delivery.delivery_service import create_delivery_service, DeliveryRequest, DeliveryMethod, StorageConfig, EmailConfig, NotificationConfig
-                delivery_service = create_delivery_service(str(task.owner_id))
-                # 友好名称: 任务名+时间
-                friendly_name = execution_result.get("report", {}).get("friendly_name") or f"report_{task.id}.docx"
-                ts_email = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                email_config = EmailConfig(
-                    recipients=task.recipients,
-                    subject=f"报告生成完成 - {task.name} - {ts_email}",
-                    body=(
-                        f"报告已生成: {friendly_name}\n\n"
-                        f"下载链接: {download_url if download_url else '请登录系统查看'}\n"
-                        f"任务: {task.name}\n时间窗口: {time_window['start']} - {time_window['end']}\n"
-                    ),
-                    attach_files=False
-                )
-                req = DeliveryRequest(
-                    task_id=str(task_id),
-                    user_id=str(task.owner_id),
-                    files=[],
-                    delivery_method=DeliveryMethod.EMAIL_ONLY,
-                    storage_config=StorageConfig(bucket_name="reports", path_prefix=f"reports/{task.owner_id}", public_access=False, retention_days=90),
-                    email_config=email_config,
-                    notification_config=NotificationConfig(channels=["system"], message="报告已生成", priority="normal"),
-                    metadata={"report_path": execution_result.get("report", {}).get("storage_path")}
-                )
-                # 在同步任务中执行异步投递
-                asyncio.run(delivery_service.deliver_report(req))
-            except Exception as e:
-                logger.error(f"Failed to send success notification for task {task_id}: {e}")
+                    # 使用DeliveryService 发送邮件（若可用）或通知服务
+                    from app.services.infrastructure.delivery.delivery_service import create_delivery_service, DeliveryRequest, DeliveryMethod, StorageConfig, EmailConfig, NotificationConfig
+                    delivery_service = create_delivery_service(str(task.owner_id))
+                    # 友好名称: 任务名+时间
+                    friendly_name = execution_result.get("report", {}).get("friendly_name") or f"report_{task.id}.docx"
+                    ts_email = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                    email_config = EmailConfig(
+                        recipients=task.recipients,
+                        subject=f"报告生成完成 - {task.name} - {ts_email}",
+                        body=(
+                            f"报告已生成: {friendly_name}\n\n"
+                            f"下载链接: {download_url if download_url else '请登录系统查看'}\n"
+                            f"任务: {task.name}\n时间窗口: {time_window['start']} - {time_window['end']}\n"
+                        ),
+                        attach_files=False
+                    )
+                    req = DeliveryRequest(
+                        task_id=str(task_id),
+                        user_id=str(task.owner_id),
+                        files=[],
+                        delivery_method=DeliveryMethod.EMAIL_ONLY,
+                        storage_config=StorageConfig(bucket_name="reports", path_prefix=f"reports/{task.owner_id}", public_access=False, retention_days=90),
+                        email_config=email_config,
+                        notification_config=NotificationConfig(channels=["system"], message="报告已生成", priority="normal"),
+                        metadata={"report_path": execution_result.get("report", {}).get("storage_path")}
+                    )
+                    # 在同步任务中执行异步投递
+                    asyncio.run(delivery_service.deliver_report(req))
+                except Exception as e:
+                    logger.error(f"Failed to send success notification for task {task_id}: {e}")
         
-        update_progress(100, "任务执行完成")
-        logger.info(f"Task {task_id} completed successfully in {task_execution.total_duration}s")
+        final_message = "任务执行完成" if overall_success else f"任务执行失败: {report_info.get('error')}"
+        final_pipeline_status = PipelineTaskStatus.COMPLETED if overall_success else PipelineTaskStatus.FAILED
+        update_progress(
+            100,
+            final_message,
+            stage="completion",
+            pipeline_status=final_pipeline_status,
+            status="success" if overall_success else "failed",
+            error=report_info.get("error") if not overall_success else None,
+        )
+
+        if overall_success:
+            progress_recorder.complete(
+                "任务执行完成",
+                result={
+                    "task_id": task_id,
+                    "execution_id": str(task_execution.execution_id),
+                },
+            )
+            logger.info(f"Task {task_id} completed successfully in {task_execution.total_duration}s")
+        else:
+            progress_recorder.fail(
+                message="任务执行失败: 报告生成失败",
+                stage="document_generation",
+                error_details={"error": report_info.get("error")},
+            )
+            logger.warning(f"Task {task_id} completed with failures in {task_execution.total_duration}s: {report_info.get('error')}")
 
         return {
-            "status": "completed",
+            "status": "completed" if overall_success else "failed",
             "task_id": task_id,
             "execution_id": str(task_execution.execution_id),
             "execution_time": task_execution.total_duration,
@@ -679,6 +974,16 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             logger.info(f"Task {task_id} was cancelled: {error_message}")
         else:
             logger.error(f"Task {task_id} failed: {error_message}", exc_info=True)
+
+        if 'progress_recorder' in locals():
+            try:
+                progress_recorder.fail(
+                    message="任务执行失败" if not is_cancelled else "任务已取消",
+                    stage="cancelled" if is_cancelled else "failure",
+                    error_details={"error": error_message},
+                )
+            except Exception as notify_error:
+                logger.warning(f"Failed to record failure progress for task {task_id}: {notify_error}")
 
         # 更新失败/取消状态
         if task_execution_id:

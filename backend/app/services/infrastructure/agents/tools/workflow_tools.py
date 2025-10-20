@@ -222,10 +222,10 @@ class StatBasicWorkflowTool(Tool):
 - **环比查询**: 对于环比查询，使用 {{prev_start_date}} 和 {{prev_end_date}}
 - **百分比计算**: 对于计算占比或百分比的查询，SQL本身不要包含 CONCAT 或 '%' 符号，只返回 ROUND(...) 计算出的纯数字
 - **不要添加额外的计算列**: 只返回用户明确要求的指标
-- 返回形如：{"sql": "SELECT ..."}
+- 返回形如：{{"sql": "SELECT ..."}}
 
 ## 输出格式
-仅返回一个JSON对象：{"sql": "SELECT ..."}
+仅返回一个JSON对象：{{"sql": "SELECT ..."}}
 
 重要提醒：所有时间相关的过滤都使用占位符格式（如 {{start_date}}），不要使用具体的日期值。
 """
@@ -404,7 +404,7 @@ class StatRatioWorkflowTool(Tool):
 - **时间过滤统一规范**: 查询必须使用日期范围 dt >= {{start_date}} AND dt <= {{end_date}} 进行过滤
 - **环比查询**: 对于环比查询，使用 {{prev_start_date}} 和 {{prev_end_date}}
 - **百分比计算**: SQL本身不要包含 CONCAT 或 '%' 符号，只返回 ROUND(...) 计算出的纯数字
-- 使用真实存在的表名与列名；返回形如：{"sql": "SELECT ..."}
+- 使用真实存在的表名与列名；返回形如：{{"sql": "SELECT ..."}}
 
 重要提醒：所有时间相关的过滤都使用占位符格式（如 {{start_date}}），不要使用具体的日期值。
 """
@@ -619,7 +619,7 @@ class StatCategoryMixWorkflowTool(Tool):
   - 若提供topN：选取计数前N的分类，其余合并为'其他'（当includes为空时优先生效）。
 - ratio = cnt / NULLIF(SUM(cnt) OVER (), 0)
 - WHERE 子句必须包含基于 {time_col} 的时间范围过滤
-- 使用真实存在的表名与列名；返回形如：{"sql": "SELECT ..."}。
+- 使用真实存在的表名与列名；返回形如：{{"sql": "SELECT ..."}}。
 """
 
             llm_text = await self._llm.call_llm(sql_prompt, user_id=user_id)

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import SessionLocal
 from app.services.infrastructure.notification.email_service import EmailService
 from app.core.api_specification import NotificationMessage
 from app.models.notification import NotificationType, NotificationPriority
@@ -204,6 +204,48 @@ class NotificationService:
             logger.info(f"Task {task_id} completion notification sent to user {user_id}")
         except Exception as e:
             logger.error(f"Error sending task completion notification: {e}")
+
+    async def send_task_progress_update(
+        self,
+        *,
+        task_id: int,
+        progress_data: Dict[str, Any]
+    ) -> None:
+        """
+        发送实时任务进度通知（用于调度器触发时的早期反馈）
+        """
+        try:
+            if not settings.ENABLE_WEBSOCKET_NOTIFICATIONS:
+                return
+
+            owner_id = None
+            if self.redis_client:
+                owner_id = await self.redis_client.get(f"report_task:{task_id}:owner")
+
+            # 回退：直接查询数据库获取任务所有者
+            if not owner_id:
+                with SessionLocal() as db_session:
+                    task = crud.task.get(db_session, id=task_id)
+                    owner_id = str(task.owner_id) if task else None
+
+            if not owner_id:
+                logger.debug(f"无法确定任务 {task_id} 的所有者，跳过进度通知")
+                return
+
+            message = {
+                "type": "task_progress",
+                "task_id": task_id,
+                "progress": progress_data.get("progress"),
+                "status": progress_data.get("status"),
+                "message": progress_data.get("message"),
+                "timestamp": datetime.now().isoformat(),
+                "details": progress_data,
+            }
+
+            await self.send_direct_message(owner_id, message)
+
+        except Exception as e:
+            logger.error(f"发送任务进度通知失败: {e}")
 
     async def notify_task_failed(
         self, db: Session, task_id: int, user_id: str, task_name: str, error_message: str

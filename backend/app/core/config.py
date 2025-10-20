@@ -279,7 +279,7 @@ class Settings(BaseSettings):
     
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
-    MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport-prod")
+    MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     
     # 本地存储配置 - 仅作为MinIO的备选方案

@@ -8,12 +8,14 @@
 
 import time
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import structlog
 
 from .types import AgentInput
 from .tools.registry import ToolRegistry
 from .auth_context import auth_manager
+from .config_context import config_manager
+from .sql_generation import SQLGenerationCoordinator, SQLGenerationConfig
 
 
 class StepExecutor:
@@ -32,6 +34,8 @@ class StepExecutor:
         self._struct_logger = structlog.get_logger(self.__class__.__name__)
         self.registry = ToolRegistry()
         self._setup_tools()
+        self._sql_generation_config = SQLGenerationConfig()
+        self._sql_coordinator: Optional[SQLGenerationCoordinator] = None
         # 高可用：工具调用重试配置
         self.max_tool_retries = 2
         self.retry_backoff_base = 0.5  # seconds
@@ -72,6 +76,124 @@ class StepExecutor:
         self.registry.register(StatCategoryMixWorkflowTool(self.container))
 
         self._logger.info(f"已注册 {len(self.registry._tools)} 个工具")
+
+    def _get_sql_coordinator(self) -> Optional[SQLGenerationCoordinator]:
+        """Lazily instantiate the SQL generation coordinator."""
+        if self._sql_coordinator is not None:
+            return self._sql_coordinator
+
+        llm_client = getattr(self.container, "llm_service", None) or getattr(self.container, "llm", None)
+        if not llm_client:
+            self._logger.warning("⏳ [SQLCoordinator] 缺少LLM服务，无法启用新SQL生成管线")
+            self._sql_coordinator = None
+            return None
+
+        db_connector = getattr(self.container, "data_source", None) or getattr(self.container, "db_connector", None)
+        config = self._sql_generation_config
+
+        try:
+            self._sql_coordinator = SQLGenerationCoordinator(
+                self.container,
+                llm_client=llm_client,
+                db_connector=db_connector,
+                config=config,
+            )
+        except Exception as exc:
+            self._logger.error(f"❌ [SQLCoordinator] 初始化失败: {exc}")
+            self._sql_coordinator = None
+        return self._sql_coordinator
+
+    def _should_use_sql_coordinator(self, ai: AgentInput, context: Dict[str, Any]) -> bool:
+        """Determine whether the new SQL coordinator should handle the request."""
+        try:
+            tdc = getattr(ai, "task_driven_context", {}) or {}
+            if isinstance(tdc, dict) and tdc.get("force_sql_generation_coordinator"):
+                return True
+
+            user_id = ai.user_id or auth_manager.get_current_user_id()
+            config = config_manager.get_config(user_id)
+            custom_settings = getattr(config, "custom_settings", {}) or {}
+            flag_key = self._sql_generation_config.feature_flag_key
+            return bool(custom_settings.get(flag_key))
+        except Exception:
+            return False
+
+    async def _generate_sql_with_coordinator(
+        self,
+        ai: AgentInput,
+        context: Dict[str, Any],
+        user_id: str,
+        observations: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Run the coordinator-based SQL generation pipeline."""
+        coordinator = self._get_sql_coordinator()
+        if not coordinator:
+            return None
+
+        query_text = (
+            context.get("placeholder_description")
+            or getattr(getattr(ai, "placeholder", None), "description", "")
+            or ai.user_prompt
+        )
+        if not query_text:
+            query_text = "生成统计分析SQL"
+
+        snapshot = {
+            "time_context": context.get("time_context"),
+            "window": context.get("window"),
+            "start_date": context.get("start_date"),
+            "end_date": context.get("end_date"),
+            "column_details": context.get("column_details"),
+            "columns": context.get("columns"),
+            "selected_tables": context.get("selected_tables"),
+            "tables": context.get("tables"),
+            "data_source": context.get("data_source"),
+            "user_id": user_id,
+            "semantic_type": context.get("semantic_type"),
+        }
+
+        try:
+            coordinator_result = await coordinator.generate(query_text, snapshot)
+        except Exception as exc:
+            self._logger.error(f"❌ [SQLCoordinator] 执行异常: {exc}", exc_info=True)
+            return {
+                "success": False,
+                "action": "sql_generation",
+                "error": f"sql_coordinator_exception: {exc}",
+            }
+
+        if coordinator_result.success:
+            context["current_sql"] = coordinator_result.sql
+            context["sql"] = coordinator_result.sql
+            context["coordinator_metadata"] = coordinator_result.metadata
+            observations.append("✅ SQLGenerationCoordinator 生成有效SQL")
+            return {
+                "success": True,
+                "action": "sql_generation",
+                "current_sql": coordinator_result.sql,
+                "sql": coordinator_result.sql,
+                "message": "SQL已生成",
+                "next_step_hint": "调用sql.validate验证SQL",
+                "coordinator_metadata": coordinator_result.metadata,
+            }
+
+        if coordinator_result.needs_user_input:
+            observations.append("⚠️ SQLGenerationCoordinator 需要额外输入")
+            return {
+                "success": False,
+                "action": "sql_generation",
+                "error": coordinator_result.error or "user_input_required",
+                "message": coordinator_result.error,
+                "suggestions": coordinator_result.suggestions,
+            }
+
+        observations.append("❌ SQLGenerationCoordinator 生成失败")
+        return {
+            "success": False,
+            "action": "sql_generation",
+            "error": coordinator_result.error or "generation_failed",
+            "debug_info": coordinator_result.debug_info,
+        }
 
     async def _load_data_source_config(
         self,
@@ -338,73 +460,48 @@ class StepExecutor:
                 else:
                     self._logger.warning("⚠️ [SQL生成] ResourcePool不可用，无法提取详细信息")
 
+                use_legacy_sql_generation = True
+                result: Optional[Dict[str, Any]] = None
+
+                if self._should_use_sql_coordinator(ai, context):
+                    coordinator_payload = await self._generate_sql_with_coordinator(ai, context, user_id, observations)
+                    if coordinator_payload:
+                        use_legacy_sql_generation = False
+                        result = coordinator_payload
+                        context["sql_generation_strategy"] = "coordinator"
+
+                if use_legacy_sql_generation:
+                    context["sql_generation_strategy"] = "legacy"
+
                 # 🗄️ [ResourcePool模式] 从ContextMemory判断schema状态
-                context_memory = context.get("context_memory")
-                missing_time = not (context.get("start_date") or (isinstance(context.get("window"), dict) and context.get("window", {}).get("start_date")))
+                if use_legacy_sql_generation:
+                    context_memory = context.get("context_memory")
+                    missing_time = not (context.get("start_date") or (isinstance(context.get("window"), dict) and context.get("window", {}).get("start_date")))
 
-                # 从ContextMemory判断schema可用性
-                if context_memory:
-                    missing_schema = not context_memory.schema_available
-                    self._logger.info(
-                        f"🗄️ [Gating检查] ContextMemory: "
-                        f"schema_available={context_memory.schema_available}"
-                    )
-                else:
-                    # 回退：如果没有ContextMemory，使用传统检查
-                    missing_schema = (
-                        not context.get("schema_summary") and
-                        not (context.get("columns") and len(context.get("columns")) > 0)
-                    )
-                    self._logger.warning("⚠️ [Gating检查] 没有ContextMemory，使用传统检查")
-                if missing_time:
-                    observations.append("⚠️ 缺少时间范围，建议先计算时间窗口 time.window")
-                    decision = {
-                        "success": True,
-                        "action": "gating",
-                        "gating_redirect": "time.window",
-                        "message": "缺少时间范围，已建议先执行 time.window",
-                        "next_step_hint": "请先调用 time.window 计算统计时间范围"
-                    }
-                    # 返回让下一轮按建议执行
-                    return {
-                        "success": True,
-                        "step_result": decision,
-                        "context": context,
-                        "observations": observations,
-                        "decision_info": {
-                            "step_completed": "gating",
-                            "step_reason": "缺少时间范围",
-                            "next_recommendations": ["调用 time.window 计算时间窗口"]
-                        },
-                        "execution_time": int((time.time() - step_start) * 1000)
-                    }
-
-                if missing_schema:
-                    observations.append("⚠️ 缺少表列信息，主动获取schema信息")
-                    self._logger.info("🔍 [Gating] 检测到缺少字段详情，主动调用schema.get_columns获取")
-
-                    # 预选一批最相关的表
-                    try:
-                        suggested_tables = self._suggest_tables_from_names(
-                            context.get("tables") or [],
-                            context.get("placeholder_description") or ""
+                    # 从ContextMemory判断schema可用性
+                    if context_memory:
+                        missing_schema = not context_memory.schema_available
+                        self._logger.info(
+                            f"🗄️ [Gating检查] ContextMemory: "
+                            f"schema_available={context_memory.schema_available}"
                         )
-                        if not suggested_tables and context.get("tables"):
-                            # 如果智能选择失败，取前5张表作为兜底
-                            suggested_tables = context.get("tables")[:5]
-                    except Exception:
-                        suggested_tables = context.get("tables", [])[:5] if context.get("tables") else []
-
-                    if not suggested_tables:
-                        # 如果连表列表都没有，需要先list_tables
-                        self._logger.warning("🔍 [Gating] 连表列表都没有，需要先调用schema.list_tables")
+                    else:
+                        # 回退：如果没有ContextMemory，使用传统检查
+                        missing_schema = (
+                            not context.get("schema_summary") and
+                            not (context.get("columns") and len(context.get("columns")) > 0)
+                        )
+                        self._logger.warning("⚠️ [Gating检查] 没有ContextMemory，使用传统检查")
+                    if missing_time:
+                        observations.append("⚠️ 缺少时间范围，建议先计算时间窗口 time.window")
                         decision = {
                             "success": True,
                             "action": "gating",
-                            "gating_redirect": "schema.list_tables",
-                            "message": "缺少表列表，需要先执行 schema.list_tables",
-                            "next_step_hint": "请先调用 schema.list_tables 获取所有表"
+                            "gating_redirect": "time.window",
+                            "message": "缺少时间范围，已建议先执行 time.window",
+                            "next_step_hint": "请先调用 time.window 计算统计时间范围"
                         }
+                        # 返回让下一轮按建议执行
                         return {
                             "success": True,
                             "step_result": decision,
@@ -412,62 +509,101 @@ class StepExecutor:
                             "observations": observations,
                             "decision_info": {
                                 "step_completed": "gating",
-                                "step_reason": "缺少表列表",
-                                "next_recommendations": ["调用 schema.list_tables 获取表列表"]
+                                "step_reason": "缺少时间范围",
+                                "next_recommendations": ["调用 time.window 计算时间窗口"]
                             },
                             "execution_time": int((time.time() - step_start) * 1000)
                         }
 
-                    # 主动调用schema.get_columns获取字段信息
-                    try:
-                        self._logger.info(f"🔧 [Gating主动获取] 调用schema.get_columns获取表字段: {suggested_tables}")
+                    if missing_schema:
+                        observations.append("⚠️ 缺少表列信息，主动获取schema信息")
+                        self._logger.info("🔍 [Gating] 检测到缺少字段详情，主动调用schema.get_columns获取")
 
-                        # 获取schema.get_columns工具
-                        schema_tool = self.registry.get("schema.get_columns")
-                        if not schema_tool:
-                            raise ValueError("schema.get_columns工具未找到")
+                        # 预选一批最相关的表
+                        try:
+                            suggested_tables = self._suggest_tables_from_names(
+                                context.get("tables") or [],
+                                context.get("placeholder_description") or ""
+                            )
+                            if not suggested_tables and context.get("tables"):
+                                # 如果智能选择失败，取前5张表作为兜底
+                                suggested_tables = context.get("tables")[:5]
+                        except Exception:
+                            suggested_tables = context.get("tables", [])[:5] if context.get("tables") else []
 
-                        # 准备工具输入
-                        schema_input = {
-                            "tables": suggested_tables,
-                            "data_source": ds,
-                            "connection_config": ds,
-                            "user_id": user_id
-                        }
-
-                        # 执行工具
-                        schema_result = await self._execute_tool_with_retry("schema.get_columns", schema_tool, schema_input)
-
-                        if schema_result.get("success") and schema_result.get("column_details"):
-                            # 成功获取字段信息，更新上下文
-                            self._update_context_state(context, schema_result, "schema.get_columns")
-                            observations.append(f"✅ 已主动获取{len(schema_result.get('column_details', {}))}张表的字段信息")
-                            self._logger.info(f"✅ [Gating主动获取] 成功获取{len(schema_result.get('column_details', {}))}张表的字段信息")
-
-                            # 继续执行SQL生成（不返回，继续往下走）
-                        else:
-                            # 获取失败，返回错误
-                            error_msg = schema_result.get("error", "未知错误")
-                            self._logger.error(f"❌ [Gating主动获取] schema.get_columns失败: {error_msg}")
+                        if not suggested_tables:
+                            # 如果连表列表都没有，需要先list_tables
+                            self._logger.warning("🔍 [Gating] 连表列表都没有，需要先调用schema.list_tables")
+                            decision = {
+                                "success": True,
+                                "action": "gating",
+                                "gating_redirect": "schema.list_tables",
+                                "message": "缺少表列表，需要先执行 schema.list_tables",
+                                "next_step_hint": "请先调用 schema.list_tables 获取所有表"
+                            }
                             return {
-                                "success": False,
-                                "error": f"auto_schema_fetch_failed: {error_msg}",
+                                "success": True,
+                                "step_result": decision,
                                 "context": context,
-                                "observations": observations + [f"❌ 主动获取schema失败: {error_msg}"],
+                                "observations": observations,
+                                "decision_info": {
+                                    "step_completed": "gating",
+                                    "step_reason": "缺少表列表",
+                                    "next_recommendations": ["调用 schema.list_tables 获取表列表"]
+                                },
                                 "execution_time": int((time.time() - step_start) * 1000)
                             }
-                    except Exception as e:
-                        self._logger.error(f"❌ [Gating主动获取] 异常: {str(e)}")
-                        return {
-                            "success": False,
-                            "error": f"auto_schema_fetch_exception: {str(e)}",
-                            "context": context,
-                            "observations": observations + [f"❌ 主动获取schema异常: {str(e)}"],
-                            "execution_time": int((time.time() - step_start) * 1000)
-                        }
+
+                        # 主动调用schema.get_columns获取字段信息
+                        try:
+                            self._logger.info(f"🔧 [Gating主动获取] 调用schema.get_columns获取表字段: {suggested_tables}")
+
+                            # 获取schema.get_columns工具
+                            schema_tool = self.registry.get("schema.get_columns")
+                            if not schema_tool:
+                                raise ValueError("schema.get_columns工具未找到")
+
+                            # 准备工具输入
+                            schema_input = {
+                                "tables": suggested_tables,
+                                "data_source": ds,
+                                "connection_config": ds,
+                                "user_id": user_id
+                            }
+
+                            # 执行工具
+                            schema_result = await self._execute_tool_with_retry("schema.get_columns", schema_tool, schema_input)
+
+                            if schema_result.get("success") and schema_result.get("column_details"):
+                                # 成功获取字段信息，更新上下文
+                                self._update_context_state(context, schema_result, "schema.get_columns")
+                                observations.append(f"✅ 已主动获取{len(schema_result.get('column_details', {}))}张表的字段信息")
+                                self._logger.info(f"✅ [Gating主动获取] 成功获取{len(schema_result.get('column_details', {}))}张表的字段信息")
+
+                                # 继续执行SQL生成（不返回，继续往下走）
+                            else:
+                                # 获取失败，返回错误
+                                error_msg = schema_result.get("error", "未知错误")
+                                self._logger.error(f"❌ [Gating主动获取] schema.get_columns失败: {error_msg}")
+                                return {
+                                    "success": False,
+                                    "error": f"auto_schema_fetch_failed: {error_msg}",
+                                    "context": context,
+                                    "observations": observations + [f"❌ 主动获取schema失败: {error_msg}"],
+                                    "execution_time": int((time.time() - step_start) * 1000)
+                                }
+                        except Exception as e:
+                            self._logger.error(f"❌ [Gating主动获取] 异常: {str(e)}")
+                            return {
+                                "success": False,
+                                "error": f"auto_schema_fetch_exception: {str(e)}",
+                                "context": context,
+                                "observations": observations + [f"❌ 主动获取schema异常: {str(e)}"],
+                                "execution_time": int((time.time() - step_start) * 1000)
+                            }
 
                 # 前置综合分析（表/列/模板/时间/占位符），指导SQL生成
-                if not context.get("pre_sql_analysis"):
+                if use_legacy_sql_generation and not context.get("pre_sql_analysis"):
                     try:
                         pre = await self._run_pre_sql_analysis(context, user_id)
                         if pre:
@@ -476,67 +612,81 @@ class StepExecutor:
                     except Exception:
                         pass
 
-                sql_prompt = self._build_sql_generation_prompt(context, step.get("input", {}))
+                if use_legacy_sql_generation:
+                    sql_prompt = self._build_sql_generation_prompt(context, step.get("input", {}))
 
-                # 选择LLM策略
-                try:
-                    llm_service = getattr(self.container, 'llm_service', None) or getattr(self.container, 'llm', None)
-                    if not llm_service:
-                        raise ValueError("LLM service not found in container")
-
-                    # 根据上下文构建policy
-                    from .llm_strategy_manager import llm_strategy_manager
-                    llm_policy = llm_strategy_manager.build_llm_policy(
-                        user_id=user_id,
-                        stage="tool",
-                        complexity="high",
-                        tool_name="sql.draft",
-                        output_kind="sql",
-                        context=context
-                    )
-
-                    # 调用LLM生成结构化JSON，优先从 {"sql": "..."} 获取SQL
-                    llm_text = await self._call_llm(llm_service, sql_prompt, user_id, llm_policy)
-                    extracted_sql = ""
-                    gen_struct = None
+                    # 选择LLM策略
                     try:
-                        from .utils.json_utils import parse_json_safely
-                        gen_struct = parse_json_safely(llm_text)
-                        if isinstance(gen_struct, dict) and isinstance(gen_struct.get("sql"), str):
-                            extracted_sql = gen_struct["sql"].strip()
-                    except Exception:
-                        gen_struct = None
-                    # 兼容回退：从文本中提取SQL
-                    if not extracted_sql:
-                        extracted_sql = self._extract_sql(llm_text)
+                        llm_service = getattr(self.container, 'llm_service', None) or getattr(self.container, 'llm', None)
+                        if not llm_service:
+                            raise ValueError("LLM service not found in container")
 
-                    if not extracted_sql:
-                        # 回退到提示词，要求后续步骤继续
+                        # 根据上下文构建policy
+                        from .llm_strategy_manager import llm_strategy_manager
+                        llm_policy = llm_strategy_manager.build_llm_policy(
+                            user_id=user_id,
+                            stage="tool",
+                            complexity="high",
+                            tool_name="sql.draft",
+                            output_kind="sql",
+                            context=context
+                        )
+
+                        # 调用LLM生成结构化JSON，优先从 {"sql": "..."} 获取SQL
+                        llm_text = await self._call_llm(llm_service, sql_prompt, user_id, llm_policy)
+                        self._logger.info("🧾 [sql_generation] LLM原始输出预览: %s", llm_text[:500])
+
+                        extracted_sql = ""
+                        gen_struct = None
+                        try:
+                            from .utils.json_utils import parse_json_safely
+                            gen_struct = parse_json_safely(llm_text)
+                            if isinstance(gen_struct, dict):
+                                extracted_sql = self._extract_sql_from_struct(gen_struct)
+                        except Exception:
+                            gen_struct = None
+
+                        if not extracted_sql and isinstance(gen_struct, dict):
+                            self._logger.warning(
+                                "⚠️ [sql_generation] JSON结构中未找到SQL字段, keys=%s",
+                                list(gen_struct.keys())
+                            )
+
+                        # 兼容回退：从文本中提取SQL
+                        if not extracted_sql:
+                            extracted_sql = self._extract_sql(llm_text)
+
+                        if not extracted_sql:
+                            self._logger.error(
+                                "❌ [sql_generation] 未提取到SQL, stage=%s, tool=%s",
+                                llm_policy.get("stage"),
+                                llm_policy.get("step")
+                            )
+                            result = {
+                                "success": False,
+                                "action": "sql_generation",
+                                "sql_generation_prompt": sql_prompt,
+                                "error": "未能从LLM输出中提取SQL",
+                                "llm_raw": llm_text,
+                            }
+                        else:
+                            result = {
+                                "success": True,
+                                "action": "sql_generation",
+                                "sql_generation_prompt": sql_prompt,
+                                "current_sql": extracted_sql,
+                                "sql": extracted_sql,
+                                "generation_struct": gen_struct,
+                                "message": "SQL已生成",
+                                "next_step_hint": "调用sql.validate验证SQL"
+                            }
+                    except Exception as e:
                         result = {
                             "success": False,
                             "action": "sql_generation",
                             "sql_generation_prompt": sql_prompt,
-                            "error": "未能从LLM输出中提取SQL",
-                            "llm_raw": llm_text,
+                            "error": f"llm_generation_failed: {str(e)}"
                         }
-                    else:
-                        result = {
-                            "success": True,
-                            "action": "sql_generation",
-                            "sql_generation_prompt": sql_prompt,
-                            "current_sql": extracted_sql,
-                            "sql": extracted_sql,
-                            "generation_struct": gen_struct,
-                            "message": "SQL已生成",
-                            "next_step_hint": "调用sql.validate验证SQL"
-                        }
-                except Exception as e:
-                    result = {
-                        "success": False,
-                        "action": "sql_generation",
-                        "sql_generation_prompt": sql_prompt,
-                        "error": f"llm_generation_failed: {str(e)}"
-                    }
 
             # 工具调用动作
             else:
@@ -1031,12 +1181,82 @@ WHERE dt BETWEEN '2025-10-09' AND '2025-10-09'  -- 禁止！
             self._logger.error(f"LLM调用失败: {str(e)}")
             raise
 
+    def _extract_sql_from_struct(self, struct: Dict[str, Any]) -> str:
+        """从LLM返回的结构化结果中提取SQL。"""
+        if isinstance(struct, list):
+            for item in struct:
+                if isinstance(item, dict):
+                    nested = self._extract_sql_from_struct(item)
+                    if nested:
+                        return nested
+                elif isinstance(item, str):
+                    text = item.strip()
+                    if text and text.lower().startswith(("select", "with")):
+                        return text
+            return ""
+
+        if not isinstance(struct, dict):
+            return ""
+
+        candidate_keys = [
+            "sql",
+            "result",
+            "final_sql",
+            "generated_sql",
+            "sql_template",
+            "query",
+        ]
+
+        for key in candidate_keys:
+            value = struct.get(key)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if candidate and candidate.lower().startswith(("select", "with")):
+                    return candidate
+            elif isinstance(value, dict):
+                nested = self._extract_sql_from_struct(value)
+                if nested:
+                    return nested
+            elif isinstance(value, list):
+                nested = self._extract_sql_from_struct(value)
+                if nested:
+                    return nested
+
+        sql_lines = struct.get("sql_lines") or struct.get("lines")
+        if isinstance(sql_lines, list):
+            joined = "\n".join(line for line in sql_lines if isinstance(line, str)).strip()
+            if joined and joined.lower().startswith(("select", "with")):
+                return joined
+
+        nested_keys = ["data", "payload", "output", "response", "details"]
+        for key in nested_keys:
+            nested = struct.get(key)
+            if isinstance(nested, dict):
+                nested_sql = self._extract_sql_from_struct(nested)
+                if nested_sql:
+                    return nested_sql
+            elif isinstance(nested, list):
+                nested_sql = self._extract_sql_from_struct(nested)
+                if nested_sql:
+                    return nested_sql
+
+        return ""
+
     def _extract_sql(self, text: str) -> str:
         """从LLM文本中提取SQL，支持```sql```代码块或纯文本。"""
         try:
             t = (text or "").strip()
             if not t:
                 return ""
+            if t.startswith("{") or t.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(t)
+                    sql = self._extract_sql_from_struct(parsed)
+                    if sql:
+                        return sql
+                except Exception:
+                    pass
             # 优先提取```sql```代码块
             import re
             code_fence = re.search(r"```sql\s*([\s\S]*?)```", t, re.IGNORECASE)

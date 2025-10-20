@@ -7,7 +7,7 @@
 
 import logging
 import uuid
-from typing import Dict, Any, List, Optional, AsyncIterator
+from typing import Dict, Any, List, Optional, AsyncIterator, Tuple
 from datetime import datetime
 
 # 业务层导入
@@ -22,6 +22,10 @@ from app.services.domain.placeholder.types import (
 from app.services.infrastructure.agents.facade import AgentFacade
 from app.services.infrastructure.agents.tools.registry import ToolRegistry
 from app.core.container import Container
+from app.services.domain.placeholder.services.placeholder_analysis_domain_service import (
+    PlaceholderAnalysisDomainService,
+)
+from app.services.application.context.data_source_context_server import DataSourceContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,8 @@ class PlaceholderApplicationService:
             "default_timeout": 300,
             "retry_attempts": 3
         }
+        # 领域服务
+        self.domain_service = PlaceholderAnalysisDomainService()
     
     async def initialize(self):
         """初始化应用服务"""
@@ -102,22 +108,77 @@ class PlaceholderApplicationService:
                 schema_info.username = request.data_source_info.get('username')
                 schema_info.password = request.data_source_info.get('password')
 
+            semantic_type = None
+            if isinstance(request.context, dict):
+                schema_ctx = request.context.get("schema_context", {})
+                if isinstance(schema_ctx, dict):
+                    schema_info.tables = schema_ctx.get("available_tables", []) or []
+                    schema_info.columns = schema_ctx.get("columns", {}) or {}
+                semantic_type = request.context.get("semantic_type")
+
             # 构建占位符信息
+            placeholder_granularity = "daily"
+            if isinstance(request.context, dict):
+                placeholder_granularity = (
+                    request.context.get("business_requirements", {}).get("time_sensitivity")
+                    or request.context.get("time_granularity")
+                    or "daily"
+                )
+
             placeholder_info = PlaceholderSpec(
+                id=request.placeholder_id,
                 description=f"{request.business_command} - {request.requirements}",
-                type="placeholder_analysis"
+                type=semantic_type or "placeholder_analysis",
+                granularity=placeholder_granularity
             )
 
             # 构建数据源配置 - 确保包含ID让executor能加载完整配置
             data_source_config = None
             if request.data_source_info:
-                # 如果有ID，传递ID让executor加载完整配置
-                ds_id = request.data_source_info.get('id') or request.data_source_info.get('data_source_id')
+                ds_config = dict(request.data_source_info)
+                ds_id = ds_config.get('id') or ds_config.get('data_source_id')
                 if ds_id:
-                    data_source_config = {"data_source_id": str(ds_id), "id": str(ds_id)}
-                else:
-                    # 否则直接使用提供的配置
-                    data_source_config = request.data_source_info
+                    ds_config.setdefault("id", str(ds_id))
+                    ds_config.setdefault("data_source_id", str(ds_id))
+                if semantic_type:
+                    ds_config.setdefault("semantic_type", semantic_type)
+                if isinstance(request.context, dict):
+                    if request.context.get("business_requirements"):
+                        ds_config.setdefault("business_requirements", request.context.get("business_requirements"))
+                    schema_ctx = request.context.get("schema_context", {})
+                    if isinstance(schema_ctx, dict) and schema_ctx.get("available_tables"):
+                        ds_config.setdefault("available_tables", schema_ctx.get("available_tables"))
+                data_source_config = ds_config
+
+            enriched_task_context = {
+                "placeholder_id": request.placeholder_id,
+                "business_command": request.business_command,
+                "requirements": request.requirements,
+                "target_objective": request.target_objective,
+                "context": request.context,
+                "data_source_info": request.data_source_info,
+                "analysis_type": "placeholder_service",
+            }
+            if isinstance(request.context, dict):
+                for key in [
+                    "semantic_type",
+                    "business_requirements",
+                    "placeholder_context_snippet",
+                    "schema_context",
+                    "template_context",
+                    "business_context",
+                    "planning_hints",
+                    "top_n",
+                    "schedule",
+                    "time_window",
+                    "time_context",
+                    "cron_expression",
+                    "time_range",
+                    "user_id",
+                ]:
+                    value = request.context.get(key)
+                    if value is not None:
+                        enriched_task_context[key] = value
 
             agent_input = AgentInput(
                 user_prompt=f"占位符分析: {request.business_command}\n需求: {request.requirements}\n目标: {request.target_objective}",
@@ -128,15 +189,7 @@ class PlaceholderApplicationService:
                     timezone="Asia/Shanghai"
                 ),
                 data_source=data_source_config,
-                task_driven_context={
-                    "placeholder_id": request.placeholder_id,
-                    "business_command": request.business_command,
-                    "requirements": request.requirements,
-                    "target_objective": request.target_objective,
-                    "context": request.context,
-                    "data_source_info": request.data_source_info,
-                    "analysis_type": "placeholder_service"
-                },
+                task_driven_context=enriched_task_context,
                 user_id=self.user_id  # 🔧 添加 user_id
             )
 
@@ -620,12 +673,71 @@ class PlaceholderApplicationService:
                 - 任务中多占位符：真实的任务信息
         """
         try:
-            # 👇 构建增强的 context（统一处理逻辑）
+            # 👇 获取数据源信息并构建统一上下文
+            data_source_info = await self._get_data_source_info(data_source_id)
+
+            user_id = (task_context or {}).get("user_id") or self.user_id
+            template_id = getattr(placeholder, "template_id", None)
+            template_id_str = str(template_id) if template_id else None
+            template_content = ""
+            template_snippet = ""
+            if template_id_str:
+                template_content = self._load_template_content(template_id_str)
+                template_snippet = self._extract_placeholder_snippet(
+                    template_content,
+                    getattr(placeholder, "placeholder_text", ""),
+                    getattr(placeholder, "placeholder_name", "")
+                )
+
+            raw_schedule = (task_context or {}).get("schedule")
+            if raw_schedule and not isinstance(raw_schedule, dict):
+                normalized_schedule = {"cron_expression": raw_schedule}
+            else:
+                normalized_schedule = raw_schedule or {}
+
+            raw_time_window = (task_context or {}).get("time_window") or {}
+            normalized_time_window, normalized_time_range = self._normalize_time_window(
+                raw_time_window, normalized_schedule
+            )
+
+            business_context = {
+                "template_id": template_id_str,
+                "data_source_id": data_source_id,
+                "template_context": {"snippet": template_snippet} if template_snippet else {},
+                "execution_context": task_context or {},
+                "time_column": normalized_time_window.get("time_column"),
+                "data_range": normalized_time_window.get("data_range") or "day",
+                "time_window": normalized_time_window,
+                "time_range": normalized_time_range,
+            }
+
+            business_requirements = await self.domain_service.analyze_placeholder_business_requirements(
+                placeholder_text=placeholder.placeholder_text,
+                business_context=business_context,
+                user_id=user_id
+            )
+            semantic_type = self._map_business_to_semantic_type(business_requirements)
+            schema_context = await self._get_schema_context(user_id, data_source_id)
+
+            data_source_info["semantic_type"] = semantic_type
+            data_source_info["business_requirements"] = business_requirements
+
             context = self._build_unified_context(
                 placeholder=placeholder,
                 data_source_id=data_source_id,
                 success_criteria=success_criteria,
-                task_context=task_context
+                task_context=task_context,
+                data_source_info=data_source_info,
+                business_requirements=business_requirements,
+                semantic_type=semantic_type,
+                template_context={"snippet": template_snippet} if template_snippet else {},
+                template_snippet=template_snippet,
+                schema_context=schema_context,
+                business_context=business_context,
+                template_content=template_content,
+                normalized_time_window=normalized_time_window,
+                normalized_time_range=normalized_time_range,
+                schedule=normalized_schedule,
             )
 
             # 构建Agent输入
@@ -635,7 +747,7 @@ class PlaceholderApplicationService:
                 requirements=placeholder.description or task_objective,
                 context=context,  # 👈 使用统一构建的 context
                 target_objective=task_objective,
-                data_source_info=await self._get_data_source_info(data_source_id)
+                data_source_info=data_source_info
             )
 
             # 调用占位符分析
@@ -674,7 +786,18 @@ class PlaceholderApplicationService:
         placeholder,
         data_source_id: str,
         success_criteria: Dict[str, Any],
-        task_context: Optional[Dict[str, Any]] = None
+        task_context: Optional[Dict[str, Any]] = None,
+        data_source_info: Optional[Dict[str, Any]] = None,
+        business_requirements: Optional[Dict[str, Any]] = None,
+        semantic_type: Optional[str] = None,
+        template_context: Optional[Dict[str, Any]] = None,
+        template_snippet: Optional[str] = None,
+        schema_context: Optional[Dict[str, Any]] = None,
+        business_context: Optional[Dict[str, Any]] = None,
+        template_content: Optional[str] = None,
+        normalized_time_window: Optional[Dict[str, Any]] = None,
+        normalized_time_range: Optional[Dict[str, Any]] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         构建统一的 context（区分真实值 vs 默认值）
@@ -693,8 +816,10 @@ class PlaceholderApplicationService:
         # 🔹 基础字段（两种场景都有）
         context = {
             "data_source_id": data_source_id,
-            "placeholder_type": placeholder.placeholder_type,
-            "content_type": placeholder.content_type,
+            "placeholder_type": getattr(placeholder, "placeholder_type", None),
+            "placeholder_name": getattr(placeholder, "placeholder_name", None),
+            "content_type": getattr(placeholder, "content_type", None),
+            "template_id": str(getattr(placeholder, "template_id", "") or "") or None,
         }
 
         # 🔹 从 success_criteria 提取信息
@@ -711,19 +836,48 @@ class PlaceholderApplicationService:
         if isinstance(parsing_metadata, dict):
             context["parsing_metadata"] = parsing_metadata
 
+        # 🔹 数据源上下文
+        if data_source_info:
+            ds_id = data_source_info.get("data_source_id") or data_source_info.get("id") or data_source_id
+            normalized_ds = {
+                "id": str(ds_id) if ds_id else None,
+                "data_source_id": str(ds_id) if ds_id else None,
+                "name": data_source_info.get("name"),
+                "source_type": data_source_info.get("source_type"),
+                "connection_config": data_source_info.get("connection_config") or data_source_info
+            }
+            context["data_source"] = normalized_ds
+            context["data_source_id"] = normalized_ds["data_source_id"]
+            context["data_source_info"] = data_source_info
+            if data_source_info.get("name"):
+                context.setdefault("data_source_name", data_source_info.get("name"))
+
         # 🔹 任务上下文处理（区分真实值 vs 默认值）
         if task_context:
             # ✅ 任务场景：使用真实的任务信息
             logger.info(f"📦 使用真实任务上下文: task_id={task_context.get('task_id')}")
 
-            context["template_id"] = task_context.get("template_id")
             context["task_id"] = task_context.get("task_id")
             context["task_name"] = task_context.get("task_name")
             context["report_period"] = task_context.get("report_period")
+            context["user_id"] = task_context.get("user_id")
 
-            # 时间信息（真实值）
-            context["schedule"] = task_context.get("schedule")  # 真实 cron 表达式
-            context["time_window"] = task_context.get("time_window")  # 真实时间窗口
+            raw_schedule = schedule if schedule is not None else task_context.get("schedule")
+            if raw_schedule and not isinstance(raw_schedule, dict):
+                schedule_dict = {"cron_expression": raw_schedule}
+            else:
+                schedule_dict = raw_schedule or {}
+            context["schedule"] = schedule_dict
+
+            raw_time_window = task_context.get("time_window") or {}
+            if normalized_time_window is None or normalized_time_range is None:
+                normalized_time_window, normalized_time_range = self._normalize_time_window(
+                    raw_time_window,
+                    schedule_dict
+                )
+            context["time_window"] = normalized_time_window
+            context["time_range"] = normalized_time_range
+
             context["time_context"] = task_context.get("time_context")  # 完整时间上下文
 
             # 执行上下文（真实值）
@@ -746,34 +900,284 @@ class PlaceholderApplicationService:
             time_manager = TimeContextManager()
             default_time_ctx = time_manager.build_task_time_context(default_cron, datetime.now())
 
-            context["schedule"] = default_cron  # 默认 cron
-            context["time_window"] = {
-                "start": f"{default_time_ctx.get('data_start_time')} 00:00:00",
-                "end": f"{default_time_ctx.get('data_end_time')} 23:59:59"
+            schedule_dict = {
+                "cron_expression": default_cron,
+                "timezone": default_time_ctx.get("timezone", "Asia/Shanghai"),
             }
+            context["schedule"] = schedule_dict
+            default_raw_time_window = {
+                "start": default_time_ctx.get("data_start_time") and f"{default_time_ctx.get('data_start_time')} 00:00:00",
+                "end": default_time_ctx.get("data_end_time") and f"{default_time_ctx.get('data_end_time')} 23:59:59",
+                "time_column": None,
+                "timezone": default_time_ctx.get("timezone", "Asia/Shanghai"),
+                "data_range": "day",
+            }
+            normalized_default_window, normalized_default_range = self._normalize_time_window(
+                default_raw_time_window,
+                schedule_dict
+            )
+            context["time_window"] = normalized_default_window
+            context["time_range"] = normalized_default_range
             context["time_context"] = default_time_ctx
             logger.info(f"🕒 使用默认时间窗口: {context['time_window']}")
 
+        # 🔹 业务与语义信息
+        if business_context:
+            context["business_context"] = business_context
+        if business_requirements:
+            context["business_requirements"] = business_requirements
+            if business_requirements.get("top_n") is not None:
+                context.setdefault("top_n", business_requirements.get("top_n"))
+        if semantic_type:
+            context["semantic_type"] = semantic_type
+            context["placeholder_type"] = semantic_type
+
+        # 🔹 模板上下文
+        if template_context:
+            context["template_context"] = template_context
+        if template_snippet:
+            context["placeholder_context_snippet"] = template_snippet
+        if template_content:
+            context["template_content_preview"] = template_content[:500]
+
+        # 🔹 Schema上下文
+        if schema_context:
+            context["schema_context"] = schema_context
+
+        # 默认的规划提示占位
+        context.setdefault("planning_hints", {})
+
         return context
+
+    def _normalize_time_window(
+        self,
+        raw_time_window: Optional[Dict[str, Any]],
+        schedule: Optional[Dict[str, Any]] = None,
+        default_timezone: str = "Asia/Shanghai",
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """规范化时间窗口信息，生成统一的time_window与time_range结构"""
+        raw_time_window = raw_time_window or {}
+        schedule = schedule or {}
+        if isinstance(schedule, str):
+            schedule = {"cron_expression": schedule}
+
+        timezone = (
+            raw_time_window.get("timezone")
+            or schedule.get("timezone")
+            or default_timezone
+        )
+        start_dt = raw_time_window.get("start") or raw_time_window.get("start_datetime")
+        end_dt = raw_time_window.get("end") or raw_time_window.get("end_datetime")
+        start_date = raw_time_window.get("start_date")
+        end_date = raw_time_window.get("end_date")
+
+        if start_dt and not start_date:
+            start_date = start_dt.split(" ")[0]
+        if end_dt and not end_date:
+            end_date = end_dt.split(" ")[0]
+
+        normalized_time_window = {
+            "start": start_dt,
+            "end": end_dt,
+            "start_date": start_date,
+            "end_date": end_date,
+            "time_column": raw_time_window.get("time_column"),
+            "timezone": timezone,
+            "data_range": raw_time_window.get("data_range"),
+        }
+
+        normalized_time_range = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "time_column": raw_time_window.get("time_column"),
+            "timezone": timezone,
+        }
+
+        return normalized_time_window, normalized_time_range
+
+    def _map_business_to_semantic_type(self, business_requirements: Optional[Dict[str, Any]]) -> str:
+        """将业务需求映射到Agent工具的语义类型"""
+        if not business_requirements:
+            return "stat"
+
+        business_type = str(business_requirements.get("business_type", "")).lower()
+        semantic_intent = str(business_requirements.get("semantic_intent", "")).lower()
+
+        if "ranking" in business_type or "top" in semantic_intent or "排行" in semantic_intent:
+            return "ranking"
+        if "compare" in business_type or "对比" in semantic_intent or "比较" in semantic_intent:
+            return "compare"
+        if "period" in business_type or "周期" in semantic_intent or "时间" in semantic_intent:
+            return "period"
+        if "chart" in business_type or "图表" in semantic_intent:
+            return "chart"
+        return "stat"
+
+    def _extract_placeholder_snippet(self, template_text: str, placeholder_text: str, placeholder_name: str) -> str:
+        """从模板中提取包含占位符的段落"""
+        try:
+            if not template_text:
+                return ""
+            lines = template_text.splitlines()
+            keys = [k for k in [placeholder_text, placeholder_name, placeholder_name and f"{{{{{placeholder_name}}}}}"] if k]
+            hit_idx = -1
+            for i, line in enumerate(lines):
+                for key in keys:
+                    if key and key in line:
+                        hit_idx = i
+                        break
+                if hit_idx >= 0:
+                    break
+
+            if hit_idx < 0:
+                preview = template_text[:500]
+                return preview + ("…" if len(template_text) > 500 else "")
+
+            start = hit_idx
+            while start > 0 and lines[start].strip() != "" and lines[start - 1].strip() != "":
+                start -= 1
+            end = hit_idx
+            while end + 1 < len(lines) and lines[end].strip() != "" and lines[end + 1].strip() != "":
+                end += 1
+            snippet_lines = lines[start:end + 1]
+            if start > 0:
+                snippet_lines.insert(0, lines[start - 1])
+            if end + 1 < len(lines):
+                snippet_lines.append(lines[end + 1])
+            return "\n".join(snippet_lines).strip()
+        except Exception:
+            preview = template_text[:500]
+            return preview + ("…" if len(template_text) > 500 else "")
+
+    def _load_template_content(self, template_id: str) -> str:
+        """加载模板内容"""
+        try:
+            from app.db.session import get_db_session
+            from app import crud
+
+            with get_db_session() as db_session:
+                template_obj = crud.template.get(db_session, id=template_id)
+                if template_obj and getattr(template_obj, "content", None):
+                    return template_obj.content
+        except Exception as e:
+            logger.warning(f"加载模板内容失败: {e}")
+        return ""
+
+    async def _get_schema_context(self, user_id: Optional[str], data_source_id: str) -> Dict[str, Any]:
+        """获取数据源Schema信息，用于指导Agent生成SQL"""
+        if not data_source_id:
+            return {"available_tables": [], "table_count": 0}
+
+        try:
+            builder = DataSourceContextBuilder(container=self.container)
+            context_result = await builder.build_data_source_context(
+                user_id=user_id or "system",
+                data_source_id=data_source_id,
+                required_tables=None,
+                force_refresh=False,
+                names_only=True
+            )
+            if context_result and context_result.get("success"):
+                tables_payload = context_result.get("tables", [])
+                tables: List[str] = []
+                for table_info in tables_payload:
+                    if isinstance(table_info, dict):
+                        name = table_info.get("table_name")
+                        if name:
+                            tables.append(name)
+                return {
+                    "available_tables": tables,
+                    "table_count": len(tables)
+                }
+        except Exception as e:
+            logger.warning(f"获取Schema上下文失败: {e}")
+        return {"available_tables": [], "table_count": 0}
 
     async def _get_data_source_info(self, data_source_id: str) -> Dict[str, Any]:
         """获取数据源信息"""
         try:
+            if not data_source_id:
+                return {}
+
+            normalized_id = str(data_source_id)
+
+            # 优先使用容器提供的用户数据源服务（支持密码解密）
+            user_id = self.user_id or ""
+            user_ds_service = getattr(self.container, "user_data_source_service", None)
+            if user_ds_service and user_id:
+                try:
+                    ds_obj = await user_ds_service.get_user_data_source(user_id, normalized_id)
+                    if ds_obj and hasattr(ds_obj, "connection_config"):
+                        cfg = dict(ds_obj.connection_config or {})
+                        # 补全基础字段
+                        source_type = getattr(ds_obj, "source_type", cfg.get("source_type"))
+                        if hasattr(source_type, "value"):
+                            source_type = source_type.value
+                        if isinstance(source_type, str):
+                            cfg.setdefault("source_type", source_type.split(".")[-1])
+                        cfg.setdefault("name", getattr(ds_obj, "name", ""))
+                        cfg.setdefault("id", normalized_id)
+                        cfg.setdefault("data_source_id", normalized_id)
+                        # 兼容常用字段
+                        cfg.setdefault("database_name", cfg.get("database") or cfg.get("schema"))
+                        return cfg
+                except Exception as svc_error:
+                    logger.warning(f"使用用户数据源服务获取配置失败: {svc_error}")
+
+            # 回退：直接读取数据源记录
             from app.crud import data_source as crud_data_source
             from app.db.session import get_db_session
+            from app.models.data_source import DataSourceType
+            from app.core.security_utils import decrypt_data
+            from app.core.data_source_utils import DataSourcePasswordManager
 
             with get_db_session() as db:
-                data_source = crud_data_source.get(db, id=data_source_id)
+                data_source = crud_data_source.get(db, id=normalized_id)
                 if not data_source:
                     return {}
 
-                return {
-                    "database_name": getattr(data_source, 'doris_database', 'unknown'),
-                    "host": getattr(data_source, 'doris_fe_hosts', ['localhost'])[0] if getattr(data_source, 'doris_fe_hosts') else 'localhost',
-                    "port": getattr(data_source, 'doris_query_port', 9030),
-                    "username": getattr(data_source, 'doris_username', 'root'),
-                    "password": getattr(data_source, 'doris_password', '')
+                info: Dict[str, Any] = {
+                    "id": normalized_id,
+                    "data_source_id": normalized_id,
+                    "name": data_source.name,
                 }
+
+                if data_source.source_type == DataSourceType.doris:
+                    info.update({
+                        "source_type": "doris",
+                        "database": getattr(data_source, "doris_database", "default"),
+                        "database_name": getattr(data_source, "doris_database", "default"),
+                        "fe_hosts": list(getattr(data_source, "doris_fe_hosts", []) or ["localhost"]),
+                        "be_hosts": list(getattr(data_source, "doris_be_hosts", []) or ["localhost"]),
+                        "http_port": getattr(data_source, "doris_http_port", 8030),
+                        "query_port": getattr(data_source, "doris_query_port", 9030),
+                        "username": getattr(data_source, "doris_username", "root"),
+                        "password": DataSourcePasswordManager.get_password(data_source.doris_password) if getattr(data_source, "doris_password", None) else "",
+                        "timeout": 30
+                    })
+                elif data_source.source_type == DataSourceType.sql:
+                    conn_str = data_source.connection_string
+                    try:
+                        if conn_str:
+                            conn_str = decrypt_data(conn_str)
+                    except Exception:
+                        pass
+                    info.update({
+                        "source_type": "sql",
+                        "connection_string": conn_str,
+                        "database": getattr(data_source, "database_name", None),
+                        "database_name": getattr(data_source, "database_name", None),
+                        "host": getattr(data_source, "host", None),
+                        "port": getattr(data_source, "port", None),
+                        "username": getattr(data_source, "username", None),
+                        "password": getattr(data_source, "password", None),
+                    })
+                else:
+                    source_type = data_source.source_type.value if hasattr(data_source.source_type, "value") else str(data_source.source_type)
+                    info.setdefault("source_type", source_type)
+
+                return info
+
         except Exception as e:
             logger.error(f"获取数据源信息失败: {e}")
             return {}

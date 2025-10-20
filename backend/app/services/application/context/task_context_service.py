@@ -214,6 +214,16 @@ class TaskDrivenContextBuilder:
                 self.user_data_source_service = UserDataSourceService(container)
             except Exception as e:
                 logger.warning(f"Failed to initialize task context dependencies: {e}")
+            finally:
+                # 如果专用服务不可用，回退到容器自带的用户数据源适配器
+                if self.user_data_source_service is None:
+                    try:
+                        uds_service = getattr(container, "user_data_source_service", None)
+                        if uds_service:
+                            self.user_data_source_service = uds_service
+                            logger.info("TaskContextBuilder 使用容器内置的 user_data_source_service 回退适配器")
+                    except Exception as fallback_error:
+                        logger.warning(f"Failed to use container user_data_source_service: {fallback_error}")
 
     async def build_task_driven_context(
         self,
@@ -288,14 +298,75 @@ class TaskDrivenContextBuilder:
                 )
 
                 if user_data_source:
+                    # 兼容对象或字典格式
+                    if isinstance(user_data_source, dict):
+                        connection_config = user_data_source.get("connection_config", {}) or {}
+                        ds_name = user_data_source.get("name", "")
+                        ds_type = user_data_source.get("source_type", "")
+                        available_tables = user_data_source.get("available_tables", []) or []
+                        schema_info = user_data_source.get("schema_info")
+                        connection_healthy = user_data_source.get("connection_healthy", True)
+                    else:
+                        connection_config = getattr(user_data_source, "connection_config", {}) or {}
+                        ds_name = getattr(user_data_source, "name", "")
+                        ds_type = getattr(user_data_source, "source_type", "")
+                        available_tables = getattr(user_data_source, "available_tables", []) or []
+                        schema_info = getattr(user_data_source, "schema_info", None)
+                        connection_healthy = getattr(user_data_source, "connection_healthy", True)
+
+                    # 规范化数据源类型
+                    norm_type = ""
+                    if isinstance(ds_type, str):
+                        norm_type = ds_type.split(".")[-1].lower()
+                    elif hasattr(ds_type, "value"):
+                        norm_type = str(getattr(ds_type, "value")).lower()
+                    if norm_type:
+                        connection_config.setdefault("source_type", norm_type)
+                    else:
+                        norm_type = connection_config.get("source_type", "")
+
+                    # 针对Doris/Mysql等常见数据源补全字段
+                    if norm_type == "doris":
+                        host = connection_config.get("host") or connection_config.get("hostname")
+                        if host and "fe_hosts" not in connection_config:
+                            connection_config["fe_hosts"] = [host]
+                        port = connection_config.get("port")
+                        if port:
+                            connection_config.setdefault("query_port", port)
+                        connection_config.setdefault("http_port", connection_config.get("http_port", 8030))
+                        connection_config.setdefault("timeout", connection_config.get("timeout", 30))
+                    elif norm_type in {"sql", "mysql", "postgres", "postgresql"}:
+                        # 有些旧配置使用离散字段，尝试构建连接串
+                        conn_str = connection_config.get("connection_string")
+                        host = connection_config.get("host")
+                        port = connection_config.get("port")
+                        database = connection_config.get("database") or connection_config.get("database_name")
+                        if database and "database" not in connection_config:
+                            connection_config["database"] = database
+                        username = connection_config.get("username")
+                        password = connection_config.get("password")
+                        dialect = connection_config.get("dialect") or norm_type
+                        if (not conn_str) and host and port and database and username is not None:
+                            password_part = f":{password}" if password else ""
+                            connection_config["connection_string"] = f"{dialect}://{username}{password_part}@{host}:{port}/{database}"
+                        if norm_type not in {"mysql", "postgres", "postgresql"}:
+                            # 统一归为 SQL
+                            connection_config["source_type"] = "sql"
+
+                    if not connection_config and hasattr(self.container, "data_source"):
+                        logger.warning(
+                            "User data source缺少连接配置，Agent可能无法连库。"
+                            " 请检查数据源配置是否包含 connection_string / source_type。"
+                        )
+
                     return DataSourceContextInfo(
                         data_source_id=data_source_id,
-                        data_source_name=user_data_source.name,
-                        source_type=user_data_source.source_type,
-                        connection_config=user_data_source.connection_config or {},
-                        available_tables=user_data_source.get("available_tables", []),
-                        schema_info=user_data_source.get("schema_info"),
-                        connection_healthy=getattr(user_data_source, 'connection_healthy', True)
+                        data_source_name=ds_name,
+                        source_type=ds_type,
+                        connection_config=connection_config,
+                        available_tables=available_tables,
+                        schema_info=schema_info,
+                        connection_healthy=connection_healthy
                     )
         except Exception as e:
             logger.warning(f"Failed to get data source from service: {e}")

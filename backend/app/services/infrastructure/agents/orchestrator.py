@@ -496,6 +496,10 @@ class UnifiedOrchestrator:
                 f"{context['recommended_time_column']}"
             )
 
+        if context.get("coordinator_metadata"):
+            updates["coordinator_metadata"] = context.get("coordinator_metadata")
+            execution_context["coordinator_metadata"] = context.get("coordinator_metadata")
+
         # template_context: 存入ResourcePool（用于SQL生成）
         if context.get("template_context"):
             updates["template_context"] = context["template_context"]

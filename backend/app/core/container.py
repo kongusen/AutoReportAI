@@ -47,7 +47,15 @@ class DataSourceAdapter:
                 q = sql
                 # 排除不支持LIMIT的语句（特别是Doris的SHOW命令）
                 sql_upper = (sql or "").upper().strip()
-                skip_limit_patterns = ["SHOW FULL COLUMNS", "SHOW COLUMNS", "DESC ", "DESCRIBE "]
+                skip_limit_patterns = [
+                    "SHOW FULL COLUMNS",
+                    "SHOW COLUMNS",
+                    "SHOW TABLES",
+                    "SHOW DATABASES",
+                    "SHOW SCHEMAS",
+                    "DESC ",
+                    "DESCRIBE ",
+                ]
                 should_skip_limit = any(sql_upper.startswith(pattern) for pattern in skip_limit_patterns)
 
                 if limit and "LIMIT" not in sql_upper and not should_skip_limit:
@@ -386,6 +394,9 @@ class _UserDataSourceServiceAdapter:
 
             # Build connection_config for connector factory
             cfg: Dict[str, Any] = {"name": ds.name}
+            source_type_value = (
+                ds.source_type.value if hasattr(ds.source_type, "value") else str(ds.source_type)
+            )
             if ds.source_type == DataSourceType.doris:
                 cfg.update({
                     "source_type": "doris",
@@ -428,7 +439,15 @@ class _UserDataSourceServiceAdapter:
                     "file_path": getattr(ds, "file_path", None),
                 })
             else:
-                cfg.update({"source_type": str(ds.source_type)})
+                cfg.update({"source_type": source_type_value})
+
+            # Ensure basic fields present for downstream tools
+            if source_type_value and "source_type" not in cfg:
+                cfg["source_type"] = source_type_value
+            if getattr(ds, "name", None):
+                cfg.setdefault("name", ds.name)
+            if getattr(ds, "connection_string", None) and "connection_string" not in cfg:
+                cfg["connection_string"] = ds.connection_string
 
             # Return minimal object expected by DataSourceContextBuilder
             class _DS:

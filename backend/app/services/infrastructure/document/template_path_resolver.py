@@ -47,6 +47,7 @@ def resolve_docx_template_path(db: Session, template_id: str) -> Dict[str, Any]:
     """
     from app import crud as crud_template
     from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+    from app.core.config import settings
 
     tpl = crud_template.template.get(db=db, id=template_id)
     if not tpl:
@@ -59,6 +60,19 @@ def resolve_docx_template_path(db: Session, template_id: str) -> Dict[str, Any]:
 
     # Download from storage to temp file with retry
     storage = get_hybrid_storage_service()
+    backend_info = {}
+    if hasattr(storage, "get_backend_info"):
+        try:
+            backend_info = storage.get_backend_info()
+        except Exception as backend_error:
+            logger.warning(f"获取存储后端信息失败: {backend_error}")
+    logger.info(
+        "Resolving template %s using storage backend=%s bucket=%s path=%s",
+        template_id,
+        backend_info.get("backend_type", getattr(storage, "backend_type", "unknown")),
+        getattr(settings, "MINIO_BUCKET_NAME", "unknown"),
+        storage_path,
+    )
 
     # 检查文件是否存在
     if not storage.file_exists(storage_path):
@@ -130,4 +144,3 @@ def cleanup_template_temp_dir(template_meta: Dict[str, Any]):
         _temp_dirs_to_cleanup.discard(temp_dir)
     except Exception as e:
         logger.warning(f"清理模板临时目录失败 {temp_dir}: {e}")
-

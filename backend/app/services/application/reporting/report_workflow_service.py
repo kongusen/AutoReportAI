@@ -222,7 +222,8 @@ class ReportWorkflowService:
                         template_path=template_file_path,
                         placeholder_data=placeholder_data,
                         output_path=output_file_path,
-                        use_intelligent_text=use_intelligent_text
+                        use_intelligent_text=use_intelligent_text,
+                        user_id=self.user_id
                     )
                 else:
                     # 使用传统Word服务
@@ -235,7 +236,8 @@ class ReportWorkflowService:
                         placeholder_data=placeholder_data,
                         output_path=output_file_path,
                         container=None,
-                        use_agent_charts=False
+                        use_agent_charts=False,
+                        user_id=self.user_id
                     )
 
                 if not doc_result["success"]:

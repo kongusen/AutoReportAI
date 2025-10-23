@@ -137,6 +137,25 @@ export default function ReportsPage() {
     return { total, generating, completed, failed }
   }
 
+  // 缩短文件路径显示
+  const shortenPath = (path: string, maxLength: number = 40) => {
+    if (!path || path.length <= maxLength) return path
+
+    const parts = path.split('/')
+    if (parts.length <= 2) return path
+
+    const fileName = parts[parts.length - 1]
+    const parentDir = parts[parts.length - 2]
+
+    // 如果文件名+父目录已经很长，只显示部分
+    if ((fileName.length + parentDir.length) > maxLength) {
+      return `.../${fileName.substring(0, maxLength - 4)}...`
+    }
+
+    // 显示 .../父目录/文件名
+    return `.../${parentDir}/${fileName}`
+  }
+
   const stats = getReportStats()
 
   const columns: any[] = [
@@ -197,8 +216,11 @@ export default function ReportsPage() {
       title: '文件路径',
       dataIndex: 'file_path',
       render: (filePath: string) => (
-        <span className="text-sm text-gray-500 font-mono truncate max-w-xs">
-          {filePath}
+        <span
+          className="text-sm text-gray-500 font-mono block"
+          title={filePath}
+        >
+          {shortenPath(filePath)}
         </span>
       ),
     },
@@ -206,6 +228,7 @@ export default function ReportsPage() {
       key: 'actions',
       title: '操作',
       width: 150,
+      fixed: 'right' as const,
       render: (_: any, record: Report) => (
         <div className="flex items-center gap-1">
           <Button
@@ -352,6 +375,7 @@ export default function ReportsPage() {
           columns={columns}
           dataSource={filteredReports}
           rowKey="id"
+          scroll={{ x: 1200 }}
         />
       )}
 

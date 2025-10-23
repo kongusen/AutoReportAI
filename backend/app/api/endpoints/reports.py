@@ -90,7 +90,7 @@ async def get_reports(
             # 添加增强信息
             report_data.update({
                 "name": f"报告 #{report.id}",
-                "file_size": 0,  # TODO: 从文件存储服务获取实际大小
+                "file_size": report.file_size or 0,
                 "download_url": f"/api/v1/reports/{report.id}/download",
                 "preview_available": report.status == "completed"
             })
@@ -101,7 +101,7 @@ async def get_reports(
         enhanced_reports = [{
             **ReportHistoryResponse.model_validate(report).model_dump(),
             "name": f"报告 #{report.id}",
-            "file_size": 0,
+            "file_size": report.file_size or 0,
         } for report in reports]
     
     return ApiResponse(
@@ -547,7 +547,7 @@ async def get_report(
         data={
             **ReportHistoryResponse.model_validate(report).model_dump(),
             "name": f"报告 #{report.id}",
-            "file_size": 0,
+            "file_size": report.file_size or 0,
             "content": report.result if report.status == "completed" else None,
         },
         message="获取报告成功"
@@ -1292,13 +1292,41 @@ async def generate_agent_based_intelligent_report_task(
 本报告使用简化模式生成。如需完整分析，请检查Agent系统配置。
             """.strip()
         
-        # 更新报告状态
+        # 保存报告文件并更新状态
         with get_db_session() as db:
             report = db.query(ReportHistory).filter(
                 ReportHistory.id == report_record_id
             ).first()
-            
+
             if report:
+                # 保存报告内容到存储系统
+                try:
+                    from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+                    from io import BytesIO
+
+                    storage_service = get_hybrid_storage_service()
+                    report_bytes = final_content.encode('utf-8')
+                    file_size = len(report_bytes)
+
+                    # 生成文件名
+                    filename = f"report_{report_record_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+
+                    # 上传到存储系统
+                    file_info = storage_service.upload_file(
+                        file_data=BytesIO(report_bytes),
+                        original_filename=filename,
+                        file_type="reports",
+                        content_type="text/markdown"
+                    )
+
+                    report.file_path = file_info["file_path"]
+                    report.file_size = file_size
+                    logger.info(f"报告文件已保存: {file_info['file_path']}, 大小: {file_size} bytes")
+
+                except Exception as storage_error:
+                    logger.warning(f"保存报告文件失败，仅保存内容到数据库: {storage_error}")
+                    report.file_size = len(final_content.encode('utf-8'))
+
                 report.status = "completed"
                 report.result = final_content
                 report.processing_metadata = {

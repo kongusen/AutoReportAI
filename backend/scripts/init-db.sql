@@ -481,6 +481,7 @@ CREATE TABLE IF NOT EXISTS report_history (
     id SERIAL PRIMARY KEY,
     status VARCHAR NOT NULL,
     file_path VARCHAR,
+    file_size INTEGER DEFAULT 0,
     error_message TEXT,
     result TEXT,
     processing_metadata JSON,

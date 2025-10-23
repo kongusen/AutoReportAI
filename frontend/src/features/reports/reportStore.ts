@@ -133,20 +133,30 @@ export const useReportStore = create<ReportState>((set, get) => ({
   // 下载报告
   downloadReport: async (id: string) => {
     try {
-      const response = await api.get(`/reports/${id}/download`, {
+      // 直接使用 apiClient 以获取完整的响应（包括 headers）
+      const apiClient = (await import('@/lib/api')).default
+      const response = await apiClient.get(`/reports/${id}/download`, {
         responseType: 'blob'
       })
-      
+
       // 从响应头获取文件名
       const contentDisposition = response.headers['content-disposition']
-      let fileName = 'report.pdf'
+      let fileName = 'report.docx'
+
       if (contentDisposition) {
-        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/)
-        if (fileNameMatch) {
-          fileName = fileNameMatch[1]
+        // 优先尝试解析 RFC 5987 格式的 filename* (支持UTF-8)
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)
+        if (filenameStarMatch) {
+          fileName = decodeURIComponent(filenameStarMatch[1])
+        } else {
+          // 回退到标准 filename
+          const filenameMatch = contentDisposition.match(/filename="([^"]+)"/)
+          if (filenameMatch) {
+            fileName = filenameMatch[1]
+          }
         }
       }
-      
+
       // 创建下载链接
       const url = window.URL.createObjectURL(new Blob([response.data]))
       const link = document.createElement('a')
@@ -156,7 +166,7 @@ export const useReportStore = create<ReportState>((set, get) => ({
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-      
+
       toast.success('报告下载成功')
     } catch (error: any) {
       console.error('Failed to download report:', error)

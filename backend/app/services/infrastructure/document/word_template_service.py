@@ -60,7 +60,8 @@ class WordTemplateService:
         output_path: str,
         container=None,
         use_agent_charts: bool = True,
-        use_agent_optimization: bool = True
+        use_agent_optimization: bool = True,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         处理Word文档模板，替换占位符和生成图表
@@ -72,6 +73,7 @@ class WordTemplateService:
             container: 服务容器，用于Agent图表生成和内容优化
             use_agent_charts: 是否使用Agent生成图表
             use_agent_optimization: 是否使用Agent优化文档内容
+            user_id: 用户UUID，用于Agent调用
 
         Returns:
             处理结果
@@ -90,11 +92,11 @@ class WordTemplateService:
 
             # Agent优化文档内容（在替换占位符后，生成图表前）
             if use_agent_optimization and container:
-                await self._optimize_document_content_with_agent(doc, placeholder_data, container)
+                await self._optimize_document_content_with_agent(doc, placeholder_data, container, user_id)
 
             # 替换图表占位符 - 优先使用Agent
             if use_agent_charts and container:
-                await self._replace_chart_placeholders_with_agent(doc, placeholder_data, container)
+                await self._replace_chart_placeholders_with_agent(doc, placeholder_data, container, user_id)
             else:
                 await self._replace_chart_placeholders_fallback(doc, placeholder_data)
 
@@ -215,7 +217,7 @@ class WordTemplateService:
                 for cell in row.cells:
                     self._replace_text_in_document(cell, data)
 
-    async def _optimize_document_content_with_agent(self, doc, data: Dict[str, Any], container=None):
+    async def _optimize_document_content_with_agent(self, doc, data: Dict[str, Any], container=None, user_id: Optional[str] = None):
         """
         使用Agent优化文档内容 - 根据实际数据智能调整占位符周围的文字描述
 
@@ -311,7 +313,7 @@ class WordTemplateService:
                                 "paragraph_text": paragraph_text,
                                 "related_data": related_placeholders
                             },
-                            user_id="report_system"
+                            user_id=user_id or "system"
                         )
 
                         # 调用Agent
@@ -364,9 +366,15 @@ class WordTemplateService:
             self.logger.error(f"❌ 文档内容优化失败: {e}")
             # 优化失败不影响整体流程，继续执行
 
-    async def _replace_chart_placeholders_with_agent(self, doc, data: Dict[str, Any], container=None):
+    async def _replace_chart_placeholders_with_agent(self, doc, data: Dict[str, Any], container=None, user_id: Optional[str] = None):
         """
         使用Agent替换图表占位符 - 更智能的图表生成
+
+        Args:
+            doc: Word文档对象
+            data: 占位符数据
+            container: 服务容器
+            user_id: 用户UUID
         """
         if not DOCX_AVAILABLE:
             return
@@ -448,7 +456,7 @@ class WordTemplateService:
                                 "suggested_type": self._suggest_chart_type(placeholder, chart_data)
                             }
                         },
-                        user_id="report_system"
+                        user_id=user_id or "system"
                     )
 
                     # 使用Agent生成图表
@@ -830,7 +838,8 @@ class AgentEnhancedWordService(WordTemplateService):
         template_path: str,
         placeholder_data: Dict[str, Any],
         output_path: str,
-        use_intelligent_text: bool = True
+        use_intelligent_text: bool = True,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         增强版文档处理，默认使用Agent图表生成和智能文本处理
@@ -841,7 +850,8 @@ class AgentEnhancedWordService(WordTemplateService):
             output_path=output_path,
             container=self.container,
             use_agent_charts=True,
-            use_intelligent_text=use_intelligent_text
+            use_intelligent_text=use_intelligent_text,
+            user_id=user_id
         )
 
     async def process_document_template_with_intelligence(
@@ -851,7 +861,8 @@ class AgentEnhancedWordService(WordTemplateService):
         output_path: str,
         container=None,
         use_agent_charts: bool = False,
-        use_intelligent_text: bool = True
+        use_intelligent_text: bool = True,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         带智能文本处理的文档模板处理
@@ -863,6 +874,7 @@ class AgentEnhancedWordService(WordTemplateService):
             container: 服务容器
             use_agent_charts: 是否使用Agent生成图表
             use_intelligent_text: 是否使用智能文本处理
+            user_id: 用户UUID
 
         Returns:
             处理结果
@@ -901,7 +913,7 @@ class AgentEnhancedWordService(WordTemplateService):
 
             # 5. 处理图表占位符
             if use_agent_charts and container:
-                await self._replace_chart_placeholders_with_agent(doc, placeholder_data, container)
+                await self._replace_chart_placeholders_with_agent(doc, placeholder_data, container, user_id)
             else:
                 await self._replace_chart_placeholders_fallback(doc, placeholder_data)
 

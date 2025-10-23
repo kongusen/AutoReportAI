@@ -30,6 +30,15 @@ executions = relationship("TaskExecution", back_populates="task", cascade="all, 
 - Migration `002_add_placeholder_parsing_fields.sql` adds the missing columns
 - Updated `backend/scripts/init-db.sql` to include these fields in the initial schema
 
+### 4. Report History File Size Missing
+**Error**: `column report_history.file_size does not exist`
+
+**Cause**: The `ReportHistory` model (`backend/app/models/report_history.py`) defines a `file_size` column that was missing from the actual database table and initialization script.
+
+**Fix**:
+- Migration `003_add_file_size_to_report_history.sql` adds the missing column
+- Updated `backend/scripts/init-db.sql` to include the column with a default value
+
 ## How to Apply Migrations
 
 ### Option 1: Using Docker (Recommended)
@@ -69,6 +78,7 @@ After applying the migrations and restarting your services:
 
 - `001_add_comment_column_to_column_schemas.sql` - Adds missing comment column to column_schemas
 - `002_add_placeholder_parsing_fields.sql` - Adds missing parsing fields to template_placeholders
+- `003_add_file_size_to_report_history.sql` - Adds missing file_size column to report_history
 - `apply_migration.py` - Python helper script to apply migrations
 
 ## Quick Apply All Migrations

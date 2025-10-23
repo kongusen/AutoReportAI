@@ -44,8 +44,7 @@ async def validate_agent_charts(
 
         # 1. 测试Agent系统导入
         try:
-            from app.services.infrastructure.agents.facade import AgentFacade
-            from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec
+            from app.services.infrastructure.agents import AgentService, AgentInput, PlaceholderSpec
             validation_results["agent_system"] = True
             logger.info("✅ Agent系统导入成功")
         except Exception as e:

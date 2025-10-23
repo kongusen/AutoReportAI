@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { StopIcon } from '@heroicons/react/24/outline'
 import { apiClient as api } from '@/lib/api-client'
-import useTaskProgress from '@/hooks/useTaskProgress'
+import useTaskProgress, { ProgressEvent } from '@/hooks/useTaskProgress'
 
 interface TaskExecutionProgressProps {
   taskId: number
@@ -9,19 +9,6 @@ interface TaskExecutionProgressProps {
   onExecutionComplete?: (result: any) => void
   onExecutionError?: (error: string) => void
   onCancel?: () => void
-}
-
-interface ProgressData {
-  task_id: number
-  execution_id: string
-  progress_percentage: number
-  current_step: string
-  execution_status: string
-  started_at: string | null
-  completed_at: string | null
-  estimated_completion: string | null
-  celery_task_id: string | null
-  error_details: string | null
 }
 
 const progressStages = [
@@ -39,6 +26,34 @@ const progressStages = [
   { threshold: 95, message: '正在发送通知', description: '正在发送完成通知...' },
   { threshold: 100, message: '任务执行完成', description: '所有步骤已完成' }
 ]
+
+const stageLabels: Record<string, string> = {
+  initialization: '初始化',
+  time_context: '时间上下文',
+  agent_initialization: 'Agent 初始化',
+  placeholder_precheck: '占位符准备',
+  placeholder_analysis: '占位符分析',
+  etl_processing: 'ETL 处理',
+  document_generation: '文档生成',
+  notification: '通知发送',
+  completion: '完成',
+  failure: '失败',
+  cancelled: '已取消'
+}
+
+const statusColorMap: Record<string, string> = {
+  running: 'bg-blue-500',
+  success: 'bg-emerald-500',
+  failed: 'bg-red-500',
+  cancelled: 'bg-gray-400'
+}
+
+const statusTextMap: Record<string, string> = {
+  running: 'text-blue-600',
+  success: 'text-emerald-600',
+  failed: 'text-red-600',
+  cancelled: 'text-gray-500'
+}
 
 export const TaskExecutionProgress: React.FC<TaskExecutionProgressProps> = ({
   taskId,
@@ -103,6 +118,25 @@ export const TaskExecutionProgress: React.FC<TaskExecutionProgressProps> = ({
   }
 
   const estimatedRemaining = getEstimatedRemaining()
+
+  const events: ProgressEvent[] = (progressData?.progress_details ?? []).slice(-60)
+  const displayedEvents = [...events].sort((a, b) => {
+    const ta = new Date(a.timestamp).getTime()
+    const tb = new Date(b.timestamp).getTime()
+    return ta - tb
+  }).reverse()
+
+  const formatEventTime = (timestamp?: string) => {
+    if (!timestamp) return ''
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return timestamp
+    return date.toLocaleTimeString('zh-CN', { hour12: false })
+  }
+
+  const resolveStageLabel = (stage?: string | null) => {
+    if (!stage) return undefined
+    return stageLabels[stage] ?? stage
+  }
 
   const handleCancel = async () => {
     if (cancelling) return
@@ -197,6 +231,74 @@ export const TaskExecutionProgress: React.FC<TaskExecutionProgressProps> = ({
           <div className="bg-red-50 border border-red-200 rounded p-2">
             <div className="text-sm text-red-800 font-medium">执行失败</div>
             <div className="text-xs text-red-600 mt-1">{progressData.error_details}</div>
+          </div>
+        )}
+
+        {/* 事件明细 */}
+        {displayedEvents.length > 0 && (
+          <div className="border border-gray-200 bg-white rounded-lg p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">实时进度事件</span>
+              <span className="text-xs text-gray-400">最近 {displayedEvents.length} 条</span>
+            </div>
+            <div className="mt-3 max-h-64 overflow-y-auto space-y-3 pr-1">
+              {displayedEvents.map((event, index) => {
+                const stageLabel = resolveStageLabel(event.stage)
+                const statusKey = event.status ?? 'running'
+                const dotClass = statusColorMap[statusKey] ?? statusColorMap.running
+                const statusTextClass = statusTextMap[statusKey] ?? statusTextMap.running
+                const progressValue = Number.isFinite(event.progress) ? Math.round(Number(event.progress)) : null
+                const eventKey = `${event.timestamp}-${event.message}-${event.placeholder}-${index}`
+
+                return (
+                  <div key={eventKey} className="flex items-start gap-3">
+                    <div className="flex flex-col items-center">
+                      <span className={`mt-1 w-2 h-2 rounded-full ${dotClass}`}></span>
+                    </div>
+                    <div className="flex-1 border border-gray-100 rounded-md bg-gray-50/70 p-3 shadow-sm">
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>{formatEventTime(event.timestamp)}</span>
+                        {progressValue !== null && <span>{progressValue}%</span>}
+                      </div>
+                      <div className="mt-1 text-sm text-gray-800">
+                        {event.message || '进行中...'}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {stageLabel && (
+                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-600">
+                            {stageLabel}
+                          </span>
+                        )}
+                        {event.placeholder && (
+                          <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-0.5 text-xs text-purple-600">
+                            占位符 {event.placeholder}
+                          </span>
+                        )}
+                        <span className={`text-xs ${statusTextClass}`}>
+                          {statusKey === 'running'
+                            ? '进行中'
+                            : statusKey === 'success'
+                              ? '已完成'
+                              : statusKey === 'failed'
+                                ? '失败'
+                                : '已取消'}
+                        </span>
+                      </div>
+                      {event.details?.current && event.details?.total && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          进度 {event.details.current}/{event.details.total}
+                        </div>
+                      )}
+                      {event.error && (
+                        <div className="mt-2 text-xs text-red-600">
+                          错误: {event.error}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
 

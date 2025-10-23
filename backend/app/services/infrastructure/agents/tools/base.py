@@ -1,16 +1,19 @@
 """
-工具基类定义
+Loom 兼容工具基类。
 
-定义所有Agent工具的统一接口
-确保一致的输入输出格式
+原始项目中的工具通过继承一个简单的 `Tool` 抽象类并暴露异步
+`execute` 方法。为了在新的基础设施层复用这一模式，我们在此重建
+相同的基类定义，供 `adapt_legacy_tool` 装饰器包装。
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 class Tool(ABC):
-    """Agent工具基类"""
+    """Agent 工具统一接口。"""
 
     def __init__(self) -> None:
         self.name: str = ""
@@ -19,24 +22,19 @@ class Tool(ABC):
     @abstractmethod
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行工具逻辑
+        执行工具逻辑并返回结构化结果。
 
-        Args:
-            input_data: 工具输入数据
-
-        Returns:
-            Dict: 标准格式的工具输出
+        返回字典约定：
             {
-                "success": bool,  # 执行是否成功
-                "result": Any,    # 主要结果
-                "error": str,     # 错误信息 (如果失败)
-                ...               # 其他工具特定的输出
+                "success": bool,
+                ...  # 具体工具可附带其他字段
             }
         """
         raise NotImplementedError
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover - 调试辅助
         return f"{self.__class__.__name__}({self.name})"
 
-    def __repr__(self) -> str:
-        return self.__str__()
+
+__all__ = ["Tool"]
+

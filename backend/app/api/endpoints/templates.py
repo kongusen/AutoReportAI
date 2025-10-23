@@ -12,8 +12,10 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.template import Template as TemplateModel
 from app.schemas.template import TemplateCreate, TemplateUpdate, Template as TemplateSchema, TemplatePreview
+from app.schemas.template_placeholder import TemplatePlaceholderCreate, TemplatePlaceholderUpdate
 from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
 from app.crud import template as crud_template
+from app import crud
 from app.services.domain.template.services.template_domain_service import TemplateParser
 from app.api import deps
 import re
@@ -880,7 +882,7 @@ async def reparse_template_placeholders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """重新解析模板占位符"""
+    """重新解析模板占位符并保存到数据库"""
     try:
         # 验证模板存在性
         template = crud_template.get_by_id_and_user(
@@ -888,38 +890,88 @@ async def reparse_template_placeholders(
             id=template_id,
             user_id=current_user.id
         )
-        
+
         if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="模板不存在"
             )
-        
+
         # 解析模板结构
         structure = template_parser.parse_template_structure(template.content or "")
-        
-        logger.info(f"用户 {current_user.id} 重新解析了模板 {template_id} 的占位符: {len(structure.get('placeholders', []))} 个")
-        
+        placeholders_data = structure.get('placeholders', [])
+
+        # 🔑 保存占位符到数据库
+        from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService
+        placeholder_service = PlaceholderApplicationService()
+
+        saved_count = 0
+        for ph in placeholders_data:
+            try:
+                # 使用upsert逻辑，如果存在就更新，不存在就创建
+                existing = crud.template_placeholder.get_by_template_and_name(
+                    db=db,
+                    template_id=template_id,
+                    name=ph.get('name', '') or ph.get('description', '')
+                )
+
+                if existing and not force_reparse:
+                    continue  # 如果已存在且不强制重新解析，跳过
+
+                placeholder_in = TemplatePlaceholderCreate(
+                    template_id=template_id,
+                    placeholder_name=ph.get('name', '') or ph.get('description', ''),
+                    placeholder_text=ph.get('text', ''),
+                    placeholder_type=ph.get('type', 'statistical'),
+                    content_type='text',
+                    execution_order=ph.get('position', 1),
+                    is_active=True,
+                    original_type=ph.get('original_type'),
+                    extracted_description=ph.get('description'),
+                    parsing_metadata=ph
+                )
+
+                if existing:
+                    # 更新现有占位符
+                    crud.template_placeholder.update(
+                        db=db,
+                        db_obj=existing,
+                        obj_in=TemplatePlaceholderUpdate(**placeholder_in.dict(exclude={'template_id'}))
+                    )
+                else:
+                    # 创建新占位符
+                    crud.template_placeholder.create(db=db, obj_in=placeholder_in)
+
+                saved_count += 1
+
+            except Exception as e:
+                logger.warning(f"保存占位符失败 {ph.get('name')}: {e}")
+                continue
+
+        logger.info(f"用户 {current_user.id} 重新解析了模板 {template_id} 的占位符: 发现 {len(placeholders_data)} 个，保存 {saved_count} 个")
+
         return ApiResponse(
             success=True,
             data={
                 "template_id": template_id,
-                "placeholders": structure.get('placeholders', []),
+                "placeholders": placeholders_data,
                 "sections": structure.get('sections', []),
                 "variables": structure.get('variables', {}),
                 "complexity_score": structure.get('complexity_score', 0),
-                "force_reparse": force_reparse
+                "force_reparse": force_reparse,
+                "saved_count": saved_count,
+                "total_found": len(placeholders_data)
             },
-            message=f"占位符重新解析完成，共发现 {len(structure.get('placeholders', []))} 个占位符"
+            message=f"占位符重新解析完成，共发现 {len(placeholders_data)} 个占位符，已保存 {saved_count} 个到数据库"
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"重新解析占位符失败: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="重新解析占位符失败"
+            detail=f"重新解析占位符失败: {str(e)}"
         )
 
 

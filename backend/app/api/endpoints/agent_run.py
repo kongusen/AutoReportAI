@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from ..deps import get_current_user
 from ...services.application.agent_input.bridge import AgentInputBridge
-from ...services.infrastructure.agents.data_source_security_service import data_source_security_service
+from ...services.infrastructure.agents import data_source_security_service
 from ...core.container import Container
 
 logger = logging.getLogger(__name__)

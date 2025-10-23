@@ -11,7 +11,7 @@ from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
 from app.services.infrastructure.agents import (
-    AgentFacade,
+    AgentService,
     AgentInput,
     PlaceholderSpec,
     SchemaInfo,
@@ -247,7 +247,7 @@ class SchemaAnalysisService:
             # 使用新的Agent系统进行Schema分析
             from app.core.container import Container
             container = Container()
-            agent_facade = AgentFacade(container)
+            agent_service = AgentService(container=container)
 
             # 构建Agent输入
             agent_input = AgentInput(
@@ -272,7 +272,7 @@ class SchemaAnalysisService:
             )
 
             # 执行Agent分析
-            result = await agent_facade.execute(agent_input)
+            result = await agent_service.execute(agent_input)
             response = result.result if result.success else ""
 
             # 完整解析AI响应
@@ -298,7 +298,7 @@ class SchemaAnalysisService:
             # 使用新的Agent系统进行语义分析
             from app.core.container import Container
             container = Container()
-            agent_facade = AgentFacade(container)
+            agent_service = AgentService(container=container)
 
             # 构建Agent输入
             agent_input = AgentInput(
@@ -323,7 +323,7 @@ class SchemaAnalysisService:
             )
 
             # 执行Agent分析
-            result = await agent_facade.execute(agent_input)
+            result = await agent_service.execute(agent_input)
             response = result.result if result.success else ""
 
             # 完整解析AI响应
@@ -350,7 +350,7 @@ class SchemaAnalysisService:
             # 使用新的Agent系统进行数据质量分析
             from app.core.container import Container
             container = Container()
-            agent_facade = AgentFacade(container)
+            agent_service = AgentService(container=container)
 
             # 构建Agent输入
             agent_input = AgentInput(
@@ -375,7 +375,7 @@ class SchemaAnalysisService:
             )
 
             # 执行Agent分析
-            result = await agent_facade.execute(agent_input)
+            result = await agent_service.execute(agent_input)
             response = result.result if result.success else ""
 
             # 完整解析AI响应

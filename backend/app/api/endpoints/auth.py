@@ -1,6 +1,7 @@
 """认证相关API端点 - v2版本"""
 
 from datetime import datetime, timedelta
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from app.models.user import User as ORMUser
 from app.schemas.user import UserCreate, UserSchema
 from app.schemas.token import Token
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -159,13 +161,9 @@ async def forgot_password(
             
             # TODO: 集成邮件服务(可使用SendGrid/AWS SES)
             # 目前记录日志
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"密码重置令牌已生成: {email}, 令牌: {reset_token}")
             
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"密码重置令牌生成失败: {e}")
     
     return ApiResponse(
@@ -209,8 +207,6 @@ async def reset_password(
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"密码重置失败: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

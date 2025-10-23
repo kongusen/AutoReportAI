@@ -9,7 +9,7 @@ from datetime import datetime
 import asyncio
 
 from app.core.container import container
-from app.services.infrastructure.agents.facade import AgentFacade
+from app.services.infrastructure.agents import AgentService
 from app.services.application.facades.unified_service_facade import create_unified_service_facade
 from app.db.session import get_db_session
 
@@ -67,7 +67,7 @@ class PipelineHealthService:
     async def _check_agent_system(self) -> Dict[str, Any]:
         """检查Agent系统"""
         try:
-            agent_facade = AgentFacade(container)
+            agent_service = AgentService(container=container)
 
             # 简单的Agent执行测试
             from app.services.infrastructure.agents.types import (
@@ -84,7 +84,7 @@ class PipelineHealthService:
 
             # 测试执行（允许失败，记录状态）
             try:
-                result = await agent_facade.execute(test_input)
+                result = await agent_service.execute(test_input)
                 agent_status = "healthy" if result.success else "degraded"
                 error_msg = None if result.success else result.metadata.get("error", "执行失败")
             except Exception as e:

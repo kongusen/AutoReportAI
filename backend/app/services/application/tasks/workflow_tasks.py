@@ -94,6 +94,136 @@ def generate_report_workflow(
         }
 
 
+@celery_app.task(bind=True, name='generate_report_orchestrated')
+def generate_report_orchestrated(
+    self,
+    task_id: str,
+    template_id: str,
+    data_source_id: str,
+    user_id: str,
+    schedule: Optional[Dict[str, Any]] = None,
+    skip_stages: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    使用 Orchestrator 的报告生成工作流 - 多阶段 Agent 编排
+
+    Args:
+        task_id: 任务ID
+        template_id: 模板ID
+        data_source_id: 数据源ID
+        user_id: 用户ID
+        schedule: 调度信息
+        skip_stages: 要跳过的阶段列表
+
+    Returns:
+        Dict[str, Any]: 执行结果
+    """
+    try:
+        logger.info(f"开始多阶段报告生成 - 任务: {task_id}, 模板: {template_id}")
+
+        # 更新任务状态
+        self.update_state(
+            state='PROGRESS',
+            meta={
+                'current_step': '初始化 Orchestrator',
+                'progress': 5,
+                'started_at': datetime.now().isoformat()
+            }
+        )
+
+        # 创建 Orchestrator
+        import asyncio
+        from app.services.infrastructure.agents import ReportGenerationOrchestrator, OrchestratorContext
+        from app.core.container import Container
+
+        async def run_orchestration():
+            container = Container()
+            orchestrator = ReportGenerationOrchestrator(container=container)
+
+            # 创建执行上下文
+            context = OrchestratorContext(
+                template_id=template_id,
+                data_source_id=data_source_id,
+                user_id=user_id,
+                schedule=schedule,
+                execution_time=datetime.now(),
+            )
+
+            # 执行编排流程
+            all_events = []
+            async for event in orchestrator.execute(context, skip_stages=skip_stages):
+                all_events.append(event)
+
+                # 更新 Celery 任务状态
+                if event.get("type") == "stage_started":
+                    progress = (event.get("stage_index", 0) / event.get("total_stages", 6)) * 100
+                    self.update_state(
+                        state='PROGRESS',
+                        meta={
+                            'current_step': f"执行阶段: {event.get('stage_name')}",
+                            'progress': progress,
+                            'stage_index': event.get("stage_index"),
+                        }
+                    )
+
+                elif event.get("type") == "orchestration_failed":
+                    self.update_state(
+                        state='FAILURE',
+                        meta={
+                            'error': event.get("error"),
+                            'failed_stage': event.get("failed_stage"),
+                        }
+                    )
+
+            return {
+                "context": context,
+                "events": all_events,
+            }
+
+        # 执行异步编排
+        result_data = asyncio.run(run_orchestration())
+        context = result_data["context"]
+        events = result_data["events"]
+
+        # 构建返回结果
+        result = {
+            'success': True,
+            'task_id': task_id,
+            'template_id': template_id,
+            'data_source_id': data_source_id,
+            'user_id': user_id,
+            'workflow_type': 'orchestrated_report_generation',
+            'completed_at': datetime.now().isoformat(),
+            'stage_results': {
+                name: stage.to_dict()
+                for name, stage in context.stage_results.items()
+            },
+            'total_events': len(events),
+        }
+
+        logger.info(f"多阶段报告生成完成 - 任务: {task_id}")
+        return result
+
+    except Exception as e:
+        logger.error(f"多阶段报告生成失败 - 任务: {task_id}, 错误: {e}", exc_info=True)
+
+        self.update_state(
+            state='FAILURE',
+            meta={
+                'error': str(e),
+                'task_id': task_id,
+                'failed_at': datetime.now().isoformat()
+            }
+        )
+
+        return {
+            'success': False,
+            'task_id': task_id,
+            'error': str(e),
+            'failed_at': datetime.now().isoformat()
+        }
+
+
 @celery_app.task(bind=True, name='analyze_placeholder_workflow')
 def analyze_placeholder_workflow(
     self,
@@ -131,7 +261,7 @@ def analyze_placeholder_workflow(
 
         # 使用Agent系统进行占位符分析
         import asyncio
-        from app.services.infrastructure.agents.facade import AgentFacade
+        from app.services.infrastructure.agents import AgentService
         from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext
         from app.core.container import Container
         from app.db.session import get_db_session
@@ -139,7 +269,7 @@ def analyze_placeholder_workflow(
         async def run_analysis():
             # 创建Agent门面
             container = Container()
-            agent_facade = AgentFacade(container)
+            agent_service = AgentService(container=container)
 
             # 获取数据源信息和模板信息
             with get_db_session() as db:
@@ -220,7 +350,7 @@ def analyze_placeholder_workflow(
             )
 
             # 🎯 使用任务验证智能模式 - 核心调用
-            result = await agent_facade.execute_task_validation(agent_input)
+            result = await agent_service.execute_task_validation(agent_input)
 
             return result
 
@@ -246,7 +376,7 @@ def analyze_placeholder_workflow(
                 'user_id': user_id,
                 'force_reanalyze': force_reanalyze,
                 'analysis_completed_at': datetime.now().isoformat(),
-                'sql_content': analysis_result.content,
+                'sql_content': analysis_result.result,
                 'validation_info': analysis_result.metadata,
                 'generation_method': analysis_result.metadata.get('generation_method', 'validation'),
                 'time_updated': analysis_result.metadata.get('time_updated', False),

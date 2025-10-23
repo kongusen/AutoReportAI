@@ -18,9 +18,8 @@ from app.services.domain.placeholder.types import (
     PlaceholderAgent
 )
 
-# 基础设施层导入 - 使用现有的PTOF agent系统
-from app.services.infrastructure.agents.facade import AgentFacade
-from app.services.infrastructure.agents.tools.registry import ToolRegistry
+# 基础设施层导入 - 使用Loom Agent系统
+from app.services.infrastructure.agents import AgentService
 from app.core.container import Container
 from app.services.domain.placeholder.services.placeholder_analysis_domain_service import (
     PlaceholderAnalysisDomainService,
@@ -43,8 +42,7 @@ class PlaceholderApplicationService:
     def __init__(self, user_id: str = None):
         # 基础设施组件 - 使用现有的PTOF agent系统
         self.container = Container()
-        self.agent_facade = AgentFacade(self.container)
-        self.tool_registry = ToolRegistry()
+        self.agent_service = AgentService(container=self.container)
 
         # 用户上下文
         self.user_id = user_id
@@ -200,12 +198,13 @@ class PlaceholderApplicationService:
             }
 
             # 2. 使用任务验证智能模式执行分析
-            result = await self.agent_facade.execute_task_validation(agent_input)
+            result = await self.agent_service.execute_task_validation(agent_input)
+            logger.info(f"🤖 Agent执行结果: success={result.success}, result_type={type(result.result)}, result_preview={str(result.result)[:200]}")
 
             # 3. 构建结果
             if result.success:
                 sql_result = SQLGenerationResult(
-                    sql_query=result.content,
+                    sql_query=result.result,
                     validation_status="valid",
                     optimization_applied=True,
                     estimated_performance="good",
@@ -250,8 +249,6 @@ class PlaceholderApplicationService:
                 }
 
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"占位符分析失败: {e}")
 
             error_result = SQLGenerationResult(
@@ -435,7 +432,6 @@ class PlaceholderApplicationService:
             from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
             from app.crud import template_placeholder as crud_template_placeholder
             from app.db.session import get_db_session
-            from app.services.infrastructure.agents.facade import AgentFacade
 
             sql_replacer = SqlPlaceholderReplacer()
 
@@ -461,87 +457,129 @@ class PlaceholderApplicationService:
                     "placeholder_count": len(placeholders)
                 }
 
-                # 分析占位符状态
-                placeholders_need_analysis = []
+                # 🔄 新方案：循环调用单占位符分析方法，复用已调试通过的逻辑
+                # 导入 PlaceholderOrchestrationService
+                from app.api.endpoints.placeholders import PlaceholderOrchestrationService
+
+                orchestration_service = PlaceholderOrchestrationService()
+
+                total_count = len(placeholders)
+                success_count = 0
+                failed_count = 0
+
+                yield {
+                    "type": "batch_analysis_started",
+                    "message": f"开始批量分析 {total_count} 个占位符（复用单占位符分析逻辑）",
+                    "total_count": total_count
+                }
+
+                # 构建任务上下文 - 传递给单占位符分析
+                task_context = {
+                    "time_window": time_window,
+                    "time_column": time_column,
+                    "data_range": "day",
+                    "execution_context": {
+                        "task_objective": task_objective,
+                        "success_criteria": success_criteria
+                    }
+                }
+
+                for idx, ph in enumerate(placeholders, 1):
+                    try:
+                        logger.info(f"📋 处理占位符 ({idx}/{total_count}): {ph.placeholder_name}")
+
+                        yield {
+                            "type": "placeholder_processing",
+                            "message": f"正在分析占位符: {ph.placeholder_name}",
+                            "current": idx,
+                            "total": total_count,
+                            "placeholder_name": ph.placeholder_name
+                        }
+
+                        # 🎯 调用单占位符分析方法（包含完整的周期占位符处理逻辑）
+                        result = await orchestration_service.analyze_placeholder_with_full_pipeline(
+                            placeholder_name=ph.placeholder_name,
+                            placeholder_text=ph.placeholder_text,
+                            template_id=template_id,
+                            data_source_id=data_source_id,
+                            user_id=self.user_id,
+                            **task_context
+                        )
+
+                        # 处理返回结果
+                        if result.get("status") == "success":
+                            # 更新占位符记录
+                            if result.get("generated_sql"):
+                                ph.generated_sql = result["generated_sql"].get("sql", "")
+                                ph.sql_validated = True
+
+                            ph.agent_analyzed = True
+                            ph.analyzed_at = datetime.now()
+
+                            # 如果是周期占位符，保存计算值
+                            if result.get("analysis_result", {}).get("computed_value"):
+                                ph.computed_value = result["analysis_result"]["computed_value"]
+
+                            db.commit()
+                            success_count += 1
+
+                            yield {
+                                "type": "placeholder_analyzed",
+                                "placeholder_name": ph.placeholder_name,
+                                "success": True,
+                                "result": result,
+                                "current": idx,
+                                "total": total_count
+                            }
+                        else:
+                            failed_count += 1
+                            logger.error(f"❌ 占位符分析失败: {ph.placeholder_name}, 错误: {result.get('error')}")
+
+                            yield {
+                                "type": "placeholder_analyzed",
+                                "placeholder_name": ph.placeholder_name,
+                                "success": False,
+                                "error": result.get("error", "分析失败"),
+                                "current": idx,
+                                "total": total_count
+                            }
+
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"❌ 占位符处理异常: {ph.placeholder_name}, 异常: {e}")
+
+                        yield {
+                            "type": "placeholder_analyzed",
+                            "placeholder_name": ph.placeholder_name,
+                            "success": False,
+                            "error": str(e),
+                            "current": idx,
+                            "total": total_count
+                        }
+
+                yield {
+                    "type": "batch_analysis_complete",
+                    "message": f"批量分析完成",
+                    "total_count": total_count,
+                    "success_count": success_count,
+                    "failed_count": failed_count
+                }
+
+                # 原有的SQL替换和数据提取逻辑保持不变
+                # 重新加载占位符以获取更新后的数据
+                placeholders = crud_template_placeholder.get_by_template(db, template_id)
                 placeholders_need_sql_replacement = []
                 placeholders_ready = []
 
                 for ph in placeholders:
-                    needs_generation = (
-                        not ph.generated_sql or
-                        not ph.sql_validated or
-                        ph.generated_sql.strip() == ""
-                    )
-
-                    if needs_generation:
-                        placeholders_need_analysis.append(ph)
-                    else:
-                        # 检查SQL是否需要占位符替换
+                    if ph.generated_sql and ph.generated_sql.strip():
                         sql_placeholders = sql_replacer.extract_placeholders(ph.generated_sql)
                         if sql_placeholders:
                             placeholders_need_sql_replacement.append(ph)
                         else:
                             placeholders_ready.append(ph)
 
-                yield {
-                    "type": "placeholder_analysis_complete",
-                    "message": f"占位符分析完成",
-                    "need_generation": len(placeholders_need_analysis),
-                    "need_replacement": len(placeholders_need_sql_replacement),
-                    "ready": len(placeholders_ready)
-                }
-
-                # Step 1: 为需要生成SQL的占位符调用Agent
-                if placeholders_need_analysis:
-                    yield {
-                        "type": "sql_generation_started",
-                        "message": f"开始为 {len(placeholders_need_analysis)} 个占位符生成SQL"
-                    }
-
-                    for ph in placeholders_need_analysis:
-                        try:
-                            # 调用Agent生成SQL
-                            sql_result = await self._generate_sql_with_agent(
-                                ph, data_source_id, task_objective, success_criteria, db
-                            )
-
-                            if sql_result["success"]:
-                                # 更新占位符的SQL
-                                ph.generated_sql = sql_result["sql"]
-                                ph.sql_validated = True
-                                ph.agent_analyzed = True
-                                ph.analyzed_at = datetime.now()
-                                db.commit()
-
-                                # 检查生成的SQL是否需要占位符替换
-                                sql_placeholders = sql_replacer.extract_placeholders(ph.generated_sql)
-                                if sql_placeholders:
-                                    placeholders_need_sql_replacement.append(ph)
-                                else:
-                                    placeholders_ready.append(ph)
-
-                                yield {
-                                    "type": "sql_generated",
-                                    "placeholder_name": ph.placeholder_name,
-                                    "sql": ph.generated_sql,
-                                    "has_placeholders": len(sql_placeholders) > 0
-                                }
-                            else:
-                                yield {
-                                    "type": "sql_generation_failed",
-                                    "placeholder_name": ph.placeholder_name,
-                                    "error": sql_result["error"]
-                                }
-
-                        except Exception as e:
-                            logger.error(f"SQL生成失败 {ph.placeholder_name}: {e}")
-                            yield {
-                                "type": "sql_generation_failed",
-                                "placeholder_name": ph.placeholder_name,
-                                "error": str(e)
-                            }
-
-                # Step 2: 对所有需要占位符替换的SQL进行替换
+                # Step 2: 对所有需要占位符替换的SQL进行替换（保持原有逻辑）
                 if placeholders_need_sql_replacement:
                     yield {
                         "type": "sql_replacement_started",
@@ -753,22 +791,28 @@ class PlaceholderApplicationService:
             # 调用占位符分析
             sql_result = None
             async for event in self.analyze_placeholder(agent_request):
+                logger.debug(f"收到事件: type={event.get('type')}, placeholder_id={event.get('placeholder_id')}")
+
                 if event.get("type") == "sql_generation_complete":
                     sql_result = event.get("content")
+                    logger.info(f"✅ SQL生成成功: placeholder={agent_request.placeholder_id}, has_sql_query={hasattr(sql_result, 'sql_query') if sql_result else False}")
                     break
                 elif event.get("type") == "sql_generation_failed":
+                    logger.error(f"❌ SQL生成失败: placeholder={agent_request.placeholder_id}, error={event.get('error')}")
                     return {
                         "success": False,
                         "error": event.get("error", "SQL生成失败")
                     }
 
-            if sql_result and hasattr(sql_result, 'generated_sql'):
+            if sql_result and hasattr(sql_result, 'sql_query'):
+                logger.info(f"📊 返回SQL结果: placeholder={agent_request.placeholder_id}, sql_length={len(sql_result.sql_query)}")
                 return {
                     "success": True,
-                    "sql": sql_result.generated_sql,
-                    "confidence": sql_result.confidence_score
+                    "sql": sql_result.sql_query,
+                    "confidence": sql_result.metadata.get('confidence_level', 0.9)
                 }
             else:
+                logger.error(f"❌ SQL结果验证失败: sql_result={sql_result}, has_sql_query={hasattr(sql_result, 'sql_query') if sql_result else False}")
                 return {
                     "success": False,
                     "error": "Agent未返回有效的SQL结果"

@@ -18,7 +18,7 @@ from typing import Any
 from ..deps import get_current_user
 # Updated imports for new simplified agent architecture
 from ...services.infrastructure.agents import (
-    AgentFacade,
+    AgentService,
     AgentInput,
     PlaceholderSpec,
     SchemaInfo,
@@ -134,7 +134,7 @@ async def agent_task_stream_generator(
         
         # 创建新的Agent系统组件
         container = Container()
-        agent_facade = AgentFacade(container)
+        agent_service = AgentService(container=container)
 
         # 发送开始事件
         start_event = StreamEvent(
@@ -179,7 +179,7 @@ async def agent_task_stream_generator(
 
         # 执行Agent任务
         if task_request.enable_streaming:
-            result = await agent_facade.execute(agent_input)
+            result = await agent_service.execute(agent_input)
             
             # 模拟阶段进度事件（在实际实现中，这应该来自TT控制循环）
             phases = [
@@ -223,7 +223,7 @@ async def agent_task_stream_generator(
         
         else:
             # 非流式模式，直接执行
-            result = await agent_facade.execute(agent_input)
+            result = await agent_service.execute(agent_input)
 
         # 发送最终结果
         final_event = StreamEvent(

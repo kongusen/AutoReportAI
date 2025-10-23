@@ -1,315 +1,273 @@
 """
-Agent系统统一门面
-提供简洁的Agent执行入口，封装内部复杂性
-支持动态认证和配置集成
+Facade providing a minimal compatibility layer on top of the Loom agent
+runtime.  It mirrors the role previously played by
+`app.services.infrastructure.agents.facade.AgentFacade`, but delegates all
+reasoning/execution to Loom.
 """
 
-from typing import Dict, Any, Optional, Callable
-from .types import AgentInput, AgentOutput
-from .orchestrator import UnifiedOrchestrator
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Dict, Iterable, Optional, Union
+
+from loom.interfaces.llm import BaseLLM
+
+from .types import AgentInput, AgentOutput, AgentRequest, AgentResponse
 from .auth_context import auth_manager, UserAuthContext
 from .config_context import config_manager, AgentSystemConfig
+from .compat import agent_input_to_request, agent_response_to_output
+from .config import LoomAgentConfig, ToolFactory
+from .runtime import LoomAgentRuntime, build_default_runtime
+from .prompts import build_system_instructions
+
+logger = logging.getLogger(__name__)
 
 
-class AgentFacade:
-    """Agent系统的统一入口门面"""
+class LoomAgentFacade:
+    """
+    Entry point for executing agent tasks via Loom.  Consumers only need to
+    supply a service container plus an `AgentRequest` payload.
+    """
 
-    def __init__(self, container) -> None:
-        """
-        初始化Agent门面
+    def __init__(
+        self,
+        *,
+        container: Any,
+        runtime: Optional[LoomAgentRuntime] = None,
+        config: Optional[LoomAgentConfig] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
+        additional_tools: Optional[Iterable[ToolFactory]] = None,
+        llm: Optional[BaseLLM] = None,
+        include_legacy_tools: bool = True,
+    ) -> None:
+        self._container = container
+        self._config_overrides = config_overrides or {}
 
-        Args:
-            container: 依赖注入容器 (备份系统的服务容器)
-        """
-        self.container = container
-        self.orchestrator = UnifiedOrchestrator(container)
+        if runtime is not None:
+            self._runtime = runtime
+        else:
+            overrides = dict(self._config_overrides)
+            if config is not None:
+                overrides.setdefault("llm", {})
+                overrides["llm"].update(
+                    {
+                        "provider": config.llm.provider,
+                        "model": config.llm.model,
+                        "api_key": config.llm.api_key,
+                        "base_url": config.llm.base_url,
+                        "temperature": config.llm.temperature,
+                        "max_tokens": config.llm.max_tokens,
+                        "mock_responses": config.llm.mock_responses,
+                        "extra_params": config.llm.extra_params,
+                    }
+                )
+                overrides.setdefault("runtime", {})
+                overrides["runtime"].update(
+                    {
+                        "max_iterations": config.runtime.max_iterations,
+                        "max_context_tokens": config.runtime.max_context_tokens,
+                        "system_prompt": config.runtime.system_prompt,
+                        "enable_metrics": config.runtime.enable_metrics,
+                    }
+                )
+
+            self._runtime = build_default_runtime(
+                container=container,
+                overrides=overrides,
+                additional_tools=additional_tools,
+                llm=llm,
+                include_legacy_tools=include_legacy_tools,
+            )
+
+    @property
+    def runtime(self) -> LoomAgentRuntime:
+        return self._runtime
 
     def configure_auth(
         self,
         auth_context: Optional[UserAuthContext] = None,
-        auth_provider: Optional[Callable[[str], UserAuthContext]] = None
+        auth_provider: Optional[Any] = None,
     ) -> None:
-        """
-        配置认证系统
+        """Align with legacy facade: allow pre-setting auth context or provider."""
 
-        Args:
-            auth_context: 直接设置的认证上下文
-            auth_provider: 认证提供器函数，接受token返回认证上下文
-        """
         if auth_context:
             auth_manager.set_context(auth_context)
-
-        # 可以在此处扩展设置auth_provider的逻辑
+        if auth_provider:
+            # 兼容旧接口：暂存回调交由上层自行调用
+            try:
+                user_id = auth_manager.get_current_user_id()
+                if user_id and callable(auth_provider):
+                    ctx = auth_provider(user_id)
+                    if ctx:
+                        auth_manager.set_context(ctx)
+            except Exception:
+                pass
 
     def configure_system(
         self,
         config: Optional[AgentSystemConfig] = None,
-        config_loader: Optional[Callable[[str], Dict[str, Any]]] = None
+        config_loader: Optional[Any] = None,
     ) -> None:
-        """
-        配置系统设置
-
-        Args:
-            config: 直接设置的系统配置
-            config_loader: 配置加载器函数，接受user_id返回配置字典
-        """
         if config:
             config_manager.set_config(config)
-
         if config_loader:
             config_manager.set_config_loader(config_loader)
 
-    async def execute(self, ai: AgentInput, mode: str = "ptof") -> AgentOutput:
+    def _parse_llm_output(self, raw_output: str) -> tuple[str, Dict[str, Any]]:
         """
-        执行Agent任务的统一入口
+        Parse the raw LLM response into structured content.
 
-        Args:
-            ai: 标准化的Agent输入
-            mode: 执行模式
-                - "ptof": 传统Plan-Tool-Observe-Finalize一次性流程（默认）
-                - "ptav": Plan-Tool-Active-Validate单步骤循环流程
-                - "task_sql_validation": Task任务中SQL有效性验证和更新
-                - "report_chart_generation": 报告生成中数据转图表流程
-
-        Returns:
-            AgentOutput: 标准化的Agent输出
+        Expected JSON schema:
+            {
+                "sql": "SELECT ...",
+                "analysis": {...},
+                "test_result": {...},
+                "warnings": [...],
+                "fallback_reason": "..."
+            }
         """
-        # 如果AI输入没有指定user_id，尝试从认证上下文获取
-        if not ai.user_id:
-            current_user_id = auth_manager.get_current_user_id()
-            if current_user_id:
-                # 创建新的AgentInput实例，设置user_id
-                ai = self._clone_agent_input_with_user_id(ai, current_user_id)
 
-        return await self.orchestrator.execute(ai, mode=mode)
+        metadata_updates: Dict[str, Any] = {}
 
-    async def execute_task_validation(self, ai: AgentInput) -> AgentOutput:
-        """
-        任务验证专用方法: SQL验证模式 + PTAV回退机制
+        try:
+            parsed = json.loads(raw_output)
+            if not isinstance(parsed, dict):
+                raise ValueError('LLM output is not a JSON object')
 
-        完整工作流:
-        1. 任务触发 -> 检查是否存在SQL？
-        2. [有SQL] -> SQL验证模式 (Schema检查 -> 语法验证 -> 时间属性验证 -> 快速修正)
-        3. [无SQL/验证失败] -> PTAV回退模式 -> 从零生成新SQL
-        4. 实现自动化运维: 维护存量任务健康 + 自动初始化新任务
+            sql = parsed.get('sql') or parsed.get('result') or parsed.get('content')
+            if isinstance(sql, dict):
+                sql = sql.get('text') or sql.get('value')
+            if not isinstance(sql, str) or not sql.strip():
+                sql = raw_output
 
-        Args:
-            ai: Agent输入，应包含任务上下文
+            for key in ('analysis', 'test_result', 'warnings', 'observations', 'metadata'):
+                if key in parsed and parsed[key]:
+                    metadata_updates[key] = parsed[key]
 
-        Returns:
-            AgentOutput: 验证结果或新生成的SQL
-        """
-        from typing import Optional
-        import logging
+            return sql, metadata_updates
+        except Exception:
+            logger.warning('⚠️ LLM output JSON parsing failed; using raw output.')
+            metadata_updates['parsing_error'] = True
+            return raw_output, metadata_updates
 
-        logger = logging.getLogger(f"{self.__class__.__name__}.task_validation")
+    def _compose_prompt(self, request: AgentRequest) -> str:
+        """Convert the structured request into a single prompt string."""
 
-        # 提取当前SQL（如果存在）
-        current_sql = self._extract_current_sql_from_context(ai)
-
-        if current_sql:
-            logger.info(f"🔍 [任务验证] 发现现有SQL，启动验证模式: {current_sql[:100]}...")
-
-            # 阶段1: SQL验证模式 - 检查现有SQL健康状态
-            validation_result = await self.execute(ai, mode="task_sql_validation")
-
-            if validation_result.success:
-                logger.info(f"✅ [任务验证] SQL验证通过，任务健康")
-                return validation_result
-
-            else:
-                # 安全获取错误信息
-                error_info = "未知错误"
-                try:
-                    if isinstance(validation_result.metadata, dict):
-                        error_info = validation_result.metadata.get('error', '未知错误')
-                    else:
-                        error_info = str(validation_result.metadata) if validation_result.metadata else '未知错误'
-                except Exception:
-                    error_info = '元数据访问异常'
-
-                logger.warning(f"⚠️ [任务验证] SQL验证失败: {error_info}")
-
-                # 检查是否是可修复的问题
-                if self._is_repairable_sql_issue(validation_result):
-                    logger.info(f"🔧 [任务验证] 问题可修复，继续使用验证模式")
-                    return validation_result
-                else:
-                    logger.info(f"🔄 [任务验证] SQL不可修复，启动PTAV回退生成新SQL")
-                    # 进入PTAV回退模式
-                    return await self._execute_ptav_fallback(ai, reason="sql_validation_failed")
-
-        else:
-            logger.info(f"📝 [任务验证] 未发现现有SQL，启动PTAV回退生成新SQL")
-            # 阶段2: PTAV回退模式 - 从零生成新SQL
-            return await self._execute_ptav_fallback(ai, reason="missing_sql")
-
-    async def _execute_ptav_fallback(self, ai: AgentInput, reason: str) -> AgentOutput:
-        """PTAV回退模式执行"""
-        import logging
-
-        logger = logging.getLogger(f"{self.__class__.__name__}.ptav_fallback")
-        logger.info(f"🔄 [PTAV回退] 开始回退生成，原因: {reason}")
-
-        # 使用PTAV循环模式重新生成SQL
-        result = await self.execute(ai, mode="ptav")
-
-        if result.success:
-            logger.info(f"✅ [PTAV回退] 成功生成新SQL")
-            # 在结果中标记这是通过回退生成的
+        context_json = ""
+        if request.context:
             try:
-                if isinstance(result.metadata, dict):
-                    result.metadata["fallback_reason"] = reason
-                    result.metadata["generation_method"] = "ptav_fallback"
-                elif hasattr(result, 'metadata'):
-                    # 如果metadata不是字典，创建一个新的字典
-                    result.metadata = {
-                        "fallback_reason": reason,
-                        "generation_method": "ptav_fallback",
-                        "original_metadata": result.metadata
-                    }
-            except Exception as e:
-                logger.warning(f"设置回退标记时出错: {e}")
-        else:
-            logger.error(f"❌ [PTAV回退] 回退生成失败")
+                context_json = json.dumps(request.context, ensure_ascii=False, indent=2)
+            except TypeError:
+                context_json = json.dumps(
+                    {k: str(v) for k, v in request.context.items()},
+                    ensure_ascii=False,
+                    indent=2,
+                )
 
-        return result
+        tool_section = ""
+        available_tools = request.context.get("available_tools", [])
+        if available_tools:
+            lines = [f"- {tool['name']}: {tool.get('desc', '')}" for tool in available_tools]
+            tool_section = "\n".join(lines)
 
-    def _extract_current_sql_from_context(self, ai: AgentInput) -> Optional[str]:
-        """从AgentInput中提取当前SQL"""
-        # 尝试多种方式获取当前SQL
-        try:
-            # 方式1: 直接从属性获取
-            if hasattr(ai, 'current_sql') and ai.current_sql:
-                return ai.current_sql.strip()
+        sections = [
+            "你是AutoReport的智能分析助手，需要根据输入信息完成任务。",
+            f"### 执行阶段\n{request.stage}",
+            f"### 工作模式\n{request.mode}",
+            f"### 用户需求\n{request.prompt}",
+        ]
+        if tool_section:
+            sections.append(f"### 可用工具\n{tool_section}")
+        if context_json:
+            sections.append(f"### 上下文信息\n{context_json}")
+        return "\n\n".join(sections)
 
-            # 方式2: 从context中获取
-            if hasattr(ai, 'context') and ai.context:
-                if hasattr(ai.context, 'current_sql') and ai.context.current_sql:
-                    return ai.context.current_sql.strip()
-
-            # 方式3: 从task_driven_context中获取
-            if hasattr(ai, 'task_driven_context') and ai.task_driven_context:
-                task_context = ai.task_driven_context
-                if isinstance(task_context, dict):
-                    if task_context.get('current_sql'):
-                        return task_context['current_sql'].strip()
-                    if task_context.get('existing_sql'):
-                        return task_context['existing_sql'].strip()
-
-            # 方式4: 从data_source中获取
-            if hasattr(ai, 'data_source') and ai.data_source:
-                if isinstance(ai.data_source, dict) and ai.data_source.get('sql_to_test'):
-                    return ai.data_source['sql_to_test'].strip()
-
-        except Exception as e:
-            import logging
-            logging.getLogger(f"{self.__class__.__name__}").warning(f"提取SQL时出错: {e}")
-
-        return None
-
-    def _is_repairable_sql_issue(self, validation_result: AgentOutput) -> bool:
-        """判断SQL问题是否可修复"""
-        try:
-            # 安全检查metadata类型
-            if not validation_result.metadata:
-                return False
-
-            if not isinstance(validation_result.metadata, dict):
-                # 如果metadata不是字典，尝试检查结果字符串中的关键词
-                metadata_str = str(validation_result.metadata).lower()
-                return any(pattern in metadata_str for pattern in ['syntax', '语法', 'table', '表名'])
-
-            # 如果有corrected_sql，说明问题已经修复
-            if validation_result.metadata.get('corrected_sql'):
-                return True
-
-            # 检查错误类型
-            error = validation_result.metadata.get('error', '')
-            issues = validation_result.metadata.get('issues', [])
-
-            # 可修复的问题类型
-            repairable_patterns = [
-                'syntax', '语法', 'schema_mismatch', '表名', '列名',
-                'time', '时间', 'date', '日期', 'column', 'table',
-                'update', 'UPDATE'  # 添加UPDATE关键词相关的修复
-            ]
-
-            # 如果错误消息中包含可修复的关键词
-            error_text = str(error).lower()
-            issues_text = ' '.join(str(issue).lower() for issue in issues)
-            combined_text = f"{error_text} {issues_text}"
-
-            return any(pattern in combined_text for pattern in repairable_patterns)
-
-        except Exception as e:
-            # 如果检查过程出错，保守地返回True，让系统尝试修复
-            import logging
-            logging.getLogger(f"{self.__class__.__name__}").warning(f"检查可修复性时出错: {e}")
-            return True
-
-    def _clone_agent_input_with_user_id(self, ai: AgentInput, user_id: str) -> AgentInput:
-        """克隆AgentInput并设置user_id"""
-        from dataclasses import replace
-        return replace(ai, user_id=user_id)
-
-    async def execute_with_auth(
-        self,
-        ai: AgentInput,
-        auth_context: UserAuthContext,
-        mode: str = "ptof"
-    ) -> AgentOutput:
+    async def execute(self, request: Union[AgentRequest, AgentInput]) -> AgentResponse:
         """
-        使用指定认证上下文执行Agent任务
-
-        Args:
-            ai: 标准化的Agent输入
-            auth_context: 用户认证上下文
-            mode: 执行模式（同execute方法）
-
-        Returns:
-            AgentOutput: 标准化的Agent输出
+        Execute a user request through Loom.  The context metadata is encoded
+        into the prompt to preserve behaviour parity with the legacy system's
+        prompt builder.
         """
-        # 临时设置认证上下文
-        original_context = auth_manager.get_context()
+
+        request_obj = request if isinstance(request, AgentRequest) else agent_input_to_request(request)
+
+        available_tools = request_obj.context.get("available_tools", [])
+        system_prompt = build_system_instructions(request_obj.stage, available_tools)
+        self._runtime.agent.executor.system_instructions = system_prompt
+
+        prompt = self._compose_prompt(request_obj)
+        logger.info("Executing Loom agent task user_id=%s", request_obj.user_id)
+
         try:
-            auth_manager.set_context(auth_context)
+            raw_output = await self._runtime.run(
+                prompt,
+                user_id=request_obj.user_id,
+                stage=request_obj.stage,
+                output_kind=request_obj.metadata.get("output_kind") if request_obj.metadata else None,
+            )
 
-            # 确保AgentInput有user_id
-            if not ai.user_id:
-                ai = self._clone_agent_input_with_user_id(ai, auth_context.user_id)
+            parsed_output, metadata_updates = self._parse_llm_output(raw_output)
 
-            return await self.execute(ai, mode=mode)
-        finally:
-            # 恢复原认证上下文
-            if original_context:
-                auth_manager.set_context(original_context)
-            else:
-                auth_manager.clear_context()
-
-    async def health_check(self) -> Dict[str, Any]:
-        """
-        Agent系统健康检查
-
-        Returns:
-            Dict: 健康状态信息
-        """
-        try:
-            # 检查核心组件状态
-            orchestrator_ok = self.orchestrator is not None
-            executor_ok = self.orchestrator.executor is not None
-            tools_count = len(self.orchestrator.executor.registry._tools)
-
-            return {
-                "status": "healthy",
-                "architecture": "PTOF",
-                "orchestrator_ok": orchestrator_ok,
-                "executor_ok": executor_ok,
-                "tools_registered": tools_count,
-                "version": "2.0-simplified"
+            metadata = {
+                "prompt": prompt,
+                "tools": [tool.name for tool in self._runtime.tools],
             }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "error": str(e)
+            metadata.update(request_obj.metadata)
+            metadata.update(metadata_updates)
+
+            return AgentResponse(success=True, output=parsed_output, metadata=metadata)
+        except Exception as exc:
+            logger.exception("Loom agent execution failed: %s", exc)
+            metadata = {
+                "prompt": prompt,
+                "tools": [tool.name for tool in self._runtime.tools],
             }
+            metadata.update(request_obj.metadata)
+            return AgentResponse(success=False, output="", error=str(exc), metadata=metadata)
+
+    async def execute_legacy(self, agent_input: AgentInput) -> AgentOutput:
+        """
+        Convenience wrapper that accepts a legacy `AgentInput` and returns an
+        `AgentOutput`, enabling drop-in replacement in existing services.
+        """
+
+        response = await self.execute(agent_input)
+        return agent_response_to_output(response)
+
+    async def execute_task_validation(self, agent_input: AgentInput) -> AgentOutput:
+        """Compatibility helper replicating旧系统的任务验证流程入口。"""
+
+        request = agent_input_to_request(agent_input)
+        request.stage = "task_execution"
+        request.mode = "task_execution"
+        request.metadata["task_mode"] = "validation"
+
+        response = await self.execute(request)
+        if response.success:
+            return agent_response_to_output(response)
+
+        # 如果验证失败且不存在历史SQL，则回退到模板模式重新生成
+        has_sql = False
+        tdc = request.context.get("task_driven_context", {})
+        if isinstance(tdc, dict):
+            sql_val = tdc.get("current_sql") or tdc.get("existing_sql")
+            has_sql = bool(sql_val)
+
+        if not has_sql:
+            request.stage = "template"
+            request.mode = "template"
+            request.metadata["task_mode"] = "regenerate"
+            response = await self.execute(request)
+
+        return agent_response_to_output(response)
+
+
+class AgentFacade(LoomAgentFacade):
+    """向后兼容别名，允许旧代码继续导入 AgentFacade。"""
+
+
+__all__ = [
+    "LoomAgentFacade",
+    "AgentFacade",
+]

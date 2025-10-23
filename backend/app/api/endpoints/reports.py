@@ -1050,8 +1050,6 @@ async def generate_agent_based_intelligent_report_task(
         try:
             from app.api.utils.agent_context_helpers import create_report_generation_context
             # Updated to use new Agent system
-            from app.services.infrastructure.agents import AgentFacade, AgentInput, PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
-            from app.core.container import Container
             
             # 创建报告生成上下文
             data_source_info = {
@@ -1455,19 +1453,23 @@ async def download_report(
             
             # 下载文件
             file_data, backend_type = storage_service.download_file(report.file_path)
-            
-            # 生成友好的文件名
-            task_name = report.task.name if report.task else f"报告_{report_id}"
+
+            # 生成友好的文件名 - 使用任务名称
+            if report.task:
+                base_filename = report.task.name
+            else:
+                base_filename = f"报告_{report_id}"
+
             timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S") if report.generated_at else "unknown"
-            
+
             # 根据文件路径确定扩展名
             file_ext = report.file_path.split('.')[-1] if '.' in report.file_path else 'txt'
-            filename = f"{task_name}_{timestamp}.{file_ext}"
-            
+            filename = f"{base_filename}_{timestamp}.{file_ext}"
+
             # 清理文件名中的非法字符
             import re
             filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-            
+
             # 确定Content-Type
             content_type = "application/octet-stream"
             if file_ext == 'md':
@@ -1480,17 +1482,28 @@ async def download_report(
                 content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             elif file_ext == 'pdf':
                 content_type = "application/pdf"
-            
+
             # 创建响应
             file_stream = io.BytesIO(file_data)
-            
-            logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {report.file_path}")
-            
+
+            # 处理中文文件名 - 使用RFC 5987编码
+            from urllib.parse import quote
+
+            # ASCII文件名作为回退
+            ascii_filename = filename.encode('ascii', 'ignore').decode('ascii')
+            if not ascii_filename:
+                ascii_filename = f"report_{timestamp}.{file_ext}"
+
+            # UTF-8编码的文件名（RFC 5987）
+            encoded_filename = quote(filename)
+
+            logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {report.file_path}, 文件名: {filename}")
+
             return StreamingResponse(
                 file_stream,
                 media_type=content_type,
                 headers={
-                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Disposition": f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}',
                     "X-Storage-Backend": backend_type,
                     "X-Report-ID": str(report_id)
                 }

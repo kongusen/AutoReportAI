@@ -17,6 +17,9 @@ class ReportHistory(Base):
     # The path to the generated .docx file.
     file_path = Column(String, nullable=True)
 
+    # The size of the generated file in bytes.
+    file_size = Column(Integer, nullable=True, default=0)
+
     # A detailed error message if the task failed.
     error_message = Column(Text, nullable=True)
 

@@ -8,19 +8,6 @@ interface CompactTaskProgressProps {
   onExecutionError?: (error: string) => void
 }
 
-interface ProgressData {
-  task_id: number
-  execution_id: string
-  progress_percentage: number
-  current_step: string
-  execution_status: string
-  started_at: string | null
-  completed_at: string | null
-  estimated_completion: string | null
-  celery_task_id: string | null
-  error_details: string | null
-}
-
 export const CompactTaskProgress: React.FC<CompactTaskProgressProps> = ({
   taskId,
   isExecuting,

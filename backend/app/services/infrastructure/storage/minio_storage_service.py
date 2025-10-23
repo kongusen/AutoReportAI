@@ -121,8 +121,8 @@ class MinIOStorageService:
 
     def upload_with_key(
         self,
-        object_name: str,
         file_data: BytesIO,
+        object_name: str,
         content_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """按指定对象键上传文件到 MinIO"""
@@ -144,9 +144,6 @@ class MinIOStorageService:
             }
         except Exception as e:
             logger.error(f"upload_with_key failed: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"File upload failed: {e}")
             raise
     
     def file_exists(self, object_name: str) -> bool:

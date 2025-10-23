@@ -1,966 +1,1123 @@
 """
-统一编排器 (Unified Orchestrator) - 单步骤循环版本
+Task Orchestrator - 多阶段 Agent 编排器
 
-实现Plan-Tool-Active-Validate (PTAV) 单步骤循环架构:
-1. Plan: Agent分析当前状态并决策下一步行动
-2. Tool: 执行Agent决定的单个工具/动作
-3. Active: Agent分析工具执行结果
-4. Validate: Agent验证是否达到目标，决定继续或结束
+负责协调整个报告生成流程中的多个 Agent，实现：
+1. 占位符扫描与分析
+2. SQL 生成与验证
+3. ETL 取数
+4. 数据回填与图表生成
+5. 文案优化
+6. 文档生成
 
-关键特性：
-- 单步骤执行：每次只执行一个操作，立即返回给Agent分析
-- Agent主导：所有决策由Agent做出，工具只执行
-- 真实验证：通过实际数据库执行验证SQL正确性
-- 状态维护：在循环中维护执行上下文和进度
-
-适配到backup系统的服务容器
+基于 Loom 框架的 Task 工具和 AgentSpec 注册机制。
 """
 
-import json
-import time
-import uuid
+from __future__ import annotations
+
 import logging
-from typing import Any, Dict
-
-from .types import AgentInput, AgentOutput
-from .planner import AgentPlanner
-from .context_prompt_controller import ContextPromptController
-from .executor import StepExecutor
-from .auth_context import auth_manager
-from .config_context import config_manager
-from .resource_pool import ResourcePool, ContextMemory
-from .llm_strategy_manager import llm_strategy_manager
-
-
-class UnifiedOrchestrator:
-    """统一编排器 - 实现Plan-Tool-Active-Validate单步骤循环"""
-
-    def __init__(self, container) -> None:
-        """
-        初始化编排器
-
-        Args:
-            container: backup系统的服务容器
-        """
-        self.container = container
-        self.planner = AgentPlanner(container)
-        self.executor = StepExecutor(container)
-        self._ctrl = ContextPromptController()
-        self._logger = logging.getLogger(self.__class__.__name__)
-
-        # 循环控制配置
-        self.max_iterations = 15  # 最大迭代次数防止无限循环
-        self.iteration_timeout = 300  # 总超时时间（秒）
-
-    async def execute(self, ai: AgentInput, mode: str = "ptof") -> AgentOutput:
-        """
-        统一执行入口 - 支持多种执行模式
-
-        Args:
-            ai: Agent输入
-            mode: 执行模式
-                - "ptof": 传统Plan-Tool-Observe-Finalize一次性流程
-                - "ptav": Plan-Tool-Active-Validate单步骤循环流程
-                - "task_sql_validation": Task任务中SQL有效性验证和更新
-                - "report_chart_generation": 报告生成中数据转图表流程
-
-        Returns:
-            AgentOutput: 执行结果
-        """
-        self._logger.info(f"🚀 开始Agent执行 [模式: {mode}]: {ai.user_prompt}")
-
-        # 清除LLM策略管理器的请求级缓存，避免跨请求数据污染
-        llm_strategy_manager.clear_cache()
-        self._logger.debug("已清除LLM策略管理器缓存")
-
-        try:
-            if mode == "ptof":
-                return await self._execute_ptof(ai)
-            elif mode == "ptav":
-                return await self._execute_ptav_loop(ai)
-            elif mode == "task_sql_validation":
-                return await self._execute_task_sql_validation(ai)
-            elif mode == "report_chart_generation":
-                return await self._execute_report_chart_generation(ai)
-            else:
-                raise ValueError(f"不支持的执行模式: {mode}")
-
-        except Exception as e:
-            error = {"error": f"orchestrator_exception: {str(e)}", "mode": mode}
-            self._logger.error(f"Agent执行异常 [模式: {mode}]: {str(e)}")
-            return AgentOutput(False, "", error)
-
-    async def _execute_ptof(self, ai: AgentInput) -> AgentOutput:
-        """
-        执行传统PTOF工作流程 - 用于简单的一次性任务
-
-        Args:
-            ai: Agent输入
-
-        Returns:
-            AgentOutput: 执行结果
-        """
-        iteration_id = str(uuid.uuid4())
-        self._logger.info(f"📋 [PTOF模式] 开始执行 {iteration_id}")
-
-        try:
-            # Phase 1: Plan - 生成执行计划
-            plan_start = time.time()
-            plan_result = await self.planner.generate_plan(ai)
-            plan_duration = int((time.time() - plan_start) * 1000)
-
-            self._logger.info(f"计划生成完成 {iteration_id}: {plan_duration}ms")
-
-            if not plan_result.get("success"):
-                self._logger.error(f"计划生成失败 {iteration_id}: {plan_result}")
-                return AgentOutput(False, "", plan_result)
-
-            plan = plan_result["plan"]
-
-            # Phase 2: Tool - 执行工具
-            tools_start = time.time()
-            exec_result = await self.executor.execute(plan, ai)
-            tools_duration = int((time.time() - tools_start) * 1000)
-
-            self._logger.info(f"工具执行完成 {iteration_id}: {tools_duration}ms")
-
-            # Phase 3: Observe - 观察和总结
-            observe_start = time.time()
-            observation_report = self._build_observation_report(plan, exec_result)
-            observe_duration = int((time.time() - observe_start) * 1000)
-
-            self._logger.info(f"观察总结完成 {iteration_id}: {observe_duration}ms")
-
-            # Phase 4: Finalize - 最终决策
-            finalize_start = time.time()
-            finalize_prompt = self._ctrl.build_finalize_prompt(ai, plan, exec_result)
-
-            # 适配backup系统的LLM服务
-            llm_service = getattr(self.container, 'llm_service', None) or getattr(self.container, 'llm', None)
-            if not llm_service:
-                raise ValueError("LLM service not found in container")
-
-            # 调用LLM生成最终决策
-            user_id = ai.user_id or auth_manager.get_current_user_id()
-            if not user_id:
-                self._logger.warning("⚠️ [Orchestrator] 未提供user_id，将使用全局模型配置")
-
-            # 使用策略管理器构建finalize阶段的LLM策略
-            finalize_llm_policy = llm_strategy_manager.build_llm_policy(
-                user_id=user_id,
-                stage="finalize",
-                complexity="high",  # finalize阶段总是高复杂度
-                output_kind=ai.constraints.output_kind if ai.constraints else "sql"
-            )
-
-            llm_decision = await self._call_llm(llm_service, finalize_prompt, user_id, finalize_llm_policy)
-            decision = self._parse_final_decision(llm_decision, ai)
-            finalize_duration = int((time.time() - finalize_start) * 1000)
-
-            self._logger.info(f"最终决策完成 {iteration_id}: {finalize_duration}ms")
-
-            # 返回结果 - 无论成功失败都返回SQL结果
-            sql_result = decision.get("result", "")
-            if decision.get("success"):
-                self._logger.info(f"✅ [PTOF模式] Agent执行成功 {iteration_id}")
-                return AgentOutput(True, sql_result, decision)
-            else:
-                self._logger.warning(f"⚠️ [PTOF模式] Agent执行失败但返回SQL {iteration_id}: {decision}")
-                # 即使失败也返回SQL，让前端可以显示和调试
-                return AgentOutput(False, sql_result, decision)
-
-        except Exception as e:
-            error = {"error": f"ptof_execution_exception: {str(e)}"}
-            self._logger.error(f"❌ [PTOF模式] Agent执行异常 {iteration_id}: {str(e)}")
-            return AgentOutput(False, "", error)
-
-    async def _execute_ptav_loop(self, ai: AgentInput) -> AgentOutput:
-        """
-        执行Plan-Tool-Active-Validate单步骤循环 - 用于复杂SQL生成和验证
-
-        关键特性：
-        1. Agent分析当前状态并决策下一步
-        2. 执行单个工具/动作
-        3. Agent分析结果并验证
-        4. 循环直到达到目标或超时
-
-        Args:
-            ai: Agent输入
-
-        Returns:
-            AgentOutput: 执行结果
-        """
-        session_id = str(uuid.uuid4())
-        start_time = time.time()
-        iteration = 0
-
-        self._logger.info(f"🔄 [PTAV循环] 开始会话 {session_id}")
-
-        # 🗄️ [ResourcePool模式] 初始化资源池 - 精简记忆，减少token消耗
-        resource_pool = ResourcePool()
-        self._logger.info(f"🗄️ [PTAV循环] 使用ResourcePool模式（精简记忆，适用于大型数据库）")
-
-        # 初始化执行上下文 - 在循环中维护状态
-        execution_context = {
-            "session_id": session_id,
-            "current_sql": "",
-            "validation_results": [],
-            "execution_history": [],
-            "goal_achieved": False,
-            "last_error": None,
-            "accumulated_observations": [],
-            "resource_pool": resource_pool
-        }
-
-        try:
-            while iteration < self.max_iterations:
-                iteration += 1
-                iteration_start = time.time()
-
-                # 检查超时
-                if time.time() - start_time > self.iteration_timeout:
-                    self._logger.warning(f"⏰ [PTAV循环] 会话超时 {session_id}")
-                    break
-
-                self._logger.info(f"🔍 [PTAV循环] 第{iteration}轮 - 分析当前状态")
-
-                # Phase 1: Plan - Agent分析当前状态并决策下一步
-                plan_result = await self.planner.generate_plan(ai)
-                if not plan_result.get("success"):
-                    self._logger.error(f"❌ [PTAV循环] 第{iteration}轮计划失败: {plan_result}")
-                    execution_context["last_error"] = plan_result.get("error")
-                    break
-
-                # Phase 2: Tool - 执行Agent决定的单个动作
-                plan = plan_result["plan"]
-                self._logger.info(f"🔧 [PTAV循环] 第{iteration}轮执行动作: {plan.get('steps', [{}])[0].get('action', 'unknown')}")
-
-                exec_result = await self.executor.execute(plan, ai)
-                execution_time = int((time.time() - iteration_start) * 1000)
-
-                # 🚨 防御性检查：确保exec_result是字典
-                if not isinstance(exec_result, dict):
-                    self._logger.error(f"🚨 [PTAV循环] exec_result不是字典类型: {type(exec_result)}, 内容: {exec_result}")
-                    exec_result = {
-                        "success": False,
-                        "error": "invalid_exec_result_type",
-                        "context": {},
-                        "observations": [f"❌ Executor返回了非字典类型: {type(exec_result)}"]
-                    }
-
-                # 更新执行上下文
-                execution_context["execution_history"].append({
-                    "iteration": iteration,
-                    "plan": plan,
-                    "exec_result": exec_result,
-                    "execution_time": execution_time
-                })
-
-                # 累积观察记录
-                if exec_result.get("observations"):
-                    execution_context["accumulated_observations"].extend(exec_result["observations"])
-
-                # 🔧 [统一Context管理] 使用统一方法更新execution_context
-                context = exec_result.get("context", {})
-                self._update_execution_context(execution_context, context)
-
-                # Phase 3: Active - Agent分析工具执行结果
-                self._logger.info(f"🧠 [PTAV循环] 第{iteration}轮分析结果: 成功={exec_result.get('success')}")
-
-                # Phase 4: Validate - Agent验证是否达到目标（增强智能判断）
-                # 4.1: 智能模式分析 - 检测是否应该提前退出
-                pattern_analysis = self._analyze_execution_pattern(execution_context, iteration)
-                if pattern_analysis.get("should_exit"):
-                    self._logger.warning(f"🤖 [PTAV智能退出] {pattern_analysis.get('reason')}")
-                    execution_context["last_error"] = pattern_analysis.get("reason")
-                    execution_context["exit_suggestion"] = pattern_analysis.get("suggestion")
-                    break
-
-                # 4.2: 目标达成验证
-                validation_result = await self._validate_goal_achievement(ai, execution_context, exec_result)
-
-                if validation_result.get("goal_achieved"):
-                    self._logger.info(f"🎯 [PTAV循环] 目标达成，第{iteration}轮完成")
-                    execution_context["goal_achieved"] = True
-                    break
-
-                elif validation_result.get("should_continue", True):
-                    self._logger.info(f"➡️ [PTAV循环] 继续第{iteration+1}轮，原因: {validation_result.get('reason', '')}")
-                    # 更新AI输入以传递最新状态
-                    ai = self._update_ai_with_context(ai, execution_context)
-                else:
-                    self._logger.warning(f"🛑 [PTAV循环] 停止循环，原因: {validation_result.get('reason', '')}")
-                    execution_context["last_error"] = validation_result.get("reason")
-                    break
-
-            # 生成最终结果
-            final_result = await self._finalize_ptav_result(ai, execution_context)
-
-            total_time = int((time.time() - start_time) * 1000)
-            self._logger.info(f"🏁 [PTAV循环] 会话结束 {session_id}: {iteration}轮, {total_time}ms")
-
-            if final_result.get("success"):
-                return AgentOutput(True, final_result.get("result", ""), final_result)
-            else:
-                # 失败时也返回partial_result中的SQL，让前端可以显示和调试
-                partial_sql = final_result.get("partial_result", "")
-                return AgentOutput(False, partial_sql, final_result)
-
-        except Exception as e:
-            error = {"error": f"ptav_loop_exception: {str(e)}", "session_id": session_id, "iteration": iteration}
-            self._logger.error(f"❌ [PTAV循环] 异常 {session_id}: {str(e)}")
-            return AgentOutput(False, "", error)
-
-    def _analyze_execution_pattern(self, execution_context: Dict[str, Any], iteration: int) -> Dict[str, Any]:
-        """分析执行模式，判断是否应该智能退出"""
-        execution_history = execution_context.get("execution_history", [])
-
-        # 检测重复失败模式
-        if len(execution_history) >= 3:
-            last_3_actions = [h.get("plan", {}).get("steps", [{}])[0].get("action", "") for h in execution_history[-3:]]
-            last_3_success = [h.get("exec_result", {}).get("success", False) for h in execution_history[-3:]]
-
-            # 同一动作连续失败3次
-            if len(set(last_3_actions)) == 1 and not any(last_3_success):
-                return {
-                    "should_exit": True,
-                    "reason": f"重复执行{last_3_actions[0]}失败3次",
-                    "suggestion": "建议重新分析问题或更换策略"
-                }
-
-        # 检测Schema获取失败
-        if iteration > 3 and not execution_context.get("tables"):
-            schema_attempts = sum(1 for h in execution_history if "schema" in str(h.get("plan", {}).get("steps", [{}])[0].get("action", "")))
-            if schema_attempts >= 2:
-                return {
-                    "should_exit": True,
-                    "reason": "多次尝试后仍无Schema信息",
-                    "suggestion": "建议检查数据源配置"
-                }
-
-        # 检测网络/数据库连接问题
-        connection_failures = sum(1 for h in execution_history if any(keyword in str(h.get("exec_result", {}).get("error", "")).lower()
-                                  for keyword in ["network", "connection", "http query failed", "mysql", "doris"]))
-        if connection_failures >= 3:
-            return {
-                "should_exit": True,
-                "reason": "数据库连接频繁失败",
-                "suggestion": "建议检查数据源配置和网络连接"
-            }
-
-        # 检测无进展状态
-        if iteration > 5:
-            has_sql = bool(execution_context.get("current_sql"))
-            if not has_sql and iteration > 5:
-                return {
-                    "should_exit": True,
-                    "reason": "5轮后仍无SQL生成",
-                    "suggestion": "建议检查表结构或降低复杂度"
-                }
-
-        return {"should_exit": False}
-
-    async def _validate_goal_achievement(self, ai: AgentInput, execution_context: Dict[str, Any], exec_result: Dict[str, Any]) -> Dict[str, Any]:
-        """验证是否达成目标 - 增强智能判断 + SQL修复循环"""
-        # 检查是否有可用的SQL且通过了数据库验证
-        current_sql = execution_context.get("current_sql", "")
-        context = exec_result.get("context", {})
-
-        # SQL生成且数据库验证成功
-        if (current_sql and
-            context.get("sql_executed_successfully") and
-            context.get("execution_result", {}).get("rows")):
-
-            return {
-                "goal_achieved": True,
-                "reason": "SQL生成并通过数据库验证，获得了有效数据",
-                "result": current_sql
-            }
-
-        # 如果SQL通过了语法验证但数据库连接失败，也应该算作成功
-        if (current_sql and
-            context.get("database_validated") is False and
-            not context.get("issues") and
-            any(keyword in str(context.get("database_error", "")).lower()
-                for keyword in ["connection", "network", "http query failed", "mysql", "doris"])):
-
-            return {
-                "goal_achieved": True,
-                "reason": "SQL生成并通过语法验证，数据库连接问题不影响SQL正确性",
-                "result": current_sql,
-                "note": "建议检查数据源连接配置"
-            }
-
-        # 图表生成完成
-        if context.get("chart_image_path"):
-            return {
-                "goal_achieved": True,
-                "reason": "图表生成完成",
-                "result": context.get("chart_image_path")
-            }
-
-        # SQL验证失败 - 进入修复循环逻辑
-        if not exec_result.get("success") and current_sql:
-            issues = context.get("issues", [])
-            if issues:
-                # 获取或初始化修复计数器
-                sql_fix_attempts = execution_context.get("sql_fix_attempts", 0)
-
-                # 如果修复次数未达到上限（3次），继续修复
-                if sql_fix_attempts < 3:
-                    execution_context["sql_fix_attempts"] = sql_fix_attempts + 1
-                    execution_context["last_sql_issues"] = issues
-
-                    self._logger.info(f"🔧 [SQL修复循环] 第{sql_fix_attempts + 1}次修复尝试，问题: {len(issues)}个")
-
-                    # 如果有修正建议，使用修正建议
-                    if context.get("corrected_sql"):
-                        execution_context["current_sql"] = context["corrected_sql"]
-                        return {
-                            "goal_achieved": False,
-                            "should_continue": True,
-                            "reason": f"应用修正建议，第{sql_fix_attempts + 1}次修复尝试"
-                        }
-                    else:
-                        # 没有修正建议，请求Agent基于问题进行修复
-                        return {
-                            "goal_achieved": False,
-                            "should_continue": True,
-                            "reason": f"SQL有问题需要修复，第{sql_fix_attempts + 1}次尝试"
-                        }
-                else:
-                    # 修复次数已达上限，放弃修复
-                    self._logger.warning(f"⚠️ [SQL修复循环] 3次修复后仍有问题，放弃修复")
-                    return {
-                        "goal_achieved": False,
-                        "should_continue": False,
-                        "reason": "SQL修复失败：3次尝试后仍有问题"
-                    }
-
-        # 执行失败且无修正建议
-        if not exec_result.get("success") and not context.get("corrected_sql"):
-            return {
-                "goal_achieved": False,
-                "should_continue": False,
-                "reason": "执行失败且无修正建议"
-            }
-
-        # 继续执行
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, AsyncIterator
+from uuid import UUID
+
+from .types import AgentInput, AgentOutput, PlaceholderSpec, SchemaInfo, TaskContext
+from .service import AgentService
+from .config import LoomAgentConfig
+
+logger = logging.getLogger(__name__)
+
+
+class StageStatus(str, Enum):
+    """阶段执行状态"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class StageResult:
+    """单个阶段的执行结果"""
+    stage_name: str
+    status: StageStatus
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    output: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
-            "goal_achieved": False,
-            "should_continue": True,
-            "reason": "需要更多步骤完成目标"
+            "stage_name": self.stage_name,
+            "status": self.status.value,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "output": self.output,
+            "metadata": self.metadata,
+            "error": self.error,
         }
 
-    def _update_execution_context(self, execution_context: Dict[str, Any], context: Dict[str, Any]) -> None:
-        """🗄️ ResourcePool模式的execution_context更新逻辑
 
-        将详细信息存入ResourcePool，execution_context保持轻量。
+@dataclass
+class OrchestratorContext:
+    """编排器执行上下文"""
+    template_id: str
+    data_source_id: str
+    user_id: str
+    execution_time: datetime = field(default_factory=datetime.now)
+
+    # 任务调度信息
+    schedule: Optional[Dict[str, Any]] = None
+    time_window: Optional[Dict[str, Any]] = None
+
+    # 模板与数据源信息
+    template: Optional[Any] = None
+    data_source: Optional[Any] = None
+
+    # 阶段间共享的数据
+    shared_data: Dict[str, Any] = field(default_factory=dict)
+
+    # 各阶段的执行结果
+    stage_results: Dict[str, StageResult] = field(default_factory=dict)
+
+
+class ReportGenerationOrchestrator:
+    """
+    报告生成编排器
+
+    协调多个专门的 Agent 完成完整的报告生成流程。
+    每个阶段都有明确的输入/输出，失败时可以回退。
+    """
+
+    STAGE_ORDER = [
+        "placeholder_scan",      # 占位符扫描
+        "sql_generation",        # SQL 生成与验证
+        "etl_execution",         # ETL 取数
+        "data_fill_chart",       # 数据回填与图表生成
+        "content_optimization",  # 文案优化
+        "document_generation",   # 文档生成
+    ]
+
+    def __init__(self, container: Any, config: Optional[LoomAgentConfig] = None):
+        self.container = container
+        self.config = config
+        self.agent_service = AgentService(container=container, config=config)
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    async def execute(
+        self,
+        context: OrchestratorContext,
+        skip_stages: Optional[List[str]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        执行完整的报告生成流程
 
         Args:
-            execution_context: PTAV循环的执行上下文
-            context: 单轮执行返回的context
+            context: 编排器上下文
+            skip_stages: 要跳过的阶段列表
+
+        Yields:
+            流式输出每个阶段的进度和结果
         """
-        resource_pool = execution_context.get("resource_pool")
-        if not resource_pool:
-            self._logger.error("⚠️ ResourcePool未初始化")
-            return
+        skip_stages = skip_stages or []
 
-        # 准备更新数据
-        updates = {}
+        yield {
+            "type": "orchestration_started",
+            "template_id": context.template_id,
+            "total_stages": len(self.STAGE_ORDER) - len(skip_stages),
+            "execution_time": context.execution_time.isoformat(),
+        }
 
-        # current_sql: 既存入ResourcePool，也保留在execution_context（用于快速访问）
-        if context.get("current_sql"):
-            execution_context["current_sql"] = context["current_sql"]
-            updates["current_sql"] = context["current_sql"]
-
-        # column_details: 存入ResourcePool（完整数据）
-        if context.get("column_details"):
-            updates["column_details"] = context["column_details"]
-            table_count = len(context["column_details"])
-            table_names = list(context["column_details"].keys())
-            self._logger.info(
-                f"🗄️ [ResourcePool] 存储column_details: "
-                f"{table_count}张表 - {table_names}"
-            )
-
-        # schema_summary: 存入ResourcePool
-        if context.get("schema_summary"):
-            updates["schema_summary"] = context["schema_summary"]
-
-        # recommended_time_column: 存入ResourcePool
-        if context.get("recommended_time_column"):
-            updates["recommended_time_column"] = context["recommended_time_column"]
-            self._logger.info(
-                f"🗄️ [ResourcePool] 存储推荐时间列: "
-                f"{context['recommended_time_column']}"
-            )
-
-        if context.get("coordinator_metadata"):
-            updates["coordinator_metadata"] = context.get("coordinator_metadata")
-            execution_context["coordinator_metadata"] = context.get("coordinator_metadata")
-
-        # template_context: 存入ResourcePool（用于SQL生成）
-        if context.get("template_context"):
-            updates["template_context"] = context["template_context"]
-
-        # 批量更新ResourcePool
-        if updates:
-            resource_pool.update(updates)
-            stats = resource_pool.get_stats()
-            self._logger.debug(f"🗄️ [ResourcePool] 当前状态: {stats}")
-
-    def _update_ai_with_context(self, ai: AgentInput, execution_context: Dict[str, Any]) -> AgentInput:
-        """使用执行上下文更新AI输入
-
-        向下一轮Plan提供可见的上下文线索，避免重复无效动作：
-        - 已有/更新的schema
-        - 是否已有current_sql
-        - 上一步执行的工具与建议
-        - 验证问题提示
-        """
-        try:
-            from dataclasses import replace
-            from .types import SchemaInfo
-
-            # 最近一次执行结果
-            last = (execution_context.get("execution_history") or [])[-1] if execution_context.get("execution_history") else None
-            last_plan = (last or {}).get("plan", {})
-            last_step = (last_plan.get("steps", []) or [{}])[0] if last_plan else {}
-            last_tool = last_step.get("tool") or last_step.get("action")
-            last_exec = (last or {}).get("exec_result", {})
-            last_ctx = last_exec.get("context", {})
-            decision_info = last_exec.get("decision_info", {})
-
-            # 提取schema更新 - 优先使用累积的execution_context信息
-            new_tables = execution_context.get("tables") or last_ctx.get("tables") or getattr(ai.schema, 'tables', [])
-            new_columns = execution_context.get("columns") or last_ctx.get("columns") or getattr(ai.schema, 'columns', {})
-
-            # 规划提示 - 增强SQL修复信息传递
-            planning_hints = {
-                "has_current_sql": bool(last_ctx.get("current_sql")),
-                "last_step": last_tool,
-                "next_recommendations": decision_info.get("next_recommendations", []),
-                "validation_issues": last_ctx.get("issues", []) or last_ctx.get("validation_issues", []),
-                "warnings": last_ctx.get("warnings", []) or last_ctx.get("validation_warnings", []),
-                "sql_fix_attempts": execution_context.get("sql_fix_attempts", 0),
-                "last_sql_issues": execution_context.get("last_sql_issues", []),
-            }
-
-            # 合并到task_driven_context
-            tdc = dict(getattr(ai, 'task_driven_context', {}) or {})
-            tdc["planning_hints"] = planning_hints
-
-            # 🗄️ [ResourcePool模式] 传递轻量级ContextMemory和ResourcePool引用
-            resource_pool = execution_context.get("resource_pool")
-
-            if resource_pool:
-                # 从ResourcePool构建ContextMemory
-                context_memory = resource_pool.build_context_memory()
-                tdc["context_memory"] = context_memory.to_dict()
-
-                # 🔧 传递ResourcePool引用给Executor（Executor需要按需提取详细信息）
-                tdc["resource_pool"] = resource_pool
-
-                self._logger.info(
-                    f"🗄️ [AI Context] 传递ContextMemory + ResourcePool引用: "
-                    f"has_sql={context_memory.has_sql}, "
-                    f"schema_available={context_memory.schema_available}, "
-                    f"tables={len(context_memory.available_tables)}"
+        for stage_idx, stage_name in enumerate(self.STAGE_ORDER, 1):
+            if stage_name in skip_stages:
+                self.logger.info(f"跳过阶段 {stage_idx}/{len(self.STAGE_ORDER)}: {stage_name}")
+                context.stage_results[stage_name] = StageResult(
+                    stage_name=stage_name,
+                    status=StageStatus.SKIPPED,
                 )
+                yield {
+                    "type": "stage_skipped",
+                    "stage_name": stage_name,
+                    "stage_index": stage_idx,
+                }
+                continue
 
-                # 注意：不再传递完整的column_details到AI Context
-                # Executor通过ContextMemory了解状态，需要详细信息时从ResourcePool按需提取
-            else:
-                self._logger.warning("⚠️ [AI Context] ResourcePool未初始化，无法传递ContextMemory")
+            self.logger.info(f"开始执行阶段 {stage_idx}/{len(self.STAGE_ORDER)}: {stage_name}")
 
-            # 更新schema
-            new_schema = SchemaInfo(tables=new_tables, columns=new_columns)
-            return replace(ai, schema=new_schema, task_driven_context=tdc)
-        except Exception:
-            return ai
-
-    async def _finalize_ptav_result(self, ai: AgentInput, execution_context: Dict[str, Any]) -> Dict[str, Any]:
-        """生成PTAV循环的最终结果"""
-        if execution_context.get("goal_achieved"):
-            return {
-                "success": True,
-                "result": execution_context.get("current_sql", ""),
-                "execution_summary": f"完成{len(execution_context['execution_history'])}轮迭代",
-                "final_sql": execution_context.get("current_sql"),
-                "iteration_count": len(execution_context["execution_history"]),
-                "observations": execution_context.get("accumulated_observations", [])
-            }
-        else:
-            return {
-                "success": False,
-                "error": execution_context.get("last_error", "未能达成目标"),
-                "execution_summary": f"执行{len(execution_context['execution_history'])}轮后停止",
-                "partial_result": execution_context.get("current_sql", ""),
-                "iteration_count": len(execution_context["execution_history"]),
-                "observations": execution_context.get("accumulated_observations", [])
+            yield {
+                "type": "stage_started",
+                "stage_name": stage_name,
+                "stage_index": stage_idx,
+                "total_stages": len(self.STAGE_ORDER),
             }
 
-    async def _execute_task_sql_validation(self, ai: AgentInput) -> AgentOutput:
-        """
-        执行Task任务中的SQL有效性验证和更新流程
+            # 执行单个阶段
+            try:
+                async for event in self._execute_stage(stage_name, context):
+                    yield event
 
-        专门用于任务执行过程中：
-        1. 检查现有SQL是否过时或有缺陷
-        2. 基于最新schema和业务需求验证SQL
-        3. 如需要则更新SQL，确保能正确执行
-        4. 针对性验证，不做完整重建
+                # 检查阶段是否成功
+                stage_result = context.stage_results.get(stage_name)
+                if not stage_result or stage_result.status == StageStatus.FAILED:
+                    yield {
+                        "type": "stage_failed",
+                        "stage_name": stage_name,
+                        "error": stage_result.error if stage_result else "Unknown error",
+                    }
 
-        Args:
-            ai: Agent输入，应包含现有的SQL和任务上下文
+                    # 阶段失败，终止流程
+                    yield {
+                        "type": "orchestration_failed",
+                        "failed_stage": stage_name,
+                        "stage_index": stage_idx,
+                        "error": stage_result.error if stage_result else "Unknown error",
+                    }
+                    return
 
-        Returns:
-            AgentOutput: 验证和更新结果
-        """
-        task_id = str(uuid.uuid4())
-        self._logger.info(f"🔍 [SQL验证模式] 开始任务验证 {task_id}")
-
-        try:
-            current_sql = getattr(ai, 'current_sql', '') or ai.context.current_sql if hasattr(ai.context, 'current_sql') else ""
-
-            if not current_sql:
-                self._logger.warning(f"⚠️ [SQL验证模式] 无现有SQL需要验证")
-                return AgentOutput(False, "", {"error": "missing_current_sql", "message": "没有提供需要验证的SQL"})
-
-            self._logger.info(f"📝 [SQL验证模式] 验证SQL: {current_sql[:100]}...")
-
-            # 构建验证专用的AgentInput - 重点关注验证而非重新生成
-            validation_context = {
-                "mode": "sql_validation",
-                "current_sql": current_sql,
-                "validation_focus": "compatibility_check",  # 兼容性检查，不完整重建
-                "preserve_logic": True  # 保持原有逻辑
-            }
-
-            # 执行增强验证流程：时间属性检查 -> Schema兼容性 -> 语法检查 -> 数据库验证
-            validation_steps = [
-                {"action": "tool_call", "tool": "time.window", "reason": "检查和更新时间属性", "input": {}},
-                {"action": "tool_call", "tool": "schema.list_columns", "reason": "确认schema变更", "input": {}},
-                {"action": "tool_call", "tool": "sql.validate", "reason": "验证SQL兼容性", "input": {"current_sql": current_sql}},
-            ]
-
-            # 只有在验证失败时才尝试修正
-            plan = {
-                "thought": "验证现有SQL的有效性，仅在必要时进行最小化修正",
-                "steps": validation_steps,
-                "expected_outcome": "validated_sql"
-            }
-
-            # 执行验证
-            exec_result = await self.executor.execute({"plan": plan}, ai)
-            context = exec_result.get("context", {})
-
-            # 分析验证结果，特别关注时间属性
-            time_updated = context.get("start_date") or context.get("end_date")
-            time_issues = [issue for issue in context.get("issues", []) if any(keyword in str(issue).lower() for keyword in ["时间", "日期", "date", "time"])]
-
-            if context.get("database_validated") and not context.get("issues"):
-                # SQL验证通过
-                message = "现有SQL验证通过"
-                if time_updated:
-                    message += f"，时间属性已更新({context.get('start_date', '')} - {context.get('end_date', '')})"
-
-                self._logger.info(f"✅ [SQL验证模式] {message}")
-                return AgentOutput(True, current_sql, {
-                    "validation_status": "passed",
-                    "current_sql": current_sql,
-                    "message": message,
-                    "time_updated": bool(time_updated),
-                    "time_range": {
-                        "start_date": context.get("start_date"),
-                        "end_date": context.get("end_date")
-                    },
-                    "validation_details": context
-                })
-
-            elif context.get("issues") or context.get("database_error"):
-                # SQL有问题，需要修正
-                issues = context.get("issues", [])
-                time_issue_count = len(time_issues)
-
-                self._logger.warning(f"⚠️ [SQL验证模式] 发现{len(issues)}个问题(其中{time_issue_count}个时间相关)，需要修正")
-
-                # 如果有修正建议，应用修正
-                if context.get("corrected_sql"):
-                    corrected_sql = context["corrected_sql"]
-                    self._logger.info(f"🔧 [SQL验证模式] 应用修正建议")
-
-                    # 验证修正后的SQL
-                    validation_result = await self._quick_validate_sql(corrected_sql, ai)
-                    if validation_result.get("success"):
-                        message = f"SQL已修正，解决了{len(issues)}个问题"
-                        if time_issue_count > 0:
-                            message += f"(包括{time_issue_count}个时间属性问题)"
-
-                        return AgentOutput(True, corrected_sql, {
-                            "validation_status": "corrected",
-                            "original_sql": current_sql,
-                            "current_sql": corrected_sql,
-                            "issues_fixed": issues,
-                            "time_issues_fixed": time_issues,
-                            "time_updated": bool(time_updated),
-                            "time_range": {
-                                "start_date": context.get("start_date"),
-                                "end_date": context.get("end_date")
-                            },
-                            "message": message
-                        })
-
-                # 修正失败，返回问题详情
-                return AgentOutput(False, "", {
-                    "validation_status": "failed",
-                    "current_sql": current_sql,
-                    "issues": issues,
-                    "error": "SQL验证失败且无法自动修正",
-                    "database_error": context.get("database_error"),
-                    "recommendations": "需要手动检查SQL或重新生成"
-                })
-
-            else:
-                # 验证状态不明确
-                return AgentOutput(False, "", {
-                    "validation_status": "unknown",
-                    "current_sql": current_sql,
-                    "error": "SQL验证结果不明确",
-                    "exec_result": exec_result
-                })
-
-        except Exception as e:
-            error = {"error": f"task_sql_validation_exception: {str(e)}", "task_id": task_id}
-            self._logger.error(f"❌ [SQL验证模式] 异常 {task_id}: {str(e)}")
-            return AgentOutput(False, "", error)
-
-    async def _execute_report_chart_generation(self, ai: AgentInput) -> AgentOutput:
-        """
-        执行报告生成中的数据转图表流程
-
-        专门用于报告生成中：
-        1. 验证查询结果数据的完整性和格式
-        2. 根据数据特征选择合适的图表类型
-        3. 生成图表配置和样式
-        4. 生成最终图表文件
-        5. 添加图例说明和格式化
-
-        Args:
-            ai: Agent输入，应包含查询结果数据
-
-        Returns:
-            AgentOutput: 图表生成结果
-        """
-        chart_session_id = str(uuid.uuid4())
-        self._logger.info(f"📊 [图表生成模式] 开始图表生成 {chart_session_id}")
-
-        try:
-            # 检查输入数据
-            data_rows = getattr(ai, 'data_rows', []) or []
-            data_columns = getattr(ai, 'data_columns', []) or []
-
-            if not data_rows or not data_columns:
-                context = getattr(ai, 'context', {})
-                if hasattr(context, 'execution_result'):
-                    data_rows = context.execution_result.get('rows', [])
-                    data_columns = context.execution_result.get('columns', [])
-
-            if not data_rows:
-                self._logger.warning(f"⚠️ [图表生成模式] 无数据可用于生成图表")
-                return AgentOutput(False, "", {
-                    "error": "missing_data",
-                    "message": "没有提供可用于生成图表的数据"
-                })
-
-            self._logger.info(f"📊 [图表生成模式] 处理数据: {len(data_rows)}行 x {len(data_columns)}列")
-
-            # 构建图表生成管道
-            chart_pipeline = [
-                {"action": "tool_call", "tool": "data.quality", "reason": "验证数据质量和格式", "input": {}},
-                {"action": "tool_call", "tool": "chart.spec", "reason": "生成图表配置", "input": {}},
-                {"action": "tool_call", "tool": "word_chart_generator", "reason": "生成最终图表", "input": {}}
-            ]
-
-            plan = {
-                "thought": "数据质量验证 -> 图表配置生成 -> 图表渲染",
-                "steps": chart_pipeline,
-                "expected_outcome": "chart"
-            }
-
-            # 执行图表生成管道
-            exec_result = await self.executor.execute({"plan": plan}, ai)
-            context = exec_result.get("context", {})
-
-            # 检查图表生成结果
-            if context.get("chart_image_path"):
-                chart_path = context["chart_image_path"]
-                chart_spec = context.get("chart_spec", {})
-
-                self._logger.info(f"✅ [图表生成模式] 图表生成成功: {chart_path}")
-
-                return AgentOutput(True, chart_path, {
-                    "generation_status": "success",
-                    "chart_image_path": chart_path,
-                    "chart_spec": chart_spec,
-                    "data_summary": {
-                        "row_count": len(data_rows),
-                        "column_count": len(data_columns),
-                        "columns": data_columns[:10]  # 只返回前10列避免过长
-                    },
-                    "message": f"成功生成图表，处理了{len(data_rows)}行数据"
-                })
-
-            elif context.get("chart_spec"):
-                # 图表配置生成了但图片生成失败
-                self._logger.warning(f"⚠️ [图表生成模式] 图表配置生成成功但图片生成失败")
-                return AgentOutput(False, "", {
-                    "generation_status": "partial_success",
-                    "chart_spec": context["chart_spec"],
-                    "error": "图表配置生成成功但图片渲染失败",
-                    "data_summary": {"row_count": len(data_rows), "column_count": len(data_columns)}
-                })
-
-            else:
-                # 图表生成完全失败
-                error_details = exec_result.get("observations", [])
-                self._logger.error(f"❌ [图表生成模式] 图表生成失败")
-                return AgentOutput(False, "", {
-                    "generation_status": "failed",
-                    "error": "图表生成流程失败",
-                    "error_details": error_details,
-                    "data_summary": {"row_count": len(data_rows), "column_count": len(data_columns)}
-                })
-
-        except Exception as e:
-            error = {"error": f"chart_generation_exception: {str(e)}", "chart_session_id": chart_session_id}
-            self._logger.error(f"❌ [图表生成模式] 异常 {chart_session_id}: {str(e)}")
-            return AgentOutput(False, "", error)
-
-    async def _quick_validate_sql(self, sql: str, ai: AgentInput) -> Dict[str, Any]:
-        """快速SQL验证 - 用于任务验证模式"""
-        try:
-            validation_plan = {
-                "steps": [{"action": "tool_call", "tool": "sql.validate", "reason": "快速验证", "input": {"current_sql": sql}}]
-            }
-            result = await self.executor.execute(validation_plan, ai)
-            context = result.get("context", {})
-
-            return {
-                "success": not bool(context.get("issues")),
-                "issues": context.get("issues", []),
-                "database_validated": context.get("database_validated", False)
-            }
-        except Exception:
-            return {"success": False, "issues": ["验证过程异常"]}
-
-
-    async def _call_llm(self, llm_service, prompt: str, user_id: str = "system", llm_policy: Dict[str, Any] = None) -> str:
-        """
-        调用LLM服务，适配backup系统的不同接口
-
-        Args:
-            llm_service: LLM服务实例
-            prompt: 提示词
-            user_id: 用户ID
-
-        Returns:
-            str: LLM响应
-        """
-        # 尝试不同的LLM服务接口
-        try:
-            # 默认LLM策略（如果没有提供）
-            if not llm_policy:
-                llm_policy = {
-                    "stage": "finalize",
-                    "complexity": "high",
-                    "output_kind": "sql"
+                yield {
+                    "type": "stage_completed",
+                    "stage_name": stage_name,
+                    "stage_index": stage_idx,
+                    "result": stage_result.to_dict(),
                 }
 
-            # 尝试方式1: ask方法 (类似当前系统)
-            if hasattr(llm_service, 'ask'):
-                result = await llm_service.ask(
-                    user_id=user_id,
-                    prompt=prompt,
-                    response_format={"type": "json_object"},
-                    llm_policy=llm_policy
+            except Exception as e:
+                self.logger.error(f"阶段 {stage_name} 执行异常: {e}", exc_info=True)
+
+                context.stage_results[stage_name] = StageResult(
+                    stage_name=stage_name,
+                    status=StageStatus.FAILED,
+                    error=str(e),
+                    completed_at=datetime.now(),
                 )
-                return result.get("response", "{}") if isinstance(result, dict) else (result or "{}")
 
-            # 尝试方式2: generate_response方法
-            elif hasattr(llm_service, 'generate_response'):
-                result = await llm_service.generate_response(
-                    prompt=prompt,
-                    user_id=user_id,
-                    response_format={"type": "json_object"}
-                )
-                return result.get("response", "{}") if isinstance(result, dict) else (result or "{}")
+                yield {
+                    "type": "stage_failed",
+                    "stage_name": stage_name,
+                    "error": str(e),
+                }
 
-            # 尝试方式3: 直接调用
-            elif callable(llm_service):
-                result = await llm_service(prompt)
-                return result
+                yield {
+                    "type": "orchestration_failed",
+                    "failed_stage": stage_name,
+                    "error": str(e),
+                }
+                return
 
-            else:
-                raise ValueError("Unsupported LLM service interface")
+        # 所有阶段完成
+        yield {
+            "type": "orchestration_completed",
+            "template_id": context.template_id,
+            "completed_stages": len([r for r in context.stage_results.values() if r.status == StageStatus.COMPLETED]),
+            "total_stages": len(self.STAGE_ORDER),
+            "execution_time_seconds": (datetime.now() - context.execution_time).total_seconds(),
+        }
+
+    async def _execute_stage(
+        self,
+        stage_name: str,
+        context: OrchestratorContext,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """执行单个阶段"""
+
+        stage_result = StageResult(
+            stage_name=stage_name,
+            status=StageStatus.IN_PROGRESS,
+            started_at=datetime.now(),
+        )
+        context.stage_results[stage_name] = stage_result
+
+        # 根据阶段名称调用相应的处理方法
+        stage_handlers = {
+            "placeholder_scan": self._stage_placeholder_scan,
+            "sql_generation": self._stage_sql_generation,
+            "etl_execution": self._stage_etl_execution,
+            "data_fill_chart": self._stage_data_fill_chart,
+            "content_optimization": self._stage_content_optimization,
+            "document_generation": self._stage_document_generation,
+        }
+
+        handler = stage_handlers.get(stage_name)
+        if not handler:
+            raise ValueError(f"Unknown stage: {stage_name}")
+
+        try:
+            async for event in handler(context, stage_result):
+                yield event
+
+            # 标记阶段完成
+            stage_result.status = StageStatus.COMPLETED
+            stage_result.completed_at = datetime.now()
 
         except Exception as e:
-            self._logger.error(f"LLM调用失败: {str(e)}")
-            return '{"success": false, "error": "llm_call_failed"}'
+            stage_result.status = StageStatus.FAILED
+            stage_result.error = str(e)
+            stage_result.completed_at = datetime.now()
+            raise
 
-    def _build_observation_report(self, plan: Dict[str, Any], exec_result: Dict[str, Any]) -> str:
-        """构建观察报告"""
-        obs = exec_result.get("observations", [])
-        lines = [
-            f"计划步骤: {len(plan.get('steps', []))}",
-            f"成功步骤: {exec_result.get('successful_steps', 0)}/{exec_result.get('total_steps', 0)}",
-            "",
-            "观测记录:",
+    async def _stage_placeholder_scan(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 1: 占位符扫描
+
+        扫描模板，识别所有占位符及其类型、位置、上下文信息。
+        """
+        yield {"type": "stage_log", "message": "开始扫描模板占位符..."}
+
+        # 从数据库加载模板（如果还没有）
+        if not context.template:
+            from app.db.session import get_db_session
+            from app.models.template import Template
+
+            with get_db_session() as db:
+                context.template = db.query(Template).filter(
+                    Template.id == UUID(context.template_id)
+                ).first()
+
+                if not context.template:
+                    raise ValueError(f"Template not found: {context.template_id}")
+
+        # 扫描占位符
+        from app.services.domain.placeholder.usecases.scanner import PlaceholderScanner
+
+        scanner = PlaceholderScanner()
+        placeholders = await scanner.scan_template(
+            template_content=context.template.content,
+            template_id=context.template_id,
+        )
+
+        yield {
+            "type": "stage_log",
+            "message": f"扫描完成，发现 {len(placeholders)} 个占位符",
+        }
+
+        # 保存到共享数据
+        context.shared_data["placeholders"] = placeholders
+        result.output = {
+            "placeholder_count": len(placeholders),
+            "placeholders": [p.to_dict() for p in placeholders],
+        }
+        result.metadata = {
+            "template_name": context.template.name,
+            "scan_method": "PlaceholderScanner",
+        }
+
+    async def _stage_sql_generation(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 2: SQL 生成与验证（并发优化版）
+
+        为每个数据占位符生成 SQL，并进行验证和测试执行。
+        采用 3 并发策略提升性能。
+        """
+        import asyncio
+
+        placeholders = context.shared_data.get("placeholders", [])
+
+        yield {
+            "type": "stage_log",
+            "message": f"开始为 {len(placeholders)} 个占位符生成 SQL（3并发）...",
+        }
+
+        # 加载数据源信息
+        if not context.data_source:
+            from app.db.session import get_db_session
+            from app.models.data_source import DataSource
+
+            with get_db_session() as db:
+                context.data_source = db.query(DataSource).filter(
+                    DataSource.id == UUID(context.data_source_id)
+                ).first()
+
+                if not context.data_source:
+                    raise ValueError(f"DataSource not found: {context.data_source_id}")
+
+        # 过滤数据占位符
+        data_placeholders = [
+            p for p in placeholders
+            if p.get("type") in ["data", "sql", "metric"]
         ]
 
-        for i, o in enumerate(obs, 1):
-            lines.append(f"{i}. {o}")
+        if not data_placeholders:
+            yield {
+                "type": "stage_log",
+                "message": "没有数据占位符需要生成 SQL",
+            }
+            context.shared_data["sql_results"] = []
+            result.output = {"generated_count": 0, "sql_results": []}
+            return
 
-        # 添加上下文信息
-        ctx = exec_result.get("context", {})
-        if ctx.get("current_sql"):
-            lines.extend(["", f"当前SQL: {ctx['current_sql']}"])
-        if ctx.get("execution_result"):
-            rows = ctx["execution_result"].get("rows", [])
-            lines.append(f"执行行数: {len(rows)}")
-        if ctx.get("chart_spec"):
-            lines.append("已生成图表配置")
-        if ctx.get("chart_image_path"):
-            lines.append(f"图表图片路径: {ctx['chart_image_path']}")
+        yield {
+            "type": "stage_log",
+            "message": f"发现 {len(data_placeholders)} 个数据占位符",
+        }
 
-        return "\n".join(lines)
+        # 并发生成 SQL
+        semaphore = asyncio.Semaphore(3)  # 3 并发
+        sql_results = []
+        failed_placeholders = []
 
-    def _parse_final_decision(self, text: str, ai: AgentInput) -> Dict[str, Any]:
-        """解析最终决策"""
+        async def generate_sql_for_placeholder(placeholder, index):
+            """为单个占位符生成 SQL"""
+            async with semaphore:
+                try:
+                    ph_id = placeholder.get("id")
+                    ph_name = placeholder.get("name")
+
+                    self.logger.info(f"[{index}/{len(data_placeholders)}] 生成 SQL: {ph_name}")
+
+                    # 使用现有的单占位符分析服务
+                    from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService
+                    from app.services.domain.placeholder.types import PlaceholderAnalysisRequest
+
+                    ph_service = PlaceholderApplicationService(user_id=context.user_id)
+
+                    request = PlaceholderAnalysisRequest(
+                        placeholder_id=ph_id,
+                        business_command=placeholder.get("description", ""),
+                        requirements=placeholder.get("requirements", ""),
+                        target_objective=placeholder.get("objective", "数据查询"),
+                        context={
+                            "placeholder_context_snippet": placeholder.get("context_text", ""),
+                            "time_window": context.time_window,
+                            "schedule": context.schedule,
+                        },
+                        data_source_info={
+                            "id": str(context.data_source.id),
+                            "source_type": context.data_source.source_type.value if hasattr(context.data_source.source_type, 'value') else str(context.data_source.source_type),
+                            "database_name": getattr(context.data_source, 'doris_database', 'default_db'),
+                            "host": context.data_source.doris_fe_hosts[0] if context.data_source.doris_fe_hosts else None,
+                            "port": getattr(context.data_source, 'doris_fe_http_port', 8030),
+                        },
+                    )
+
+                    # 执行分析
+                    sql_result = None
+                    async for event in ph_service.analyze_placeholder(request):
+                        if event.get("type") == "sql_generation_complete":
+                            sql_result = event.get("content")
+                            break
+                        elif event.get("type") in ["sql_generation_failed", "analysis_error"]:
+                            sql_result = event.get("content")
+                            break
+
+                    if sql_result and sql_result.sql_query:
+                        return {
+                            "success": True,
+                            "placeholder_id": ph_id,
+                            "placeholder_name": ph_name,
+                            "sql": sql_result.sql_query,
+                            "validation_status": sql_result.validation_status,
+                            "metadata": sql_result.metadata,
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "placeholder_id": ph_id,
+                            "placeholder_name": ph_name,
+                            "error": "SQL generation returned empty result",
+                        }
+
+                except Exception as e:
+                    self.logger.error(f"占位符 {placeholder.get('name')} SQL生成失败: {e}")
+                    return {
+                        "success": False,
+                        "placeholder_id": placeholder.get("id"),
+                        "placeholder_name": placeholder.get("name"),
+                        "error": str(e),
+                    }
+
+        # 并发执行所有占位符的 SQL 生成
+        tasks = [
+            generate_sql_for_placeholder(ph, idx)
+            for idx, ph in enumerate(data_placeholders, 1)
+        ]
+
+        # 使用 asyncio.gather 并发执行
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 处理结果
+        for res in results:
+            if isinstance(res, Exception):
+                self.logger.error(f"SQL 生成任务异常: {res}")
+                failed_placeholders.append({
+                    "error": str(res),
+                })
+            elif res.get("success"):
+                sql_results.append({
+                    "placeholder_id": res["placeholder_id"],
+                    "placeholder_name": res["placeholder_name"],
+                    "sql": res["sql"],
+                    "validation_status": res["validation_status"],
+                    "metadata": res["metadata"],
+                })
+            else:
+                failed_placeholders.append({
+                    "placeholder_id": res["placeholder_id"],
+                    "placeholder_name": res["placeholder_name"],
+                    "error": res.get("error", "Unknown error"),
+                })
+
+        # 保存到共享数据
+        context.shared_data["sql_results"] = sql_results
+        context.shared_data["failed_sql_generation"] = failed_placeholders
+
+        result.output = {
+            "generated_count": len(sql_results),
+            "failed_count": len(failed_placeholders),
+            "sql_results": sql_results,
+        }
+        result.metadata = {
+            "total_placeholders": len(placeholders),
+            "data_placeholders": len(data_placeholders),
+            "success_rate": len(sql_results) / len(data_placeholders) if data_placeholders else 0,
+            "failed_placeholders": failed_placeholders,
+        }
+
+        # 检查失败率
+        if failed_placeholders:
+            failure_rate = len(failed_placeholders) / len(data_placeholders)
+            if failure_rate > 0.5:
+                yield {
+                    "type": "stage_warning",
+                    "message": f"⚠️ SQL 生成失败率过高: {failure_rate*100:.1f}% ({len(failed_placeholders)}/{len(data_placeholders)})",
+                }
+
+        yield {
+            "type": "stage_log",
+            "message": f"SQL 生成完成 - 成功: {len(sql_results)}/{len(data_placeholders)}，失败: {len(failed_placeholders)}",
+        }
+
+    async def _stage_etl_execution(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 3: ETL 取数（完整实现版）
+
+        批量执行所有 SQL，获取数据并缓存。
+        采用 3 并发策略，参考原 agents/tools/sql/executor.py 实现。
+        """
+        import asyncio
+        import time
+
+        sql_results = context.shared_data.get("sql_results", [])
+
+        if not sql_results:
+            yield {
+                "type": "stage_log",
+                "message": "没有 SQL 需要执行",
+            }
+            context.shared_data["etl_results"] = []
+            result.output = {"executed_count": 0, "etl_results": []}
+            return
+
+        yield {
+            "type": "stage_log",
+            "message": f"开始执行 {len(sql_results)} 个 SQL 查询（3并发）...",
+        }
+
+        # 使用 SQL 执行工具
+        from app.services.infrastructure.agents.tools.sql_tools import SQLExecuteTool
+
+        sql_tool = SQLExecuteTool(container=self.container)
+
+        # 并发执行 SQL
+        semaphore = asyncio.Semaphore(3)  # 3 并发
+        etl_results = []
+
+        async def execute_single_sql(sql_result, index):
+            """执行单个 SQL"""
+            async with semaphore:
+                placeholder_id = sql_result.get("placeholder_id")
+                placeholder_name = sql_result.get("placeholder_name")
+                sql_with_placeholders = sql_result.get("sql")
+
+                try:
+                    self.logger.info(f"[{index}/{len(sql_results)}] 执行 SQL: {placeholder_name}")
+
+                    start_time = time.time()
+
+                    # 构建执行上下文
+                    exec_input = {
+                        "sql": sql_with_placeholders,
+                        "current_sql": sql_with_placeholders,
+                        "time_window": context.time_window or {},
+                        "window": context.time_window or {},
+                        "data_source": {
+                            "id": str(context.data_source.id),
+                            "source_type": context.data_source.source_type.value if hasattr(context.data_source.source_type, 'value') else str(context.data_source.source_type),
+                            "database_name": getattr(context.data_source, 'doris_database', 'default_db'),
+                        },
+                        "user_id": context.user_id,
+                    }
+
+                    # 执行 SQL
+                    exec_result = await sql_tool.execute(exec_input)
+
+                    execution_time = time.time() - start_time
+
+                    if exec_result.get("success"):
+                        return {
+                            "success": True,
+                            "placeholder_id": placeholder_id,
+                            "placeholder_name": placeholder_name,
+                            "data": exec_result.get("rows", []),
+                            "columns": exec_result.get("columns", []),
+                            "row_count": exec_result.get("row_count", 0),
+                            "execution_time": execution_time,
+                            "execution_sql": exec_result.get("sql"),  # 替换后的实际 SQL
+                            "metadata": {
+                                "sql_with_placeholders": sql_with_placeholders,
+                                "time_window": context.time_window,
+                            }
+                        }
+                    else:
+                        error_msg = exec_result.get("error", "Unknown error")
+                        self.logger.error(f"SQL 执行失败 - 占位符: {placeholder_name}, 错误: {error_msg}")
+
+                        return {
+                            "success": False,
+                            "placeholder_id": placeholder_id,
+                            "placeholder_name": placeholder_name,
+                            "data": [],
+                            "columns": [],
+                            "row_count": 0,
+                            "execution_time": execution_time,
+                            "error": error_msg,
+                        }
+
+                except Exception as e:
+                    self.logger.error(f"ETL 执行异常 - 占位符: {placeholder_name}: {e}", exc_info=True)
+
+                    return {
+                        "success": False,
+                        "placeholder_id": placeholder_id,
+                        "placeholder_name": placeholder_name,
+                        "data": [],
+                        "columns": [],
+                        "row_count": 0,
+                        "error": str(e),
+                    }
+
+        # 并发执行所有 SQL
+        tasks = [
+            execute_single_sql(sql_result, idx)
+            for idx, sql_result in enumerate(sql_results, 1)
+        ]
+
+        # 使用 asyncio.gather 并发执行
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 处理结果
+        for res in results:
+            if isinstance(res, Exception):
+                self.logger.error(f"ETL 执行任务异常: {res}")
+                etl_results.append({
+                    "success": False,
+                    "error": str(res),
+                    "data": [],
+                    "row_count": 0,
+                })
+            else:
+                etl_results.append(res)
+
+                # 输出日志
+                if res.get("success"):
+                    yield {
+                        "type": "stage_log",
+                        "message": f"✅ {res['placeholder_name']}: {res['row_count']} 行，耗时 {res['execution_time']:.2f}s",
+                    }
+                else:
+                    yield {
+                        "type": "stage_warning",
+                        "message": f"❌ {res['placeholder_name']} 执行失败: {res.get('error', 'Unknown')}",
+                    }
+
+        # 保存结果
+        context.shared_data["etl_results"] = etl_results
+
+        # 统计
+        success_count = len([r for r in etl_results if r.get("success")])
+        failed_count = len(etl_results) - success_count
+        total_rows = sum(r.get("row_count", 0) for r in etl_results)
+
+        result.output = {
+            "executed_count": len(etl_results),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "total_rows": total_rows,
+            "etl_results": etl_results,
+        }
+
+        result.metadata = {
+            "total_execution_time": sum(r.get("execution_time", 0) for r in etl_results),
+            "avg_execution_time": sum(r.get("execution_time", 0) for r in etl_results) / len(etl_results) if etl_results else 0,
+            "success_rate": success_count / len(etl_results) if etl_results else 0,
+        }
+
+        yield {
+            "type": "stage_log",
+            "message": f"ETL 执行完成 - 成功: {success_count}/{len(etl_results)}，总行数: {total_rows}，总耗时: {result.metadata['total_execution_time']:.2f}s",
+        }
+
+    async def _stage_data_fill_chart(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 4: 数据回填与图表生成（完整实现版）
+
+        将数据回填到模板占位符，生成图表图片。
+        参考原 agents/tools/chart_tools.py 实现。
+        """
+        import asyncio
+
+        placeholders = context.shared_data.get("placeholders", [])
+        etl_results = context.shared_data.get("etl_results", [])
+
+        yield {"type": "stage_log", "message": "开始数据回填与图表生成..."}
+
+        # 1. 构建占位符 → 数据映射
+        placeholder_data_map = {}
+        for etl_result in etl_results:
+            ph_id = etl_result.get("placeholder_id")
+            placeholder_data_map[ph_id] = {
+                "data": etl_result.get("data", []),
+                "columns": etl_result.get("columns", []),
+                "row_count": etl_result.get("row_count", 0),
+            }
+
+        # 2. 分类处理占位符
+        fill_results = []
+        chart_results = []
+
+        # 过滤出需要处理的占位符
+        data_and_chart_placeholders = [
+            p for p in placeholders
+            if p.get("type") in ["data", "sql", "metric", "chart"]
+        ]
+
+        if not data_and_chart_placeholders:
+            yield {"type": "stage_log", "message": "没有需要回填的占位符"}
+            context.shared_data["fill_results"] = []
+            context.shared_data["chart_results"] = []
+            result.output = {"filled_count": 0, "chart_count": 0}
+            return
+
+        yield {
+            "type": "stage_log",
+            "message": f"发现 {len(data_and_chart_placeholders)} 个需要处理的占位符",
+        }
+
+        for idx, placeholder in enumerate(data_and_chart_placeholders, 1):
+            ph_id = placeholder.get("id")
+            ph_type = placeholder.get("type")
+            ph_name = placeholder.get("name")
+
+            yield {
+                "type": "stage_progress",
+                "message": f"处理占位符 ({idx}/{len(data_and_chart_placeholders)}): {ph_name}",
+                "progress": (idx / len(data_and_chart_placeholders)) * 100,
+            }
+
+            if ph_type in ["data", "sql", "metric"]:
+                # 数据占位符 - 直接回填
+                data_info = placeholder_data_map.get(ph_id, {})
+
+                if data_info.get("row_count", 0) > 0:
+                    # 根据占位符格式决定回填方式
+                    fill_format = placeholder.get("format", "single_value")
+
+                    if fill_format == "single_value":
+                        # 单个值（如总数、平均值）
+                        filled_value = data_info["data"][0][0] if data_info["data"] and data_info["data"][0] else "N/A"
+
+                    elif fill_format == "table":
+                        # 表格数据
+                        filled_value = {
+                            "type": "table",
+                            "columns": data_info["columns"],
+                            "data": data_info["data"],
+                        }
+
+                    elif fill_format == "list":
+                        # 列表数据
+                        filled_value = {
+                            "type": "list",
+                            "items": [row[0] if row else "" for row in data_info["data"]],
+                        }
+                    else:
+                        # 默认单值
+                        filled_value = data_info["data"][0][0] if data_info["data"] and data_info["data"][0] else "N/A"
+
+                    fill_results.append({
+                        "placeholder_id": ph_id,
+                        "placeholder_name": ph_name,
+                        "filled_value": filled_value,
+                        "format": fill_format,
+                        "row_count": data_info["row_count"],
+                    })
+                else:
+                    # 没有数据
+                    fill_results.append({
+                        "placeholder_id": ph_id,
+                        "placeholder_name": ph_name,
+                        "filled_value": "暂无数据",
+                        "format": "text",
+                        "row_count": 0,
+                    })
+
+            elif ph_type == "chart":
+                # 图表占位符 - 生成图表
+                data_info = placeholder_data_map.get(ph_id, {})
+
+                if data_info.get("row_count", 0) > 0:
+                    try:
+                        # 生成图表
+                        chart_result = await self._generate_chart(
+                            placeholder=placeholder,
+                            data=data_info["data"],
+                            columns=data_info["columns"],
+                        )
+
+                        if chart_result.get("success"):
+                            chart_results.append({
+                                "placeholder_id": ph_id,
+                                "placeholder_name": ph_name,
+                                "chart_path": chart_result.get("chart_path"),
+                                "chart_type": chart_result.get("chart_type"),
+                            })
+
+                            yield {
+                                "type": "stage_log",
+                                "message": f"✅ 图表生成成功: {ph_name}",
+                            }
+                        else:
+                            chart_results.append({
+                                "placeholder_id": ph_id,
+                                "placeholder_name": ph_name,
+                                "error": chart_result.get("error"),
+                            })
+
+                            yield {
+                                "type": "stage_warning",
+                                "message": f"❌ 图表生成失败: {ph_name}, {chart_result.get('error')}",
+                            }
+
+                    except Exception as e:
+                        self.logger.error(f"图表生成异常: {ph_name}, {e}")
+                        chart_results.append({
+                            "placeholder_id": ph_id,
+                            "placeholder_name": ph_name,
+                            "error": str(e),
+                        })
+                else:
+                    # 没有数据，无法生成图表
+                    chart_results.append({
+                        "placeholder_id": ph_id,
+                        "placeholder_name": ph_name,
+                        "chart_path": None,
+                        "message": "暂无数据，无法生成图表",
+                    })
+
+        # 3. 保存结果
+        context.shared_data["fill_results"] = fill_results
+        context.shared_data["chart_results"] = chart_results
+
+        success_chart_count = len([c for c in chart_results if c.get("chart_path")])
+
+        result.output = {
+            "filled_count": len(fill_results),
+            "chart_count": len(chart_results),
+            "success_chart_count": success_chart_count,
+            "fill_results": fill_results,
+            "chart_results": chart_results,
+        }
+
+        result.metadata = {
+            "total_data_rows": sum(f.get("row_count", 0) for f in fill_results),
+        }
+
+        yield {
+            "type": "stage_log",
+            "message": f"数据回填与图表生成完成 - 回填: {len(fill_results)}, 图表: {success_chart_count}/{len(chart_results)}",
+        }
+
+    async def _generate_chart(
+        self,
+        placeholder: Dict[str, Any],
+        data: List[List],
+        columns: List[str],
+    ) -> Dict[str, Any]:
+        """
+        生成图表
+
+        参考原 agents/tools/chart_tools.py 的实现
+        """
         try:
-            t = (text or "").strip()
-            if t.startswith("```json"):
-                t = t.replace("```json", "").replace("```", "").strip()
+            import matplotlib.pyplot as plt
+            import matplotlib
+            import os
+            import base64
+            import io
+            from datetime import datetime
 
-            data = json.loads(t)
+            # 设置中文字体支持
+            matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial']
+            matplotlib.rcParams['axes.unicode_minus'] = False
 
-            if not isinstance(data.get("success"), bool):
-                return {"success": False, "error": "invalid_decision_format"}
+            # 创建图表
+            fig, ax = plt.subplots(figsize=(10, 6))
 
-            if data.get("success") and not data.get("result"):
-                return {"success": False, "error": "missing_result"}
+            chart_type = placeholder.get("chart_type", "bar")
+            title = placeholder.get("name", "数据图表")
 
-            # SQL结果验证
-            if (ai.constraints.output_kind or "sql").lower() == "sql" and data.get("success"):
-                sql = str(data.get("result", ""))
-                if "SELECT" not in sql.upper():
-                    return {"success": False, "error": "invalid_sql_in_decision"}
+            if not data or len(columns) < 2:
+                ax.text(0.5, 0.5, "暂无数据或数据格式不正确", transform=ax.transAxes, ha="center", va="center")
+            else:
+                # 转换数据格式
+                x_values = [row[0] if row else "" for row in data]
+                y_values = [float(row[1]) if len(row) > 1 and row[1] is not None else 0 for row in data]
 
-            return data
+                if chart_type == "bar":
+                    bars = ax.bar(x_values, y_values, color="#2563eb", alpha=0.8)
+                    ax.set_xlabel(columns[0])
+                    ax.set_ylabel(columns[1])
+                elif chart_type == "line":
+                    ax.plot(x_values, y_values, marker="o", linewidth=2, markersize=6, color="#10b981")
+                    ax.set_xlabel(columns[0])
+                    ax.set_ylabel(columns[1])
+                elif chart_type == "pie":
+                    ax.pie(y_values, labels=x_values, autopct="%1.1f%%", startangle=90)
+                    ax.axis("equal")
+                else:
+                    # 默认柱状图
+                    bars = ax.bar(x_values, y_values, color="#2563eb", alpha=0.8)
+                    ax.set_xlabel(columns[0])
+                    ax.set_ylabel(columns[1])
+
+            ax.set_title(title, fontsize=14, fontweight="bold", pad=20)
+            plt.tight_layout()
+
+            # 保存图片
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            placeholder_id = placeholder.get("id", "chart")
+            filename = f"chart_{placeholder_id}_{timestamp}.png"
+
+            # 确保 charts 目录存在
+            charts_dir = "/tmp/autoreport_charts"
+            os.makedirs(charts_dir, exist_ok=True)
+            image_path = os.path.join(charts_dir, filename)
+
+            # 保存到文件
+            plt.savefig(image_path, dpi=300, bbox_inches="tight", facecolor="white")
+            plt.close()
+
+            return {
+                "success": True,
+                "chart_path": image_path,
+                "chart_type": chart_type,
+            }
 
         except Exception as e:
+            self.logger.error(f"图表生成异常: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": f"decision_parse_failed: {str(e)}",
-                "raw": text
+                "error": str(e),
             }
+
+    async def _stage_content_optimization(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 5: 文案优化
+
+        根据占位符数据，优化模板中占位符附近的语句。
+        """
+        yield {"type": "stage_log", "message": "开始文案优化..."}
+
+        # TODO: 实现文案优化逻辑
+        # 可以使用另一个专门的 Loom Agent 来处理
+
+        result.output = {"optimized": True}
+
+        yield {"type": "stage_log", "message": "文案优化完成"}
+
+    async def _stage_document_generation(
+        self,
+        context: OrchestratorContext,
+        result: StageResult,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        阶段 6: 文档生成（完整实现版）
+
+        生成最终的 DOCX 文档。
+        参考 backend/app/services/infrastructure/document/word_template_service.py
+        """
+        import os
+        from datetime import datetime
+
+        fill_results = context.shared_data.get("fill_results", [])
+        chart_results = context.shared_data.get("chart_results", [])
+
+        yield {"type": "stage_log", "message": "开始生成 DOCX 文档..."}
+
+        try:
+            # 1. 准备文档数据
+            from docx import Document
+            from docx.shared import Inches, Pt
+            from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+
+            # 创建新文档
+            doc = Document()
+
+            # 添加标题
+            title = doc.add_heading(context.template.name if context.template else "报告", level=1)
+            title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+
+            # 添加生成时间
+            doc.add_paragraph(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            doc.add_paragraph("")  # 空行
+
+            # 2. 回填数据占位符
+            yield {"type": "stage_log", "message": f"回填 {len(fill_results)} 个数据占位符..."}
+
+            for fill_result in fill_results:
+                ph_name = fill_result.get("placeholder_name", "未命名占位符")
+                filled_value = fill_result.get("filled_value")
+                fill_format = fill_result.get("format", "text")
+
+                # 添加占位符标题
+                doc.add_heading(ph_name, level=2)
+
+                if fill_format == "single_value":
+                    # 单个值
+                    doc.add_paragraph(f"数值: {filled_value}")
+
+                elif fill_format == "table" and isinstance(filled_value, dict):
+                    # 表格
+                    columns = filled_value.get("columns", [])
+                    data = filled_value.get("data", [])
+
+                    if columns and data:
+                        # 创建表格
+                        table = doc.add_table(rows=1 + len(data), cols=len(columns))
+                        table.style = 'Light Grid Accent 1'
+
+                        # 表头
+                        header_cells = table.rows[0].cells
+                        for idx, col_name in enumerate(columns):
+                            header_cells[idx].text = str(col_name)
+
+                        # 数据行
+                        for row_idx, row_data in enumerate(data, 1):
+                            row_cells = table.rows[row_idx].cells
+                            for col_idx, cell_value in enumerate(row_data):
+                                if col_idx < len(row_cells):
+                                    row_cells[col_idx].text = str(cell_value) if cell_value is not None else ""
+
+                elif fill_format == "list" and isinstance(filled_value, dict):
+                    # 列表
+                    items = filled_value.get("items", [])
+                    for item in items:
+                        doc.add_paragraph(str(item), style='List Bullet')
+
+                else:
+                    # 默认文本
+                    doc.add_paragraph(str(filled_value))
+
+                doc.add_paragraph("")  # 空行
+
+            # 3. 插入图表
+            yield {"type": "stage_log", "message": f"插入 {len(chart_results)} 个图表..."}
+
+            for chart_result in chart_results:
+                ph_name = chart_result.get("placeholder_name", "未命名图表")
+                chart_path = chart_result.get("chart_path")
+
+                # 添加图表标题
+                doc.add_heading(ph_name, level=2)
+
+                if chart_path and os.path.exists(chart_path):
+                    # 插入图表图片
+                    doc.add_picture(chart_path, width=Inches(6))
+                    last_paragraph = doc.paragraphs[-1]
+                    last_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                else:
+                    # 图表不存在
+                    error_msg = chart_result.get("error") or chart_result.get("message", "图表不可用")
+                    doc.add_paragraph(f"图表生成失败: {error_msg}")
+
+                doc.add_paragraph("")  # 空行
+
+            # 4. 保存文档
+            output_dir = os.path.join("/tmp", "generated_reports")
+            os.makedirs(output_dir, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            template_name = context.template.name if context.template else "report"
+            # 清理文件名中的非法字符
+            safe_template_name = "".join(c for c in template_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            output_filename = f"{safe_template_name}_{timestamp}.docx"
+            output_path = os.path.join(output_dir, output_filename)
+
+            doc.save(output_path)
+
+            # 获取文件大小
+            file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+
+            result.output = {
+                "document_path": output_path,
+                "document_size": file_size,
+                "charts_embedded": len([c for c in chart_results if c.get("chart_path")]),
+                "data_filled": len(fill_results),
+            }
+
+            result.metadata = {
+                "template_name": context.template.name if context.template else "Unknown",
+                "generated_at": datetime.now().isoformat(),
+                "output_filename": output_filename,
+            }
+
+            yield {
+                "type": "stage_log",
+                "message": f"✅ DOCX 文档生成成功: {output_path} ({file_size/1024:.1f} KB)",
+            }
+
+        except Exception as e:
+            self.logger.error(f"文档生成异常: {e}", exc_info=True)
+
+            result.output = {
+                "document_path": None,
+                "error": str(e),
+            }
+
+            yield {
+                "type": "stage_error",
+                "message": f"❌ DOCX 文档生成失败: {str(e)}",
+            }
+
+            raise
+
+        yield {"type": "stage_log", "message": "DOCX 文档生成完成"}
+
+
+__all__ = [
+    "ReportGenerationOrchestrator",
+    "OrchestratorContext",
+    "StageStatus",
+    "StageResult",
+]

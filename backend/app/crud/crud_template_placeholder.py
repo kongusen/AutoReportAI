@@ -5,10 +5,13 @@ Template Placeholder CRUD操作
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
+import logging
 
 from app.crud.base import CRUDBase
 from app.models.template_placeholder import TemplatePlaceholder
 from app.schemas.template_placeholder import TemplatePlaceholderCreate, TemplatePlaceholderUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class CRUDTemplatePlaceholder(
@@ -17,20 +20,31 @@ class CRUDTemplatePlaceholder(
     """模板占位符CRUD操作类"""
     
     def get_by_template(
-        self, 
-        db: Session, 
+        self,
+        db: Session,
         template_id: str,
         include_inactive: bool = False
     ) -> List[TemplatePlaceholder]:
         """根据模板ID获取所有占位符"""
+        # 🔑 确保template_id是UUID类型
+        from uuid import UUID
+        if isinstance(template_id, str):
+            try:
+                template_id = UUID(template_id)
+            except ValueError:
+                logger.warning(f"Invalid UUID format: {template_id}")
+                return []
+
         query = db.query(TemplatePlaceholder).filter(
             TemplatePlaceholder.template_id == template_id
         )
-        
+
         if not include_inactive:
             query = query.filter(TemplatePlaceholder.is_active == True)
-        
-        return query.order_by(TemplatePlaceholder.execution_order).all()
+
+        result = query.order_by(TemplatePlaceholder.execution_order).all()
+        logger.info(f"get_by_template: template_id={template_id}, include_inactive={include_inactive}, count={len(result)}")
+        return result
     
     def get_by_template_and_name(
         self,

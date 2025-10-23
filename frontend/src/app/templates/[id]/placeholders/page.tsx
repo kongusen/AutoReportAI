@@ -43,7 +43,7 @@ export default function TemplatePlaceholdersPage() {
   const params = useParams()
   const router = useRouter()
   const templateId = params.id as string
-  
+
   const { currentTemplate, getTemplate } = useTemplateStore()
   const [placeholders, setPlaceholders] = useState<NormalizedPlaceholder[]>([])
   const [analytics, setAnalytics] = useState<PlaceholderAnalytics | null>(null)
@@ -84,87 +84,72 @@ export default function TemplatePlaceholdersPage() {
   const loadData = async () => {
     try {
       setLoading(true)
-      
-      // 并行加载数据
-      const [templateResult, placeholdersResult, savedPlaceholdersResult, dataSourcesResult] = await Promise.allSettled([
+
+      // 并行加载数据 - 优先使用数据库中的占位符数据
+      const [templateResult, savedPlaceholdersResult, dataSourcesResult] = await Promise.allSettled([
         getTemplate(templateId),
-        api.get(`/templates/${templateId}/preview`), // 使用预览API获取占位符
-        api.get(`/placeholders/?template_id=${templateId}`), // 获取已保存的占位符配置
+        api.get(`/placeholders/?template_id=${templateId}`), // 直接获取已保存的占位符配置（包含SQL）
         api.get('/data-sources')
       ])
 
-      // 处理占位符数据 - 合并预览API和已保存的配置
-      if (placeholdersResult.status === 'fulfilled') {
-        const placeholderData = placeholdersResult.value.data?.data || placeholdersResult.value.data || {}
-        const rawPlaceholders = placeholderData.placeholders || []
-        
-        // 使用工具函数规范化占位符数据
-        let normalizedPlaceholdersData = normalizePlaceholders(rawPlaceholders)
-        
-        // 合并已保存的占位符配置
-        if (savedPlaceholdersResult.status === 'fulfilled') {
-          const savedData = savedPlaceholdersResult.value.data?.data || []
+      // 处理占位符数据 - 直接使用数据库中的数据（不再使用preview API）
+      if (savedPlaceholdersResult.status === 'fulfilled') {
+        // 根据实际响应结构提取数据
+        // savedPlaceholdersResult.value.data 可能是：
+        // 1. 直接是数组（axios拦截器已unwrap）
+        // 2. APIResponse格式 {success, message, data: []}
+        const responseData = savedPlaceholdersResult.value.data
+        const rawSavedData = Array.isArray(responseData)
+          ? responseData  // 情况1：直接是数组
+          : (responseData?.data || [])  // 情况2：APIResponse格式
 
-          // 🔧 添加调试日志
-          console.log('🔧 [Debug] 从数据库加载的占位符数据:', savedData)
-          console.log('🔧 [Debug] 当前规范化的占位符:', normalizedPlaceholdersData.map(p => ({ name: p.name, generated_sql: p.generated_sql })))
+        const savedPlaceholders = Array.isArray(rawSavedData)
+          ? rawSavedData
+          : Array.isArray(rawSavedData?.items)
+            ? rawSavedData.items
+            : []
 
-          const savedPlaceholdersMap = new Map(
-            savedData.map((p: any) => [p.placeholder_name || p.name, p])
-          )
+        // 规范化占位符数据
+        const normalizedRawData = normalizePlaceholders(savedPlaceholders)
 
-          // 🔧 调试映射关系
-          console.log('🔧 [Debug] 占位符映射关系:')
-          savedPlaceholdersMap.forEach((value, key) => {
-            console.log(`  "${key}" -> generated_sql: "${(value as any).generated_sql}"`)
-          })
+        // 直接使用数据库中的数据，添加必要的字段补充
+        const normalizedPlaceholdersData = normalizedRawData.map((placeholder: any) => {
+          const enriched: any = {
+            ...placeholder,
+            db_saved: true,
+            status: placeholder.sql_validated
+              ? 'tested'
+              : (placeholder.agent_analyzed ? 'analyzed' : 'pending')
+          }
 
-          // 将保存的分析结果合并到规范化数据中
-          normalizedPlaceholdersData = normalizedPlaceholdersData.map(placeholder => {
-            const savedPlaceholder = savedPlaceholdersMap.get(placeholder.name) as any
-            if (savedPlaceholder) {
-              console.log(`🔧 [Debug] 合并占位符 "${placeholder.name}":`, {
-                原始: placeholder.generated_sql,
-                数据库: savedPlaceholder.generated_sql,
-                最终: savedPlaceholder.generated_sql || ''
-              })
-              return {
-                ...placeholder,
-                id: savedPlaceholder.id, // 添加数据库ID
-                generated_sql: savedPlaceholder.generated_sql || '',
-                suggested_sql: savedPlaceholder.generated_sql || '',
-                analysis: savedPlaceholder.description || savedPlaceholder.analysis || '',
-                confidence_score: savedPlaceholder.confidence_score || 0,
-                sql_validated: savedPlaceholder.sql_validated || false,
-                agent_analyzed: true,
-                status: 'analyzed'
-              } as any
-            }
-            return placeholder
-          })
+          // 如果有agent_config中的test_result，也添加进来
+          const lastTestResult = placeholder.agent_config?.last_test_result
+          if (lastTestResult) {
+            enriched.last_test_result = lastTestResult
+          }
 
-          // 🔧 最终结果调试
-          console.log('🔧 [Debug] 合并后的占位符数据:', normalizedPlaceholdersData.map(p => ({
-            name: p.name,
-            generated_sql: (p as any).generated_sql,
-            id: (p as any).id
-          })))
-        }
+          return enriched
+        })
         
         setPlaceholders(normalizedPlaceholdersData)
         
-        // 计算统计信息
+        // 计算统计信息 - 基于数据库中的真实数据
         const stats = calculatePlaceholderStats(normalizedPlaceholdersData)
+        const analyzedCount = normalizedPlaceholdersData.filter((p: any) => p.agent_analyzed || p.generated_sql).length
+        const validatedCount = normalizedPlaceholdersData.filter((p: any) => p.sql_validated).length
+        const totalConfidence = normalizedPlaceholdersData.reduce((sum: number, p: any) => sum + (p.confidence_score || 0), 0)
+        const avgConfidence = normalizedPlaceholdersData.length > 0 ? totalConfidence / normalizedPlaceholdersData.length : 0
+
         setAnalytics({
           total_placeholders: stats.totalCount,
-          analyzed_placeholders: 0, // 这些是新解析的占位符，还没有分析
-          sql_validated_placeholders: 0,
-          average_confidence_score: 0,
+          analyzed_placeholders: analyzedCount,
+          sql_validated_placeholders: validatedCount,
+          average_confidence_score: avgConfidence,
           cache_hit_rate: 0,
-          analysis_coverage: 0,
+          analysis_coverage: stats.totalCount > 0 ? (analyzedCount / stats.totalCount) * 100 : 0,
           execution_stats: {
-            total_executions: 0,
-            successful_executions: 0,
+            total_executions: validatedCount,
+            successful_executions: validatedCount,
             failed_executions: 0,
             average_execution_time_ms: 0
           }
@@ -190,20 +175,24 @@ export default function TemplatePlaceholdersPage() {
     try {
       setAnalyzing(true)
       toast.loading('正在重新解析占位符...', { duration: 1000 })
-      
+
       // 使用混合管理器重新解析并存储占位符
       const response = await api.post(`/templates/${templateId}/placeholders/reparse`, {}, {
         params: { force_reparse: true }
       })
-      
+
       if (response.data?.success) {
         toast.success(response.data.message || '占位符重新解析完成')
+
+        // 等待一小段时间确保数据库写入完成
+        await new Promise(resolve => setTimeout(resolve, 500))
+
         await loadData() // 重新加载数据以显示新解析的占位符
       } else {
         toast.error(response.data?.message || '占位符重新解析失败')
       }
     } catch (error: any) {
-      console.error('Failed to re-analyze placeholders:', error)
+      console.error('Failed to reparse placeholders:', error)
       toast.error(error.response?.data?.detail || '占位符重新解析失败')
     } finally {
       setAnalyzing(false)
@@ -236,12 +225,6 @@ export default function TemplatePlaceholdersPage() {
       const result = response.data?.data || response.data
       const isSuccess = response.data?.success !== undefined ? response.data.success : (result && result.generated_sql)
 
-      // 🔧 添加调试信息
-      console.log('🔧 [Debug] API响应结构:', response.data)
-      console.log('🔧 [Debug] 提取的result:', result)
-      console.log('🔧 [Debug] isSuccess:', isSuccess)
-      console.log('🔧 [Debug] generated_sql:', result?.generated_sql)
-      
       if (isSuccess && result) {
         // 检查是否有验证结果（周期性占位符会直接包含验证结果）
         if (result.test_result) {
@@ -355,10 +338,9 @@ export default function TemplatePlaceholdersPage() {
           columns: validationResult.columns || [],
           row_count: validationResult.row_count || 0,
           execution_time_ms: validationResult.execution_result?.metadata?.execution_time_ms || 0,
-          sql_after_substitution: validationResult.executable_sql || sql,  // 🔑 使用 executable_sql
-          primary_value: validationResult.primary_value  // 🔑 添加主要值
+          sql_after_substitution: validationResult.executable_sql || sql,
+          primary_value: validationResult.primary_value
         }
-        console.log('✅ [SQL验证结果]', testResult)
         setTestResults(prev => ({ ...prev, [validationKey]: testResult }))
         
         // 更新占位符状态

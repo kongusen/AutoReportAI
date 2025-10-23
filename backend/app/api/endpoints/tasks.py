@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from app.utils.time_context import TimeContextManager
 import time as _time
 import os as _os
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 创建任务控制器实例
@@ -342,12 +344,8 @@ async def pause_task(
                     "scheduler_removed": True,
                     "message": f"已从调度器移除任务 {task_id}"
                 }
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.info(f"✅ 任务 {task_id} 已从调度器移除")
             except Exception as scheduler_error:
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"⚠️ 从调度器移除任务 {task_id} 失败: {scheduler_error}")
                 scheduler_result = {
                     "scheduler_removed": False,
@@ -371,12 +369,8 @@ async def pause_task(
                 ongoing_execution.completed_at = datetime.utcnow()
                 db.commit()
                 cancelled_execution = str(ongoing_execution.execution_id)
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.info(f"✅ 取消了正在执行的任务: {ongoing_execution.celery_task_id}")
         except Exception as cancel_error:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"⚠️ 取消执行任务失败: {cancel_error}")
 
         return APIResponse(
@@ -392,8 +386,6 @@ async def pause_task(
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"❌ 暂停任务失败: {e}")
         db.rollback()
         return APIResponse(success=False, data=None, errors=[str(e)], message="暂停任务失败")
@@ -442,12 +434,8 @@ async def resume_task(
                     "message": f"已添加到调度器",
                     "next_run_time": next_run_time
                 }
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.info(f"✅ 任务 {task_id} 已添加到调度器，下次执行: {next_run_time}")
             except Exception as scheduler_error:
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"⚠️ 添加任务 {task_id} 到调度器失败: {scheduler_error}")
                 scheduler_result = {
                     "scheduler_added": False,
@@ -471,8 +459,6 @@ async def resume_task(
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"❌ 恢复任务失败: {e}")
         db.rollback()
         return APIResponse(success=False, data=None, errors=[str(e)], message="恢复任务失败")

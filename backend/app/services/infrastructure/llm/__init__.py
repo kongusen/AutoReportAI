@@ -5,7 +5,10 @@ React Agent架构的LLM服务基础设施模块
 与用户LLM偏好和服务器配置完全集成
 """
 
+import logging
 from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 # 核心LLM接口
 from .pure_database_manager import (
@@ -114,8 +117,6 @@ async def ask_agent_for_user(
                 
         except Exception as e:
             # Agent模式失败，回退到基础模式
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"Agent模式执行失败，回退到基础模式: {e}")
     
     # 基础模式：使用原始ask_agent

@@ -147,6 +147,30 @@ export function Table<T = any>({
     }
   }
 
+  const getCellStyle = (column: Column<T>, isHeader: boolean): React.CSSProperties => {
+    const style: React.CSSProperties = {}
+
+    if (column.width !== undefined) {
+      style.width = column.width as any
+    }
+
+    if (column.fixed === 'left') {
+      style.position = 'sticky'
+      style.left = 0
+      style.zIndex = isHeader ? 40 : 20
+      style.backgroundColor = isHeader ? '#f9fafb' : '#ffffff'
+      style.boxShadow = 'inset -1px 0 0 rgba(229, 231, 235, 0.8)'
+    } else if (column.fixed === 'right') {
+      style.position = 'sticky'
+      style.right = 0
+      style.zIndex = isHeader ? 40 : 20
+      style.backgroundColor = isHeader ? '#f9fafb' : '#ffffff'
+      style.boxShadow = 'inset 1px 0 0 rgba(229, 231, 235, 0.8)'
+    }
+
+    return style
+  }
+
   return (
     <div className={cn('overflow-hidden rounded-lg border border-gray-200', className)}>
       <div className={scroll?.x ? 'overflow-x-auto' : ''} style={{ maxWidth: scroll?.x }}>
@@ -166,7 +190,7 @@ export function Table<T = any>({
                     getAlignClass(column.align),
                     column.className
                   )}
-                  style={{ width: column.width }}
+                  style={getCellStyle(column, true)}
                 >
                   <div className="flex items-center gap-2">
                     {column.title}
@@ -224,22 +248,23 @@ export function Table<T = any>({
                       {finalColumns.map((column) => (
                         <td
                           key={column.key}
-                          className={cn(
-                            'py-4 text-sm text-gray-900',
-                            // 特殊处理选择列和操作列的padding
-                            column.key === 'selection' ? 'px-1 text-center' :
-                            column.key === 'actions' ? 'px-1 sm:px-2' :
-                            'px-2 sm:px-4 lg:px-6',
-                            getAlignClass(column.align),
-                            column.className,
-                            // 动态调整whitespace行为
-                            column.className?.includes('min-w-0') ? '' : 'whitespace-nowrap'
-                          )}
-                        >
-                          {getCellValue(record, column)}
-                        </td>
-                      ))}
-                    </tr>
+                        className={cn(
+                          'py-4 text-sm text-gray-900',
+                          // 特殊处理选择列和操作列的padding
+                          column.key === 'selection' ? 'px-1 text-center' :
+                          column.key === 'actions' ? 'px-1 sm:px-2' :
+                          'px-2 sm:px-4 lg:px-6',
+                          getAlignClass(column.align),
+                          column.className,
+                          // 动态调整whitespace行为
+                          column.className?.includes('min-w-0') ? '' : 'whitespace-nowrap'
+                        )}
+                        style={getCellStyle(column, false)}
+                      >
+                        {getCellValue(record, column)}
+                      </td>
+                    ))}
+                  </tr>
                     {/* 展开行 */}
                     {isExpanded && expandable?.expandedRowRender && (
                       <tr>

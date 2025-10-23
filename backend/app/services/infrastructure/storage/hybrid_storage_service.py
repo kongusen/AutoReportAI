@@ -138,7 +138,7 @@ class HybridStorageService:
             if self.backend_type == "minio":
                 from .minio_storage_service import MinIOStorageService
                 assert isinstance(storage, MinIOStorageService)
-                return storage.upload_with_key(object_name, file_data, content_type)
+                return storage.upload_with_key(file_data, object_name, content_type)
             # 本地回退：将 object_name 作为相对路径写入
             from .file_storage_service import FileStorageService
             if isinstance(storage, FileStorageService):

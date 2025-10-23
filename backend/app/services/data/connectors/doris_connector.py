@@ -24,6 +24,8 @@ from app.models.data_source import DataSource
 from .base_connector import BaseConnector, ConnectorConfig, QueryResult
 from .resilience_manager import get_resilience_manager, CircuitBreakerConfig, RetryConfig
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class DorisConfig(ConnectorConfig):
@@ -349,8 +351,6 @@ class DorisConnector(BaseConnector):
                     return decrypted
             except Exception as e:
                 # 解密失败，记录日志但不抛出异常
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"密码解密失败，使用明文处理: {e}")
         
         # 直接返回原密码（可能是明文）

@@ -25,7 +25,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..deps import get_current_user, get_db
 # Updated imports for new simplified agent architecture
 from ...services.infrastructure.agents import (
-    AgentFacade,
     AgentInput,
     PlaceholderSpec,
     SchemaInfo,

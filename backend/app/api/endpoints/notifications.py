@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.schemas.notification import (
 from app.services.infrastructure.notification.notification_service import get_notification_service
 from app.websocket.manager import websocket_manager
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -322,8 +324,6 @@ async def send_realtime_notification(user_id: str, notification):
         
     except Exception as e:
         # 记录错误但不影响主流程
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"发送实时通知失败: {str(e)}")
 
 

@@ -550,8 +550,10 @@ export default function TasksPage() {
     {
       key: 'actions',
       title: '操作',
-      width: '120px',
-      className: 'w-30 min-w-0',
+      width: 140,
+      fixed: 'right' as const,
+      align: 'right' as const,
+      className: 'min-w-[140px]',
       render: (_: any, record: Task) => {
         // 使用多种状态源来判断执行状态
         const apiExecutionStatus = (record as any).current_execution_status
@@ -569,151 +571,159 @@ export default function TasksPage() {
           !['completed', 'failed', 'cancelled'].includes(localProgress.status)
 
         const isExecuting = isExecutingFromAPI || isExecutingFromLocal || isExecutingFromWS || isExecutingFromProgress
+        const isScheduledTask = Boolean((record.schedule || '').trim())
+        const typeLabel = isScheduledTask ? '定时' : '手动'
 
-        // 按钮可用性判断
-        const canExecute = record.is_active && !isExecuting
-        const canPause = record.is_active && !isExecuting
-        const canStart = !record.is_active && !isExecuting
-        const canDelete = !record.is_active && !isExecuting
+        const baseIconClass = 'w-3.5 h-3.5'
+        const buttonClass = 'h-8 w-8 p-0 flex-shrink-0 rounded-full'
+
+        const handleExecuteNow = async () => {
+          try {
+            setExecutingTasks(prev => new Set([...prev, record.id]))
+            await executeTask(record.id.toString())
+          } catch (error) {
+            setExecutingTasks(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(record.id)
+              return newSet
+            })
+          }
+        }
+
+        const handleCancelExecution = async () => {
+          try {
+            const response = await api.post(`/tasks/${record.id}/cancel`) as any
+
+            setExecutingTasks(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(record.id)
+              return newSet
+            })
+
+            clearTaskProgress(record.id.toString())
+            fetchTasks()
+
+            if (response.data?.success) {
+              toast.success('任务已取消')
+            } else {
+              toast.info(response.data?.message || '任务已结束')
+            }
+          } catch (error: any) {
+            console.error('Failed to cancel task:', error)
+
+            setExecutingTasks(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(record.id)
+              return newSet
+            })
+            clearTaskProgress(record.id.toString())
+
+            toast.error('取消任务失败')
+          }
+        }
+
+        const showManualRun = !isScheduledTask && !isExecuting
+        const showScheduledRun = isScheduledTask && record.is_active && !isExecuting
+        const showResume = isScheduledTask && !record.is_active && !isExecuting
+        const showPause = isScheduledTask && record.is_active && !isExecuting
+        const showEdit = !isExecuting
+        const showDelete = !isExecuting && (!isScheduledTask || !record.is_active)
 
         return (
-          <div className="flex items-center gap-0.5 min-w-0">
-            {/* 查看详情 - 始终可用 */}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => router.push(`/tasks/${record.id}`)}
-              title="查看详情"
-              className="h-8 w-8 p-0 flex-shrink-0"
-            >
-              <EyeIcon className="w-3 h-3" />
-            </Button>
-
-            {/* 立即执行 - 只在任务启用且未执行时显示 */}
-            {canExecute && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  try {
-                    setExecutingTasks(prev => new Set([...prev, record.id]))
-                    await executeTask(record.id.toString())
-                  } catch (error) {
-                    setExecutingTasks(prev => {
-                      const newSet = new Set(prev)
-                      newSet.delete(record.id)
-                      return newSet
-                    })
-                  }
-                }}
-                title="立即执行"
-                className="text-green-600 hover:text-green-700 hover:bg-green-50 h-8 w-8 p-0 flex-shrink-0"
-              >
-                <PlayIcon className="w-3 h-3" />
-              </Button>
-            )}
-
-            {/* 启用任务 - 只在任务停用时显示 */}
-            {canStart && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => toggleTaskStatus(record.id.toString(), true)}
-                title="启用任务"
-                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 h-8 w-8 p-0 flex-shrink-0"
-              >
-                <CheckIcon className="w-3 h-3" />
-              </Button>
-            )}
-
-            {/* 暂停任务 - 只在任务启用且未执行时显示 */}
-            {canPause && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => toggleTaskStatus(record.id.toString(), false)}
-                title="暂停任务"
-                className="text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 h-8 w-8 p-0 flex-shrink-0"
-              >
-                <PauseIcon className="w-3 h-3" />
-              </Button>
-            )}
-
-            {/* 编辑 - 只在未执行时可用，中等屏幕以上显示 */}
-            {!isExecuting && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => router.push(`/tasks/${record.id}/edit`)}
-                title="编辑任务"
-                className="hidden md:inline-flex h-8 w-8 p-0 flex-shrink-0"
-              >
-                <PencilIcon className="w-3 h-3" />
-              </Button>
-            )}
-
-            {/* 删除 - 只在任务停用且未执行时显示，大屏幕才显示 */}
-            {canDelete && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setSelectedTask(record)
-                  setDeleteModalOpen(true)
-                }}
-                title="删除任务"
-                className="text-red-600 hover:text-red-700 hover:bg-red-50 hidden lg:inline-flex h-8 w-8 p-0 flex-shrink-0"
-              >
-                <TrashIcon className="w-3 h-3" />
-              </Button>
-            )}
-
-            {/* 执行中状态指示和暂停按钮 */}
-            {isExecuting && (
-              <div className="flex items-center gap-1 min-w-0">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">{typeLabel}</span>
+              <div className="flex items-center gap-1">
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={async () => {
-                    try {
-                      const response = await api.post(`/tasks/${record.id}/cancel`) as any
-
-                      setExecutingTasks(prev => {
-                        const newSet = new Set(prev)
-                        newSet.delete(record.id)
-                        return newSet
-                      })
-
-                      clearTaskProgress(record.id.toString())
-                      fetchTasks()
-
-                      if (response.data?.success) {
-                        toast.success('任务已取消')
-                      } else {
-                        toast.info(response.data?.message || '任务已结束')
-                      }
-                    } catch (error: any) {
-                      console.error('Failed to cancel task:', error)
-
-                      setExecutingTasks(prev => {
-                        const newSet = new Set(prev)
-                        newSet.delete(record.id)
-                        return newSet
-                      })
-                      clearTaskProgress(record.id.toString())
-
-                      toast.error('取消任务失败')
-                    }
-                  }}
-                  title="停止执行"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0 flex-shrink-0"
+                  onClick={() => router.push(`/tasks/${record.id}`)}
+                  title="查看详情"
+                  className={`${buttonClass} hover:bg-gray-100`}
                 >
-                  <StopIcon className="w-3 h-3" />
+                  <EyeIcon className={baseIconClass} />
                 </Button>
-                <div className="hidden sm:flex items-center gap-1 text-xs text-gray-500 min-w-0">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse flex-shrink-0"></div>
-                  <span className="truncate">执行中</span>
-                </div>
+
+                {(showManualRun || showScheduledRun) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleExecuteNow}
+                    title="立即执行"
+                    className={`${buttonClass} text-green-600 hover:text-green-700 hover:bg-green-50`}
+                  >
+                    <PlayIcon className={baseIconClass} />
+                  </Button>
+                )}
+
+                {showResume && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => toggleTaskStatus(record.id.toString(), true)}
+                    title="启用任务"
+                    className={`${buttonClass} text-blue-600 hover:text-blue-700 hover:bg-blue-50`}
+                  >
+                    <CheckIcon className={baseIconClass} />
+                  </Button>
+                )}
+
+                {showPause && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => toggleTaskStatus(record.id.toString(), false)}
+                    title="暂停任务"
+                    className={`${buttonClass} text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50`}
+                  >
+                    <PauseIcon className={baseIconClass} />
+                  </Button>
+                )}
+
+                {showEdit && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => router.push(`/tasks/${record.id}/edit`)}
+                    title="编辑任务"
+                    className={`${buttonClass} hidden md:inline-flex hover:bg-gray-100`}
+                  >
+                    <PencilIcon className={baseIconClass} />
+                  </Button>
+                )}
+
+                {showDelete && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setSelectedTask(record)
+                      setDeleteModalOpen(true)
+                    }}
+                    title="删除任务"
+                    className={`${buttonClass} text-red-600 hover:text-red-700 hover:bg-red-50 hidden lg:inline-flex`}
+                  >
+                    <TrashIcon className={baseIconClass} />
+                  </Button>
+                )}
+
+                {isExecuting && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleCancelExecution}
+                    title="停止执行"
+                    className={`${buttonClass} text-red-600 hover:text-red-700 hover:bg-red-50`}
+                  >
+                    <StopIcon className={baseIconClass} />
+                  </Button>
+                )}
+              </div>
+            </div>
+            {isExecuting && (
+              <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
+                <span>执行中</span>
               </div>
             )}
           </div>

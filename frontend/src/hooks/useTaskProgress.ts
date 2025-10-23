@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { apiClient as api } from '@/lib/api-client'
 import { onTaskUpdate, PipelineTaskStatus, PipelineTaskUpdate } from '@/services/websocketAdapter'
 
+export interface ProgressEvent {
+  timestamp: string
+  progress: number
+  message: string
+  stage?: string | null
+  status?: string | null
+  placeholder?: string | null
+  details?: Record<string, any> | null
+  error?: string | null
+}
+
 export interface ProgressData {
   task_id: number | string
   execution_id?: string
@@ -13,6 +24,7 @@ export interface ProgressData {
   estimated_completion?: string | null
   celery_task_id?: string | null
   error_details?: string | null
+  progress_details?: ProgressEvent[]
 }
 
 function mapWsStatusToExecutionStatus(status?: PipelineTaskStatus): string {
@@ -34,6 +46,23 @@ export function useTaskProgress(taskId: number | string, enabled: boolean = true
   const pollingRef = useRef<NodeJS.Timer | null>(null)
   const taskIdStr = String(taskId)
 
+  const normalizeApiData = (resp: ProgressData): ProgressData => {
+    const progressDetails = Array.isArray(resp.progress_details) ? resp.progress_details : []
+    return {
+      task_id: resp.task_id ?? taskIdStr,
+      execution_id: resp.execution_id,
+      progress_percentage: resp.progress_percentage ?? 0,
+      current_step: resp.current_step,
+      execution_status: resp.execution_status ?? 'processing',
+      started_at: resp.started_at ?? null,
+      completed_at: resp.completed_at ?? null,
+      estimated_completion: resp.estimated_completion ?? null,
+      celery_task_id: resp.celery_task_id ?? null,
+      error_details: resp.error_details ?? null,
+      progress_details,
+    }
+  }
+
   useEffect(() => {
     if (!enabled) {
       stop()
@@ -54,18 +83,37 @@ export function useTaskProgress(taskId: number | string, enabled: boolean = true
       const normalized = typeof update.progress === 'number'
         ? (update.progress <= 1 ? Math.round(update.progress * 100) : Math.round(update.progress))
         : (data?.progress_percentage ?? 0)
+      const wsEvent: ProgressEvent | null = update.message
+        ? {
+            timestamp: new Date().toISOString(),
+            progress: normalized,
+            message: update.message,
+            stage: update.details?.stage ?? null,
+            status: update.details?.status ?? mapWsStatusToExecutionStatus(update.status),
+            placeholder: update.details?.placeholder ?? null,
+            details: update.details ?? null,
+            error: update.error ?? null,
+          }
+        : null
 
-      setData(prev => ({
-        task_id: taskIdStr,
-        progress_percentage: normalized,
-        current_step: update.message,
-        execution_status: mapWsStatusToExecutionStatus(update.status),
-        started_at: prev?.started_at ?? null,
-        completed_at: prev?.completed_at ?? null,
-        estimated_completion: prev?.estimated_completion ?? null,
-        celery_task_id: prev?.celery_task_id ?? null,
-        error_details: update.error || prev?.error_details || null,
-      }))
+      setData(prev => {
+        const prevDetails = prev?.progress_details ?? []
+        const mergedDetails = wsEvent ? [...prevDetails, wsEvent].slice(-60) : prevDetails
+
+        return {
+          task_id: taskIdStr,
+          execution_id: prev?.execution_id,
+          progress_percentage: normalized,
+          current_step: update.message || prev?.current_step,
+          execution_status: mapWsStatusToExecutionStatus(update.status),
+          started_at: prev?.started_at ?? null,
+          completed_at: prev?.completed_at ?? null,
+          estimated_completion: prev?.estimated_completion ?? null,
+          celery_task_id: prev?.celery_task_id ?? null,
+          error_details: update.error || prev?.error_details || null,
+          progress_details: mergedDetails,
+        }
+      })
     })
 
     return () => {
@@ -78,7 +126,7 @@ export function useTaskProgress(taskId: number | string, enabled: boolean = true
   async function fetchProgress() {
     try {
       const resp = await api.get<ProgressData>(`/tasks/${taskIdStr}/progress`)
-      if (resp) setData(resp)
+      if (resp) setData(normalizeApiData(resp))
       setError(null)
     } catch (e: any) {
       // 404 表示尚未开始，不作为致命错误
@@ -98,4 +146,3 @@ export function useTaskProgress(taskId: number | string, enabled: boolean = true
 }
 
 export default useTaskProgress
-

@@ -59,7 +59,8 @@ class WordTemplateService:
         placeholder_data: Dict[str, Any],
         output_path: str,
         container=None,
-        use_agent_charts: bool = True
+        use_agent_charts: bool = True,
+        use_agent_optimization: bool = True
     ) -> Dict[str, Any]:
         """
         处理Word文档模板，替换占位符和生成图表
@@ -68,8 +69,9 @@ class WordTemplateService:
             template_path: 模板文件路径
             placeholder_data: 占位符数据
             output_path: 输出文件路径
-            container: 服务容器，用于Agent图表生成
+            container: 服务容器，用于Agent图表生成和内容优化
             use_agent_charts: 是否使用Agent生成图表
+            use_agent_optimization: 是否使用Agent优化文档内容
 
         Returns:
             处理结果
@@ -78,13 +80,17 @@ class WordTemplateService:
             if not DOCX_AVAILABLE:
                 raise ImportError("python-docx 未安装，无法处理Word文档")
 
-            self.logger.info(f"开始处理Word模板: {template_path} (Agent图表: {use_agent_charts})")
+            self.logger.info(f"开始处理Word模板: {template_path} (Agent图表: {use_agent_charts}, Agent优化: {use_agent_optimization})")
 
             # 加载文档
             doc = Document(template_path)
 
             # 替换文本占位符
             self._replace_text_in_document(doc, placeholder_data)
+
+            # Agent优化文档内容（在替换占位符后，生成图表前）
+            if use_agent_optimization and container:
+                await self._optimize_document_content_with_agent(doc, placeholder_data, container)
 
             # 替换图表占位符 - 优先使用Agent
             if use_agent_charts and container:
@@ -102,6 +108,7 @@ class WordTemplateService:
                 "output_path": output_path,
                 "placeholders_processed": len(placeholder_data),
                 "chart_generation_method": "agent" if use_agent_charts and container else "traditional",
+                "content_optimization": "enabled" if use_agent_optimization and container else "disabled",
                 "message": "Word文档处理成功"
             }
 
@@ -208,6 +215,155 @@ class WordTemplateService:
                 for cell in row.cells:
                     self._replace_text_in_document(cell, data)
 
+    async def _optimize_document_content_with_agent(self, doc, data: Dict[str, Any], container=None):
+        """
+        使用Agent优化文档内容 - 根据实际数据智能调整占位符周围的文字描述
+
+        Args:
+            doc: Word文档对象
+            data: 占位符数据
+            container: 服务容器
+        """
+        if not container:
+            self.logger.warning("没有提供服务容器，跳过文档内容优化")
+            return
+
+        from app.services.infrastructure.agents import AgentService
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
+
+        try:
+            agent_service = AgentService(container=container)
+
+            total_paragraphs = len(doc.paragraphs)
+            self.logger.info(f"📄 开始文档优化，共 {total_paragraphs} 个段落")
+
+            # 遍历所有段落，找到需要优化的内容
+            optimized_count = 0
+            for i, p in enumerate(doc.paragraphs):
+                paragraph_text = p.text.strip()
+
+                # 跳过空段落和图表占位符
+                if not paragraph_text or paragraph_text.startswith("{{图表："):
+                    continue
+
+                # 检查段落中是否包含已替换的数据值
+                has_data_value = False
+                related_placeholders = []
+
+                for placeholder_key, placeholder_value in data.items():
+                    # 跳过图表占位符
+                    if "图表" in placeholder_key or placeholder_key.startswith("{{图表："):
+                        continue
+
+                    # 检查段落是否包含这个占位符的值
+                    str_value = str(placeholder_value) if placeholder_value is not None else ""
+                    # 对于较短的值（如单个数字），需要更严格的匹配
+                    if str_value and len(str_value) >= 2 and str_value in paragraph_text:
+                        has_data_value = True
+                        related_placeholders.append({
+                            "key": placeholder_key,
+                            "value": placeholder_value
+                        })
+
+                # 如果段落包含数据值，使用Agent优化
+                if has_data_value and related_placeholders:
+                    self.logger.info(f"🤖 使用Agent优化段落 {i+1}: {paragraph_text[:50]}...")
+
+                    try:
+                        # 构建优化提示
+                        context_info = "\n".join([
+                            f"- {ph['key']}: {ph['value']}"
+                            for ph in related_placeholders[:5]  # 最多5个占位符
+                        ])
+
+                        optimization_prompt = f"""请优化以下报告段落，使其更符合数据特征和专业性要求。
+
+原始段落:
+{paragraph_text}
+
+相关数据:
+{context_info}
+
+要求:
+1. 保持段落的核心意思和数据准确性
+2. 使用更专业、流畅的表达方式
+3. 根据数据值调整描述的语气（如数值高低、趋势等）
+4. 保持简洁，不要过度冗长
+5. 只返回优化后的段落文本，不要添加任何解释
+
+请直接输出优化后的段落文本："""
+
+                        # 准备Agent输入
+                        placeholder_spec = PlaceholderSpec(
+                            id=f"paragraph_{i}",
+                            description=f"段落优化: {paragraph_text[:30]}",
+                            type="text"
+                        )
+
+                        agent_input = AgentInput(
+                            user_prompt=optimization_prompt,
+                            placeholder=placeholder_spec,
+                            schema=SchemaInfo(tables=[], columns={}),
+                            context=TaskContext(task_time=None, timezone="Asia/Shanghai"),
+                            constraints=AgentConstraints(output_kind="text", max_attempts=1),
+                            data_source={"id": "", "type": "generated"},
+                            task_driven_context={
+                                "paragraph_text": paragraph_text,
+                                "related_data": related_placeholders
+                            },
+                            user_id="report_system"
+                        )
+
+                        # 调用Agent
+                        agent_result = await agent_service.execute(agent_input)
+
+                        if agent_result.success and hasattr(agent_result, 'result') and agent_result.result:
+                            optimized_text = str(agent_result.result).strip()
+
+                            # 清理可能的JSON或Markdown包裹
+                            import json
+                            try:
+                                # 如果返回的是JSON，提取文本
+                                parsed = json.loads(optimized_text)
+                                if isinstance(parsed, dict):
+                                    optimized_text = parsed.get('result', parsed.get('text', optimized_text))
+                            except:
+                                pass
+
+                            # 移除可能的markdown代码块标记
+                            optimized_text = optimized_text.replace('```', '').strip()
+
+                            if optimized_text and optimized_text != paragraph_text:
+                                self.logger.info(f"✅ 段落优化成功: {optimized_text[:50]}...")
+                                optimized_count += 1
+
+                                # 保持原有的格式，只替换文本
+                                if p.runs:
+                                    # 保留第一个run的格式
+                                    first_run = p.runs[0]
+                                    # 清空所有runs
+                                    for run in p.runs:
+                                        run.text = ""
+                                    # 在第一个run中设置新文本
+                                    first_run.text = optimized_text
+                                else:
+                                    p.text = optimized_text
+                            else:
+                                self.logger.debug("优化结果与原文相同，保持不变")
+                        else:
+                            error_msg = getattr(agent_result, 'metadata', {}).get('error', '优化失败')
+                            self.logger.warning(f"⚠️ 段落优化失败: {error_msg}")
+
+                    except Exception as opt_error:
+                        self.logger.warning(f"⚠️ 段落优化异常: {opt_error}, 保持原文")
+                        continue
+
+            self.logger.info(f"✅ 文档内容优化完成，共优化 {optimized_count} 个段落")
+
+        except Exception as e:
+            self.logger.error(f"❌ 文档内容优化失败: {e}")
+            # 优化失败不影响整体流程，继续执行
+
     async def _replace_chart_placeholders_with_agent(self, doc, data: Dict[str, Any], container=None):
         """
         使用Agent替换图表占位符 - 更智能的图表生成
@@ -215,7 +371,7 @@ class WordTemplateService:
         if not DOCX_AVAILABLE:
             return
 
-        from app.services.infrastructure.agents.facade import AgentFacade
+        from app.services.infrastructure.agents import AgentService
         from app.services.infrastructure.agents.types import AgentInput
 
         # 如果没有容器，回退到传统方法
@@ -223,15 +379,22 @@ class WordTemplateService:
             self.logger.warning("没有提供服务容器，回退到传统图表生成")
             return await self._replace_chart_placeholders_fallback(doc, data)
 
-        agent_facade = AgentFacade(container)
+        agent_service = AgentService(container=container)
 
         for p in doc.paragraphs:
             placeholder = p.text.strip()
 
             if placeholder.startswith("{{图表："):
-                chart_data = data.get(placeholder)
+                # 尝试多种key格式查找数据
+                chart_data = data.get(placeholder)  # 先尝试完整格式 {{图表：xxx}}
+
                 if chart_data is None:
-                    self.logger.warning(f"没有找到图表数据: {placeholder}")
+                    # 尝试去掉花括号的格式 图表：xxx
+                    placeholder_without_braces = placeholder.replace("{{", "").replace("}}", "")
+                    chart_data = data.get(placeholder_without_braces)
+
+                if chart_data is None:
+                    self.logger.warning(f"没有找到图表数据: {placeholder} (也尝试了 {placeholder_without_braces})")
                     continue
 
                 self.logger.info(f"🤖 使用Agent为 '{placeholder}' 生成图表...")
@@ -264,33 +427,32 @@ class WordTemplateService:
                         max_attempts=3
                     )
 
+                    data_rows = self._convert_data_to_rows(chart_data)
+                    data_columns = self._extract_columns_from_data(chart_data)
+
                     agent_input = AgentInput(
                         user_prompt=f"为以下数据生成图表：{title}",
                         placeholder=placeholder_spec,
                         schema=schema_info,
-                        task_context=task_context,
+                        context=task_context,
                         constraints=constraints,
-                        data_source_id="",
+                        data_source={"id": "", "type": "generated"},
+                        task_driven_context={
+                            "execution_result": {
+                                "rows": data_rows,
+                                "columns": data_columns
+                            },
+                            "chart_requirements": {
+                                "title": title,
+                                "placeholder": placeholder,
+                                "suggested_type": self._suggest_chart_type(placeholder, chart_data)
+                            }
+                        },
                         user_id="report_system"
                     )
 
-                    # 设置额外的上下文数据
-                    agent_input.data_rows = self._convert_data_to_rows(chart_data)
-                    agent_input.data_columns = self._extract_columns_from_data(chart_data)
-                    agent_input.context = {
-                        "execution_result": {
-                            "rows": agent_input.data_rows,
-                            "columns": agent_input.data_columns
-                        },
-                        "chart_requirements": {
-                            "title": title,
-                            "placeholder": placeholder,
-                            "suggested_type": self._suggest_chart_type(placeholder, chart_data)
-                        }
-                    }
-
                     # 使用Agent生成图表
-                    agent_result = await agent_facade.orchestrator._execute_report_chart_generation(agent_input)
+                    agent_result = await agent_service.execute(agent_input)
 
                     if agent_result.success and hasattr(agent_result, 'result') and agent_result.result:
                         # Agent成功生成了图表
@@ -333,7 +495,14 @@ class WordTemplateService:
             placeholder = p.text.strip()
 
             if placeholder.startswith("{{图表："):
-                chart_data = data.get(placeholder)
+                # 尝试多种key格式查找数据
+                chart_data = data.get(placeholder)  # 先尝试完整格式 {{图表：xxx}}
+
+                if chart_data is None:
+                    # 尝试去掉花括号的格式 图表：xxx
+                    placeholder_without_braces = placeholder.replace("{{", "").replace("}}", "")
+                    chart_data = data.get(placeholder_without_braces)
+
                 if chart_data is None:
                     continue
 

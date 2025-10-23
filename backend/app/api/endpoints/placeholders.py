@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import json
 import asyncio
+import re
 
 from app import crud
 from app.api.deps import get_current_user, get_db
@@ -32,13 +33,23 @@ from app.utils.error_validation import (
 from app.middleware.error_handling import APIErrorHandler, create_error_response
 
 # 核心：使用现有的Agent基础设施
-from app.services.infrastructure.agents.facade import AgentFacade
+from app.services.infrastructure.agents import AgentService
 from app.services.infrastructure.agents.types import (
     AgentInput,
     PlaceholderSpec,
     SchemaInfo,
     TaskContext,
     AgentConstraints,
+)
+from app.services.infrastructure.agents.tools.sql_tools import (
+    SQLExecuteTool,
+    SQLPolicyTool,
+    SQLValidateTool,
+)
+from app.services.infrastructure.agents.tools.time_tools import TimeWindowTool
+from app.services.infrastructure.agents.tools.schema_tools import (
+    SchemaListTablesTool,
+    SchemaListColumnsTool,
 )
 
 # Domain层业务服务
@@ -50,9 +61,25 @@ from app.services.domain.placeholder.services.placeholder_analysis_domain_servic
 from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService
 
 from app.core.container import container
+from app.core.data_source_utils import DataSourcePasswordManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+KEYWORD_SYNONYMS = {
+    "退货": ["return", "refund"],
+    "退款": ["refund"],
+    "退单": ["return", "refund"],
+    "交易": ["transaction", "trade", "order", "sale", "sales"],
+    "订单": ["order"],
+    "客户": ["customer", "client"],
+    "用户": ["user", "customer"],
+    "商品": ["product", "item"],
+    "销售": ["sale", "sales"],
+    "库存": ["inventory", "stock"],
+    "申请": ["request", "application"],
+    "渠道": ["channel"],
+}
 
 class PlaceholderOrchestrationService:
     """
@@ -62,7 +89,7 @@ class PlaceholderOrchestrationService:
 
     def __init__(self):
         # 使用现有的完整Agent系统
-        self.agent_facade = AgentFacade(container)
+        self.agent_service = AgentService(container=container)
 
         # Domain层业务服务
         self.domain_service = PlaceholderAnalysisDomainService()
@@ -73,6 +100,39 @@ class PlaceholderOrchestrationService:
         # Schema缓存 - 避免重复获取
         self._schema_cache = {}
         self._cache_ttl = 300  # 5分钟缓存
+
+        # 工具实例（用于SQL验证/执行等步骤）
+        self._sql_policy_tool: Optional[SQLPolicyTool] = None
+        self._sql_validate_tool: Optional[SQLValidateTool] = None
+        self._sql_execute_tool: Optional[SQLExecuteTool] = None
+        self._time_window_tool: Optional[TimeWindowTool] = None
+        self._schema_list_tables_tool: Optional[SchemaListTablesTool] = None
+        self._schema_list_columns_tool: Optional[SchemaListColumnsTool] = None
+
+        try:
+            self._sql_policy_tool = SQLPolicyTool(container=container)
+        except Exception as exc:
+            logger.warning(f"SQLPolicyTool 初始化失败: {exc}")
+        try:
+            self._sql_validate_tool = SQLValidateTool(container=container)
+        except Exception as exc:
+            logger.warning(f"SQLValidateTool 初始化失败: {exc}")
+        try:
+            self._sql_execute_tool = SQLExecuteTool(container=container)
+        except Exception as exc:
+            logger.warning(f"SQLExecuteTool 初始化失败: {exc}")
+        try:
+            self._time_window_tool = TimeWindowTool(container=container)
+        except Exception as exc:
+            logger.warning(f"TimeWindowTool 初始化失败: {exc}")
+        try:
+            self._schema_list_tables_tool = SchemaListTablesTool(container=container)
+        except Exception as exc:
+            logger.warning(f"SchemaListTablesTool 初始化失败: {exc}")
+        try:
+            self._schema_list_columns_tool = SchemaListColumnsTool(container=container)
+        except Exception as exc:
+            logger.warning(f"SchemaListColumnsTool 初始化失败: {exc}")
 
         logger.info("🚀 占位符编排服务初始化，基于完整Agent基础设施")
 
@@ -351,6 +411,33 @@ class PlaceholderOrchestrationService:
             except Exception as e:
                 logger.warning(f"⚠️ 加载模板内容失败: {e}")
 
+            if not schema_info:
+                schema_info = SchemaInfo()
+
+            data_source_config = await self._build_data_source_config(user_id, data_source_id)
+            schema_analysis = await self._prepare_schema_context(
+                schema_info=schema_info,
+                data_source_config=data_source_config,
+                placeholder_name=placeholder_name,
+                placeholder_text=placeholder_text,
+                template_context_snippet=template_context_snippet,
+                template_content=template_content,
+            )
+
+            candidate_tables = schema_analysis.get("candidate_tables", [])
+            table_columns = schema_analysis.get("table_columns", {})
+            column_details = schema_analysis.get("column_details", {})
+            schema_summary = schema_analysis.get("schema_summary")
+
+            if candidate_tables:
+                for table in candidate_tables:
+                    if table not in schema_info.tables:
+                        schema_info.tables.append(table)
+            if table_columns:
+                for table, cols in table_columns.items():
+                    if isinstance(cols, list):
+                        schema_info.columns[table] = cols
+
             # 构建Agent输入 - 包含完整上下文信息
             agent_input = AgentInput(
                 user_prompt=f"分析占位符'{placeholder_name}': {placeholder_text}",
@@ -373,8 +460,12 @@ class PlaceholderOrchestrationService:
                     "data_source_id": data_source_id,
                     "semantic_type": semantic_type,  # 传给SQLDraftTool
                     "business_requirements": business_requirements,
-                    "tables": schema_info.tables if schema_info else [],  # 传递表信息
-                    "available_tables": schema_info.tables if schema_info else [],  # 传递可用表信息
+                    "tables": list(schema_info.tables),
+                    "available_tables": list(schema_info.tables),
+                    "candidate_tables": candidate_tables,
+                    "table_columns": table_columns,
+                    "column_details": column_details,
+                    "connection_config": data_source_config,
                 },
                 task_driven_context={
                     "template_context": template_context or {},
@@ -405,9 +496,13 @@ class PlaceholderOrchestrationService:
 
                     # 🔍 Schema信息传递（确保模型能看到表结构）
                     "schema_context": {
-                        "available_tables": schema_info.tables if schema_info else [],
-                        "table_count": len(schema_info.tables) if schema_info else 0,
-                        "schema_source": "DataSourceContextBuilder"
+                        "available_tables": list(schema_info.tables),
+                        "table_count": len(schema_info.tables),
+                        "schema_source": "DataSourceContextBuilder",
+                        "candidate_tables": candidate_tables,
+                        "table_columns": table_columns,
+                        "column_details": column_details,
+                        "schema_summary": schema_summary,
                     },
 
                     "placeholder_contexts": [  # 添加占位符上下文数组
@@ -421,7 +516,11 @@ class PlaceholderOrchestrationService:
                                 "time_sensitivity": business_requirements.get("time_sensitivity")
                             }
                         }
-                    ]
+                    ],
+                    "candidate_tables": candidate_tables,
+                    "table_columns": table_columns,
+                    "column_details": column_details,
+                    "schema_summary": schema_summary,
                 },
                 user_id=user_id
             )
@@ -434,7 +533,7 @@ class PlaceholderOrchestrationService:
             # 🎯 使用任务验证智能模式 - 统一的SQL验证和生成系统
             logger.info(f"🎯 使用任务验证智能模式 - 自动SQL健康检查与智能回退")
 
-            agent_result = await self.agent_facade.execute_task_validation(agent_input)
+            agent_result = await self.agent_service.execute_task_validation(agent_input)
 
             # 🔧 添加调试信息
             logger.info(f"🔧 [Debug] Agent执行结果: success={agent_result.success}")
@@ -559,13 +658,29 @@ class PlaceholderOrchestrationService:
             # 第4步: 结果处理和增强
             # ==========================================
 
-            # 从Agent结果中提取SQL和元数据
-            generated_sql = agent_result.result
+            # 从Agent结果中提取SQL和元数据，并执行后处理
             agent_metadata = agent_result.metadata if isinstance(agent_result.metadata, dict) else {}
+            raw_sql_text = self._extract_sql_from_result(agent_result.result)
+            normalized_sql, tool_logs, execution_test_result = await self._post_process_generated_sql(
+                raw_sql_text,
+                task_schedule,
+                user_id,
+                data_source_id,
+                semantic_type,
+                data_source_config=data_source_config,
+                allowed_tables=candidate_tables or schema_info.tables,
+            )
+
+            if tool_logs:
+                existing_logs = agent_metadata.get("tool_logs") if isinstance(agent_metadata.get("tool_logs"), list) else []
+                agent_metadata["tool_logs"] = existing_logs + tool_logs
+
+            generated_sql = normalized_sql
 
             # 🔧 添加成功路径调试信息
             logger.info(f"🔧 [Debug] 进入成功处理分支")
-            logger.info(f"🔧 [Debug] 提取的SQL: {generated_sql}")
+            logger.info(f"🔧 [Debug] 原始SQL: {raw_sql_text}")
+            logger.info(f"🔧 [Debug] 规范化SQL: {generated_sql}")
             logger.info(f"🔧 [Debug] agent_metadata keys: {list(agent_metadata.keys()) if agent_metadata else 'empty'}")
 
             # 🔍 调试：查看execution_summary和observations的内容
@@ -574,9 +689,11 @@ class PlaceholderOrchestrationService:
             if "observations" in agent_metadata:
                 logger.info(f"🔍 [Debug] observations: {agent_metadata['observations']}")
 
+            test_result = execution_test_result
+
             # 提取测试结果（如果有）
             # 🔑 关键修复：从execution_summary或observations中提取SQL执行结果
-            test_result = agent_metadata.get("test_result")
+            test_result = test_result or agent_metadata.get("test_result")
 
             # 策略1: 从execution_summary提取
             if not test_result and "execution_summary" in agent_metadata:
@@ -661,7 +778,8 @@ class PlaceholderOrchestrationService:
                         "execution_time_ms": agent_metadata.get("execution_time_ms", 0),
                         "agent_facade_used": True,
                         "domain_service_used": True,
-                        "steps_executed": agent_metadata.get("steps_executed", [])
+                        "steps_executed": agent_metadata.get("steps_executed", []),
+                        "tool_logs": agent_metadata.get("tool_logs", [])
                     }
                 },
                 "business_validation": validation_result,
@@ -684,6 +802,445 @@ class PlaceholderOrchestrationService:
         except Exception as e:
             logger.error(f"❌ Agent Pipeline分析异常: {e}")
             return self._create_error_result(placeholder_name, str(e))
+
+    async def _prepare_schema_context(
+        self,
+        schema_info: SchemaInfo,
+        data_source_config: Dict[str, Any],
+        placeholder_name: str,
+        placeholder_text: str,
+        template_context_snippet: Optional[str],
+        template_content: str,
+    ) -> Dict[str, Any]:
+        tables: List[str] = list(schema_info.tables)
+        if not tables and self._schema_list_tables_tool:
+            try:
+                list_result = await self._schema_list_tables_tool.execute({
+                    "data_source": data_source_config,
+                })
+            except Exception as exc:
+                logger.warning(f"SchemaListTablesTool 执行失败: {exc}")
+                list_result = {"success": False, "error": str(exc)}
+            if list_result.get("success"):
+                tables = list_result.get("tables", []) or []
+                schema_info.tables = tables
+            else:
+                self._ensure_connection_success(list_result, "schema.list_tables", data_source_config.get("id"))
+
+        context_pieces = [
+            placeholder_name or "",
+            placeholder_text or "",
+            template_context_snippet or "",
+            template_content[:5000] if template_content else "",
+        ]
+        combined_text = "\n".join(piece for piece in context_pieces if piece)
+        text_lower = combined_text.lower()
+        tokens = set(re.findall(r"[a-z0-9]+", text_lower))
+
+        for cn_word, synonyms in KEYWORD_SYNONYMS.items():
+            if cn_word in combined_text:
+                tokens.update(synonyms)
+
+        candidate_scores: Dict[str, float] = {}
+        for table in tables:
+            table_lower = table.lower()
+            score = 0.0
+            if table_lower in text_lower:
+                score += 5.0
+            parts = [p for p in re.split(r"[_\-]", table_lower) if p]
+            for part in parts:
+                if part in tokens:
+                    score += 3.0
+            for token in tokens:
+                if token and token in table_lower:
+                    score += 1.0
+            candidate_scores[table] = score
+
+        sorted_tables = sorted(
+            tables,
+            key=lambda t: candidate_scores.get(t, 0.0),
+            reverse=True,
+        )
+        candidate_tables = [t for t in sorted_tables if candidate_scores.get(t, 0.0) > 0]
+        if not candidate_tables:
+            candidate_tables = sorted_tables[:5]
+
+        table_columns: Dict[str, List[str]] = {}
+        column_details: Dict[str, Any] = {}
+        schema_summary: Optional[str] = None
+
+        if self._schema_list_columns_tool and candidate_tables:
+            try:
+                column_result = await self._schema_list_columns_tool.execute({
+                    "tables": candidate_tables,
+                    "data_source": data_source_config,
+                })
+            except Exception as exc:
+                logger.warning(f"SchemaListColumnsTool 执行失败: {exc}")
+                column_result = {"success": False, "error": str(exc)}
+
+            if column_result.get("success"):
+                columns_map = column_result.get("columns") or {}
+                if isinstance(columns_map, dict):
+                    table_columns = {
+                        table: columns_map.get(table, [])
+                        for table in candidate_tables
+                    }
+                details_map = column_result.get("column_details") or {}
+                if isinstance(details_map, dict):
+                    column_details = {
+                        table: details_map.get(table, [])
+                        for table in candidate_tables
+                    }
+                schema_summary = column_result.get("schema_summary")
+            else:
+                self._ensure_connection_success(column_result, "schema.list_columns", data_source_config.get("id"))
+
+        return {
+            "candidate_tables": candidate_tables,
+            "table_columns": table_columns,
+            "column_details": column_details,
+            "schema_summary": schema_summary,
+        }
+
+    async def _post_process_generated_sql(
+        self,
+        sql: str,
+        task_schedule: Optional[Dict[str, Any]],
+        user_id: Optional[str],
+        data_source_id: Optional[str],
+        semantic_type: str,
+        data_source_config: Optional[Dict[str, Any]] = None,
+        allowed_tables: Optional[List[str]] = None,
+    ) -> Tuple[str, List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """
+        对 LLM 生成的 SQL 进行后处理：标准化占位符、执行安全策略、验证与执行测试。
+        返回 (标准化 SQL, 工具执行日志, 测试结果)。
+        """
+        sql_text = (sql or "").strip()
+        if not sql_text:
+            return sql_text, [], None
+
+        normalized_sql = self._ensure_placeholder_sql(sql_text, task_schedule)
+        self._validate_sql_tables(normalized_sql, allowed_tables)
+        tool_logs: List[Dict[str, Any]] = []
+        test_result: Optional[Dict[str, Any]] = None
+
+        data_source_cfg = data_source_config or await self._build_data_source_config(user_id, data_source_id)
+        execution_window = await self._build_execution_window(task_schedule)
+
+        base_payload = {
+            "current_sql": normalized_sql,
+            "sql": normalized_sql,
+            "user_id": user_id or "system",
+            "data_source": data_source_cfg,
+            "semantic_type": semantic_type,
+        }
+
+        # SQL 安全策略检查
+        if self._sql_policy_tool:
+            try:
+                policy_result = await self._sql_policy_tool.execute(dict(base_payload))
+            except Exception as exc:
+                policy_result = {"success": False, "error": str(exc)}
+                logger.warning(f"SQLPolicyTool 执行失败: {exc}")
+        else:
+            policy_result = {"success": False, "error": "tool_unavailable"}
+
+        tool_logs.append(self._summarize_tool_output("sql.policy", policy_result))
+        if policy_result.get("success"):
+            normalized_sql = policy_result.get("sql", normalized_sql)
+            base_payload["current_sql"] = normalized_sql
+            base_payload["sql"] = normalized_sql
+
+        # SQL 验证
+        if self._sql_validate_tool:
+            try:
+                validation_result = await self._sql_validate_tool.execute(dict(base_payload))
+            except Exception as exc:
+                validation_result = {"success": False, "error": str(exc)}
+                logger.warning(f"SQLValidateTool 执行失败: {exc}")
+        else:
+            validation_result = {"success": False, "error": "tool_unavailable"}
+
+        tool_logs.append(self._summarize_tool_output("sql.validate", validation_result))
+        if validation_result.get("success"):
+            normalized_sql = validation_result.get("sql", normalized_sql)
+            base_payload["current_sql"] = normalized_sql
+            base_payload["sql"] = normalized_sql
+
+        # SQL 执行验证
+        if self._sql_execute_tool and execution_window.get("start_date") and execution_window.get("end_date"):
+            execute_payload = dict(base_payload)
+            execute_payload.update(
+                {
+                    "window": execution_window,
+                    "time_window": execution_window,
+                    "start_date": execution_window.get("start_date"),
+                    "end_date": execution_window.get("end_date"),
+                }
+            )
+            try:
+                execute_result = await self._sql_execute_tool.execute(execute_payload)
+            except Exception as exc:
+                execute_result = {"success": False, "error": str(exc), "execution_sql": normalized_sql}
+                logger.warning(f"SQLExecuteTool 执行失败: {exc}")
+        else:
+            execute_result = {
+                "success": False,
+                "error": "tool_unavailable_or_missing_window",
+                "execution_sql": normalized_sql,
+            }
+
+        tool_logs.append(self._summarize_tool_output("sql.execute", execute_result))
+        if execute_result.get("success"):
+            rows = execute_result.get("rows", []) or []
+            columns = execute_result.get("columns", []) or []
+            sample_rows = rows[:5] if isinstance(rows, list) else rows
+            test_result = {
+                "executed": True,
+                "success": True,
+                "rows": rows,
+                "data": sample_rows,
+                "columns": columns,
+                "row_count": execute_result.get("row_count", len(rows)),
+                "message": "SQL执行成功",
+                "execution_sql": execute_result.get("execution_sql"),
+                "window": execution_window,
+            }
+        else:
+            if execute_result.get("error"):
+                test_result = {
+                    "executed": bool(execution_window),
+                    "success": False,
+                    "message": execute_result.get("error"),
+                    "error": execute_result.get("error"),
+                    "execution_sql": execute_result.get("execution_sql"),
+                    "window": execution_window,
+                }
+                self._ensure_connection_success(
+                    execute_result,
+                    "sql.execute",
+                    data_source_id,
+                )
+
+        return normalized_sql, tool_logs, test_result
+
+    async def _build_data_source_config(
+        self,
+        user_id: Optional[str],
+        data_source_id: Optional[str],
+    ) -> Dict[str, Any]:
+        config: Dict[str, Any] = {}
+        if data_source_id:
+            config["id"] = data_source_id
+        if not user_id or not data_source_id:
+            return config
+
+        uds = getattr(container, "user_data_source_service", None)
+        if not uds:
+            return config
+
+        try:
+            ds_obj = await uds.get_user_data_source(user_id=user_id, data_source_id=data_source_id)
+            if ds_obj and getattr(ds_obj, "connection_config", None):
+                config.update(ds_obj.connection_config)
+        except Exception as exc:
+            logger.warning(f"获取数据源连接配置失败: {exc}")
+
+        for key in ("password", "mysql_password", "api_password"):
+            if key in config and config[key]:
+                try:
+                    config[key] = DataSourcePasswordManager.get_password(config[key])
+                except Exception as exc:
+                    logger.warning(f"解密数据源密码失败({key}): {exc}")
+
+        return config
+
+    async def _build_execution_window(
+        self,
+        task_schedule: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        if task_schedule:
+            start = self._extract_date_component(
+                task_schedule.get("start_date") or task_schedule.get("start")
+            )
+            end = self._extract_date_component(
+                task_schedule.get("end_date") or task_schedule.get("end")
+            )
+            if start and end:
+                return {
+                    "start_date": start,
+                    "end_date": end,
+                    "start": start,
+                    "end": end,
+                    "label": task_schedule.get("label"),
+                }
+
+        if self._time_window_tool:
+            try:
+                window_result = await self._time_window_tool.execute({})
+                if window_result.get("success") and window_result.get("window"):
+                    window = window_result["window"]
+                    start_value = window.get("start") or window.get("start_date")
+                    end_value = window.get("end") or window.get("end_date")
+                    start = self._extract_date_component(start_value)
+                    end = self._extract_date_component(end_value)
+                    if start and end:
+                        return {
+                            "start_date": start,
+                            "end_date": end,
+                            "start": start,
+                            "end": end,
+                            "label": window.get("label"),
+                        }
+            except Exception as exc:
+                logger.warning(f"TimeWindowTool 执行失败: {exc}")
+
+        return {}
+
+    def _ensure_placeholder_sql(
+        self,
+        sql: str,
+        task_schedule: Optional[Dict[str, Any]],
+    ) -> str:
+        if not sql or "{{start_date}}" in sql or "{{end_date}}" in sql:
+            return sql
+        if not task_schedule:
+            return sql
+
+        normalized = sql
+        mapping = {
+            "start_date": ["start_date", "start"],
+            "end_date": ["end_date", "end"],
+        }
+
+        for placeholder_key, keys in mapping.items():
+            placeholder_token = f"{{{{{placeholder_key}}}}}"
+            for key in keys:
+                value = self._extract_date_component(task_schedule.get(key))
+                if not value:
+                    continue
+                candidates = {value}
+                if "T" in value:
+                    candidates.add(value.split("T")[0])
+                for candidate in candidates:
+                    if not candidate:
+                        continue
+                    normalized = normalized.replace(f"'{candidate}'", f"'{placeholder_token}'")
+                    normalized = normalized.replace(f'"{candidate}"', f'"{placeholder_token}"')
+                    normalized = normalized.replace(candidate, placeholder_token)
+
+        return normalized
+
+    def _extract_sql_from_result(self, raw_sql: Any) -> str:
+        if isinstance(raw_sql, dict):
+            for key in ("sql", "query", "result", "content"):
+                value = raw_sql.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            if raw_sql:
+                first_value = next(iter(raw_sql.values()))
+                if isinstance(first_value, str):
+                    return first_value.strip()
+        return str(raw_sql or "").strip()
+
+    def _summarize_tool_output(self, tool_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(result, dict):
+            return {"tool": tool_name, "status": "unknown"}
+        summary = {
+            "tool": tool_name,
+            "status": "success" if result.get("success") else "failed",
+        }
+        if result.get("error") in {"tool_unavailable", "tool_unavailable_or_missing_window"}:
+            summary["status"] = "skipped"
+        if "warnings" in result:
+            summary["warnings"] = result.get("warnings")
+        if "issues" in result:
+            summary["issues"] = result.get("issues")
+        if tool_name == "sql.execute":
+            summary["row_count"] = result.get("row_count")
+            if result.get("error"):
+                summary["error"] = result.get("error")
+        return summary
+
+    def _extract_date_component(self, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        if "T" in value:
+            return value.split("T")[0]
+        return value
+
+    def _ensure_connection_success(
+        self,
+        result: Dict[str, Any],
+        stage: str,
+        data_source_id: Optional[str] = None,
+    ) -> None:
+        if not isinstance(result, dict):
+            return
+
+        messages: List[str] = []
+        for key in ("error", "message", "msg", "detail"):
+            value = result.get(key)
+            if isinstance(value, str):
+                messages.append(value)
+        if result.get("code") in (401, 403, 1045):
+            messages.append(str(result.get("code")))
+
+        lowered = "\n".join(messages).lower()
+        if not lowered:
+            return
+
+        keywords = [
+            "access denied",
+            "unauthorized",
+            "authentication",
+            "auth failed",
+            "permission",
+            "denied",
+            "failed to connect",
+            "connection refused",
+            "timeout",
+            "no such host",
+        ]
+        if any(keyword in lowered for keyword in keywords):
+            message = messages[0] if messages else "数据源连接失败"
+            ds_hint = f" (data_source_id={data_source_id})" if data_source_id else ""
+            raise RuntimeError(f"数据源连接失败，阶段[{stage}]{ds_hint}: {message}")
+
+    def _validate_sql_tables(
+        self,
+        sql: str,
+        allowed_tables: Optional[List[str]] = None,
+    ) -> None:
+        if not sql or not allowed_tables:
+            return
+
+        allowed_map = {tbl.lower(): tbl for tbl in allowed_tables if isinstance(tbl, str)}
+        if not allowed_map:
+            return
+
+        pattern = re.compile(r"\b(?:from|join)\s+([^\s,;]+)", re.IGNORECASE)
+        referenced: List[str] = []
+        for match in pattern.finditer(sql):
+            token = match.group(1)
+            token = token.strip()
+            token = token.strip("`\"[]")
+            if not token:
+                continue
+            # 处理别名、逗号
+            token = token.split()[0]
+            token = token.rstrip(",")
+            if token.startswith("("):
+                continue
+            token = token.split(".")[-1]
+            token_lower = token.lower()
+            referenced.append(token)
+            if token_lower not in allowed_map:
+                raise RuntimeError(
+                    f"生成的SQL包含未授权的数据表: {token}，允许的表: {sorted(allowed_map.values())}"
+                )
 
     def _map_business_to_semantic_type(self, business_requirements: Dict[str, Any]) -> str:
         """将业务需求映射到Agent工具的语义类型"""
@@ -996,7 +1553,7 @@ class PlaceholderOrchestrationService:
                     relaxed_input.constraints.bypass_minor_errors = True
 
                 # 重新执行 - 使用任务验证智能模式
-                recovery_result = await self.agent_facade.execute_task_validation(relaxed_input)
+                recovery_result = await self.agent_service.execute_task_validation(relaxed_input)
                 if recovery_result.success:
                     return {
                         "recovered": True,
@@ -1019,7 +1576,7 @@ class PlaceholderOrchestrationService:
                 if hasattr(simplified_input, 'placeholder'):
                     simplified_input.placeholder.type = "stat"
 
-                recovery_result = await self.agent_facade.execute_task_validation(simplified_input)
+                recovery_result = await self.agent_service.execute_task_validation(simplified_input)
                 if recovery_result.success:
                     return {
                         "recovered": True,
@@ -1249,54 +1806,28 @@ async def get_placeholders(
 ) -> APIResponse[List[TemplatePlaceholder]]:
     """获取占位符列表"""
     try:
-        logger.info(f"获取占位符列表: template_id={template_id}")
         if template_id:
             placeholders = crud.template_placeholder.get_by_template(
-                db=db, template_id=template_id
+                db=db, template_id=template_id, include_inactive=True
             )
         else:
             placeholders = crud.template_placeholder.get_multi(
                 db=db, skip=skip, limit=limit
             )
 
-        # 直接返回TemplatePlaceholder格式，不使用前端适配器
-        template_placeholders = []
+        # 明确转换为Pydantic对象，确保序列化成功
+        placeholder_list = []
         for p in placeholders:
-            # 确保所有必需字段都存在（包括agent_config用于返回test_result）
-            template_placeholder = TemplatePlaceholder(
-                id=p.id,
-                template_id=p.template_id,
-                placeholder_name=p.placeholder_name,
-                placeholder_text=p.placeholder_text or p.placeholder_name,
-                placeholder_type=p.placeholder_type or "statistical",
-                content_type=p.content_type or "text",
-                agent_analyzed=p.agent_analyzed or False,
-                target_database=p.target_database,
-                target_table=p.target_table,
-                required_fields=p.required_fields,
-                generated_sql=p.generated_sql,
-                sql_validated=p.sql_validated or False,
-                execution_order=p.execution_order or 1,
-                cache_ttl_hours=p.cache_ttl_hours or 24,
-                is_required=p.is_required if p.is_required is not None else True,
-                is_active=p.is_active if p.is_active is not None else True,
-                agent_workflow_id=p.agent_workflow_id,
-                agent_config=p.agent_config or {},  # 🔑 包含test_result等信息
-                description=p.description,
-                confidence_score=p.confidence_score or 0.0,
-                content_hash=p.content_hash,
-                original_type=p.original_type,
-                extracted_description=p.extracted_description,
-                parsing_metadata=p.parsing_metadata,
-                created_at=p.created_at,
-                updated_at=p.updated_at,
-                analyzed_at=p.analyzed_at
-            )
-            template_placeholders.append(template_placeholder)
+            try:
+                pydantic_obj = TemplatePlaceholder.from_orm(p)
+                placeholder_list.append(pydantic_obj)
+            except Exception as conv_error:
+                logger.error(f"占位符序列化失败: {conv_error}, placeholder_name={getattr(p, 'placeholder_name', 'unknown')}")
+                continue
 
         return APIResponse(
             success=True,
-            data=template_placeholders,
+            data=placeholder_list,
             message="获取占位符列表成功"
         )
     except Exception as e:

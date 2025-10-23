@@ -22,16 +22,23 @@ export interface NormalizedPlaceholder {
 /**
  * 规范化占位符数据
  * 将后端API返回的不同格式统一为标准格式
+ * 后端字段映射:
+ * - placeholder_name -> name
+ * - placeholder_text -> text
+ * - placeholder_type -> type/placeholder_type
  */
 export function normalizePlaceholder(placeholder: any, index: number = 0): NormalizedPlaceholder {
+  // 从placeholder_name或name中提取名称
+  const placeholderName = placeholder.placeholder_name || placeholder.name || placeholder.description || `占位符 ${index + 1}`
+
   return {
     id: placeholder.id,
-    name: placeholder.name || placeholder.placeholder_name || placeholder.description || `占位符 ${index + 1}`,
-    text: placeholder.text || placeholder.placeholder_text || '',
+    name: placeholderName,
+    text: placeholder.placeholder_text || placeholder.text || placeholderName,
     start: placeholder.start || placeholder.start_index || 0,
     end: placeholder.end || placeholder.end_index || 0,
-    type: placeholder.type || inferPlaceholderType(placeholder.name || placeholder.description || ''),
-    description: placeholder.description || placeholder.name,
+    type: placeholder.placeholder_type || placeholder.type || inferPlaceholderType(placeholderName),
+    description: placeholder.description || placeholder.extracted_description || placeholderName,
     // SQL编辑相关字段
     execution_order: placeholder.execution_order || 0,
     cache_ttl_hours: placeholder.cache_ttl_hours || 24,

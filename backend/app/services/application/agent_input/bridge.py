@@ -111,12 +111,12 @@ class AgentInputBridge:
 
         # 2) 执行 Agent（PTOF）
         try:
-            from app.services.infrastructure.agents.facade import AgentFacade
+            from app.services.infrastructure.agents import AgentService
             from app.core.container import Container
 
             container = self.container or Container()
-            facade = AgentFacade(container)
-            result = await facade.execute(ai)
+            service = AgentService(container=container)
+            result = await service.execute(ai)
 
             return {
                 "success": result.success,

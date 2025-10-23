@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.core.config import settings
+from app.core.container import container
 from app.models.task import Task, TaskExecution, TaskStatus
 from app.models.report_history import ReportHistory
 from app.services.application.placeholder.placeholder_service import (
@@ -51,17 +52,38 @@ class DatabaseTask(CeleryTask):
 def execute_report_task(self, db: Session, task_id: int, execution_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     执行报告生成任务 - 使用新的TaskExecutionService
-    
+
     Args:
         task_id: 任务ID
         execution_context: 执行上下文（可选）
-    
+
     Returns:
         Dict: 执行结果
     """
     task_execution_id = None
     notification_service = NotificationService()
-    
+
+    # 检查任务是否被撤销的辅助函数
+    def check_if_cancelled():
+        """检查任务是否被撤销"""
+        try:
+            # 方法1: 检查Celery的撤销状态
+            from celery.result import AsyncResult
+            result = AsyncResult(self.request.id)
+            if result.state == 'REVOKED':
+                logger.info(f"Task {task_id} detected as REVOKED via Celery state")
+                raise Exception("任务已被用户取消")
+
+            # 方法2: 检查数据库中的执行状态
+            if task_execution_id:
+                exec_record = db.query(TaskExecution).filter(TaskExecution.id == task_execution_id).first()
+                if exec_record and exec_record.execution_status == TaskStatus.CANCELLED:
+                    logger.info(f"Task {task_id} detected as CANCELLED in database")
+                    raise Exception("任务已被用户取消")
+        except Exception as e:
+            if "取消" in str(e) or "cancelled" in str(e).lower():
+                raise
+
     try:
         # 1. 获取任务信息
         task = db.query(Task).filter(Task.id == task_id).first()
@@ -125,7 +147,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             stage="initialization",
             pipeline_status=PipelineTaskStatus.SCANNING,
         )
-        
+
+        # 检查是否被取消
+        check_if_cancelled()
+
         # 3. 更新任务状态
         task.status = TaskStatus.PROCESSING
         task.execution_count += 1
@@ -174,6 +199,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             "正在初始化Agent系统...",
             stage="agent_initialization",
         )
+
+        # 检查是否被取消
+        check_if_cancelled()
+
         asyncio.run(system.initialize())
         events = []
 
@@ -182,6 +211,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             "正在检查占位符状态...",
             stage="placeholder_precheck",
         )
+
+        # 检查是否被取消
+        check_if_cancelled()
 
         # 智能增量占位符解析策略
         placeholders_need_analysis = []
@@ -369,6 +401,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                 for ph in placeholders_need_analysis:
                     try:
+                        # 检查是否被取消
+                        check_if_cancelled()
+
                         update_progress(
                             30 + int(30 * processed_count / total_count),
                             f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})",
@@ -516,6 +551,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             stage="etl_processing",
         )
 
+        # 检查是否被取消
+        check_if_cancelled()
+
         try:
             # 重新加载最新的占位符数据（可能在Agent分析后有更新）
             placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
@@ -566,10 +604,15 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                     if sql_placeholders:
                         logger.info(f"占位符 {ph.placeholder_name} 需要SQL参数替换: {sql_placeholders}")
-                        final_sql = sql_replacer.replace_placeholders(
+                        # 构建时间上下文
+                        time_context = {
+                            "data_start_time": time_window.get("start", ""),
+                            "data_end_time": time_window.get("end", ""),
+                            "execution_time": datetime.now().strftime("%Y-%m-%d")
+                        }
+                        final_sql = sql_replacer.replace_time_placeholders(
                             ph.generated_sql,
-                            time_window,
-                            time_column="created_at"  # 默认时间字段，可以从数据源配置中获取
+                            time_context
                         )
                         logger.info(f"替换后SQL: {final_sql[:100]}...")
 
@@ -663,11 +706,15 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             stage="document_generation",
             pipeline_status=PipelineTaskStatus.ASSEMBLING,
         )
+
+        # 检查是否被取消
+        check_if_cancelled()
+
         tpl_meta = None  # 初始化模板元数据，用于后续清理
         report_generation_error: Optional[str] = None
         try:
             from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path, cleanup_template_temp_dir
-            from app.services.infrastructure.agents.tools.doc_assembler import DocAssemblerTool
+            from app.services.infrastructure.document.word_template_service import WordTemplateService
             from io import BytesIO
             from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
 
@@ -679,8 +726,8 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 use_direct_storage = getattr(settings, 'USE_DIRECT_STORAGE', True)
 
                 if use_direct_storage:
-                    # 新模式：直接存储到MinIO
-                    assembler = DocAssemblerTool(container=None, use_storage=True)
+                    # 新模式：使用WordTemplateService直接处理
+                    word_service = WordTemplateService()
 
                     # 准备任务信息用于存储键生成
                     from app.models.user import User
@@ -688,56 +735,63 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
 
                     safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
+                    os.makedirs(safe_tmp_dir, exist_ok=True)
                     docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
 
-                    assemble_res = asyncio.run(assembler.execute({
-                        "format": "docx",
-                        "template_path": tpl_meta['path'],
-                        "context_blocks": [
-                            {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
-                        ],
-                        "charts": [],
-                        "output_path": docx_out,
-                        "etl_results": etl_results,
-                        # 任务信息用于存储键生成
-                        "task_id": task.id,
-                        "task_name": task.name,
-                        "tenant_id": tenant_id,
-                    }))
+                    # 使用WordTemplateService处理文档
+                    assemble_res = asyncio.run(word_service.process_document_template(
+                        template_path=tpl_meta['path'],
+                        placeholder_data=etl_results,
+                        output_path=docx_out,
+                        container=container,
+                        use_agent_charts=True,
+                        use_agent_optimization=True
+                    ))
 
                     if assemble_res.get('success'):
+                        # 上传到存储
+                        storage = get_hybrid_storage_service()
+                        with open(docx_out, 'rb') as f:
+                            file_bytes = f.read()
+
+                        ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                        # 使用任务名称作为路径和文件名
+                        import re
+                        safe_task_name = re.sub(r'[<>:"/\\|?*]', '_', task.name or f'task_{task.id}')
+                        object_key = f"reports/{tenant_id}/{safe_task_name}/report_{ts}.docx"
+                        upload_result = storage.upload_with_key(BytesIO(file_bytes), object_key, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        storage_path = upload_result.get("file_path")
+
                         execution_result["report"] = {
-                            "storage_path": assemble_res.get("storage_info", {}).get("storage_path"),
-                            "backend": assemble_res.get("storage_info", {}).get("backend"),
-                            "size": assemble_res.get("storage_info", {}).get("size"),
+                            "storage_path": storage_path,
+                            "backend": upload_result.get("backend"),
+                            "size": upload_result.get("size", len(file_bytes)),
                             "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "generation_mode": "direct_storage"
+                            "generation_mode": "word_template_service"
                         }
-                        logger.info(f"✅ 报告直接存储完成: {execution_result['report']['storage_path']}")
+                        logger.info(f"✅ 报告生成并存储完成: {storage_path}")
                     else:
-                        report_generation_error = assemble_res.get('error') or "直接存储失败"
-                        logger.error(f"直接存储模式失败: {report_generation_error}")
+                        report_generation_error = assemble_res.get('error') or "文档处理失败"
+                        logger.error(f"文档生成失败: {report_generation_error}")
                         execution_result["report"] = {
                             "error": report_generation_error,
-                            "generation_mode": "direct_storage"
+                            "generation_mode": "word_template_service"
                         }
 
                 else:
                     # 传统模式：本地生成后上传
-                    assembler = DocAssemblerTool()
-                    context_blocks = [
-                        {"type": "text", "title": f"任务 {task.name}", "content": f"执行时间: {datetime.utcnow().isoformat()}"},
-                    ]
+                    word_service_traditional = WordTemplateService()
                     safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
+                    os.makedirs(safe_tmp_dir, exist_ok=True)
                     docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
-                    assemble_res = asyncio.run(assembler.execute({
-                        "format": "docx",
-                        "template_path": tpl_meta['path'],
-                        "context_blocks": context_blocks,
-                        "charts": [],
-                        "output_path": docx_out,
-                        "etl_results": etl_results,  # 传递ETL结果
-                    }))
+                    assemble_res = asyncio.run(word_service_traditional.process_document_template(
+                        template_path=tpl_meta['path'],
+                        placeholder_data=etl_results,
+                        output_path=docx_out,
+                        container=container,
+                        use_agent_charts=True,
+                        use_agent_optimization=True
+                    ))
 
                     if assemble_res.get('success') and assemble_res.get('output_path'):
                         # 上传到存储
@@ -750,7 +804,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         from app.models.user import User
                         user = db.query(User).filter(User.id == task.owner_id).first()
                         tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
-                        # 任务名slug
+                        # 使用任务名称作为路径和文件名
                         import re
                         slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
                         object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
@@ -854,6 +908,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             user_id=owner_id,
             status="completed" if final_status == TaskStatus.COMPLETED else "failed",
             file_path=report_info.get("storage_path"),
+            file_size=report_info.get("size", 0),
             error_message=report_info.get("error") if not overall_success else None,
             result=None,
             processing_metadata=history_metadata,

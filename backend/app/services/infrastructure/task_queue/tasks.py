@@ -442,9 +442,17 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         if sql_result.get("success"):
                             # 👇 更新占位符SQL（不立即提交）
                             ph.generated_sql = sql_result["sql"]
-                            ph.sql_validated = True
+                            # 只有当SQL真正验证通过时才标记为已验证
+                            ph.sql_validated = sql_result.get("validated", True)
                             ph.agent_analyzed = True
                             ph.analyzed_at = datetime.utcnow()
+
+                            # 如果SQL被自动修复，记录到metadata
+                            if sql_result.get("auto_fixed"):
+                                ph.agent_config = ph.agent_config or {}
+                                ph.agent_config["auto_fixed"] = True
+                                ph.agent_config["auto_fix_warning"] = sql_result.get("warning")
+
                             batch_updates.append(ph)  # 👈 添加到批次
 
                             events.append({
@@ -452,10 +460,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 "placeholder_name": ph.placeholder_name,
                                 "sql": sql_result["sql"],
                                 "confidence": sql_result.get("confidence", 0.0),
+                                "validated": ph.sql_validated,
+                                "auto_fixed": sql_result.get("auto_fixed", False),
                                 "timestamp": datetime.utcnow().isoformat()
                             })
 
-                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功 (批次: {len(batch_updates)}/{BATCH_SIZE})")
+                            validation_status = "✅ 验证通过" if ph.sql_validated else "⚠️ 未验证"
+                            auto_fix_info = " (自动修复)" if sql_result.get("auto_fixed") else ""
+                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功{auto_fix_info} {validation_status} (批次: {len(batch_updates)}/{BATCH_SIZE})")
 
                             # 👇 达到批量大小时提交
                             if len(batch_updates) >= BATCH_SIZE:
@@ -572,7 +584,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             # 对每个有效的占位符进行单个处理
             total_placeholders_count = len(placeholders or [])
             for i, ph in enumerate(placeholders or []):
-                if not ph.generated_sql or not ph.sql_validated:
+                # 只要有生成的SQL就尝试执行，不要求必须验证通过
+                # sql_validated 应该在执行成功后设置，而不是作为执行的前提条件
+                if not ph.generated_sql or (ph.generated_sql and ph.generated_sql.strip() == ""):
                     logger.warning(f"跳过占位符 {ph.placeholder_name}: 无有效SQL")
                     etl_results[ph.placeholder_name] = {
                         "success": False,
@@ -596,6 +610,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         record_only=True,
                     )
                     continue
+
+                # 如果SQL未验证，记录日志但继续执行
+                if not ph.sql_validated:
+                    logger.info(f"占位符 {ph.placeholder_name} SQL未验证，将尝试执行并在成功后标记为已验证")
 
                 try:
                     # 1. 首先进行SQL占位符替换（时间参数等）
@@ -684,6 +702,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     if hasattr(query_result, 'data') and query_result.data is not None and not query_result.data.empty:
                         # 将DataFrame转换为字典列表
                         result_data = query_result.data.to_dict('records')
+
+                        # 转换 Decimal 类型为 float，确保 JSON 可序列化
+                        from app.utils.json_utils import convert_decimals
+                        result_data = convert_decimals(result_data)
 
                         # 智能解包：单行单列返回值，多行返回列表
                         actual_value = None

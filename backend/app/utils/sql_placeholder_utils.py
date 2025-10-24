@@ -59,8 +59,11 @@ class SqlPlaceholderReplacer:
                     formatted_time = cls._format_time_value(time_value)
 
                     # 🚀 智能替换：检测占位符周围是否已有引号，避免双重引号
-                    # 模式1: 匹配 '{{placeholder}}' 或 "{{placeholder}}" (已有引号)
-                    quoted_pattern = rf"""['"]{{{{{{placeholder}}}}}}['"]"""
+                    # 使用 re.escape 正确转义占位符模式
+                    escaped_placeholder = re.escape(placeholder_pattern)
+                    # 模式: 匹配 '{{placeholder}}' 或 "{{placeholder}}" (已有引号)
+                    quoted_pattern = rf"['\"]" + escaped_placeholder + rf"['\"]"
+
                     if re.search(quoted_pattern, sql):
                         # 已有引号，只替换占位符本身，保留原引号
                         sql = re.sub(quoted_pattern, f"'{formatted_time}'", sql)

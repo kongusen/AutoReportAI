@@ -82,8 +82,13 @@ class DorisQueryResult:
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为可序列化的字典"""
+        from app.utils.json_utils import convert_decimals
+
+        data_dict = self.data.to_dict(orient="records") if not self.data.empty else []
+        data_dict = convert_decimals(data_dict)
+
         return {
-            "data": self.data.to_dict(orient="records") if not self.data.empty else [],
+            "data": data_dict,
             "columns": self.data.columns.tolist() if not self.data.empty else [],
             "execution_time": self.execution_time,
             "rows_scanned": self.rows_scanned,

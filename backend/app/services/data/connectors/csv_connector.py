@@ -177,11 +177,16 @@ class CSVConnector(BaseConnector):
         """获取CSV数据预览"""
         try:
             result = await self.execute_query("", {"nrows": limit})
-            
+
             if result.success:
+                from app.utils.json_utils import convert_decimals
+
+                data_dict = result.data.to_dict(orient="records")
+                data_dict = convert_decimals(data_dict)
+
                 return {
                     "columns": result.data.columns.tolist(),
-                    "data": result.data.to_dict(orient="records"),
+                    "data": data_dict,
                     "row_count": len(result.data),
                     "total_columns": len(result.data.columns),
                     "data_types": result.data.dtypes.astype(str).to_dict(),

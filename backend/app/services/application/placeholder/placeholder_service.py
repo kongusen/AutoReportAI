@@ -133,7 +133,11 @@ class PlaceholderApplicationService:
 1. **必须包含时间过滤条件** - 这是基于时间周期的统计查询
 2. **只能使用实际存在的表和列** - 必须先探索schema
 3. **必须验证SQL正确性** - 确保SQL可执行
-4. **使用占位符格式** - 时间过滤使用 '{{{{start_date}}}}'
+4. **使用占位符格式** - 时间过滤使用 {{{{start_date}}}} 和 {{{{end_date}}}}
+   ⚠️ **关键要点：占位符周围不要加引号！**
+   - ✅ 正确: WHERE date BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
+   - ❌ 错误: WHERE date BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'
+   - **原因**: 占位符替换时会自动添加引号，如果SQL中已有引号会导致双重引号语法错误
 
 ## 可用工具
 你有以下工具可用：
@@ -143,19 +147,23 @@ class PlaceholderApplicationService:
 4. **sql.execute** - 执行SQL进行测试（使用LIMIT限制）
 5. **sql.refine** - 基于错误信息优化SQL
 
-## 推荐流程
+## 推荐流程（ReAct循环）
 1. 使用 schema.list_tables 查看所有可用的表
 2. 根据业务需求选择相关的表
 3. 使用 schema.list_columns 获取这些表的列信息
-4. 生成SQL查询（确保包含时间过滤）
+4. 生成SQL查询（确保包含时间过滤，**占位符不加引号**）
 5. 使用 sql.validate 验证SQL
-6. 如果验证失败，使用 sql.refine 优化
-7. 使用 sql.execute 测试SQL（可选）
+6. **如果验证失败（如双重引号错误）**：
+   - 检查SQL中占位符周围是否有引号
+   - 移除占位符周围的引号
+   - 使用 sql.refine 优化SQL
+   - 重新验证（最多重试3次）
+7. 验证成功后，可选择使用 sql.execute 测试SQL
 
 ## 期望输出
 最终返回一个JSON格式的结果：
 {{
-    "sql": "SELECT ... WHERE dt = '{{{{start_date}}}}'",
+    "sql": "SELECT ... WHERE dt BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}",
     "reasoning": "解释为什么这个SQL满足业务需求",
     "tables_used": ["table1", "table2"],
     "has_time_filter": true,
@@ -822,35 +830,93 @@ class PlaceholderApplicationService:
                 data_source_info=data_source_info
             )
 
-            # 调用占位符分析
-            sql_result = None
-            async for event in self.analyze_placeholder(agent_request):
-                logger.debug(f"收到事件: type={event.get('type')}, placeholder_id={event.get('placeholder_id')}")
+            # 调用占位符分析（带重试机制）
+            MAX_RETRIES = 3
+            retry_count = 0
+            last_error = None
 
-                if event.get("type") == "sql_generation_complete":
-                    sql_result = event.get("content")
-                    logger.info(f"✅ SQL生成成功: placeholder={agent_request.placeholder_id}, has_sql_query={hasattr(sql_result, 'sql_query') if sql_result else False}")
-                    break
-                elif event.get("type") == "sql_generation_failed":
-                    logger.error(f"❌ SQL生成失败: placeholder={agent_request.placeholder_id}, error={event.get('error')}")
-                    return {
-                        "success": False,
-                        "error": event.get("error", "SQL生成失败")
-                    }
+            while retry_count < MAX_RETRIES:
+                sql_result = None
+                async for event in self.analyze_placeholder(agent_request):
+                    logger.debug(f"收到事件: type={event.get('type')}, placeholder_id={event.get('placeholder_id')}")
 
-            if sql_result and hasattr(sql_result, 'sql_query'):
-                logger.info(f"📊 返回SQL结果: placeholder={agent_request.placeholder_id}, sql_length={len(sql_result.sql_query)}")
+                    if event.get("type") == "sql_generation_complete":
+                        sql_result = event.get("content")
+                        logger.info(f"✅ SQL生成成功 (尝试 {retry_count + 1}/{MAX_RETRIES}): placeholder={agent_request.placeholder_id}")
+                        break
+                    elif event.get("type") == "sql_generation_failed":
+                        logger.error(f"❌ SQL生成失败 (尝试 {retry_count + 1}/{MAX_RETRIES}): error={event.get('error')}")
+                        last_error = event.get("error", "SQL生成失败")
+                        break
+
+                # 检查是否生成了SQL
+                if not sql_result or not hasattr(sql_result, 'sql_query'):
+                    retry_count += 1
+                    logger.warning(f"⚠️ SQL生成未返回有效结果，准备重试 ({retry_count}/{MAX_RETRIES})")
+                    if retry_count < MAX_RETRIES:
+                        # 更新agent_request，添加重试提示
+                        agent_request.requirements = f"{agent_request.requirements}\n\n⚠️ 重试 {retry_count}: 上次生成失败，请重新尝试"
+                        continue
+                    else:
+                        return {
+                            "success": False,
+                            "error": last_error or "Agent未返回有效的SQL结果"
+                        }
+
+                # 验证生成的SQL（检查双重引号等问题）
+                generated_sql = sql_result.sql_query
+                validation_issues = self._validate_sql_placeholders(generated_sql)
+
+                if validation_issues:
+                    logger.warning(f"⚠️ SQL验证发现问题 (尝试 {retry_count + 1}/{MAX_RETRIES}): {validation_issues}")
+                    retry_count += 1
+
+                    if retry_count < MAX_RETRIES:
+                        # 尝试自动修复
+                        fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
+                        if fixed_sql != generated_sql:
+                            logger.info(f"✅ 自动修复SQL占位符引号问题")
+                            return {
+                                "success": True,
+                                "sql": fixed_sql,
+                                "confidence": sql_result.metadata.get('confidence_level', 0.9),
+                                "auto_fixed": True
+                            }
+
+                        # 无法自动修复，请求Agent重新生成
+                        agent_request.requirements = f"""{agent_request.requirements}
+
+⚠️ 重试 {retry_count}: 上次生成的SQL存在问题: {validation_issues}
+请特别注意：
+1. 占位符 {{{{start_date}}}} 和 {{{{end_date}}}} 周围**不要**加引号
+2. 正确格式: WHERE date BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
+3. 错误格式: WHERE date BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'"""
+                        continue
+                    else:
+                        # 达到最大重试次数，尝试最后一次自动修复
+                        fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
+                        return {
+                            "success": True,
+                            "sql": fixed_sql,
+                            "confidence": sql_result.metadata.get('confidence_level', 0.7),
+                            "auto_fixed": True,
+                            "warning": f"达到最大重试次数，使用自动修复的SQL: {validation_issues}"
+                        }
+
+                # SQL验证通过
+                logger.info(f"✅ SQL验证通过: placeholder={agent_request.placeholder_id}")
                 return {
                     "success": True,
-                    "sql": sql_result.sql_query,
-                    "confidence": sql_result.metadata.get('confidence_level', 0.9)
+                    "sql": generated_sql,
+                    "confidence": sql_result.metadata.get('confidence_level', 0.9),
+                    "validated": True
                 }
-            else:
-                logger.error(f"❌ SQL结果验证失败: sql_result={sql_result}, has_sql_query={hasattr(sql_result, 'sql_query') if sql_result else False}")
-                return {
-                    "success": False,
-                    "error": "Agent未返回有效的SQL结果"
-                }
+
+            # 达到最大重试次数
+            return {
+                "success": False,
+                "error": f"达到最大重试次数 ({MAX_RETRIES})，最后错误: {last_error or '未知错误'}"
+            }
 
         except Exception as e:
             logger.error(f"Agent SQL生成异常: {e}")
@@ -858,6 +924,53 @@ class PlaceholderApplicationService:
                 "success": False,
                 "error": str(e)
             }
+
+    def _validate_sql_placeholders(self, sql: str) -> Optional[str]:
+        """
+        验证SQL中的占位符格式，检查是否存在双重引号等问题
+
+        Args:
+            sql: 待验证的SQL
+
+        Returns:
+            如果有问题返回错误描述，否则返回None
+        """
+        import re
+
+        # 检查是否有带引号的占位符: '{{...}}' 或 "{{...}}"
+        quoted_placeholder_pattern = r"""['"]{{[^}]+}}['"]"""
+        matches = re.findall(quoted_placeholder_pattern, sql)
+
+        if matches:
+            return f"发现占位符周围有引号: {matches}，这会导致双重引号错误"
+
+        return None
+
+    def _fix_sql_placeholder_quotes(self, sql: str) -> str:
+        """
+        自动修复SQL中占位符周围的引号问题
+
+        移除占位符周围的单引号或双引号，因为占位符替换时会自动添加引号
+
+        Args:
+            sql: 原始SQL
+
+        Returns:
+            修复后的SQL
+        """
+        import re
+
+        # 移除占位符周围的引号
+        # 匹配模式: '{{placeholder}}' -> {{placeholder}}
+        # 或: "{{placeholder}}" -> {{placeholder}}
+        fixed_sql = re.sub(r"""['"](\{\{[^}]+\}\})['"]""", r'\1', sql)
+
+        if fixed_sql != sql:
+            logger.info(f"🔧 自动修复SQL占位符引号")
+            logger.debug(f"   原SQL: {sql[:200]}...")
+            logger.debug(f"   修复后: {fixed_sql[:200]}...")
+
+        return fixed_sql
 
     def _build_unified_context(
         self,

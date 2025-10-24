@@ -30,8 +30,13 @@ class QueryResult:
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为可序列化的字典"""
+        from app.utils.json_utils import convert_decimals
+
+        data_dict = self.data.to_dict(orient="records") if not self.data.empty else []
+        data_dict = convert_decimals(data_dict)
+
         return {
-            "data": self.data.to_dict(orient="records") if not self.data.empty else [],
+            "data": data_dict,
             "columns": self.data.columns.tolist() if not self.data.empty else [],
             "execution_time": self.execution_time,
             "success": self.success,
@@ -123,10 +128,15 @@ class BaseConnector(ABC):
                 query = f"SELECT * FROM (SELECT * FROM your_table LIMIT {limit}) AS preview"
             
             result = await self.execute_query(query)
-            
+
+            from app.utils.json_utils import convert_decimals
+
+            data_dict = result.data.to_dict(orient="records")
+            data_dict = convert_decimals(data_dict)
+
             return {
                 "columns": result.data.columns.tolist(),
-                "data": result.data.to_dict(orient="records"),
+                "data": data_dict,
                 "row_count": len(result.data),
                 "total_columns": len(result.data.columns),
                 "data_types": result.data.dtypes.astype(str).to_dict(),

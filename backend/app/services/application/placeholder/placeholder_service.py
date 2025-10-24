@@ -80,192 +80,226 @@ class PlaceholderApplicationService:
     
     async def analyze_placeholder(self, request: PlaceholderAnalysisRequest) -> AsyncIterator[Dict[str, Any]]:
         """
-        分析占位符 - 使用任务验证智能模式进行业务流程编排
+        分析占位符 - 使用ReAct模式让Agent自主使用工具生成SQL
 
-        结合SQL验证和PTAV回退机制，实现自动化运维
+        ReAct模式：Agent自己决定：
+        1. 何时调用schema.list_tables获取表
+        2. 何时调用schema.list_columns获取列信息
+        3. 何时生成SQL
+        4. 何时调用sql.validate验证
+        5. 何时调用sql.execute测试
+        6. 何时调用sql.refine优化
         """
         await self.initialize()
 
         yield {
             "type": "analysis_started",
             "placeholder_id": request.placeholder_id,
-            "mode": "task_validation_intelligent",
+            "mode": "react_autonomous",
             "timestamp": datetime.now().isoformat()
         }
 
         try:
-            # 1. 构建Agent输入
-            from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext
+            # 构建数据源配置
+            data_source_config = self._build_data_source_config(request)
 
-            # 提取数据源信息构建Schema
-            schema_info = SchemaInfo()
-            if request.data_source_info:
-                schema_info.database_name = request.data_source_info.get('database_name')
-                schema_info.host = request.data_source_info.get('host')
-                schema_info.port = request.data_source_info.get('port')
-                schema_info.username = request.data_source_info.get('username')
-                schema_info.password = request.data_source_info.get('password')
-
-            semantic_type = None
+            # 构建ReAct任务描述
+            time_window_desc = ""
             if isinstance(request.context, dict):
-                schema_ctx = request.context.get("schema_context", {})
-                if isinstance(schema_ctx, dict):
-                    schema_info.tables = schema_ctx.get("available_tables", []) or []
-                    schema_info.columns = schema_ctx.get("columns", {}) or {}
-                semantic_type = request.context.get("semantic_type")
+                time_window = request.context.get("time_window") or request.context.get("time_context")
+                if time_window:
+                    import json
+                    time_window_desc = f"\n- 时间范围: {json.dumps(time_window, ensure_ascii=False)}"
 
-            # 构建占位符信息
-            placeholder_granularity = "daily"
-            if isinstance(request.context, dict):
-                placeholder_granularity = (
-                    request.context.get("business_requirements", {}).get("time_sensitivity")
-                    or request.context.get("time_granularity")
-                    or "daily"
-                )
+            # 构建Agent任务提示
+            task_prompt = f"""
+你是一个SQL生成专家Agent。请使用可用的工具完成以下任务：
 
-            placeholder_info = PlaceholderSpec(
-                id=request.placeholder_id,
-                description=f"{request.business_command} - {request.requirements}",
-                type=semantic_type or "placeholder_analysis",
-                granularity=placeholder_granularity
-            )
+## 任务目标
+生成一个高质量的SQL查询来满足以下业务需求：
 
-            # 构建数据源配置 - 确保包含ID让executor能加载完整配置
-            data_source_config = None
-            if request.data_source_info:
-                ds_config = dict(request.data_source_info)
-                ds_id = ds_config.get('id') or ds_config.get('data_source_id')
-                if ds_id:
-                    ds_config.setdefault("id", str(ds_id))
-                    ds_config.setdefault("data_source_id", str(ds_id))
-                if semantic_type:
-                    ds_config.setdefault("semantic_type", semantic_type)
-                if isinstance(request.context, dict):
-                    if request.context.get("business_requirements"):
-                        ds_config.setdefault("business_requirements", request.context.get("business_requirements"))
-                    schema_ctx = request.context.get("schema_context", {})
-                    if isinstance(schema_ctx, dict) and schema_ctx.get("available_tables"):
-                        ds_config.setdefault("available_tables", schema_ctx.get("available_tables"))
-                data_source_config = ds_config
+### 业务需求
+{request.business_command}
 
-            enriched_task_context = {
-                "placeholder_id": request.placeholder_id,
-                "business_command": request.business_command,
-                "requirements": request.requirements,
-                "target_objective": request.target_objective,
-                "context": request.context,
-                "data_source_info": request.data_source_info,
-                "analysis_type": "placeholder_service",
-            }
-            if isinstance(request.context, dict):
-                for key in [
-                    "semantic_type",
-                    "business_requirements",
-                    "placeholder_context_snippet",
-                    "schema_context",
-                    "template_context",
-                    "business_context",
-                    "planning_hints",
-                    "top_n",
-                    "schedule",
-                    "time_window",
-                    "time_context",
-                    "cron_expression",
-                    "time_range",
-                    "user_id",
-                ]:
-                    value = request.context.get(key)
-                    if value is not None:
-                        enriched_task_context[key] = value
+### 具体目标
+{request.target_objective or request.requirements}
+{time_window_desc}
+
+### 数据源信息
+- 数据源ID: {data_source_config.get('data_source_id', 'N/A')}
+- 数据库: {data_source_config.get('database_name', 'N/A')}
+
+## ⚠️ 重要约束
+1. **必须包含时间过滤条件** - 这是基于时间周期的统计查询
+2. **只能使用实际存在的表和列** - 必须先探索schema
+3. **必须验证SQL正确性** - 确保SQL可执行
+4. **使用占位符格式** - 时间过滤使用 '{{{{start_date}}}}'
+
+## 可用工具
+你有以下工具可用：
+1. **schema.list_tables** - 列出数据源中的所有表
+2. **schema.list_columns** - 获取指定表的列信息
+3. **sql.validate** - 验证SQL的正确性
+4. **sql.execute** - 执行SQL进行测试（使用LIMIT限制）
+5. **sql.refine** - 基于错误信息优化SQL
+
+## 推荐流程
+1. 使用 schema.list_tables 查看所有可用的表
+2. 根据业务需求选择相关的表
+3. 使用 schema.list_columns 获取这些表的列信息
+4. 生成SQL查询（确保包含时间过滤）
+5. 使用 sql.validate 验证SQL
+6. 如果验证失败，使用 sql.refine 优化
+7. 使用 sql.execute 测试SQL（可选）
+
+## 期望输出
+最终返回一个JSON格式的结果：
+{{
+    "sql": "SELECT ... WHERE dt = '{{{{start_date}}}}'",
+    "reasoning": "解释为什么这个SQL满足业务需求",
+    "tables_used": ["table1", "table2"],
+    "has_time_filter": true,
+    "time_column_used": "dt"
+}}
+
+现在开始执行任务，使用工具进行推理和行动(ReAct)！
+"""
+
+            logger.info("🤖 启动ReAct模式 - Agent将自主使用工具生成SQL")
+
+            # 构建AgentInput
+            from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
 
             agent_input = AgentInput(
-                user_prompt=f"占位符分析: {request.business_command}\n需求: {request.requirements}\n目标: {request.target_objective}",
-                placeholder=placeholder_info,
-                schema=schema_info,
+                user_prompt=task_prompt,
+                placeholder=PlaceholderSpec(
+                    id=request.placeholder_id,
+                    description=request.business_command,
+                    type="sql_generation_react",
+                    granularity="daily"
+                ),
+                schema=None,  # Agent自己探索schema
                 context=TaskContext(
                     task_time=int(datetime.now().timestamp()),
                     timezone="Asia/Shanghai"
                 ),
                 data_source=data_source_config,
-                task_driven_context=enriched_task_context,
-                user_id=self.user_id  # 🔧 添加 user_id
+                task_driven_context={
+                    "mode": "react",
+                    "business_command": request.business_command,
+                    "requirements": request.requirements,
+                    "target_objective": request.target_objective,
+                    "enable_tools": True  # 明确启用工具使用
+                },
+                user_id=self.user_id
+            )
+
+            # 调用Agent执行ReAct
+            logger.info("📞 调用Agent执行ReAct模式...")
+            result = await self.agent_service.execute(agent_input)
+
+            if not result.success:
+                raise RuntimeError(f"Agent执行失败: {result.error}")
+
+            # 解析Agent的结果
+            output = result.result
+            generated_sql = None
+            reasoning = ""
+            metadata = {}
+
+            if isinstance(output, dict):
+                # 检查是否是错误响应
+                if output.get("success") is False or ("error" in output and "sql" not in output):
+                    error_msg = output.get("error", "Agent返回错误格式")
+                    logger.error(f"❌ Agent返回错误响应: {error_msg}, 完整输出: {output}")
+                    raise RuntimeError(f"Agent执行失败: {error_msg}")
+
+                generated_sql = output.get("sql", "")
+                reasoning = output.get("reasoning", "")
+                metadata = {
+                    "tables_used": output.get("tables_used", []),
+                    "has_time_filter": output.get("has_time_filter", False),
+                    "time_column_used": output.get("time_column_used", "")
+                }
+            elif isinstance(output, str):
+                try:
+                    import json
+                    parsed = json.loads(output)
+
+                    # 检查是否是错误响应
+                    if parsed.get("success") is False or ("error" in parsed and "sql" not in parsed):
+                        error_msg = parsed.get("error", "Agent返回错误格式")
+                        raise RuntimeError(f"Agent执行失败: {error_msg}")
+
+                    # ✅ 修复：如果没有sql键，返回空字符串而不是整个JSON
+                    generated_sql = parsed.get("sql", "")
+                    reasoning = parsed.get("reasoning", "")
+                    metadata = {
+                        "tables_used": parsed.get("tables_used", []),
+                        "has_time_filter": parsed.get("has_time_filter", False),
+                        "time_column_used": parsed.get("time_column_used", "")
+                    }
+                except json.JSONDecodeError:
+                    # 不是JSON，可能是直接的SQL语句
+                    generated_sql = output
+                    reasoning = "Agent自主生成"
+                except RuntimeError:
+                    # 重新抛出我们的错误检查
+                    raise
+
+            # 验证生成的SQL
+            if not generated_sql or not generated_sql.strip():
+                raise RuntimeError("Agent未能生成有效的SQL")
+
+            # 额外验证：确保是SQL语句而不是JSON
+            sql_stripped = generated_sql.strip()
+            if sql_stripped.startswith("{") and sql_stripped.endswith("}"):
+                # 看起来是JSON而不是SQL
+                try:
+                    json.loads(sql_stripped)
+                    raise RuntimeError("Agent返回的是JSON而不是SQL语句")
+                except json.JSONDecodeError:
+                    # 不是有效JSON，可能是特殊的SQL，允许通过
+                    pass
+
+            # 验证是否以SELECT/WITH开头（基本的SQL检查）
+            sql_upper = sql_stripped.upper()
+            if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
+                raise RuntimeError(f"生成的内容不是有效的SQL查询: {sql_stripped[:100]}...")
+
+            logger.info(f"✅ Agent生成SQL完成: {generated_sql[:100]}...")
+
+            # 构建结果
+            metadata.update({
+                "generation_method": "react_autonomous",
+                "reasoning": reasoning,
+                "agent_metadata": result.metadata,
+                "generated_at": datetime.now().isoformat()
+            })
+
+            sql_result = SQLGenerationResult(
+                sql_query=generated_sql,
+                validation_status="valid",
+                optimization_applied=True,
+                estimated_performance="good",
+                metadata=metadata
             )
 
             yield {
-                "type": "agent_input_prepared",
+                "type": "sql_generation_complete",
                 "placeholder_id": request.placeholder_id,
+                "content": sql_result,
+                "generation_method": "react_autonomous",
                 "timestamp": datetime.now().isoformat()
             }
-
-            # 2. 使用任务验证智能模式执行分析
-            result = await self.agent_service.execute_task_validation(agent_input)
-            logger.info(f"🤖 Agent执行结果: success={result.success}, result_type={type(result.result)}, result_preview={str(result.result)[:200]}")
-
-            # 3. 构建结果
-            if result.success:
-                sql_result = SQLGenerationResult(
-                    sql_query=result.result,
-                    validation_status="valid",
-                    optimization_applied=True,
-                    estimated_performance="good",
-                    metadata={
-                        "generation_method": result.metadata.get('generation_method', 'validation'),
-                        "time_updated": result.metadata.get('time_updated', False),
-                        "fallback_reason": result.metadata.get('fallback_reason'),
-                        "validation_info": result.metadata,
-                        "confidence_level": 0.9,
-                        "generated_at": datetime.now().isoformat()
-                    }
-                )
-
-                yield {
-                    "type": "sql_generation_complete",
-                    "placeholder_id": request.placeholder_id,
-                    "content": sql_result,
-                    "generation_method": result.metadata.get('generation_method', 'validation'),
-                    "time_updated": result.metadata.get('time_updated', False),
-                    "timestamp": datetime.now().isoformat()
-                }
-            else:
-                # 分析失败
-                error_result = SQLGenerationResult(
-                    sql_query="",
-                    validation_status="failed",
-                    optimization_applied=False,
-                    estimated_performance="poor",
-                    metadata={
-                        "error": result.metadata.get('error', '分析失败'),
-                        "validation_info": result.metadata,
-                        "generated_at": datetime.now().isoformat()
-                    }
-                )
-
-                yield {
-                    "type": "sql_generation_failed",
-                    "placeholder_id": request.placeholder_id,
-                    "content": error_result,
-                    "error": result.metadata.get('error', '分析失败'),
-                    "timestamp": datetime.now().isoformat()
-                }
 
         except Exception as e:
             logger.error(f"占位符分析失败: {e}")
 
-            error_result = SQLGenerationResult(
-                sql_query="",
-                validation_status="error",
-                optimization_applied=False,
-                estimated_performance="poor",
-                metadata={
-                    "error": str(e),
-                    "generated_at": datetime.now().isoformat()
-                }
-            )
-
+            # ✅ 统一使用 sql_generation_failed 事件，方便下游处理
             yield {
-                "type": "analysis_error",
+                "type": "sql_generation_failed",
                 "placeholder_id": request.placeholder_id,
-                "content": error_result,
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
@@ -1225,6 +1259,563 @@ class PlaceholderApplicationService:
         except Exception as e:
             logger.error(f"获取数据源信息失败: {e}")
             return {}
+
+    # ==================== 多步骤SQL生成辅助方法 ====================
+
+    def _build_data_source_config(self, request: PlaceholderAnalysisRequest) -> Dict[str, Any]:
+        """构建数据源配置"""
+        if not request.data_source_info:
+            return {}
+
+        ds_config = dict(request.data_source_info)
+        ds_id = ds_config.get('id') or ds_config.get('data_source_id')
+        if ds_id:
+            ds_config.setdefault("id", str(ds_id))
+            ds_config.setdefault("data_source_id", str(ds_id))
+
+        return ds_config
+
+    async def _discover_schema(self, data_source_config: Dict[str, Any], request: PlaceholderAnalysisRequest):
+        """
+        Schema Discovery - 探索数据库schema
+
+        步骤：
+        1. 获取所有表
+        2. 使用Agent分析业务需求，选择相关表
+        3. 获取相关表的列信息
+        """
+        from app.services.infrastructure.agents.tools.schema_tools import SchemaListTablesTool, SchemaListColumnsTool
+        from app.services.infrastructure.agents.types import SchemaInfo
+
+        # 1. 获取所有表
+        schema_list_tables_tool = SchemaListTablesTool(container=self.container)
+        tables_result = await schema_list_tables_tool.execute({
+            "data_source": data_source_config
+        })
+
+        if not tables_result.get("success"):
+            raise RuntimeError(f"获取表列表失败: {tables_result.get('error')}")
+
+        all_tables = tables_result.get("tables", [])
+        logger.info(f"📊 发现 {len(all_tables)} 个表: {all_tables[:10]}...")
+
+        # 2. 选择相关表（简化版：使用关键词匹配或使用所有表）
+        relevant_tables = await self._select_relevant_tables(
+            all_tables,
+            request.business_command,
+            request.target_objective or request.requirements
+        )
+
+        logger.info(f"🎯 选择了 {len(relevant_tables)} 个相关表: {relevant_tables}")
+
+        # 3. 获取相关表的列信息
+        schema_list_columns_tool = SchemaListColumnsTool(container=self.container)
+        columns_result = await schema_list_columns_tool.execute({
+            "data_source": data_source_config,
+            "tables": relevant_tables
+        })
+
+        if not columns_result.get("success"):
+            raise RuntimeError(f"获取列信息失败: {columns_result.get('error')}")
+
+        # 构建SchemaInfo
+        column_details = columns_result.get("column_details", {})
+        schema_info = SchemaInfo(
+            tables=relevant_tables,
+            columns={
+                table: [col.get("name") for col in cols if col.get("name")]
+                for table, cols in column_details.items()
+            }
+        )
+
+        return schema_info
+
+    async def _select_relevant_tables(
+        self,
+        all_tables: List[str],
+        business_command: str,
+        target_objective: str
+    ) -> List[str]:
+        """
+        选择相关表
+
+        使用关键词匹配选择与业务需求相关的表
+        """
+        combined_text = f"{business_command} {target_objective}".lower()
+
+        # 计算表的相关性得分
+        scored_tables = []
+        for table in all_tables:
+            score = 0
+            table_lower = table.lower()
+
+            # 完全匹配
+            if table_lower in combined_text:
+                score += 10
+
+            # 部分匹配
+            for word in table_lower.split('_'):
+                if len(word) > 2 and word in combined_text:
+                    score += 1
+
+            if score > 0:
+                scored_tables.append((table, score))
+
+        # 排序并取前5个
+        scored_tables.sort(key=lambda x: x[1], reverse=True)
+        selected = [table for table, _ in scored_tables[:5]]
+
+        # 如果没有匹配到，使用前3个表
+        if not selected and all_tables:
+            selected = all_tables[:3]
+
+        return selected or all_tables
+
+    async def _generate_sql_with_schema(
+        self,
+        request: PlaceholderAnalysisRequest,
+        schema_info,
+        data_source_config: Dict[str, Any]
+    ) -> Tuple[str, str]:
+        """
+        基于精确schema生成SQL
+
+        返回: (sql, reasoning)
+        """
+        import json
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
+
+        # 构建schema提示
+        schema_prompt = self._build_schema_prompt(schema_info)
+
+        # 识别时间字段
+        time_columns = self._identify_time_columns(schema_info)
+
+        # 构建时间信息和要求
+        time_window = None
+        time_requirement = ""
+        if isinstance(request.context, dict):
+            time_window = request.context.get("time_window") or request.context.get("time_context")
+
+        if time_columns:
+            time_col_list = ", ".join(time_columns)
+            if time_window:
+                time_requirement = f"""
+## ⚠️ 时间过滤要求（必须遵守）
+**这是一个基于时间周期的统计查询，必须包含时间过滤条件！**
+
+- 可用的时间字段: {time_col_list}
+- 时间范围: {json.dumps(time_window, ensure_ascii=False) if time_window else "周期内数据"}
+- **必须在WHERE子句中使用时间字段进行过滤**
+- 推荐使用占位符格式: WHERE {time_columns[0]} = '{{{{start_date}}}}'
+- 或使用BETWEEN: WHERE {time_columns[0]} BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'
+"""
+            else:
+                time_requirement = f"""
+## ⚠️ 时间过滤要求（必须遵守）
+**这是一个基于时间周期的统计查询，必须包含时间过滤条件！**
+
+- 可用的时间字段: {time_col_list}
+- **必须在WHERE子句中使用时间字段进行过滤**
+- 使用占位符格式: WHERE {time_columns[0]} = '{{{{start_date}}}}'
+"""
+
+        # 构建prompt
+        user_prompt = f"""
+请基于以下信息生成SQL查询：
+
+## 业务需求
+{request.business_command}
+
+## 目标
+{request.target_objective or request.requirements}
+
+## 可用的数据库Schema（请严格使用以下表和列）
+{schema_prompt}
+{time_requirement}
+
+## 要求
+1. **只能使用上述Schema中存在的表和列**
+2. 列名必须完全匹配
+3. 生成标准的SQL查询语句
+4. **✅ 必须包含时间过滤条件**（使用上述时间字段）
+5. 返回JSON格式: {{"sql": "SELECT ...", "reasoning": "解释SQL生成的思路", "time_filter_applied": true}}
+
+请生成SQL：
+"""
+
+        # 构建AgentInput
+        agent_input = AgentInput(
+            user_prompt=user_prompt,
+            placeholder=PlaceholderSpec(
+                id=request.placeholder_id,
+                description=request.business_command,
+                type="sql_generation",
+                granularity="daily"
+            ),
+            schema=schema_info,
+            context=TaskContext(
+                task_time=int(datetime.now().timestamp()),
+                timezone="Asia/Shanghai"
+            ),
+            data_source=data_source_config,
+            task_driven_context={
+                "stage": "sql_generation",
+                "business_command": request.business_command,
+                "requirements": request.requirements,
+                "target_objective": request.target_objective
+            },
+            user_id=self.user_id
+        )
+
+        # 调用Agent生成SQL
+        result = await self.agent_service.execute(agent_input)
+
+        if not result.success:
+            raise RuntimeError(f"SQL生成失败: {result.error}")
+
+        # 解析结果
+        output = result.result
+        sql = ""
+        reasoning = ""
+
+        if isinstance(output, dict):
+            sql = output.get("sql", "")
+            reasoning = output.get("reasoning", "")
+        elif isinstance(output, str):
+            try:
+                parsed = json.loads(output)
+                sql = parsed.get("sql", output)
+                reasoning = parsed.get("reasoning", "")
+            except:
+                sql = output
+                reasoning = "直接生成"
+
+        return sql, reasoning
+
+    def _identify_time_columns(self, schema_info) -> List[str]:
+        """
+        识别Schema中的时间字段
+
+        常见时间字段名模式:
+        - dt, date, time, datetime, timestamp
+        - created_at, updated_at, create_time, update_time
+        - *_date, *_time, *_at
+        """
+        time_patterns = [
+            'dt', 'date', 'time', 'datetime', 'timestamp',
+            'created', 'updated', 'deleted',
+            'create_time', 'update_time', 'delete_time',
+            'created_at', 'updated_at', 'deleted_at',
+            'start_date', 'end_date', 'start_time', 'end_time'
+        ]
+
+        time_columns = []
+        for table, columns in schema_info.columns.items():
+            for col in columns:
+                col_lower = col.lower()
+                # 完全匹配
+                if col_lower in time_patterns:
+                    time_columns.append(col)
+                # 后缀匹配
+                elif any(col_lower.endswith(suffix) for suffix in ['_date', '_time', '_at', '_datetime', '_timestamp']):
+                    time_columns.append(col)
+                # 前缀匹配
+                elif any(col_lower.startswith(prefix) for prefix in ['date_', 'time_', 'dt_']):
+                    time_columns.append(col)
+
+        # 去重并保持顺序
+        seen = set()
+        unique_time_columns = []
+        for col in time_columns:
+            if col not in seen:
+                seen.add(col)
+                unique_time_columns.append(col)
+
+        return unique_time_columns
+
+    def _build_schema_prompt(self, schema_info) -> str:
+        """构建Schema提示文本"""
+        lines = []
+
+        for table in schema_info.tables:
+            columns = schema_info.columns.get(table, [])
+            if columns:
+                col_list = ", ".join(columns)
+                lines.append(f"### 表: {table}")
+                lines.append(f"列: {col_list}")
+                lines.append("")
+
+        return "\n".join(lines)
+
+    async def _validate_sql(self, sql: str, schema_info, require_time_filter: bool = True) -> Dict[str, Any]:
+        """
+        验证SQL正确性
+
+        检查：
+        1. SQL是否为空
+        2. 是否包含SELECT/WITH语句
+        3. 是否使用了不存在的列（基本检查）
+        4. **是否包含时间过滤条件**（重要！）
+        """
+        import re
+
+        validation_result = {
+            "is_valid": True,
+            "errors": [],
+            "warnings": [],
+            "suggestions": [],
+            "has_time_filter": False
+        }
+
+        # 1. 检查SQL是否为空
+        if not sql or not sql.strip():
+            validation_result["is_valid"] = False
+            validation_result["errors"].append("SQL为空")
+            return validation_result
+
+        # 2. 基本语法检查
+        sql_upper = sql.upper()
+        if not any(keyword in sql_upper for keyword in ["SELECT", "WITH"]):
+            validation_result["is_valid"] = False
+            validation_result["errors"].append("SQL必须包含SELECT或WITH语句")
+
+        # 3. 获取所有有效列名
+        all_valid_columns = set()
+        for columns in schema_info.columns.values():
+            all_valid_columns.update(columns)
+
+        # 4. 检查是否使用了不存在的列（简化检查）
+        # 提取潜在的列名
+        potential_columns = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', sql)
+
+        # SQL关键字
+        sql_keywords = {
+            'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE',
+            'ORDER', 'BY', 'GROUP', 'HAVING', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER',
+            'AS', 'ON', 'LIMIT', 'OFFSET', 'COUNT', 'SUM', 'AVG', 'MAX', 'MIN',
+            'DISTINCT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'NULL', 'IS', 'ASC', 'DESC',
+            'UNION', 'ALL', 'EXISTS', 'ANY', 'SOME', 'CAST', 'CONVERT'
+        }
+
+        # 检查未知列
+        unknown_columns = []
+        for col in potential_columns:
+            if col.upper() not in sql_keywords and col not in all_valid_columns:
+                # 进一步检查是否真的在SQL中作为列使用
+                pattern = rf'\b{re.escape(col)}\b\s*(=|<|>|!=|IN|BETWEEN|LIKE|,|\))'
+                if re.search(pattern, sql, re.IGNORECASE):
+                    unknown_columns.append(col)
+
+        if unknown_columns:
+            validation_result["is_valid"] = False
+            validation_result["errors"].append(f"使用了不存在的列: {', '.join(unknown_columns)}")
+            validation_result["suggestions"].append(
+                f"请检查列名，可用的列包括: {', '.join(sorted(list(all_valid_columns))[:20])}..."
+            )
+
+        # 5. ⚠️ 检查时间过滤条件（关键！）
+        if require_time_filter:
+            time_columns = self._identify_time_columns(schema_info)
+
+            if time_columns:
+                # 检查SQL中是否使用了任何时间字段
+                has_time_filter = False
+                used_time_column = None
+
+                for time_col in time_columns:
+                    # 检查WHERE子句中是否使用了时间字段
+                    # 匹配模式: time_col = / time_col BETWEEN / time_col >= / time_col <=
+                    patterns = [
+                        rf'\bWHERE\b.*\b{re.escape(time_col)}\b\s*=',
+                        rf'\bWHERE\b.*\b{re.escape(time_col)}\b\s*BETWEEN',
+                        rf'\bWHERE\b.*\b{re.escape(time_col)}\b\s*>=',
+                        rf'\bWHERE\b.*\b{re.escape(time_col)}\b\s*<=',
+                        rf'\bAND\b.*\b{re.escape(time_col)}\b\s*=',
+                        rf'\bAND\b.*\b{re.escape(time_col)}\b\s*BETWEEN',
+                        rf'\bAND\b.*\b{re.escape(time_col)}\b\s*>=',
+                        rf'\bAND\b.*\b{re.escape(time_col)}\b\s*<=',
+                    ]
+
+                    for pattern in patterns:
+                        if re.search(pattern, sql, re.IGNORECASE):
+                            has_time_filter = True
+                            used_time_column = time_col
+                            break
+
+                    if has_time_filter:
+                        break
+
+                validation_result["has_time_filter"] = has_time_filter
+                validation_result["used_time_column"] = used_time_column
+
+                if not has_time_filter:
+                    validation_result["is_valid"] = False
+                    validation_result["errors"].append("⚠️ 缺少时间过滤条件！这是基于时间周期的统计查询")
+                    validation_result["suggestions"].append(
+                        f"请添加时间过滤，可用的时间字段: {', '.join(time_columns)}"
+                    )
+                    validation_result["suggestions"].append(
+                        f"示例: WHERE {time_columns[0]} = '{{{{start_date}}}}'"
+                    )
+                    validation_result["suggestions"].append(
+                        f"或: WHERE {time_columns[0]} BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'"
+                    )
+
+        return validation_result
+
+    async def _refine_sql_add_time_filter(
+        self,
+        original_sql: str,
+        schema_info,
+        validation_result: Dict[str, Any],
+        request: PlaceholderAnalysisRequest
+    ) -> Tuple[str, str]:
+        """
+        优化SQL：添加时间过滤条件
+
+        返回: (refined_sql, reasoning)
+        """
+        import json
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
+
+        time_columns = self._identify_time_columns(schema_info)
+
+        if not time_columns:
+            return original_sql, "未找到时间字段"
+
+        # 构建refinement prompt
+        errors = validation_result.get("errors", [])
+        suggestions = validation_result.get("suggestions", [])
+
+        refinement_prompt = f"""
+你之前生成的SQL缺少时间过滤条件，需要优化：
+
+## 原始SQL
+```sql
+{original_sql}
+```
+
+## 问题
+{json.dumps(errors, ensure_ascii=False)}
+
+## 建议
+{json.dumps(suggestions, ensure_ascii=False)}
+
+## 可用的时间字段
+{', '.join(time_columns)}
+
+## Schema信息
+{self._build_schema_prompt(schema_info)}
+
+## 要求
+1. 在原SQL基础上添加时间过滤条件
+2. 使用WHERE子句或在现有WHERE子句中添加AND条件
+3. 推荐使用第一个时间字段: {time_columns[0]}
+4. 使用占位符格式: WHERE {time_columns[0]} = '{{{{start_date}}}}'
+5. 保持原SQL的其他逻辑不变
+6. 返回JSON格式: {{"sql": "优化后的SQL", "reasoning": "说明添加了什么时间过滤条件"}}
+
+请优化SQL：
+"""
+
+        # 构建AgentInput
+        agent_input = AgentInput(
+            user_prompt=refinement_prompt,
+            placeholder=PlaceholderSpec(
+                id=request.placeholder_id,
+                description="SQL优化 - 添加时间过滤",
+                type="sql_refinement",
+                granularity="daily"
+            ),
+            schema=schema_info,
+            context=TaskContext(
+                task_time=int(datetime.now().timestamp()),
+                timezone="Asia/Shanghai"
+            ),
+            data_source=self._build_data_source_config(request),
+            task_driven_context={
+                "stage": "sql_refinement",
+                "refinement_type": "add_time_filter",
+                "original_sql": original_sql
+            },
+            user_id=self.user_id
+        )
+
+        # 调用Agent优化SQL
+        try:
+            result = await self.agent_service.execute(agent_input)
+
+            if not result.success:
+                return original_sql, f"优化失败: {result.error}"
+
+            # 解析结果
+            output = result.result
+            refined_sql = ""
+            reasoning = ""
+
+            if isinstance(output, dict):
+                refined_sql = output.get("sql", "")
+                reasoning = output.get("reasoning", "")
+            elif isinstance(output, str):
+                try:
+                    parsed = json.loads(output)
+                    refined_sql = parsed.get("sql", output)
+                    reasoning = parsed.get("reasoning", "")
+                except:
+                    refined_sql = output
+                    reasoning = "自动添加时间过滤"
+
+            return refined_sql if refined_sql else original_sql, reasoning
+
+        except Exception as e:
+            logger.error(f"SQL refinement失败: {e}")
+            return original_sql, f"优化异常: {str(e)}"
+
+    async def _test_sql(self, sql: str, data_source_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        测试SQL执行
+
+        在数据库上执行SQL（LIMIT 5小样本测试）
+        """
+        # 添加LIMIT以限制返回结果
+        test_sql = sql
+        if "LIMIT" not in test_sql.upper():
+            test_sql += " LIMIT 5"
+
+        # 获取数据源adapter
+        ds_adapter = None
+        for attr in ("data_source", "data_source_service"):
+            if hasattr(self.container, attr):
+                ds_adapter = getattr(self.container, attr)
+                break
+
+        if not ds_adapter:
+            return {
+                "success": False,
+                "error": "数据源adapter不可用"
+            }
+
+        # 执行测试查询
+        try:
+            test_result = await ds_adapter.run_query(
+                data_source_config,
+                test_sql,
+                limit=5
+            )
+
+            return {
+                "success": test_result.get("success", False),
+                "error": test_result.get("error"),
+                "row_count": len(test_result.get("rows", [])) if test_result.get("success") else 0,
+                "columns": test_result.get("columns", [])
+            }
+        except Exception as e:
+            logger.error(f"SQL测试失败: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
 
 # 全局服务实例管理

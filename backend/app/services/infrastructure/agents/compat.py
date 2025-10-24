@@ -63,10 +63,17 @@ def _build_context_block(agent_input: AgentInput) -> Dict[str, Any]:
     context: Dict[str, Any] = {}
 
     context["placeholder"] = _serialize(agent_input.placeholder)
-    context["schema"] = {
-        "tables": list(agent_input.schema.tables),
-        "columns": _serialize(agent_input.schema.columns),
-    }
+
+    # ReAct模式支持：schema可以为None，Agent将自主使用工具探索schema
+    if agent_input.schema is not None:
+        context["schema"] = {
+            "tables": list(agent_input.schema.tables),
+            "columns": _serialize(agent_input.schema.columns),
+        }
+    else:
+        # ReAct模式：schema=None表示Agent将使用schema.list_tables等工具自主探索
+        context["schema"] = None
+
     context["task_context"] = _serialize(agent_input.context)
     context["constraints"] = _serialize(agent_input.constraints)
     if agent_input.data_source:

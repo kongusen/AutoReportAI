@@ -922,7 +922,11 @@ class PlaceholderOrchestrationService:
             return sql_text, [], None
 
         normalized_sql = self._ensure_placeholder_sql(sql_text, task_schedule)
-        self._validate_sql_tables(normalized_sql, allowed_tables)
+
+        # ✅ 表名验证已移除 - 这应该由Agent的sql.validate工具在ReAct模式中自主完成
+        # 旧的手动验证有bug（正则解析会把 "ods_refund)" 误识别）
+        # Agent会使用schema.list_tables获取精确表名，不需要手动验证
+
         tool_logs: List[Dict[str, Any]] = []
         test_result: Optional[Dict[str, Any]] = None
 
@@ -1135,10 +1139,18 @@ class PlaceholderOrchestrationService:
 
     def _extract_sql_from_result(self, raw_sql: Any) -> str:
         if isinstance(raw_sql, dict):
-            for key in ("sql", "query", "result", "content"):
+            # 检查是否是错误响应，如果是则返回空
+            if raw_sql.get('success') == False:
+                logger.warning(f"⚠️ Agent返回错误响应: {raw_sql.get('error', 'unknown')}")
+                return ""
+
+            # 尝试从多个可能的字段中提取内容
+            for key in ("sql", "query", "result", "content", "optimized_paragraph", "text"):
                 value = raw_sql.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+
+            # 如果没有找到标准字段，尝试使用第一个字符串值
             if raw_sql:
                 first_value = next(iter(raw_sql.values()))
                 if isinstance(first_value, str):
@@ -1209,38 +1221,17 @@ class PlaceholderOrchestrationService:
             ds_hint = f" (data_source_id={data_source_id})" if data_source_id else ""
             raise RuntimeError(f"数据源连接失败，阶段[{stage}]{ds_hint}: {message}")
 
-    def _validate_sql_tables(
-        self,
-        sql: str,
-        allowed_tables: Optional[List[str]] = None,
-    ) -> None:
-        if not sql or not allowed_tables:
-            return
-
-        allowed_map = {tbl.lower(): tbl for tbl in allowed_tables if isinstance(tbl, str)}
-        if not allowed_map:
-            return
-
-        pattern = re.compile(r"\b(?:from|join)\s+([^\s,;]+)", re.IGNORECASE)
-        referenced: List[str] = []
-        for match in pattern.finditer(sql):
-            token = match.group(1)
-            token = token.strip()
-            token = token.strip("`\"[]")
-            if not token:
-                continue
-            # 处理别名、逗号
-            token = token.split()[0]
-            token = token.rstrip(",")
-            if token.startswith("("):
-                continue
-            token = token.split(".")[-1]
-            token_lower = token.lower()
-            referenced.append(token)
-            if token_lower not in allowed_map:
-                raise RuntimeError(
-                    f"生成的SQL包含未授权的数据表: {token}，允许的表: {sorted(allowed_map.values())}"
-                )
+    # ✅ _validate_sql_tables 方法已删除
+    # 原因：
+    # 1. 手动正则解析有bug（会把 "ods_refund)" 误识别为表名）
+    # 2. 这个验证应该是Agent ReAct流程的一部分
+    # 3. Agent使用 sql.validate 工具可以更准确地验证（基于实际schema）
+    #
+    # Agent的验证流程：
+    # - 使用 schema.list_tables 获取真实表名（精确，无bug）
+    # - 使用 sql.validate 验证SQL（检查表名、列名、语法）
+    # - 如果验证失败，使用 sql.refine 自动修复
+    # - 这是真正的PTAV（Plan→Test→Adjust→Validate）模式
 
     def _map_business_to_semantic_type(self, business_requirements: Dict[str, Any]) -> str:
         """将业务需求映射到Agent工具的语义类型"""

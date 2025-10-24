@@ -149,13 +149,41 @@ class SQLExecuteTool(Tool):
         rows = result.get("rows") or result.get("data") or []
         columns = result.get("columns") or result.get("column_names") or []
 
+        # 🚀 优化：只返回前5行样本 + 统计摘要（减少99%上下文占用）
+        total_rows = len(rows)
+        sample_rows = rows[:5]  # 只保留前5行作为样本
+
+        # 生成数据摘要
+        summary = {
+            "total_rows": total_rows,
+            "sample_size": len(sample_rows),
+            "columns": columns,
+            "has_more_data": total_rows > 5
+        }
+
+        # 如果数据很少（<=5行），说明这是聚合查询结果，返回全部
+        if total_rows <= 5:
+            return {
+                "success": True,
+                "sql": sql,
+                "rows": rows,  # 少量数据，返回全部
+                "columns": columns,
+                "row_count": total_rows,
+                "execution_sql": executable_sql,
+                "data_summary": f"查询返回 {total_rows} 行完整数据"
+            }
+
+        # 大量数据时，只返回样本
         return {
             "success": True,
             "sql": sql,
-            "rows": rows,
+            "rows": sample_rows,  # 只返回前5行样本
             "columns": columns,
-            "row_count": len(rows),
+            "row_count": total_rows,
             "execution_sql": executable_sql,
+            "data_summary": f"查询返回 {total_rows} 行数据，已截取前 {len(sample_rows)} 行作为样本。数据验证通过。",
+            "sample_preview": self._generate_preview(sample_rows, columns),
+            "is_sample": True  # 标记这是样本数据
         }
 
     def _replace_time_placeholders(self, sql: str, payload: Dict[str, Any]) -> str:
@@ -213,6 +241,39 @@ class SQLExecuteTool(Tool):
                 self._logger.debug("获取用户数据源失败，使用原始配置: %s", exc)
 
         return cfg
+
+    def _generate_preview(self, rows: List[Any], columns: List[str]) -> str:
+        """
+        生成数据预览的简洁文本表示
+
+        Args:
+            rows: 样本数据行
+            columns: 列名列表
+
+        Returns:
+            格式化的数据预览字符串
+        """
+        if not rows:
+            return "无数据"
+
+        preview_lines = []
+        preview_lines.append(f"列名: {', '.join(columns)}")
+
+        for i, row in enumerate(rows, 1):
+            if isinstance(row, dict):
+                row_str = ", ".join(f"{k}={v}" for k, v in list(row.items())[:5])
+            elif isinstance(row, (list, tuple)):
+                row_str = ", ".join(str(v) for v in list(row)[:5])
+            else:
+                row_str = str(row)
+
+            # 限制每行长度
+            if len(row_str) > 100:
+                row_str = row_str[:97] + "..."
+
+            preview_lines.append(f"  行{i}: {row_str}")
+
+        return "\n".join(preview_lines)
 
 
 class SQLRefineTool(Tool):

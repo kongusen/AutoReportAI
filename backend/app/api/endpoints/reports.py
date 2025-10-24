@@ -86,10 +86,19 @@ async def get_reports(
         enhanced_reports = []
         for report in reports:
             report_data = ReportHistoryResponse.model_validate(report).model_dump()
-            
+
+            # 生成报告显示名称 - 格式: yyyy-mm-dd-任务名
+            if report.task:
+                task_name = report.task.name
+            else:
+                task_name = f"报告_{report.id}"
+
+            date_str = report.generated_at.strftime("%Y-%m-%d") if report.generated_at else datetime.now().strftime("%Y-%m-%d")
+            display_name = f"{date_str}-{task_name}"
+
             # 添加增强信息
             report_data.update({
-                "name": f"报告 #{report.id}",
+                "name": display_name,
                 "file_size": report.file_size or 0,
                 "download_url": f"/api/v1/reports/{report.id}/download",
                 "preview_available": report.status == "completed"
@@ -98,11 +107,22 @@ async def get_reports(
             
     except Exception as e:
         logger.warning(f"获取增强信息失败，使用基础信息: {e}")
-        enhanced_reports = [{
-            **ReportHistoryResponse.model_validate(report).model_dump(),
-            "name": f"报告 #{report.id}",
-            "file_size": report.file_size or 0,
-        } for report in reports]
+        enhanced_reports = []
+        for report in reports:
+            # 生成报告显示名称 - 格式: yyyy-mm-dd-任务名
+            if report.task:
+                task_name = report.task.name
+            else:
+                task_name = f"报告_{report.id}"
+
+            date_str = report.generated_at.strftime("%Y-%m-%d") if report.generated_at else datetime.now().strftime("%Y-%m-%d")
+            display_name = f"{date_str}-{task_name}"
+
+            enhanced_reports.append({
+                **ReportHistoryResponse.model_validate(report).model_dump(),
+                "name": display_name,
+                "file_size": report.file_size or 0,
+            })
     
     return ApiResponse(
         success=True,
@@ -541,12 +561,21 @@ async def get_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="报告不存在或无权限访问"
         )
-    
+
+    # 生成报告显示名称 - 格式: yyyy-mm-dd-任务名
+    if report.task:
+        task_name = report.task.name
+    else:
+        task_name = f"报告_{report.id}"
+
+    date_str = report.generated_at.strftime("%Y-%m-%d") if report.generated_at else datetime.now().strftime("%Y-%m-%d")
+    display_name = f"{date_str}-{task_name}"
+
     return ApiResponse(
         success=True,
         data={
             **ReportHistoryResponse.model_validate(report).model_dump(),
-            "name": f"报告 #{report.id}",
+            "name": display_name,
             "file_size": report.file_size or 0,
             "content": report.result if report.status == "completed" else None,
         },
@@ -1482,17 +1511,20 @@ async def download_report(
             # 下载文件
             file_data, backend_type = storage_service.download_file(report.file_path)
 
-            # 生成友好的文件名 - 使用任务名称
+            # 生成友好的文件名 - 格式: yyyy-mm-dd-任务名.docx
             if report.task:
-                base_filename = report.task.name
+                task_name = report.task.name
             else:
-                base_filename = f"报告_{report_id}"
+                task_name = f"报告_{report_id}"
 
-            timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S") if report.generated_at else "unknown"
+            # 生成日期字符串 (yyyy-mm-dd格式)
+            date_str = report.generated_at.strftime("%Y-%m-%d") if report.generated_at else datetime.now().strftime("%Y-%m-%d")
 
             # 根据文件路径确定扩展名
-            file_ext = report.file_path.split('.')[-1] if '.' in report.file_path else 'txt'
-            filename = f"{base_filename}_{timestamp}.{file_ext}"
+            file_ext = report.file_path.split('.')[-1] if '.' in report.file_path else 'docx'
+
+            # 组装文件名: yyyy-mm-dd-任务名.ext
+            filename = f"{date_str}-{task_name}.{file_ext}"
 
             # 清理文件名中的非法字符
             import re

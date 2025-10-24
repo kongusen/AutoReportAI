@@ -433,3 +433,4 @@ autorport-dev/*.temp
 !autorport-dev/docker-compose.yml
 !autorport-dev/start.sh
 !autorport-dev/README.md
+!.claude/

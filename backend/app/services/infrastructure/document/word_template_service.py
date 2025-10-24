@@ -83,6 +83,12 @@ class WordTemplateService:
                 raise ImportError("python-docx 未安装，无法处理Word文档")
 
             self.logger.info(f"开始处理Word模板: {template_path} (Agent图表: {use_agent_charts}, Agent优化: {use_agent_optimization})")
+            self.logger.info(f"📊 接收到 {len(placeholder_data)} 个占位符数据")
+
+            # 记录前5个占位符的详细信息
+            for i, (key, value) in enumerate(list(placeholder_data.items())[:5]):
+                value_preview = str(value)[:100] if value is not None else "None"
+                self.logger.info(f"  占位符 {i+1}: {key} = {value_preview}")
 
             # 加载文档
             doc = Document(template_path)
@@ -161,61 +167,89 @@ class WordTemplateService:
         替换文档中的文本占位符
         参考用户提供的replace_text_in_document逻辑
         """
+        replaced_count = 0
+        self.logger.info(f"🔄 开始替换文本占位符，数据字典包含 {len(data)} 个键")
+
         # 处理段落
         for p in doc.paragraphs:
             if '{{' in p.text and '}}' in p.text:
                 placeholders_in_paragraph = re.findall(r"\{\{.*?\}\}", p.text)
+                self.logger.debug(f"段落中发现 {len(placeholders_in_paragraph)} 个占位符: {p.text[:100]}")
 
                 for placeholder in placeholders_in_paragraph:
-                    if placeholder in data and not placeholder.startswith("{{图表："):
+                    # 跳过图表占位符
+                    if placeholder.startswith("{{图表："):
+                        continue
+
+                    # 尝试多种格式查找数据
+                    value = None
+                    matched_key = None
+                    if placeholder in data:
                         value = data[placeholder]
-                        str_value = str(value) if value is not None else ""
+                        matched_key = placeholder
+                    else:
+                        # 尝试去掉花括号的格式
+                        placeholder_without_braces = placeholder.replace("{{", "").replace("}}", "")
+                        if placeholder_without_braces in data:
+                            value = data[placeholder_without_braces]
+                            matched_key = placeholder_without_braces
 
-                        # 获取段落的完整文本
-                        full_text = "".join(run.text for run in p.runs)
+                    if value is None:
+                        self.logger.warning(f"⚠️ 未找到占位符数据: {placeholder}")
+                        continue
 
-                        if placeholder in full_text:
-                            start_index = full_text.find(placeholder)
-                            end_index = start_index + len(placeholder)
+                    self.logger.info(f"✅ 找到匹配: {placeholder} -> {matched_key} = {str(value)[:50]}")
+                    replaced_count += 1
 
-                            # 找到占位符在哪些runs中
-                            current_pos = 0
-                            start_run = None
-                            end_run = None
-                            start_run_char_index = 0
-                            end_run_char_index = 0
+                    str_value = str(value) if value is not None else ""
 
-                            for i, run in enumerate(p.runs):
-                                run_len = len(run.text)
+                    # 获取段落的完整文本
+                    full_text = "".join(run.text for run in p.runs)
 
-                                if start_run is None and start_index < current_pos + run_len:
-                                    start_run = i
-                                    start_run_char_index = start_index - current_pos
+                    if placeholder in full_text:
+                        start_index = full_text.find(placeholder)
+                        end_index = start_index + len(placeholder)
 
-                                if end_run is None and end_index <= current_pos + run_len:
-                                    end_run = i
-                                    end_run_char_index = end_index - current_pos
-                                    break
+                        # 找到占位符在哪些runs中
+                        current_pos = 0
+                        start_run = None
+                        end_run = None
+                        start_run_char_index = 0
+                        end_run_char_index = 0
 
-                                current_pos += run_len
+                        for i, run in enumerate(p.runs):
+                            run_len = len(run.text)
 
-                            # 执行替换
-                            if start_run is not None and end_run is not None:
-                                start_run_obj = p.runs[start_run]
-                                start_run_obj.text = start_run_obj.text[:start_run_char_index] + str_value
+                            if start_run is None and start_index < current_pos + run_len:
+                                start_run = i
+                                start_run_char_index = start_index - current_pos
 
-                                end_run_obj = p.runs[end_run]
-                                end_run_obj.text = end_run_obj.text[end_run_char_index:]
+                            if end_run is None and end_index <= current_pos + run_len:
+                                end_run = i
+                                end_run_char_index = end_index - current_pos
+                                break
 
-                                # 清空中间的runs
-                                for i in range(start_run + 1, end_run):
-                                    p.runs[i].text = ""
+                            current_pos += run_len
+
+                        # 执行替换
+                        if start_run is not None and end_run is not None:
+                            start_run_obj = p.runs[start_run]
+                            start_run_obj.text = start_run_obj.text[:start_run_char_index] + str_value
+
+                            end_run_obj = p.runs[end_run]
+                            end_run_obj.text = end_run_obj.text[end_run_char_index:]
+
+                            # 清空中间的runs
+                            for i in range(start_run + 1, end_run):
+                                p.runs[i].text = ""
 
         # 处理表格
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     self._replace_text_in_document(cell, data)
+
+        self.logger.info(f"📝 文本占位符替换完成，共替换 {replaced_count} 个占位符")
 
     async def _optimize_document_content_with_agent(self, doc, data: Dict[str, Any], container=None, user_id: Optional[str] = None):
         """
@@ -328,30 +362,49 @@ class WordTemplateService:
                                 # 如果返回的是JSON，提取文本
                                 parsed = json.loads(optimized_text)
                                 if isinstance(parsed, dict):
-                                    optimized_text = parsed.get('result', parsed.get('text', optimized_text))
-                            except:
+                                    # 优先查找 optimized_paragraph 字段，然后是其他常见字段
+                                    optimized_text = parsed.get('optimized_paragraph') or \
+                                                    parsed.get('result') or \
+                                                    parsed.get('text') or \
+                                                    parsed.get('content') or \
+                                                    optimized_text
+
+                                    # 如果仍然是整个JSON（没找到有效字段），检查是否是错误响应
+                                    if optimized_text == str(parsed) and parsed.get('success') == False:
+                                        # 这是一个错误响应，不应该插入文档
+                                        self.logger.warning(f"⚠️ Agent返回错误响应，跳过优化: {parsed.get('error', 'unknown')}")
+                                        optimized_text = None
+                            except json.JSONDecodeError:
+                                # 不是JSON格式，保持原样
+                                pass
+                            except Exception as e:
+                                self.logger.warning(f"JSON解析异常: {e}")
                                 pass
 
                             # 移除可能的markdown代码块标记
-                            optimized_text = optimized_text.replace('```', '').strip()
+                            if optimized_text:
+                                optimized_text = optimized_text.replace('```', '').strip()
 
-                            if optimized_text and optimized_text != paragraph_text:
-                                self.logger.info(f"✅ 段落优化成功: {optimized_text[:50]}...")
-                                optimized_count += 1
+                            if optimized_text:
+                                if optimized_text != paragraph_text:
+                                    self.logger.info(f"✅ 段落优化成功: {optimized_text[:50]}...")
+                                    optimized_count += 1
 
-                                # 保持原有的格式，只替换文本
-                                if p.runs:
-                                    # 保留第一个run的格式
-                                    first_run = p.runs[0]
-                                    # 清空所有runs
-                                    for run in p.runs:
-                                        run.text = ""
-                                    # 在第一个run中设置新文本
-                                    first_run.text = optimized_text
+                                    # 保持原有的格式，只替换文本
+                                    if p.runs:
+                                        # 保留第一个run的格式
+                                        first_run = p.runs[0]
+                                        # 清空所有runs
+                                        for run in p.runs:
+                                            run.text = ""
+                                        # 在第一个run中设置新文本
+                                        first_run.text = optimized_text
+                                    else:
+                                        p.text = optimized_text
                                 else:
-                                    p.text = optimized_text
+                                    self.logger.debug("优化结果与原文相同，保持不变")
                             else:
-                                self.logger.debug("优化结果与原文相同，保持不变")
+                                self.logger.debug("Agent返回无效内容，保持原文不变")
                         else:
                             error_msg = getattr(agent_result, 'metadata', {}).get('error', '优化失败')
                             self.logger.warning(f"⚠️ 段落优化失败: {error_msg}")

@@ -596,7 +596,22 @@ class ReportQualityChecker:
 
             # Try to parse JSON response
             try:
-                return json.loads(response.content)
+                result = json.loads(response.content)
+
+                # 检查是否是错误响应
+                if isinstance(result, dict) and result.get('success') == False:
+                    logger.warning(f"LLM返回错误响应: {result.get('error', 'unknown')}")
+                    return {
+                        "overall_assessment": f"分析失败: {result.get('error', 'unknown')}",
+                        "fluency_score": 0,
+                        "logic_score": 0,
+                        "accuracy_score": 0,
+                        "completeness_score": 0,
+                        "suggestions": [],
+                        "issues": [],
+                    }
+
+                return result
             except json.JSONDecodeError:
                 # If not valid JSON, return structured response
                 return {
@@ -807,6 +822,16 @@ class ReportQualityChecker:
             # Try to parse JSON response
             try:
                 result = json.loads(response.content)
+
+                # 检查是否是错误响应
+                if isinstance(result, dict) and result.get('success') == False:
+                    logger.warning(f"LLM返回错误响应: {result.get('error', 'unknown')}")
+                    return {
+                        "optimized_content": content,
+                        "improvements": [f"优化失败: {result.get('error', 'LLM返回错误')}"],
+                        "confidence": 0,
+                    }
+
                 return {
                     "optimized_content": result.get("optimized_content", content),
                     "improvements": result.get("improvements", []),

@@ -465,7 +465,8 @@ class ModelExecutor:
             # 根据提供商类型调用不同的实现
             if provider == "anthropic":
                 return await self._call_anthropic_direct(model_name, prompt, **kwargs)
-            elif provider == "openai":
+            elif provider in ("openai", "gpustake", "google", "cohere", "huggingface"):
+                # OpenAI兼容格式
                 return await self._call_openai_direct(model_name, prompt, **kwargs)
             else:
                 # 默认尝试OpenAI兼容格式
@@ -495,7 +496,8 @@ class ModelExecutor:
             server = crud_llm_server.get(db, id=selection.server_id)
             
             # 根据服务器类型调用不同的实现
-            if server.provider_type == "openai":
+            if server.provider_type in ("openai", "gpustake", "google", "cohere", "huggingface"):
+                # OpenAI兼容格式: OpenAI, GPUStake, Google, Cohere, HuggingFace
                 return await self._call_openai_compatible(server, model, prompt, **kwargs)
             elif server.provider_type == "anthropic":
                 return await self._call_anthropic_compatible(server, model, prompt, **kwargs)

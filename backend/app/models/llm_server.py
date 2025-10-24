@@ -22,6 +22,7 @@ class ProviderType(str, enum.Enum):
     GOOGLE = "google"        # Google格式 (Gemini, PaLM等)
     COHERE = "cohere"        # Cohere格式
     HUGGINGFACE = "huggingface"  # HuggingFace格式
+    GPUSTAKE = "gpustake"    # GPUStake API格式
     CUSTOM = "custom"        # 自定义格式
 
 

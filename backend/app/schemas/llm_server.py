@@ -18,6 +18,7 @@ class ProviderType(str, Enum):
     GOOGLE = "google"
     COHERE = "cohere"
     HUGGINGFACE = "huggingface"
+    GPUSTAKE = "gpustake"
     CUSTOM = "custom"
 
 

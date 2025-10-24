@@ -616,24 +616,96 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         )
                         logger.info(f"替换后SQL: {final_sql[:100]}...")
 
-                    # 2. 执行最终的SQL查询
-                    # TODO: 这里应该调用真实的查询执行服务
-                    # 暂时使用简化的查询结果，避免复杂的异步调用
-                    query_result = {
-                        "success": True,
-                        "data": [{"placeholder_name": ph.placeholder_name, "executed": True, "final_sql": final_sql}],
-                        "metadata": {"original_sql": ph.generated_sql, "final_sql": final_sql},
-                        "execution_time": 0.1,
-                        "row_count": 1
-                    }
+                    # 2. 获取数据源配置（与Agent分析阶段保持一致）
+                    from app.crud.crud_data_source import crud_data_source
+                    from app.models.data_source import DataSourceType
+                    from app.core.data_source_utils import DataSourcePasswordManager
 
-                    etl_results[ph.placeholder_name] = {
-                        "success": query_result.get("success", False),
-                        "data": query_result.get("data", []),
-                        "metadata": query_result.get("metadata", {}),
-                        "execution_time": query_result.get("execution_time", 0),
-                        "row_count": len(query_result.get("data", []))
-                    }
+                    data_source = crud_data_source.get(db, id=str(task.data_source_id))
+                    if not data_source:
+                        raise ValueError(f"数据源不存在: {task.data_source_id}")
+
+                    # 构建数据源配置字典（参考_get_data_source_info的实现）
+                    data_source_config = {}
+                    if data_source.source_type == DataSourceType.doris:
+                        data_source_config = {
+                            "source_type": "doris",
+                            "name": data_source.name,
+                            "database": getattr(data_source, "doris_database", "default"),
+                            "fe_hosts": list(getattr(data_source, "doris_fe_hosts", []) or ["localhost"]),
+                            "be_hosts": list(getattr(data_source, "doris_be_hosts", []) or ["localhost"]),
+                            "http_port": getattr(data_source, "doris_http_port", 8030),
+                            "query_port": getattr(data_source, "doris_query_port", 9030),
+                            "username": getattr(data_source, "doris_username", "root"),
+                            "password": DataSourcePasswordManager.get_password(data_source.doris_password) if getattr(data_source, "doris_password", None) else "",
+                            "timeout": 30
+                        }
+                    elif data_source.source_type == DataSourceType.sql:
+                        from app.core.security_utils import decrypt_data
+                        conn_str = data_source.connection_string
+                        try:
+                            if conn_str:
+                                conn_str = decrypt_data(conn_str)
+                        except Exception:
+                            pass
+                        data_source_config = {
+                            "source_type": "sql",
+                            "name": data_source.name,
+                            "connection_string": conn_str,
+                            "database": getattr(data_source, "database_name", None),
+                            "host": getattr(data_source, "host", None),
+                            "port": getattr(data_source, "port", None),
+                            "username": getattr(data_source, "username", None),
+                            "password": getattr(data_source, "password", None),
+                        }
+
+                    logger.info(f"数据源配置: {data_source.source_type}, database: {data_source_config.get('database')}")
+
+                    # 3. 使用connector直接执行查询（与Agent保持一致）
+                    from app.services.data.connectors.connector_factory import create_connector_from_config
+
+                    async def _execute_query_async():
+                        connector = create_connector_from_config(
+                            source_type=data_source.source_type,
+                            name=data_source.name,
+                            config=data_source_config
+                        )
+                        try:
+                            await connector.connect()
+                            result = await connector.execute_query(final_sql)
+                            return result
+                        finally:
+                            await connector.disconnect()
+
+                    query_result = asyncio.run(_execute_query_async())
+
+                    # 4. 解包查询结果，提取实际数据值
+                    # DorisQueryResult 没有 success 属性，只要没抛异常就是成功
+                    if hasattr(query_result, 'data') and query_result.data is not None and not query_result.data.empty:
+                        # 将DataFrame转换为字典列表
+                        result_data = query_result.data.to_dict('records')
+
+                        # 智能解包：单行单列返回值，多行返回列表
+                        actual_value = None
+                        if result_data:
+                            if len(result_data) == 1 and len(result_data[0]) == 1:
+                                # 单行单列：返回值本身
+                                actual_value = list(result_data[0].values())[0]
+                            elif len(result_data) == 1:
+                                # 单行多列：返回行字典
+                                actual_value = result_data[0]
+                            else:
+                                # 多行：返回完整列表（用于图表）
+                                actual_value = result_data
+
+                        logger.info(f"✅ 占位符 {ph.placeholder_name} 查询成功，结果类型: {type(actual_value)}, 值: {str(actual_value)[:100]}")
+
+                        # 存储实际的数据值
+                        etl_results[ph.placeholder_name] = actual_value
+                    else:
+                        # 查询成功但无数据
+                        logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 查询成功但无数据返回")
+                        etl_results[ph.placeholder_name] = None
 
                     # 更新进度
                     progress_increment = 10 / total_placeholders_count if total_placeholders_count else 0
@@ -651,14 +723,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                 except Exception as e:
                     logger.error(f"Failed to execute SQL for placeholder {ph.placeholder_name}: {e}")
-                    etl_results[ph.placeholder_name] = {
-                        "success": False,
-                        "error": str(e),
-                        "data": [],
-                        "metadata": {},
-                        "execution_time": 0,
-                        "row_count": 0
-                    }
+                    etl_results[ph.placeholder_name] = f"ERROR: {str(e)}"
 
                     update_progress(
                         task_execution.progress_percentage or int(current_progress),
@@ -681,14 +746,19 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             )
 
             # 构建执行结果
+            # 统计成功的占位符（不是ERROR开头的）
+            successful_placeholders = [k for k, v in etl_results.items() if not str(v).startswith("ERROR")]
+
             execution_result = {
-                "success": len([r for r in etl_results.values() if r.get("success")]) > 0,
+                "success": len(successful_placeholders) > 0,
                 "events": events,
                 "etl_results": etl_results,
                 "time_window": time_window,
                 "placeholders_processed": len(etl_results),
-                "placeholders_success": len([r for r in etl_results.values() if r.get("success")])
+                "placeholders_success": len(successful_placeholders)
             }
+
+            logger.info(f"📊 ETL处理完成: {len(successful_placeholders)}/{len(etl_results)} 个占位符成功")
 
         except Exception as e:
             logger.error(f"ETL processing failed: {e}")

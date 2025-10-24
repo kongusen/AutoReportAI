@@ -769,21 +769,42 @@ class ETLService:
                 if not data_source:
                     raise ValueError(f"数据源 {data_source_id} 不存在")
 
-                executor = TemplateQueryExecutor(data_source)
-                execution_results = await executor.execute_template_batch(
-                    executable_sql_map,
-                    context={
-                        "execution_mode": execution_mode,
-                        "time_context": time_result,
-                        "user_id": self.user_id
-                    }
+                # 创建查询执行器实例并执行批量查询
+                from app.services.data.query.query_executor_service import QueryExecutorService
+
+                query_executor = QueryExecutorService()
+                executor = TemplateQueryExecutor(query_executor)
+
+                # 调用正确的批量执行方法
+                batch_result = await executor.batch_execute_templates(
+                    placeholder_sql_map=executable_sql_map,
+                    base_date=base_date,
+                    connection_params={
+                        "data_source_id": data_source_id,
+                        "data_source": data_source
+                    },
+                    additional_params=time_context.get("additional_params", {}),
+                    max_concurrent=5
                 )
+
+                if not batch_result["success"]:
+                    raise Exception(f"批量执行失败: {batch_result.get('error')}")
+
+                execution_results = batch_result["placeholder_data_map"]
+
+                # 记录批量执行结果
+                self.logger.info(f"📦 batch_execute_templates返回了 {len(execution_results)} 个结果")
+                for i, (name, value) in enumerate(list(execution_results.items())[:2]):
+                    self.logger.info(f"   结果 {i+1}: {name}")
+                    self.logger.info(f"   类型: {type(value)}, 值: {str(value)[:150]}")
 
             # 4. 整理结果
             successful_extractions = []
             failed_extractions = []
 
             for placeholder_name, result in execution_results.items():
+                self.logger.debug(f"处理占位符: {placeholder_name}, 类型: {type(result)}")
+
                 if result and not str(result).startswith("ERROR"):
                     successful_extractions.append({
                         "placeholder": placeholder_name,

@@ -89,7 +89,7 @@ BEGIN
     
     -- Provider types (for LLM servers)
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'providertype') THEN
-        CREATE TYPE providertype AS ENUM ('openai', 'anthropic', 'google', 'cohere', 'huggingface', 'custom');
+        CREATE TYPE providertype AS ENUM ('openai', 'anthropic', 'google', 'cohere', 'huggingface', 'gpustake', 'custom');
     END IF;
     
 END $$;

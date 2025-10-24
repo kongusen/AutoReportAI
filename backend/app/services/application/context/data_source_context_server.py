@@ -287,8 +287,23 @@ class DataSourceContextInfo:
     database_type: str
     last_refresh: Optional[datetime] = None
 
-    def to_agent_format(self) -> Dict[str, Any]:
-        """转换为Agent友好的格式"""
+    def to_agent_format(self, lightweight: bool = False) -> Dict[str, Any]:
+        """
+        转换为Agent友好的格式
+
+        Args:
+            lightweight: 如果为True，只返回表名列表（节省token）
+        """
+        # 🚀 轻量级模式：仅返回表名列表（减少99%上下文大小）
+        if lightweight:
+            return {
+                "database_name": self.database_name,
+                "database_type": self.database_type,
+                "total_tables": len(self.tables),
+                "tables": [{"table_name": table.name} for table in self.tables]
+            }
+
+        # 完整模式：返回所有元数据
         return {
             "database_name": self.database_name,
             "database_type": self.database_type,
@@ -439,7 +454,8 @@ class DataSourceContextBuilder:
                     last_refresh=datetime.now()
                 )
 
-                ctx = context_info.to_agent_format()
+                # 🚀 使用轻量级格式以减少上下文大小
+                ctx = context_info.to_agent_format(lightweight=names_only)
                 ctx["success"] = True
                 return ctx
 
@@ -503,7 +519,8 @@ class DataSourceContextBuilder:
                     last_refresh=datetime.now()
                 )
 
-                ctx = context_info.to_agent_format()
+                # 🚀 使用轻量级格式以减少上下文大小
+                ctx = context_info.to_agent_format(lightweight=names_only)
                 ctx["success"] = True
                 ctx["fallback_mode"] = True
                 ctx["real_tables"] = len(real_tables) > 0

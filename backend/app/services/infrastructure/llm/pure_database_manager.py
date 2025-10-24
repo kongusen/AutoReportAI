@@ -111,9 +111,11 @@ class PureDatabaseLLMManager:
         logger.info(f"🎯 [ModelSelection] 选择策略: {desired_type} 模型，原因: {'; '.join(strategy_reasons)}")
 
         # 查询 DB 中活跃且健康的模型，优先当前用户的服务器
+        is_system_user = not user_id or user_id in ("system", "report_system")
+
         with get_db_session() as db:
             # 如果user_id为None、"system"或"report_system"，直接查询全局健康模型，避免UUID转换错误
-            if not user_id or user_id in ("system", "report_system"):
+            if is_system_user:
                 logger.info("🔄 [ModelSelection] 未提供用户ID或系统模式，直接查询全局健康模型")
                 models = db.query(LLMModel).join(LLMModel.server).filter(
                     LLMModel.is_active == True,
@@ -122,7 +124,7 @@ class PureDatabaseLLMManager:
                     LLMModel.server.has(is_active=True, is_healthy=True)
                 ).order_by(LLMModel.priority.asc(), LLMModel.id.asc()).all()
 
-                user_models_count = 0  # 无用户ID时没有专属模型
+                user_models_count = -1  # 标记为系统用户，-1 表示不适用用户专属模型概念
             else:
                 # 先找该用户的健康服务器上的健康模型
                 models = db.query(LLMModel).join(LLMModel.server).filter(
@@ -200,6 +202,11 @@ class PureDatabaseLLMManager:
 
             logger.info(f"✅ [ModelSelection] 模型选择完成: {selection_info}, confidence={confidence}")
 
+            # 计算是否使用了回退逻辑
+            # - 系统用户（user_models_count == -1）：不视为回退，因为直接使用全局模型是预期行为
+            # - 普通用户（user_models_count == 0）：视为回退，因为没有找到用户专属模型
+            fallback_used = user_models_count == 0
+
             result = {
                 "model_id": m.id,
                 "server_id": s.id,
@@ -211,7 +218,7 @@ class PureDatabaseLLMManager:
                 "reasoning": reasoning,
                 "selection_context": context,
                 "selection_info": selection_info,
-                "fallback_used": user_models_count == 0
+                "fallback_used": fallback_used
             }
 
             return result
@@ -287,7 +294,7 @@ class PureDatabaseLLMManager:
                 "service_type": "pure_database_llm_manager",
                 "version": "1.1.0",
                 "capabilities": ["model_selection", "user_preferences", "usage_tracking"],
-                "supported_providers": ["anthropic", "openai", "custom"],
+                "supported_providers": ["anthropic", "openai", "google", "cohere", "huggingface", "gpustake", "custom"],
                 "total_models": total_models
             }
 

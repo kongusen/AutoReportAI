@@ -149,12 +149,24 @@ class ReportWorkflowService:
             for extraction in extract_result["data"]["successful_extractions"]:
                 placeholder = extraction["placeholder"]
                 data = extraction["data"]
+
+                # 记录数据类型和内容
+                self.logger.info(f"📊 ETL提取结果: {placeholder}")
+                self.logger.info(f"   数据类型: {type(data)}")
+                self.logger.info(f"   数据内容: {str(data)[:200]}")
+
                 placeholder_data_map[placeholder] = data
 
             # 5. 处理报告占位符（周期、百分比等）
+            self.logger.info(f"🔄 开始处理报告占位符，共 {len(placeholder_data_map)} 个")
             processed_data = sql_template_service.process_report_placeholders(
                 placeholder_data_map, base_date, period_type
             )
+
+            # 记录处理后的数据
+            self.logger.info(f"✅ 报告占位符处理完成，共 {len(processed_data)} 个")
+            for i, (key, value) in enumerate(list(processed_data.items())[:3]):
+                self.logger.info(f"   处理后 {i+1}: {key} = {str(value)[:100]}")
 
             return {
                 "success": True,
@@ -342,6 +354,19 @@ class ReportWorkflowService:
                 if hasattr(template, 'placeholders') and template.placeholders:
                     if isinstance(template.placeholders, str):
                         return json.loads(template.placeholders)
+
+                    # 如果是TemplatePlaceholder对象列表，转换为字典格式
+                    if isinstance(template.placeholders, list):
+                        sql_mapping = {}
+                        for placeholder in template.placeholders:
+                            if hasattr(placeholder, 'placeholder_name') and hasattr(placeholder, 'generated_sql'):
+                                # 使用placeholder_name作为键（不带花括号的格式）
+                                sql_mapping[placeholder.placeholder_name] = placeholder.generated_sql
+
+                        if sql_mapping:
+                            self.logger.info(f"从模板获取到 {len(sql_mapping)} 个占位符SQL映射")
+                            return sql_mapping
+
                     return template.placeholders
 
                 return None
@@ -390,7 +415,7 @@ class ReportWorkflowService:
     ) -> str:
         """
         生成输出文件路径
-        文件命名规则: 时间-任务名称.格式
+        文件命名规则: yyyy-mm-dd-任务名.格式
         例如: 2025-01-15-月度销售报告.docx
         """
         try:
@@ -403,7 +428,7 @@ class ReportWorkflowService:
             if not task_name:
                 task_name = template_id
 
-            # 生成文件名: 时间-任务名称
+            # 生成文件名: yyyy-mm-dd-任务名.格式
             filename = f"{base_date}-{task_name}.{output_format}"
 
             return os.path.join(output_dir, filename)

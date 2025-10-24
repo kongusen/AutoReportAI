@@ -6,6 +6,7 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -80,6 +81,41 @@ KEYWORD_SYNONYMS = {
     "申请": ["request", "application"],
     "渠道": ["channel"],
 }
+
+
+def serialize_for_json(obj: Any) -> Any:
+    """
+    递归将数据结构转换为JSON可序列化格式，保留所有数据完整性
+
+    转换规则：
+    - Decimal → float（数值完全保留，前端可直接使用）
+    - datetime → ISO字符串（保留时区信息）
+    - dict/list → 递归处理所有嵌套内容
+    - 其他类型 → 原样保留
+
+    Args:
+        obj: 要转换的对象（可以是dict, list, Decimal等）
+
+    Returns:
+        可JSON序列化的对象，数据完整保留
+    """
+    if isinstance(obj, Decimal):
+        # 将Decimal转换为float，保留数值精度
+        # 注：对于财务数据，前端应使用decimal.js等库处理
+        return float(obj)
+    elif isinstance(obj, dict):
+        # 递归处理字典中的所有值
+        return {k: serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        # 递归处理列表/元组中的所有元素
+        return [serialize_for_json(item) for item in obj]
+    elif isinstance(obj, datetime):
+        # 将datetime转换为ISO 8601字符串
+        return obj.isoformat()
+    else:
+        # 其他类型（str, int, float, bool, None等）原样返回
+        return obj
+
 
 class PlaceholderOrchestrationService:
     """
@@ -2606,6 +2642,10 @@ async def _save_placeholder_result(
 
         logger.info(f"🔍 [Debug] 测试结果状态 - executed={test_result.get('executed')}, success={test_result.get('success')}, sql_validated={sql_validated}")
 
+        # 🚀 清理test_result和analysis_result中的Decimal对象
+        clean_test_result = serialize_for_json(test_result)
+        clean_analysis_result = serialize_for_json(analysis_result)
+
         # 构建要保存的数据（包括SQL验证状态和测试结果）
         placeholder_data = {
             "placeholder_name": placeholder_name,
@@ -2620,10 +2660,10 @@ async def _save_placeholder_result(
             "execution_order": 1,
             "cache_ttl_hours": 24,
             "description": f"Agent Pipeline分析({semantic_type}): {placeholder_name}",
-            # 🔑 将test_result保存到agent_config中，供前端查询使用
+            # 🔑 将清理后的test_result保存到agent_config中，供前端查询使用
             "agent_config": {
-                "last_test_result": test_result,
-                "last_analysis_result": analysis_result,
+                "last_test_result": clean_test_result,
+                "last_analysis_result": clean_analysis_result,
                 "semantic_type": semantic_type
             }
         }

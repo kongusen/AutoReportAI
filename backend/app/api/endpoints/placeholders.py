@@ -33,27 +33,29 @@ from app.utils.error_validation import (
 )
 from app.middleware.error_handling import APIErrorHandler, create_error_response
 
-# 核心：使用现有的Agent基础设施
-from app.services.infrastructure.agents import AgentService
-from app.services.infrastructure.agents.types import (
-    AgentInput,
-    PlaceholderSpec,
-    SchemaInfo,
-    TaskContext,
-    AgentConstraints,
+# 核心：使用新的Agent系统
+from app.services.infrastructure.agents import StageAwareAgentAdapter
+from app.services.infrastructure.agents import TaskComplexity
+from app.services.infrastructure.agents.tools.sql import (
+    SQLExecutorTool,
+    SQLValidatorTool,
+    SQLGeneratorTool,
+    create_sql_executor_tool,
+    create_sql_validator_tool,
+    create_sql_generator_tool,
 )
-from app.services.infrastructure.agents.tools.sql_tools import (
-    SQLExecuteTool,
-    SQLPolicyTool,
-    SQLValidateTool,
+from app.services.infrastructure.agents.tools.time import (
+    TimeWindowTool,
+    create_time_window_tool,
 )
-from app.services.infrastructure.agents.tools.time_tools import TimeWindowTool
-from app.services.infrastructure.agents.tools.schema_tools import (
-    SchemaListTablesTool,
-    SchemaListColumnsTool,
+from app.services.infrastructure.agents.tools.schema import (
+    SchemaDiscoveryTool,
+    SchemaRetrievalTool,
+    create_schema_discovery_tool,
+    create_schema_retrieval_tool,
 )
 
-# Domain层业务服务
+from app.services.domain.placeholder.ports.schema_discovery_port import SchemaInfo
 from app.services.domain.placeholder.services.placeholder_analysis_domain_service import (
     PlaceholderAnalysisDomainService
 )
@@ -63,6 +65,7 @@ from app.services.application.placeholder.placeholder_service import Placeholder
 
 from app.core.container import container
 from app.core.data_source_utils import DataSourcePasswordManager
+from app.services.infrastructure.agents.facade import StageAwareFacade
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,53 +127,140 @@ class PlaceholderOrchestrationService:
     """
 
     def __init__(self):
-        # 使用现有的完整Agent系统
-        self.agent_service = AgentService(container=container)
+        # 使用新的StageAwareAgentAdapter
+        self.agent_adapter = StageAwareAgentAdapter(container=container)
 
         # Domain层业务服务
         self.domain_service = PlaceholderAnalysisDomainService()
 
-        # Application层服务
-        self.app_service = PlaceholderApplicationService()
+        # Application层服务 - 每次请求时创建，以便传入 context_retriever
+        self.app_service = None
 
         # Schema缓存 - 避免重复获取
         self._schema_cache = {}
         self._cache_ttl = 300  # 5分钟缓存
 
+        # ✅ Context Retriever 缓存管理
+        self._context_retrievers = {}  # {data_source_id: context_retriever}
+        self._context_retriever_ttl = 600  # 10分钟缓存
+
         # 工具实例（用于SQL验证/执行等步骤）
-        self._sql_policy_tool: Optional[SQLPolicyTool] = None
-        self._sql_validate_tool: Optional[SQLValidateTool] = None
-        self._sql_execute_tool: Optional[SQLExecuteTool] = None
+        self._sql_policy_tool: Optional[SQLValidatorTool] = None
+        self._sql_validate_tool: Optional[SQLValidatorTool] = None
+        self._sql_execute_tool: Optional[SQLExecutorTool] = None
         self._time_window_tool: Optional[TimeWindowTool] = None
-        self._schema_list_tables_tool: Optional[SchemaListTablesTool] = None
-        self._schema_list_columns_tool: Optional[SchemaListColumnsTool] = None
+        self._schema_list_tables_tool: Optional[SchemaDiscoveryTool] = None
+        self._schema_list_columns_tool: Optional[SchemaDiscoveryTool] = None
 
         try:
-            self._sql_policy_tool = SQLPolicyTool(container=container)
+            self._sql_policy_tool = create_sql_validator_tool(container)
         except Exception as exc:
             logger.warning(f"SQLPolicyTool 初始化失败: {exc}")
         try:
-            self._sql_validate_tool = SQLValidateTool(container=container)
+            self._sql_validate_tool = create_sql_validator_tool(container)
         except Exception as exc:
             logger.warning(f"SQLValidateTool 初始化失败: {exc}")
         try:
-            self._sql_execute_tool = SQLExecuteTool(container=container)
+            self._sql_execute_tool = create_sql_executor_tool(container)
         except Exception as exc:
             logger.warning(f"SQLExecuteTool 初始化失败: {exc}")
         try:
-            self._time_window_tool = TimeWindowTool(container=container)
+            self._time_window_tool = create_time_window_tool(container)
         except Exception as exc:
             logger.warning(f"TimeWindowTool 初始化失败: {exc}")
         try:
-            self._schema_list_tables_tool = SchemaListTablesTool(container=container)
+            self._schema_list_tables_tool = create_schema_discovery_tool(container)
         except Exception as exc:
             logger.warning(f"SchemaListTablesTool 初始化失败: {exc}")
         try:
-            self._schema_list_columns_tool = SchemaListColumnsTool(container=container)
+            self._schema_list_columns_tool = create_schema_discovery_tool(container)
         except Exception as exc:
             logger.warning(f"SchemaListColumnsTool 初始化失败: {exc}")
 
         logger.info("🚀 占位符编排服务初始化，基于完整Agent基础设施")
+
+    async def _get_or_create_context_retriever(self, data_source_id: str) -> Any:
+        """
+        获取或创建 Context Retriever
+
+        为指定数据源创建完整的 Context Retriever 链：
+        SchemaContextRetriever → StageAwareContextRetriever → ContextRetriever
+
+        Args:
+            data_source_id: 数据源ID
+
+        Returns:
+            Loom-compatible ContextRetriever 实例
+        """
+        # 检查缓存
+        if data_source_id in self._context_retrievers:
+            logger.info(f"♻️ 使用缓存的 Context Retriever: {data_source_id}")
+            return self._context_retrievers[data_source_id]
+
+        logger.info(f"🔧 为数据源 {data_source_id} 创建新的 Context Retriever")
+
+        try:
+            from app.services.infrastructure.agents.context_retriever import (
+                SchemaContextRetriever
+            )
+            # 🔥 导入Loom框架的ContextRetriever（负责注入逻辑）
+            from loom.core.context_retriever import ContextRetriever
+
+            # 🔧 获取数据源连接配置
+            connection_config = {}
+            try:
+                from app.db.session import get_db_session
+                from app.models.data_source import DataSource
+
+                with get_db_session() as db:
+                    # 直接查询数据源对象
+                    data_source = db.query(DataSource).filter(
+                        DataSource.id == data_source_id
+                    ).first()
+
+                    if data_source:
+                        # ✅ 使用 DataSource 模型的 connection_config 属性（自动处理字段映射和密码解密）
+                        connection_config = data_source.connection_config
+                        logger.info(f"✅ 成功获取数据源连接配置: database={connection_config.get('database')}, fe_hosts={connection_config.get('fe_hosts')}")
+                    else:
+                        logger.warning(f"⚠️ 未找到数据源 {data_source_id}，使用空连接配置")
+            except Exception as exc:
+                logger.warning(f"⚠️ 获取数据源连接配置失败: {exc}，使用空连接配置")
+
+            # 1. 创建 Schema retriever（底层：从数据库读取 Schema）
+            schema_retriever = SchemaContextRetriever(
+                data_source_id=data_source_id,
+                connection_config=connection_config,
+                container=container
+            )
+            # 只有在未初始化时才初始化
+            if not schema_retriever._initialized:
+                await schema_retriever.initialize()
+                logger.info(f"✅ Schema 缓存已初始化，共 {len(schema_retriever.schema_cache)} 个表")
+            else:
+                logger.info(f"♻️ Schema 缓存已存在，跳过初始化，共 {len(schema_retriever.schema_cache)} 个表")
+
+            # 2. 🔥 使用Loom的ContextRetriever包装（顶层：负责注入到System Message）
+            # 注意：已移除 StageAwareContextRetriever 和 ExecutionStateManager（已弃用）
+            context_retriever = ContextRetriever(
+                retriever=schema_retriever,
+                top_k=5,
+                auto_retrieve=True,
+                inject_as="system"  # 🔥 关键：注入到 System Message，确保最高优先级
+            )
+            logger.info(f"✅ 使用Loom ContextRetriever包装，inject_as=system")
+
+            # 3. 缓存
+            self._context_retrievers[data_source_id] = context_retriever
+            logger.info(f"✅ Context Retriever 创建成功: {data_source_id}")
+
+            return context_retriever
+
+        except Exception as e:
+            logger.error(f"❌ Context Retriever 创建失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     async def analyze_placeholder_with_full_pipeline(
         self,
@@ -196,6 +286,43 @@ class PlaceholderOrchestrationService:
 
         try:
             logger.info(f"🔍 启动完整Agent Pipeline分析: {placeholder_name}")
+
+            # ==========================================
+            # ✅ 步骤 1: 启用 Context Retriever (Dynamic Context)
+            # ==========================================
+            context_retriever = None
+            if data_source_id:
+                context_retriever = await self._get_or_create_context_retriever(data_source_id)
+                if context_retriever:
+                    logger.info(f"✅ 已启用 Context Retriever for data_source: {data_source_id}")
+                else:
+                    logger.warning(f"⚠️ Context Retriever 创建失败，使用降级模式（仅 Static Context）")
+            else:
+                logger.warning(f"⚠️ 未提供 data_source_id，跳过 Context Retriever 创建")
+
+            # ✅ 步骤 2: 创建 Application Service 并传入 context_retriever
+            # 优先使用调用方传入的 user_id（必须是当前登录用户的 UUID）
+            effective_user_id = None
+            try:
+                if user_id:
+                    effective_user_id = str(user_id)
+                elif kwargs.get("user_id"):
+                    effective_user_id = str(kwargs.get("user_id"))
+            except Exception:
+                effective_user_id = user_id or kwargs.get("user_id")
+
+            if not effective_user_id:
+                logger.warning("⚠️ 未提供有效的 user_id，将降级为 'system'（可能影响用户定制配置、权限与数据隔离）")
+                effective_user_id = "system"
+
+            self.app_service = PlaceholderApplicationService(
+                user_id=effective_user_id,
+                context_retriever=context_retriever  # 🔥 关键：传入 context_retriever
+            )
+            logger.info(
+                f"✅ PlaceholderApplicationService 创建成功，"
+                f"Context Retriever: {'已启用' if context_retriever else '未启用（降级模式）'}"
+            )
 
             # ==========================================
             # 前置检查: 周期性占位符特殊处理
@@ -417,9 +544,10 @@ class PlaceholderOrchestrationService:
                 logger.info(f"🕒 为placeholder API生成默认调度: {default_cron}, "
                            f"时间窗口: {task_schedule['start_date']} ~ {task_schedule['end_date']}")
 
-            task_context = TaskContext(
-                timezone=task_schedule.get("timezone", "Asia/Shanghai"),
-                window={
+            # 构建任务上下文信息（直接作为字典，无需TaskContext类）
+            task_context_info = {
+                "timezone": task_schedule.get("timezone", "Asia/Shanghai"),
+                "window": {
                     "data_source_id": data_source_id,
                     "time_column": kwargs.get("time_column"),
                     "data_range": kwargs.get("data_range", "day"),
@@ -429,7 +557,7 @@ class PlaceholderOrchestrationService:
                     "cron_expression": task_schedule.get("cron_expression"),
                     "execution_time": task_schedule.get("execution_time")
                 }
-            )
+            }
 
             # 加载模板内容以提供更完整的上下文
             template_content = ""
@@ -474,49 +602,49 @@ class PlaceholderOrchestrationService:
                     if isinstance(cols, list):
                         schema_info.columns[table] = cols
 
-            # 构建Agent输入 - 包含完整上下文信息
-            agent_input = AgentInput(
-                user_prompt=f"分析占位符'{placeholder_name}': {placeholder_text}",
-                placeholder=PlaceholderSpec(
-                    id=placeholder_name,
-                    description=placeholder_text,
-                    type=semantic_type,
-                    granularity=business_requirements.get("time_sensitivity", "daily")
-                ),
-                schema=schema_info,
-                context=task_context,
-                constraints=AgentConstraints(
-                    sql_only=True,
-                    output_kind="sql",
-                    max_attempts=3,
-                    policy_row_limit=kwargs.get("row_limit", 1000)
-                ),
-                template_id=template_id,
-                data_source={
+            # ==========================================
+            # 第3步: 执行Agent Pipeline - 使用新的Stage-Aware系统
+            # ==========================================
+            logger.info(f"🤖 执行Stage-Aware Agent Pipeline，语义类型: {semantic_type}")
+
+            # 🎯 使用Stage-Aware SQL生成阶段
+            logger.info(f"🎯 使用Stage-Aware SQL生成阶段")
+
+            # 初始化Agent Adapter
+            await self.agent_adapter.initialize(
+                user_id=user_id,
+                task_type="placeholder_analysis",
+                task_complexity=TaskComplexity.MEDIUM
+            )
+
+            # 执行SQL生成阶段
+            logger.info(f"🔧 [Debug] agent_adapter 类型: {type(self.agent_adapter).__name__}")
+            
+            agent_result = await self.agent_adapter.generate_sql(
+                placeholder=placeholder_text,
+                data_source_id=data_source_id,
+                user_id=user_id,
+                context={
+                    "placeholder_name": placeholder_name,
+                    "placeholder_text": placeholder_text,
+                    "semantic_type": semantic_type,
+                    "template_id": template_id,
                     "data_source_id": data_source_id,
-                    "semantic_type": semantic_type,  # 传给SQLDraftTool
+                    "schema_info": schema_info,
+                    "task_context": task_context_info,
                     "business_requirements": business_requirements,
-                    "tables": list(schema_info.tables),
-                    "available_tables": list(schema_info.tables),
                     "candidate_tables": candidate_tables,
                     "table_columns": table_columns,
                     "column_details": column_details,
-                    "connection_config": data_source_config,
-                },
-                task_driven_context={
                     "template_context": template_context or {},
                     "template_context_snippet": template_context_snippet,
-                    "template_content": template_content,  # 添加模板内容
+                    "template_content": template_content,
                     "business_context": business_context,
                     "requirements": kwargs.get("requirements", ""),
-                    "top_n": business_requirements.get("top_n"),  # 用于ranking类型
-
-                    # 📋 重要：占位符上下文段落（为模型提供精确的文本上下文）
+                    "top_n": business_requirements.get("top_n"),
                     "placeholder_context_snippet": template_context_snippet,
-                    "surrounding_text": template_context_snippet,  # 为模型提供周围文本信息
+                    "surrounding_text": template_context_snippet,
                     "context_extraction_success": bool(template_context_snippet),
-
-                    # ⏰ 重要：时间调度和统计范围信息
                     "cron_expression": task_schedule.get("cron_expression", "0 9 * * *"),
                     "time_range": {
                         "start_date": task_schedule.get("start_date"),
@@ -529,63 +657,54 @@ class PlaceholderOrchestrationService:
                         "schedule_type": self._infer_schedule_type(task_schedule.get("cron_expression", "0 9 * * *")),
                         "previous_period_desc": self._describe_previous_period(task_schedule.get("cron_expression", "0 9 * * *"))
                     },
-
-                    # 🔍 Schema信息传递（确保模型能看到表结构）
-                    "schema_context": {
+                    "data_source": {
+                        "data_source_id": data_source_id,
+                        "semantic_type": semantic_type,
+                        "business_requirements": business_requirements,
+                        "tables": list(schema_info.tables),
                         "available_tables": list(schema_info.tables),
-                        "table_count": len(schema_info.tables),
-                        "schema_source": "DataSourceContextBuilder",
                         "candidate_tables": candidate_tables,
                         "table_columns": table_columns,
                         "column_details": column_details,
-                        "schema_summary": schema_summary,
+                        "connection_config": data_source_config,
                     },
-
-                    "placeholder_contexts": [  # 添加占位符上下文数组
-                        {
-                            "placeholder_name": placeholder_name,
-                            "placeholder_text": placeholder_text,
-                            "semantic_type": semantic_type,
-                            "surrounding_context": template_context_snippet,  # 占位符周围的文本
-                            "parsed_params": {
-                                "top_n": business_requirements.get("top_n"),
-                                "time_sensitivity": business_requirements.get("time_sensitivity")
-                            }
-                        }
-                    ],
-                    "candidate_tables": candidate_tables,
-                    "table_columns": table_columns,
-                    "column_details": column_details,
-                    "schema_summary": schema_summary,
-                },
-                user_id=user_id
+                    "constraints": {
+                        "sql_only": True,
+                        "output_kind": "sql",
+                        "max_attempts": 3,
+                        "policy_row_limit": kwargs.get("row_limit", 1000)
+                    }
+                }
             )
 
-            # ==========================================
-            # 第3步: 执行Agent Pipeline - 使用任务验证智能模式
-            # ==========================================
-            logger.info(f"🤖 执行Agent Pipeline，语义类型: {semantic_type}")
+            if not agent_result.get("success"):
+                error_msg = agent_result.get('error', '未知错误')
+                raise Exception(f"Agent执行失败: {error_msg}")
 
-            # 🎯 使用任务验证智能模式 - 统一的SQL验证和生成系统
-            logger.info(f"🎯 使用任务验证智能模式 - 自动SQL健康检查与智能回退")
+            # 🔧 添加调试信息 - 兼容 dict 和 AgentResponse 对象
+            is_dict = isinstance(agent_result, dict)
+            success = agent_result.get('success') if is_dict else getattr(agent_result, 'success', False)
+            result_content = agent_result.get('result') if is_dict else getattr(agent_result, 'result', None)
+            metadata = agent_result.get('metadata') if is_dict else getattr(agent_result, 'metadata', {})
+            
+            # 🔧 确保success是布尔值
+            if not isinstance(success, bool):
+                success = bool(success)
 
-            agent_result = await self.agent_service.execute_task_validation(agent_input)
+            logger.info(f"🔧 [Debug] Agent执行结果: success={success}, type={type(agent_result).__name__}")
+            logger.info(f"🔧 [Debug] Agent result type: {type(result_content)}")
+            logger.info(f"🔧 [Debug] Agent metadata type: {type(metadata)}")
+            if result_content:
+                logger.info(f"🔧 [Debug] Agent result内容(前100字符): {str(result_content)[:100]}")
+            if isinstance(metadata, dict):
+                logger.info(f"🔧 [Debug] Agent metadata keys: {list(metadata.keys())}")
 
-            # 🔧 添加调试信息
-            logger.info(f"🔧 [Debug] Agent执行结果: success={agent_result.success}")
-            logger.info(f"🔧 [Debug] Agent result type: {type(agent_result.result)}")
-            logger.info(f"🔧 [Debug] Agent metadata type: {type(agent_result.metadata)}")
-            if agent_result.result:
-                logger.info(f"🔧 [Debug] Agent result内容(前100字符): {str(agent_result.result)[:100]}")
-            if isinstance(agent_result.metadata, dict):
-                logger.info(f"🔧 [Debug] Agent metadata keys: {list(agent_result.metadata.keys())}")
-
-            if not agent_result.success:
-                logger.error(f"❌ Agent Pipeline执行失败: {agent_result.metadata}")
+            if not success:
+                logger.error(f"❌ Agent Pipeline执行失败: {metadata}")
 
                 # 🔄 新增：智能恢复机制
                 recovery_result = await self._attempt_pipeline_recovery(
-                    agent_input, agent_result, placeholder_name, semantic_type
+                    placeholder_text, data_source_id, user_id, agent_result, placeholder_name, semantic_type
                 )
 
                 # 安全地检查恢复结果
@@ -593,11 +712,20 @@ class PlaceholderOrchestrationService:
                     logger.info(f"✅ Agent Pipeline已恢复: {recovery_result['method']}")
                     # 使用恢复后的结果继续处理
                     agent_result = recovery_result["result"]
+                    # 重新提取success等字段
+                    is_dict = isinstance(agent_result, dict)
+                    success = agent_result.get('success') if is_dict else getattr(agent_result, 'success', False)
+                    result_content = agent_result.get('result') if is_dict else getattr(agent_result, 'result', None)
+                    metadata = agent_result.get('metadata') if is_dict else getattr(agent_result, 'metadata', {})
+                    # 确保success是布尔值
+                    if not isinstance(success, bool):
+                        success = bool(success)
                 else:
                     # 尝试部分成功返回：若存在候选SQL，直接返回给前端显示，测试结果显示验证/执行状态
                     try:
-                        meta = agent_result.metadata if isinstance(agent_result.metadata, dict) else {}
-                        candidate_sql = agent_result.result or meta.get('final_sql') or meta.get('partial_result') or meta.get('current_sql')
+                        # 🔧 兼容 dict 和 AgentResponse 对象
+                        meta = metadata if isinstance(metadata, dict) else {}
+                        candidate_sql = result_content or meta.get('final_sql') or meta.get('partial_result') or meta.get('current_sql')
                         if candidate_sql and isinstance(candidate_sql, str) and candidate_sql.strip():
                             # 构建增强的测试结果，确保前端能正确显示失败信息
                             existing_test_result = meta.get('test_result', {})
@@ -686,7 +814,7 @@ class PlaceholderOrchestrationService:
                     # 恢复失败且无候选SQL：返回增强的错误信息
                     return self._create_enhanced_error_result(
                         placeholder_name,
-                        agent_result.metadata if isinstance(agent_result.metadata, dict) else {},
+                        metadata if isinstance(metadata, dict) else {},
                         recovery_result.get("recovery_attempts", []) if isinstance(recovery_result, dict) else []
                     )
 
@@ -695,8 +823,8 @@ class PlaceholderOrchestrationService:
             # ==========================================
 
             # 从Agent结果中提取SQL和元数据，并执行后处理
-            agent_metadata = agent_result.metadata if isinstance(agent_result.metadata, dict) else {}
-            raw_sql_text = self._extract_sql_from_result(agent_result.result)
+            agent_metadata = metadata if isinstance(metadata, dict) else {}
+            raw_sql_text = self._extract_sql_from_result(result_content)
             normalized_sql, tool_logs, execution_test_result = await self._post_process_generated_sql(
                 raw_sql_text,
                 task_schedule,
@@ -766,7 +894,7 @@ class PlaceholderOrchestrationService:
                         break
 
             # 策略3: 如果PTAV成功但没有明确的test_result，推断为已执行成功
-            if not test_result and agent_result.success and generated_sql:
+            if not test_result and success and generated_sql:
                 # Agent成功返回了SQL，且是PTAV模式（有observations），推断已执行
                 if agent_metadata.get("observations"):
                     test_result = {
@@ -819,7 +947,7 @@ class PlaceholderOrchestrationService:
                     }
                 },
                 "business_validation": validation_result,
-                "confidence_score": self._calculate_confidence_score(agent_result, business_requirements),
+                "confidence_score": self._calculate_confidence_score(agent_result, business_requirements, success, result_content, metadata),
                 "analyzed_at": datetime.now().isoformat(),
                 "context_used": {
                     "template_context": bool(template_context),
@@ -836,8 +964,28 @@ class PlaceholderOrchestrationService:
             return result
 
         except Exception as e:
-            logger.error(f"❌ Agent Pipeline分析异常: {e}")
-            return self._create_error_result(placeholder_name, str(e))
+            logger.error(f"❌ Agent Pipeline分析异常: {e}", exc_info=True)
+
+            # ✅ 构建标准化的错误响应
+            error_response = {
+                "status": "error",
+                "placeholder_name": placeholder_name,
+                "generated_sql": {"sql": "", placeholder_name: ""},
+                "error": str(e),
+                "confidence_score": 0.0,
+                "analyzed_at": datetime.now().isoformat(),
+                "analysis_result": {
+                    "description": f"Agent Pipeline执行失败: {str(e)[:100]}",
+                    "analysis_type": "error_fallback",
+                    "error_type": type(e).__name__,
+                    "suggestions": [
+                        "请检查输入参数是否正确",
+                        "验证数据源连接状态",
+                        "查看日志获取详细错误信息"
+                    ]
+                }
+            }
+            return error_response
 
     async def _prepare_schema_context(
         self,
@@ -851,14 +999,18 @@ class PlaceholderOrchestrationService:
         tables: List[str] = list(schema_info.tables)
         if not tables and self._schema_list_tables_tool:
             try:
-                list_result = await self._schema_list_tables_tool.execute({
-                    "data_source": data_source_config,
-                })
+                list_result = await self._schema_list_tables_tool.execute(
+                    connection_config=data_source_config,
+                    discovery_type="tables"
+                )
             except Exception as exc:
                 logger.warning(f"SchemaListTablesTool 执行失败: {exc}")
                 list_result = {"success": False, "error": str(exc)}
             if list_result.get("success"):
-                tables = list_result.get("tables", []) or []
+                tables_payload = list_result.get("tables")
+                if tables_payload is None:
+                    tables_payload = (list_result.get("discovered") or {}).get("tables")
+                tables = tables_payload or []
                 schema_info.tables = tables
             else:
                 self._ensure_connection_success(list_result, "schema.list_tables", data_source_config.get("id"))
@@ -907,22 +1059,36 @@ class PlaceholderOrchestrationService:
 
         if self._schema_list_columns_tool and candidate_tables:
             try:
-                column_result = await self._schema_list_columns_tool.execute({
-                    "tables": candidate_tables,
-                    "data_source": data_source_config,
-                })
+                column_result = await self._schema_list_columns_tool.execute(
+                    connection_config=data_source_config,
+                    discovery_type="columns"
+                )
             except Exception as exc:
                 logger.warning(f"SchemaListColumnsTool 执行失败: {exc}")
                 column_result = {"success": False, "error": str(exc)}
 
             if column_result.get("success"):
-                columns_map = column_result.get("columns") or {}
+                columns_payload = column_result.get("columns")
+                if columns_payload is None:
+                    columns_payload = (column_result.get("discovered") or {}).get("columns")
+                columns_map = columns_payload or {}
                 if isinstance(columns_map, dict):
                     table_columns = {
                         table: columns_map.get(table, [])
                         for table in candidate_tables
                     }
-                details_map = column_result.get("column_details") or {}
+                elif isinstance(columns_map, list):
+                    table_columns = {
+                        table: [
+                            col for col in columns_map
+                            if isinstance(col, dict) and col.get("table_name") == table
+                        ]
+                        for table in candidate_tables
+                    }
+                details_payload = column_result.get("column_details")
+                if details_payload is None:
+                    details_payload = (column_result.get("discovered") or {}).get("column_details")
+                details_map = details_payload or {}
                 if isinstance(details_map, dict):
                     column_details = {
                         table: details_map.get(table, [])
@@ -980,7 +1146,7 @@ class PlaceholderOrchestrationService:
         # SQL 安全策略检查
         if self._sql_policy_tool:
             try:
-                policy_result = await self._sql_policy_tool.execute(dict(base_payload))
+                policy_result = await self._sql_policy_tool.execute(**dict(base_payload))
             except Exception as exc:
                 policy_result = {"success": False, "error": str(exc)}
                 logger.warning(f"SQLPolicyTool 执行失败: {exc}")
@@ -996,7 +1162,7 @@ class PlaceholderOrchestrationService:
         # SQL 验证
         if self._sql_validate_tool:
             try:
-                validation_result = await self._sql_validate_tool.execute(dict(base_payload))
+                validation_result = await self._sql_validate_tool.execute(**dict(base_payload))
             except Exception as exc:
                 validation_result = {"success": False, "error": str(exc)}
                 logger.warning(f"SQLValidateTool 执行失败: {exc}")
@@ -1021,7 +1187,7 @@ class PlaceholderOrchestrationService:
                 }
             )
             try:
-                execute_result = await self._sql_execute_tool.execute(execute_payload)
+                execute_result = await self._sql_execute_tool.execute(**execute_payload)
             except Exception as exc:
                 execute_result = {"success": False, "error": str(exc), "execution_sql": normalized_sql}
                 logger.warning(f"SQLExecuteTool 执行失败: {exc}")
@@ -1119,7 +1285,7 @@ class PlaceholderOrchestrationService:
 
         if self._time_window_tool:
             try:
-                window_result = await self._time_window_tool.execute({})
+                window_result = await self._time_window_tool.execute(data=[])
                 if window_result.get("success") and window_result.get("window"):
                     window = window_result["window"]
                     start_value = window.get("start") or window.get("start_date")
@@ -1286,12 +1452,17 @@ class PlaceholderOrchestrationService:
         else:
             return "stat"  # 默认统计类型
 
-    def _calculate_confidence_score(self, agent_result, business_requirements: Dict[str, Any]) -> float:
-        """计算置信度分数"""
+    def _calculate_confidence_score(self, agent_result, business_requirements: Dict[str, Any], success: bool = None, result_content: Any = None, metadata: Dict = None) -> float:
+        """计算置信度分数 - 兼容 dict 和 AgentResponse 对象"""
         base_score = 0.8
 
+        # 🔧 兼容 dict 和 AgentResponse 对象
+        if success is None:
+            is_dict = isinstance(agent_result, dict)
+            success = agent_result.get('success') if is_dict else getattr(agent_result, 'success', False)
+
         # Agent执行成功加分
-        if agent_result.success:
+        if success:
             base_score += 0.1
 
         # 业务需求明确度加分
@@ -1557,7 +1728,9 @@ class PlaceholderOrchestrationService:
 
     async def _attempt_pipeline_recovery(
         self,
-        agent_input,
+        placeholder_text: str,
+        data_source_id: int,
+        user_id: str,
         failed_result,
         placeholder_name: str,
         semantic_type: str
@@ -1572,16 +1745,30 @@ class PlaceholderOrchestrationService:
             logger.info("🔄 尝试SQL验证容错恢复")
 
             try:
-                # 修改约束条件，允许更宽松的验证
-                relaxed_input = agent_input
-                if hasattr(relaxed_input, 'constraints'):
-                    # 启用验证容错模式
-                    relaxed_input.constraints.validation_mode = "tolerant"
-                    relaxed_input.constraints.bypass_minor_errors = True
+                # 创建宽松的上下文
+                relaxed_context = {
+                    "placeholder_name": placeholder_name,
+                    "placeholder_text": placeholder_text,
+                    "semantic_type": semantic_type,
+                    "data_source_id": data_source_id,
+                    "constraints": {
+                        "sql_only": True,
+                        "output_kind": "sql",
+                        "max_attempts": 3,
+                        "validation_mode": "tolerant",
+                        "bypass_minor_errors": True
+                    }
+                }
 
-                # 重新执行 - 使用任务验证智能模式
-                recovery_result = await self.agent_service.execute_task_validation(relaxed_input)
-                if recovery_result.success:
+                # 重新执行 - 使用Stage-Aware系统
+                recovery_result = await self.agent_adapter.generate_sql(
+                    placeholder=placeholder_text,
+                    data_source_id=data_source_id,
+                    user_id=user_id,
+                    context=relaxed_context
+                )
+
+                if recovery_result.get("success"):
                     return {
                         "recovered": True,
                         "method": "sql_validation_bypass",
@@ -1598,13 +1785,28 @@ class PlaceholderOrchestrationService:
             logger.info("🔄 尝试简化语义类型恢复")
 
             try:
-                # 简化为基础统计类型
-                simplified_input = agent_input
-                if hasattr(simplified_input, 'placeholder'):
-                    simplified_input.placeholder.type = "stat"
+                # 创建简化的上下文
+                simplified_context = {
+                    "placeholder_name": placeholder_name,
+                    "placeholder_text": placeholder_text,
+                    "semantic_type": "stat",  # 简化为基础统计类型
+                    "data_source_id": data_source_id,
+                    "constraints": {
+                        "sql_only": True,
+                        "output_kind": "sql",
+                        "max_attempts": 3
+                    }
+                }
 
-                recovery_result = await self.agent_service.execute_task_validation(simplified_input)
-                if recovery_result.success:
+                # 重新执行 - 使用Stage-Aware系统
+                recovery_result = await self.agent_adapter.generate_sql(
+                    placeholder=placeholder_text,
+                    data_source_id=data_source_id,
+                    user_id=user_id,
+                    context=simplified_context
+                )
+
+                if recovery_result.get("success"):
                     return {
                         "recovered": True,
                         "method": "semantic_simplification",
@@ -1659,7 +1861,7 @@ class PlaceholderOrchestrationService:
     async def _generate_basic_sql_fallback(
         self,
         placeholder_name: str,
-        user_prompt: str,
+        placeholder: str,
         schema_info,
         user_id: str
     ) -> Dict[str, Any]:
@@ -2030,7 +2232,7 @@ async def analyze_placeholder_with_agent_pipeline(
         # 这样Agent会自动进入 SQL 验证/执行路径，避免 missing_current_sql
         forwarded_kwargs = {k: v for k, v in request.items() if k not in [
             'placeholder_name', 'placeholder_text', 'template_id',
-            'data_source_id', 'template_context'
+            'data_source_id', 'template_context', 'user_id'
         ]}
 
         # 统一 SQL 字段收集

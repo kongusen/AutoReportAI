@@ -36,7 +36,12 @@ async def test_facade_execute_with_mock_llm():
         include_legacy_tools=False,
     )
 
-    request = AgentRequest(prompt="测试问题", context={"table": "orders"})
+    request = AgentRequest(
+        placeholder="测试问题", 
+        data_source_id=1, 
+        user_id="test_user",
+        task_context={"table": "orders"}
+    )
     response = await facade.execute(request)
 
     assert response.success is True

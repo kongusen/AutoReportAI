@@ -14,7 +14,7 @@ from enum import Enum
 # 避免循环导入，使用类型提示字符串
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from app.services.infrastructure.agents.core import StructuredMessage
+    from app.services.infrastructure.agents.types import AgentRequest
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class OpenAIAdapter:
         self.retry_count = 3
         self.timeout = 30
     
-    def convert_to_openai_format(self, structured_message: "StructuredMessage") -> Dict[str, Any]:
+    def convert_to_openai_format(self, structured_message: "AgentRequest") -> Dict[str, Any]:
         """
         将结构化消息转换为OpenAI API格式
         
@@ -261,7 +261,7 @@ class OpenAIAdapter:
         except (json.JSONDecodeError, TypeError):
             return False
     
-    async def execute_with_retry(self, structured_message: "StructuredMessage", api_client) -> Dict[str, Any]:
+    async def execute_with_retry(self, structured_message: "AgentRequest", api_client) -> Dict[str, Any]:
         """带重试的执行方法"""
         openai_request = self.convert_to_openai_format(structured_message)
         

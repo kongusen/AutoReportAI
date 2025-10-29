@@ -11,6 +11,7 @@ from sqlalchemy import and_, desc, func
 from app.crud.base import CRUDBase
 from app.models.task import TaskExecution, TaskStatus, AgentWorkflowType
 from app.schemas.task import TaskExecutionCreate, TaskExecutionUpdate
+from app.utils.json_utils import convert_for_json
 
 
 class CRUDTaskExecution(CRUDBase[TaskExecution, TaskExecutionCreate, TaskExecutionUpdate]):
@@ -88,12 +89,13 @@ class CRUDTaskExecution(CRUDBase[TaskExecution, TaskExecutionCreate, TaskExecuti
         execution = db.query(TaskExecution).filter(TaskExecution.id == execution_id).first()
         if not execution:
             return None
-        
-        execution.execution_result = execution_result
+
+        # 转换 Decimal 对象为 float，确保 JSON 可序列化
+        execution.execution_result = convert_for_json(execution_result)
         if output_artifacts:
-            execution.output_artifacts = output_artifacts
+            execution.output_artifacts = convert_for_json(output_artifacts)
         if agent_execution_times:
-            execution.agent_execution_times = agent_execution_times
+            execution.agent_execution_times = convert_for_json(agent_execution_times)
         
         db.commit()
         db.refresh(execution)

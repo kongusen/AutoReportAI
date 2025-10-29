@@ -33,8 +33,35 @@ from app.services.infrastructure.websocket.pipeline_notifications import (
     PipelineTaskStatus,
 )
 from app.utils.time_context import TimeContextManager
+from app.utils.json_utils import convert_for_json
 
 logger = logging.getLogger(__name__)
+
+def run_async(coro):
+    """
+    在同步上下文中安全地执行异步代码
+
+    处理 Celery worker 中可能已存在的事件循环问题
+    """
+    try:
+        # 尝试获取当前运行的事件循环
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # 没有运行的事件循环，可以使用 asyncio.run()
+        return asyncio.run(coro)
+    else:
+        # 已经有运行的事件循环，需要使用 nest_asyncio 或创建新线程
+        # 使用 nest_asyncio 允许嵌套事件循环
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+            return asyncio.run(coro)
+        except ImportError:
+            # 如果 nest_asyncio 不可用，使用线程池执行
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result()
 
 class DatabaseTask(CeleryTask):
     """带数据库会话的基础任务类"""
@@ -156,10 +183,89 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         task.execution_count += 1
         task.last_execution_at = datetime.utcnow()
         db.commit()
-        
-        # 4. 初始化时间上下文
-        # Initialize placeholder processing system
-        system = PlaceholderProcessingSystem(user_id=str(task.owner_id))
+
+        # 4. 🆕 初始化 Schema Context（一次性获取所有表结构）
+        schema_context_retriever = None
+        try:
+            from app.services.infrastructure.agents.context_retriever import (
+                create_schema_context_retriever
+            )
+            from app.models.data_source import DataSource
+
+            logger.info(f"📋 初始化 Schema Context for data_source={task.data_source_id}")
+
+            update_progress(
+                8,
+                "正在初始化数据表结构上下文...",
+                stage="schema_initialization",
+                pipeline_status=PipelineTaskStatus.SCANNING,
+            )
+
+            # 获取数据源配置
+            data_source = db.query(DataSource).filter(DataSource.id == task.data_source_id).first()
+            if not data_source:
+                raise RuntimeError(f"数据源 {task.data_source_id} 不存在")
+
+            # 构建连接配置
+            connection_config = data_source.connection_config or {}
+            if not connection_config:
+                raise RuntimeError(f"数据源 {task.data_source_id} 缺少连接配置")
+
+            # 🆕 启用阶段感知的智能上下文管理
+            schema_context_retriever = create_schema_context_retriever(
+                data_source_id=str(task.data_source_id),
+                connection_config=connection_config,
+                container=container,
+                top_k=10,  # Task 批量分析，多缓存一些表
+                inject_as="system",
+                enable_stage_aware=True  # 🔥 启用阶段感知
+            )
+
+            # 预加载所有表结构（缓存）
+            run_async(schema_context_retriever.initialize())
+
+            table_count = len(schema_context_retriever.schema_cache)
+            logger.info(f"✅ Schema Context 初始化完成，缓存了 {table_count} 个表")
+
+            update_progress(
+                9,
+                f"数据表结构缓存完成（{table_count} 个表）",
+                stage="schema_initialization",
+                pipeline_status=PipelineTaskStatus.SCANNING,
+            )
+
+        except Exception as e:
+            logger.warning(f"⚠️ Schema Context 初始化失败: {e}", exc_info=True)
+            # 不要让整个任务失败，允许降级运行（Agent 可能会使用旧的 schema 工具或猜测表结构）
+            logger.info("💡 将在没有 Schema Context 的情况下继续执行（可能需要 Agent 调用其他工具获取表结构）")
+
+            # 创建一个空的 schema_context_retriever 以避免后续代码出错
+            schema_context_retriever = None
+
+            update_progress(
+                9,
+                "数据表结构初始化失败，将降级运行",
+                stage="schema_initialization",
+                pipeline_status=PipelineTaskStatus.SCANNING,
+                error=str(e)
+            )
+
+        # 5. 初始化时间上下文和 PlaceholderProcessingSystem
+        # Initialize placeholder processing system with schema context
+        system = PlaceholderProcessingSystem(
+            user_id=str(task.owner_id),
+            context_retriever=schema_context_retriever  # 🔥 传入 context
+        )
+
+        # 🆕 获取阶段感知上下文管理器和工具记录器
+        state_manager = getattr(schema_context_retriever, 'state_manager', None)
+        tool_recorder = None
+        if state_manager:
+            from app.services.infrastructure.agents.tool_wrapper import ToolResultRecorder
+            from app.services.infrastructure.agents.context_manager import ExecutionStage
+            tool_recorder = ToolResultRecorder(state_manager)
+            logger.info("✅ 任务已启用阶段感知上下文管理和工具结果记录")
+
         time_ctx_mgr = TimeContextManager()
         
         # 5. 准备执行参数
@@ -203,7 +309,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         # 检查是否被取消
         check_if_cancelled()
 
-        asyncio.run(system.initialize())
+        run_async(system.initialize())
         events = []
 
         update_progress(
@@ -374,6 +480,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         }
         # 根据是否需要分析决定执行路径
         if placeholders_need_analysis:
+            # 🆕 设置阶段为PLANNING - 准备生成SQL
+            if state_manager:
+                state_manager.set_stage(ExecutionStage.PLANNING)
+                logger.info("🎯 设置Agent阶段为 PLANNING - 准备批量生成SQL")
+
             # 使用PlaceholderApplicationService单个处理每个占位符
             update_progress(
                 30,
@@ -429,15 +540,97 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             "execution_id": str(task_execution.execution_id),
                         }
 
-                        # 使用PlaceholderApplicationService的单个处理方法
-                        sql_result = await system._generate_sql_with_agent(
-                            placeholder=ph,
-                            data_source_id=str(task.data_source_id),
-                            task_objective=f"为占位符 {ph.placeholder_name} 生成SQL",
-                            success_criteria=success_criteria,
-                            db=db,
-                            task_context=real_task_context  # 👈 传递真实的任务上下文
-                        )
+                        # 🆕 选择占位符分析方法：直接调用或使用 Celery 任务
+                        use_celery_task = getattr(settings, 'USE_CELERY_PLACEHOLDER_ANALYSIS', False)
+                        
+                        if use_celery_task:
+                            # 使用新的 Celery 占位符分析任务
+                            from app.services.infrastructure.task_queue.placeholder_tasks import analyze_single_placeholder_task
+                            
+                            logger.info(f"🔄 使用 Celery 任务分析占位符: {ph.placeholder_name}")
+                            
+                            # 触发 Celery 任务
+                            celery_task = analyze_single_placeholder_task.delay(
+                                placeholder_name=ph.placeholder_name,
+                                placeholder_text=ph.placeholder_text,
+                                template_id=str(task.template_id),
+                                data_source_id=str(task.data_source_id),
+                                user_id=str(task.owner_id),
+                                template_context=real_task_context.get("template_context"),
+                                time_window=real_task_context.get("time_window"),
+                                time_column=real_task_context.get("time_column"),
+                                data_range=real_task_context.get("data_range", "day"),
+                                requirements=real_task_context.get("requirements"),
+                                execute_sql=False,  # 任务执行阶段不执行SQL，只生成
+                                row_limit=1000,
+                                **{k: v for k, v in real_task_context.items() if k not in [
+                                    "template_context", "time_window", "time_column", "data_range", "requirements"
+                                ]}
+                            )
+                            
+                            # 等待任务完成
+                            celery_result = celery_task.get(timeout=300)  # 5分钟超时
+                            
+                            if celery_result.get("success"):
+                                analysis_result = celery_result.get("analysis_result", {})
+                                sql_result = {
+                                    "success": True,
+                                    "sql": analysis_result.get("generated_sql", {}).get("sql", ""),
+                                    "validated": analysis_result.get("generated_sql", {}).get("validated", True),
+                                    "confidence": analysis_result.get("confidence_score", 0.9),
+                                    "auto_fixed": analysis_result.get("generated_sql", {}).get("auto_fixed", False),
+                                    "warning": analysis_result.get("generated_sql", {}).get("warning")
+                                }
+                                logger.info(f"✅ Celery 任务分析成功: {ph.placeholder_name}")
+                            else:
+                                error_msg = celery_result.get("error", "Celery 任务分析失败")
+                                sql_result = {
+                                    "success": False,
+                                    "error": error_msg
+                                }
+                                logger.error(f"❌ Celery 任务分析失败: {ph.placeholder_name}, 错误: {error_msg}")
+                        else:
+                            # 使用成熟的单占位符分析能力（避免循环问题）
+                            async def _analyze_placeholder_async(placeholder_name, placeholder_text, template_id, data_source_id, template_context, user_id):
+                                from app.api.endpoints.placeholders import PlaceholderOrchestrationService
+                                orchestration_service = PlaceholderOrchestrationService()
+                                
+                                # 调用成熟的单占位符分析，结果自动保存到数据库
+                                analysis_result = await orchestration_service.analyze_placeholder_with_full_pipeline(
+                                    placeholder_name=placeholder_name,
+                                    placeholder_text=placeholder_text,
+                                    template_id=template_id,
+                                    data_source_id=data_source_id,
+                                    template_context=template_context,
+                                    user_id=user_id,
+                                    **template_context
+                                )
+                                
+                                # 转换为当前任务期望的格式（用于后续ETL步骤）
+                                if analysis_result.get("status") == "success":
+                                    generated_sql = analysis_result.get("generated_sql", {})
+                                    return {
+                                        "success": True,
+                                        "sql": generated_sql.get("sql", ""),
+                                        "validated": generated_sql.get("validated", True),
+                                        "confidence": analysis_result.get("confidence_score", 0.9),
+                                        "auto_fixed": generated_sql.get("auto_fixed", False),
+                                        "warning": generated_sql.get("warning")
+                                    }
+                                else:
+                                    return {
+                                        "success": False,
+                                        "error": analysis_result.get("error", "占位符分析失败")
+                                    }
+
+                            sql_result = run_async(_analyze_placeholder_async(
+                                placeholder_name=ph.placeholder_name,
+                                placeholder_text=ph.placeholder_text,
+                                template_id=str(tpl_meta['id']),
+                                data_source_id=data_source_id,
+                                template_context=real_task_context,
+                                user_id=str(task.owner_id)
+                            ))
 
                         if sql_result.get("success"):
                             # 👇 更新占位符SQL（不立即提交）
@@ -452,6 +645,18 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 ph.agent_config = ph.agent_config or {}
                                 ph.agent_config["auto_fixed"] = True
                                 ph.agent_config["auto_fix_warning"] = sql_result.get("warning")
+
+                            # 🆕 记录SQL生成结果（作为验证成功）
+                            if tool_recorder:
+                                tool_recorder.record_sql_validation(
+                                    tool_name="sql_generation",
+                                    result={
+                                        "valid": ph.sql_validated,
+                                        "sql": sql_result["sql"],
+                                        "auto_fixed": sql_result.get("auto_fixed", False),
+                                        "confidence": sql_result.get("confidence", 0.9)
+                                    }
+                                )
 
                             batch_updates.append(ph)  # 👈 添加到批次
 
@@ -478,6 +683,21 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         else:
                             error_msg = sql_result.get("error", "SQL生成失败")
                             logger.error(f"❌ 占位符 {ph.placeholder_name} SQL生成失败: {error_msg}")
+
+                            # 🆕 切换到ERROR_RECOVERY阶段并记录错误
+                            if state_manager:
+                                state_manager.set_stage(ExecutionStage.ERROR_RECOVERY)
+                                from app.services.infrastructure.agents.context_manager import ContextType, ContextItem
+                                state_manager.add_context(
+                                    key=f"sql_generation_error_{ph.placeholder_name}",
+                                    item=ContextItem(
+                                        type=ContextType.ERROR_INFO,
+                                        content=f"占位符 {ph.placeholder_name} SQL生成失败: {error_msg}",
+                                        metadata={"placeholder": ph.placeholder_name},
+                                        relevance_score=1.0
+                                    )
+                                )
+                                logger.warning("⚠️ 切换到 ERROR_RECOVERY 阶段")
 
                             events.append({
                                 "type": "placeholder_sql_failed",
@@ -533,7 +753,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                 return processed_count
 
-            processed_count = asyncio.run(_process_placeholders_individually())
+            processed_count = run_async(_process_placeholders_individually())
             update_progress(
                 65,
                 f"占位符分析完成，成功处理 {processed_count} 个占位符",
@@ -557,6 +777,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             })
 
         # 7. 执行真实的ETL数据处理流程
+        # 🆕 切换到EXECUTION阶段
+        if state_manager:
+            state_manager.set_stage(ExecutionStage.EXECUTION)
+            logger.info("🎯 切换到 EXECUTION 阶段 - 开始执行SQL查询")
+
         update_progress(
             70,
             "开始ETL数据处理...",
@@ -679,6 +904,137 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                     logger.info(f"数据源配置: {data_source.source_type}, database: {data_source_config.get('database')}")
 
+                    # 2.5 SQL列验证和自动修复
+                    validation_passed = True
+                    try:
+                        # 尝试导入列验证工具
+                        from app.services.infrastructure.agents.tools.column_validator import (
+                            SQLColumnValidatorTool,
+                            SQLColumnAutoFixTool
+                        )
+
+                        # 获取表结构信息
+                        table_columns = {}
+                        if hasattr(ph, 'agent_config') and ph.agent_config:
+                            schema_context = ph.agent_config.get('schema_context', {})
+                            table_columns = schema_context.get('table_columns', {})
+
+                        # 只有在有表结构信息时才进行验证
+                        if table_columns:
+                            logger.info(f"🔍 开始验证 SQL 列: {ph.placeholder_name}")
+
+                            validator = SQLColumnValidatorTool()
+
+                            async def _validate_columns_async():
+                                return await validator.execute({
+                                    "sql": final_sql,
+                                    "schema_context": {"table_columns": table_columns}
+                                })
+
+                            validation_result = run_async(_validate_columns_async())
+
+                            if validation_result.get("success") and not validation_result.get("valid"):
+                                # 发现列错误
+                                invalid_columns = validation_result.get("invalid_columns", [])
+                                suggestions = validation_result.get("suggestions", {})
+
+                                logger.warning(
+                                    f"⚠️ SQL 列验证失败: {ph.placeholder_name}\n"
+                                    f"   无效列: {invalid_columns}\n"
+                                    f"   建议: {suggestions}"
+                                )
+
+                                # 尝试自动修复
+                                if suggestions:
+                                    logger.info(f"🔧 尝试自动修复 SQL: {ph.placeholder_name}")
+
+                                    fixer = SQLColumnAutoFixTool()
+
+                                    async def _fix_columns_async():
+                                        return await fixer.execute({
+                                            "sql": final_sql,
+                                            "suggestions": suggestions
+                                        })
+
+                                    fix_result = run_async(_fix_columns_async())
+
+                                    if fix_result.get("success"):
+                                        fixed_sql = fix_result.get("fixed_sql")
+                                        changes = fix_result.get("changes", [])
+
+                                        logger.info(
+                                            f"✅ SQL 自动修复成功: {ph.placeholder_name}\n"
+                                            f"   修改: {changes}"
+                                        )
+
+                                        # 更新 SQL
+                                        final_sql = fixed_sql
+
+                                        # 更新数据库中的 SQL（保存修复后的版本，保留占位符）
+                                        # 需要将已替换的时间值还原为占位符格式
+                                        saved_sql = fixed_sql
+                                        if sql_placeholders and time_context:
+                                            # 将时间值还原为占位符
+                                            for placeholder in sql_placeholders:
+                                                if placeholder in ['start_date', 'end_date']:
+                                                    time_key = 'data_start_time' if placeholder == 'start_date' else 'data_end_time'
+                                                    time_value = time_context.get(time_key, '')
+                                                    if time_value:
+                                                        # 还原为占位符格式
+                                                        saved_sql = saved_sql.replace(f"'{time_value}'", f"{{{{{placeholder}}}}}")
+
+                                        ph.generated_sql = saved_sql
+
+                                        # 标记为需要人工审核（虽然已自动修复）
+                                        if not hasattr(ph, 'agent_config') or not ph.agent_config:
+                                            ph.agent_config = {}
+                                        ph.agent_config['auto_fixed'] = True
+                                        ph.agent_config['auto_fix_details'] = {
+                                            "changes": changes,
+                                            "original_errors": validation_result.get("errors", [])
+                                        }
+
+                                        db.commit()
+                                        logger.info(f"💾 已保存修复后的 SQL: {ph.placeholder_name}")
+                                    else:
+                                        # 自动修复失败
+                                        logger.error(f"❌ SQL 自动修复失败: {ph.placeholder_name}")
+                                        validation_passed = False
+                                else:
+                                    # 没有修复建议
+                                    logger.error(f"❌ 无法自动修复，缺少列名建议: {ph.placeholder_name}")
+                                    validation_passed = False
+
+                                # 如果自动修复失败，记录错误并跳过执行
+                                if not validation_passed:
+                                    error_msg = "\n".join(validation_result.get("errors", ["列验证失败"]))
+                                    etl_results[ph.placeholder_name] = f"ERROR: {error_msg}"
+
+                                    update_progress(
+                                        task_execution.progress_percentage or 75,
+                                        f"占位符 {ph.placeholder_name} SQL 列验证失败",
+                                        stage="etl_processing",
+                                        status="failed",
+                                        placeholder=ph.placeholder_name,
+                                        details={
+                                            "current": i + 1,
+                                            "total": total_placeholders_count,
+                                        },
+                                        error=error_msg,
+                                        record_only=True,
+                                    )
+                                    continue
+                            else:
+                                logger.info(f"✅ SQL 列验证通过: {ph.placeholder_name}")
+
+                        else:
+                            logger.debug(f"⏭️ 跳过列验证（无表结构信息）: {ph.placeholder_name}")
+
+                    except ImportError:
+                        logger.warning("列验证工具未安装，跳过验证")
+                    except Exception as val_error:
+                        logger.warning(f"列验证过程异常，继续执行: {val_error}")
+
                     # 3. 使用connector直接执行查询（与Agent保持一致）
                     from app.services.data.connectors.connector_factory import create_connector_from_config
 
@@ -695,7 +1051,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         finally:
                             await connector.disconnect()
 
-                    query_result = asyncio.run(_execute_query_async())
+                    query_result = run_async(_execute_query_async())
 
                     # 4. 解包查询结果，提取实际数据值
                     # DorisQueryResult 没有 success 属性，只要没抛异常就是成功
@@ -721,6 +1077,17 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 actual_value = result_data
 
                         logger.info(f"✅ 占位符 {ph.placeholder_name} 查询成功，结果类型: {type(actual_value)}, 值: {str(actual_value)[:100]}")
+
+                        # 🆕 记录SQL执行结果
+                        if tool_recorder:
+                            tool_recorder.record_sql_execution(
+                                tool_name=f"sql_execution_{ph.placeholder_name}",
+                                result={
+                                    "success": True,
+                                    "row_count": len(result_data),
+                                    "rows": result_data[:3] if len(result_data) > 3 else result_data  # 只记录前3行
+                                }
+                            )
 
                         # 存储实际的数据值
                         etl_results[ph.placeholder_name] = actual_value
@@ -831,13 +1198,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
 
                     # 使用WordTemplateService处理文档
-                    assemble_res = asyncio.run(word_service.process_document_template(
+                    assemble_res = run_async(word_service.process_document_template(
                         template_path=tpl_meta['path'],
                         placeholder_data=etl_results,
                         output_path=docx_out,
                         container=container,
                         use_agent_charts=True,
-                        use_agent_optimization=True
+                        use_agent_optimization=True,
+                        user_id=str(task.owner_id)
                     ))
 
                     if assemble_res.get('success'):
@@ -876,13 +1244,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
                     os.makedirs(safe_tmp_dir, exist_ok=True)
                     docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
-                    assemble_res = asyncio.run(word_service_traditional.process_document_template(
+                    assemble_res = run_async(word_service_traditional.process_document_template(
                         template_path=tpl_meta['path'],
                         placeholder_data=etl_results,
                         output_path=docx_out,
                         container=container,
                         use_agent_charts=True,
-                        use_agent_optimization=True
+                        use_agent_optimization=True,
+                        user_id=str(task.owner_id)
                     ))
 
                     if assemble_res.get('success') and assemble_res.get('output_path'):
@@ -995,6 +1364,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         if report_info.get("error"):
             history_metadata["error"] = report_info.get("error")
 
+        # 转换 history_metadata 中的 Decimal 对象
+        history_metadata = convert_for_json(history_metadata)
+
         report_history_record = ReportHistory(
             task_id=task.id,
             user_id=owner_id,
@@ -1009,6 +1381,8 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         db.flush()
         report_info["history_id"] = report_history_record.id
 
+        # 转换 execution_result 中的所有 Decimal 对象为 float，确保 JSON 可序列化
+        execution_result = convert_for_json(execution_result)
         task_execution.execution_result = execution_result
         
         # 更新任务统计
@@ -1073,7 +1447,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         metadata={"report_path": execution_result.get("report", {}).get("storage_path")}
                     )
                     # 在同步任务中执行异步投递
-                    asyncio.run(delivery_service.deliver_report(req))
+                    run_async(delivery_service.deliver_report(req))
                 except Exception as e:
                     logger.error(f"Failed to send success notification for task {task_id}: {e}")
         

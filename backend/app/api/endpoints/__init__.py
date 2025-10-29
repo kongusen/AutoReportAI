@@ -7,6 +7,7 @@ from . import (
     data_sources,
     templates,
     placeholders,
+    placeholder_async_tasks,
     reports,
 )
 

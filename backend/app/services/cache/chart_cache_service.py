@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.placeholder_chart_cache import PlaceholderChartCache
 from app.models.template_placeholder import TemplatePlaceholder
+from app.utils.json_utils import convert_for_json
 
 logger = logging.getLogger(__name__)
 
@@ -90,37 +91,44 @@ class ChartCacheService:
         try:
             # 设置过期时间
             expires_at = datetime.utcnow() + timedelta(hours=cache_ttl_hours)
-            
+
+            # 转换所有可能包含 Decimal 的字段
+            sql_metadata = convert_for_json(result_data.get('sql_metadata', {}))
+            raw_data = convert_for_json(result_data.get('raw_data', []))
+            processed_data = convert_for_json(result_data.get('processed_data', []))
+            echarts_config = convert_for_json(result_data.get('echarts_config', {}))
+            chart_metadata = convert_for_json(result_data.get('chart_config', {}).get('metadata', {}))
+
             # 创建缓存条目
             cache_entry = PlaceholderChartCache(
                 placeholder_id=placeholder_id,
                 template_id=template_id,
                 data_source_id=data_source_id,
                 user_id=user_id,
-                
+
                 # 阶段一：SQL和数据
                 generated_sql=result_data.get('sql_query', ''),
-                sql_metadata=result_data.get('sql_metadata', {}),
-                raw_data=result_data.get('raw_data', []),
-                processed_data=result_data.get('processed_data', []),
+                sql_metadata=sql_metadata,
+                raw_data=raw_data,
+                processed_data=processed_data,
                 data_quality_score=result_data.get('execution_metadata', {}).get('data_quality_score', 0.0),
-                
+
                 # 阶段二：图表配置
                 chart_type=result_data.get('chart_type', 'bar_chart'),
-                echarts_config=result_data.get('echarts_config', {}),
-                chart_metadata=result_data.get('chart_config', {}).get('metadata', {}),
-                
+                echarts_config=echarts_config,
+                chart_metadata=chart_metadata,
+
                 # 执行信息
                 execution_mode=result_data.get('execution_mode', 'test_with_chart'),
                 execution_time_ms=int(result_data.get('processing_time_ms', 0)),
                 sql_execution_time_ms=result_data.get('execution_metadata', {}).get('execution_time_ms', 0),
                 chart_generation_time_ms=0,  # TODO: 可以从详细执行信息中提取
-                
+
                 # 状态
                 is_valid=True,
                 is_preview=result_data.get('execution_mode') == 'test_with_chart',
                 stage_completed=result_data.get('stage', 'chart_complete'),
-                
+
                 # 缓存管理
                 cache_key=cache_key,
                 cache_ttl_hours=cache_ttl_hours,
@@ -150,14 +158,15 @@ class ChartCacheService:
             # 更新相关字段
             if 'sql_query' in updated_data:
                 cache_entry.generated_sql = updated_data['sql_query']
-            
+
             if 'chart_config' in updated_data:
-                cache_entry.echarts_config = updated_data['chart_config'].get('echarts_config', {})
-                cache_entry.chart_metadata = updated_data['chart_config'].get('metadata', {})
-            
+                # 转换可能包含 Decimal 的字段
+                cache_entry.echarts_config = convert_for_json(updated_data['chart_config'].get('echarts_config', {}))
+                cache_entry.chart_metadata = convert_for_json(updated_data['chart_config'].get('metadata', {}))
+
             if 'execution_time_ms' in updated_data:
                 cache_entry.execution_time_ms = updated_data['execution_time_ms']
-            
+
             # 更新时间戳
             cache_entry.updated_at = datetime.utcnow()
             

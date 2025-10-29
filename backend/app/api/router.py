@@ -7,6 +7,7 @@ from app.api.endpoints import (
     data_sources,
     templates,
     placeholders,
+    placeholder_async_tasks,
     reports,
 
     # 任务执行
@@ -70,6 +71,7 @@ api_router.include_router(users.router, prefix="/v1/users", tags=["用户管理"
 api_router.include_router(data_sources.router, prefix="/v1/data-sources", tags=["数据源"])
 api_router.include_router(templates.router, prefix="/v1/templates", tags=["模板管理"])
 api_router.include_router(placeholders.router, prefix="/v1/placeholders", tags=["占位符管理"])
+api_router.include_router(placeholder_async_tasks.router, prefix="/v1/placeholders", tags=["占位符异步任务"])
 api_router.include_router(reports.router, prefix="/v1/reports", tags=["报告管理"])
 
 # 任务执行路由

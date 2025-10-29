@@ -108,7 +108,8 @@ class AgentIntegratedLLMManager:
             
             self.available_tools = {
                 "sql_generator": SQLGeneratorTool(),
-                "sql_executor": SQLExecutorTool(),
+                # SQLExecutorTool 需要 container 参数，暂时注释掉
+                # "sql_executor": SQLExecutorTool(),
                 "data_transform": DataTransformTool(),
                 "chart_builder": ChartBuilderTool(),
                 "doc_assembler": DocumentAssemblerTool()

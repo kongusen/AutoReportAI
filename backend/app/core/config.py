@@ -230,7 +230,13 @@ class Settings(BaseSettings):
     # 新Agent 编排配置
     # ===========================================
     AGENT_ENGINE: str = os.getenv("AGENT_ENGINE", "new")  # new 或 legacy
-    NEW_AGENT_MODE: str = os.getenv("NEW_AGENT_MODE", "local_stub")  # local_stub 或 http
+    NEW_AGENT_MODE: str = os.getenv("NEW_AGENT_MODE", "local_stub")
+    
+    # ===========================================
+    # 占位符分析配置
+    # ===========================================
+    USE_CELERY_PLACEHOLDER_ANALYSIS: bool = os.getenv("USE_CELERY_PLACEHOLDER_ANALYSIS", "false").lower() == "true"
+    PLACEHOLDER_ANALYSIS_TIMEOUT: int = int(os.getenv("PLACEHOLDER_ANALYSIS_TIMEOUT", "300"))  # 5分钟  # local_stub 或 http
     NEW_AGENT_ENDPOINT: str = os.getenv("NEW_AGENT_ENDPOINT", "")  # HTTP模式下的服务地址
     NEW_AGENT_API_KEY: str = os.getenv("NEW_AGENT_API_KEY", "")
     NEW_AGENT_TIMEOUT: int = int(os.getenv("NEW_AGENT_TIMEOUT", 60))
@@ -343,6 +349,9 @@ class Settings(BaseSettings):
     DEFAULT_AI_PROVIDER_API_BASE: str = os.getenv("DEFAULT_AI_PROVIDER_API_BASE", "https://api.openai.com/v1")
     DEFAULT_AI_PROVIDER_API_KEY: str = os.getenv("DEFAULT_AI_PROVIDER_API_KEY", "sk-your-api-key")
     DEFAULT_AI_PROVIDER_MODELS: List[str] = os.getenv("DEFAULT_AI_PROVIDER_MODELS", "gpt-3.5-turbo,gpt-4").split(",")
+
+    # OpenAI 配置（兼容性）
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     class Config:
         case_sensitive = True

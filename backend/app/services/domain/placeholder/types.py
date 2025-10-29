@@ -66,6 +66,8 @@ class PlaceholderAnalysisRequest:
     placeholder_id: str
     business_command: str
     requirements: str
+    # 统一的任务上下文字段：供上层传入真实执行上下文（时间窗、调度等）
+    task_context: Dict[str, Any] = field(default_factory=dict)
     context: Dict[str, Any] = field(default_factory=dict)
     target_objective: str = ""
     data_source_info: Optional[Dict[str, Any]] = None

@@ -20,8 +20,16 @@ class DataSourceAdapter:
         if not connection_config:
             return {"success": False, "error": "missing_connection_config"}
 
-        # Normalize
-        cfg = dict(connection_config)
+        # 🔧 修复：确保 connection_config 是字典类型
+        if not isinstance(connection_config, dict):
+            logger.error(f"❌ connection_config 必须是字典，当前类型: {type(connection_config)}")
+            return {
+                "success": False,
+                "error": f"connection_config must be a dictionary, got {type(connection_config).__name__}"
+            }
+
+        # Normalize - 使用 .copy() 而不是 dict() 来避免类型转换问题
+        cfg = connection_config.copy()
         src_type = cfg.get("source_type") or cfg.get("type") or cfg.get("database_type")
         name = cfg.get("name") or cfg.get("database") or "data_source"
         if not src_type:
@@ -51,6 +59,7 @@ class DataSourceAdapter:
                     "SHOW FULL COLUMNS",
                     "SHOW COLUMNS",
                     "SHOW TABLES",
+                    "SHOW TABLE STATUS",
                     "SHOW DATABASES",
                     "SHOW SCHEMAS",
                     "DESC ",
@@ -71,21 +80,65 @@ class DataSourceAdapter:
                 rows, cols = [], []
 
                 try:
-                    if hasattr(result, 'get') and callable(result.get):
-                        # 标准字典格式 (MySQL等)
+                    import pandas as pd
+
+                    # 🔧 修复：优先检查 QueryResult 对象（from base_connector）
+                    if hasattr(result, 'data') and hasattr(result, 'success'):
+                        # QueryResult 对象格式 - 标准连接器返回格式
+                        if isinstance(result.data, pd.DataFrame):
+                            if not result.data.empty:
+                                rows = result.data.to_dict('records')
+                                cols = result.data.columns.tolist()
+                                logger.debug(f"使用QueryResult格式解析: {len(rows)}行, {len(cols)}列")
+                            else:
+                                rows, cols = [], []
+                                logger.debug("QueryResult DataFrame为空")
+                        else:
+                            # data 不是 DataFrame，可能是列表或其他格式
+                            rows = result.data if isinstance(result.data, list) else []
+                            cols = getattr(result, 'columns', []) if hasattr(result, 'columns') else []
+                            logger.debug(f"使用QueryResult非DataFrame格式: {len(rows)}行")
+
+                    elif hasattr(result, 'get') and callable(result.get):
+                        # 标准字典格式 (某些数据库直接返回字典)
                         rows = result.get("rows") or result.get("data") or []
                         cols = result.get("columns") or result.get("column_names") or []
+
+                        # 如果 rows 是 DataFrame，转换它
+                        if isinstance(rows, pd.DataFrame):
+                            if not rows.empty:
+                                # 保存列名
+                                cols = rows.columns.tolist()
+                                # 转换为字典列表
+                                rows = rows.to_dict('records')
+                            else:
+                                rows = []
+
                         logger.debug(f"使用字典格式解析: {len(rows)}行")
+
                     elif hasattr(result, 'rows'):
                         # Doris等特殊对象格式 - 直接访问属性
                         rows = getattr(result, 'rows', [])
                         cols = getattr(result, 'columns', []) or getattr(result, 'column_names', [])
+
+                        # 如果 rows 是 DataFrame，转换它
+                        if isinstance(rows, pd.DataFrame):
+                            if not rows.empty:
+                                # 保存列名
+                                cols = rows.columns.tolist()
+                                # 转换为字典列表
+                                rows = rows.to_dict('records')
+                            else:
+                                rows = []
+
                         logger.debug(f"使用对象属性解析: {len(rows)}行")
+
                     elif isinstance(result, (list, tuple)):
                         # 直接返回行数据的格式
                         rows = result
                         cols = []
                         logger.debug(f"使用列表格式解析: {len(rows)}行")
+
                     else:
                         # 尝试所有可能的属性访问
                         for attr in ['rows', 'data']:
@@ -96,20 +149,33 @@ class DataSourceAdapter:
                             if hasattr(result, attr):
                                 cols = getattr(result, attr, [])
                                 break
+
+                        # 如果 rows 是 DataFrame，转换它
+                        if isinstance(rows, pd.DataFrame):
+                            if not rows.empty:
+                                # 保存列名
+                                cols = rows.columns.tolist()
+                                # 转换为字典列表
+                                rows = rows.to_dict('records')
+                            else:
+                                rows = []
+                                cols = []
+
                         logger.debug(f"使用属性扫描解析: {len(rows)}行, {len(cols)}列")
 
-                except Exception as parse_error:
-                    logger.warning(f"结果解析失败: {parse_error}, 使用空结果")
-                    rows, cols = [], []
+                    # 🔧 最终验证：确保 rows 是字典列表
+                    if rows and not isinstance(rows, list):
+                        logger.warning(f"⚠️ rows 不是列表，类型: {type(rows)}，尝试转换")
+                        rows = [rows] if isinstance(rows, dict) else []
 
-                # 最终DataFrame安全检查
-                import pandas as pd
-                if isinstance(rows, pd.DataFrame):
-                    if not rows.empty:
-                        rows = rows.to_dict('records')
-                        logger.debug(f"Container最终转换DataFrame为字典列表: {len(rows)}行")
-                    else:
-                        rows = []
+                    if rows and rows[0] and not isinstance(rows[0], dict):
+                        logger.warning(f"⚠️ rows[0] 不是字典，类型: {type(rows[0])}，数据可能不正确")
+
+                except Exception as parse_error:
+                    logger.error(f"结果解析失败: {parse_error}, 使用空结果")
+                    import traceback
+                    logger.error(f"堆栈:\n{traceback.format_exc()}")
+                    rows, cols = [], []
 
                 return {"success": True, "rows": rows, "columns": cols}
         except Exception as e:
@@ -120,8 +186,24 @@ class DataSourceAdapter:
 class RealLLMServiceAdapter:
     """Adapter for real LLM service to match agent system interface"""
 
-    def __init__(self):
+    def __init__(self, container: Optional[Any] = None):
         self._llm_manager = None
+        self._container = container
+
+    def set_container(self, container: Any):
+        """Attach the owning container (for tool access and adapters)."""
+        self._container = container
+        return self
+
+    @property
+    def llm(self):
+        """
+        Expose LLM service interface so the adapter itself can behave like a container.
+
+        This allows utility classes that expect `container.llm` to work even when
+        they receive the adapter directly (e.g., during dynamic model selection).
+        """
+        return self
 
     async def _get_llm_manager(self):
         """Get the real LLM manager"""
@@ -145,6 +227,14 @@ class RealLLMServiceAdapter:
 
             policy = llm_policy or {}
 
+            # 兼容字符串格式的 response_format（如 "json"）
+            if isinstance(response_format, str):
+                fmt = response_format.strip().lower()
+                if fmt in {"json", "json_object"}:
+                    response_format = {"type": "json_object"}
+                else:
+                    response_format = {"type": fmt or "text"}
+
             # 默认统一启用结构化JSON输出
             if response_format is None:
                 response_format = {"type": "json_object"}
@@ -160,51 +250,114 @@ class RealLLMServiceAdapter:
                        f"complexity={complexity}, output_kind={output_kind}, "
                        f"preferred_type={preferred_model_type}, json_required={constraints['json']}")
 
-            # 1) Model selection via DB
+            # 🔥 优化模型选择策略：只在需要规划时使用think模型
             selected_model = None
             model_selection_method = "fallback"
+            
+            # 只在特定情况下使用动态模型选择（需要深度思考的场景）
+            use_dynamic_selection = (
+                not policy.get("skip_dynamic_model_selection") and
+                stage not in {"complexity_assessment", "model_selection"} and
+                # 只在Agent不确定下一步该做什么时使用think模型
+                (stage == "agent_runtime" and "不知道" in prompt or "下一步" in prompt or "如何" in prompt)
+            )
 
-            try:
-                # 修正模型选择调用，只传递支持的参数
-                sel = await select_best_model_for_user(
-                    user_id=user_id,
-                    task_type=stage,
-                    complexity=complexity,
-                    constraints=constraints,
-                    agent_id=policy.get("agent_id")
-                )
+            if not use_dynamic_selection:
+                logger.info(f"⏭️ [DynamicModelSelection] Skip dynamic selection for stage={stage} (使用default模型)")
+            else:
+                try:
+                    # 1. 只在需要规划时使用动态模型选择
+                    from app.services.infrastructure.agents.tools.model_selection import DynamicModelSwitcher
+                    from app.services.infrastructure.agents.config.user_model_resolver import UserModelResolver
 
-                model_id = sel.get("model_id")
-                if model_id and sel.get("model"):  # 使用 'model' 而不是 'model_name'
-                    selected_model = {
-                        "model_id": model_id,
-                        "model_name": sel.get("model"),
-                        "server_name": sel.get("server_name", "unknown"),
-                        "provider_name": sel.get("provider", "unknown"),
-                        "model_type": sel.get("model_type", "unknown"),
-                        "confidence": sel.get("confidence", 0.0),
-                        "reasoning": sel.get("reasoning", ""),
-                        "fallback_used": sel.get("fallback_used", False)
-                    }
-                    model_selection_method = "db_selection"
+                    # 创建动态模型选择器
+                    user_model_resolver = UserModelResolver()
+                    container_for_switcher = self._container or self
+                    dynamic_switcher = DynamicModelSwitcher(
+                        container=container_for_switcher,
+                        user_model_resolver=user_model_resolver
+                    )
 
-                    # 🎯 记录详细的模型选择结果
-                    selection_context = sel.get("selection_context", {})
-                    logger.info(f"✅ [ModelSelected] server={selected_model['server_name']}, "
-                               f"model={selected_model['model_name']}, type={selected_model['model_type']}, "
-                               f"confidence={selected_model['confidence']:.2f}, "
-                               f"fallback={selected_model['fallback_used']}, "
-                               f"context={selection_context}")
+                    # 执行动态模型选择
+                    dynamic_result = await dynamic_switcher.assess_and_select_model(
+                        task_description=prompt[:200] + "..." if len(prompt) > 200 else prompt,
+                        user_id=user_id,
+                        context={"stage": stage, "complexity": complexity},
+                        task_type=stage
+                    )
 
-                    # 如果使用了回退，记录警告
-                    if selected_model['fallback_used']:
-                        logger.warning(f"⚠️ [ModelFallback] 使用了回退模型选择，原因: {selected_model['reasoning']}")
-                else:
-                    logger.warning(f"⚠️ [ModelSelection] 模型选择未返回有效结果: {sel}")
+                    if dynamic_result and dynamic_result.get("selected_model_config"):
+                        selected_model_config = dynamic_result["selected_model_config"]
+                        complexity_assessment = dynamic_result.get("complexity_assessment", {})
 
-            except Exception as e:
-                logger.warning(f"⚠️ [ModelSelection] DB selection failed: {e}")
-                selected_model = None
+                        selected_model = {
+                            "model_id": selected_model_config.get("model_id", 1),
+                            "model_name": selected_model_config.get("model_name", "gpt-4o-mini"),
+                            "server_name": selected_model_config.get("server_name", "unknown"),
+                            "provider_name": selected_model_config.get("provider", "unknown"),
+                            "model_type": selected_model_config.get("model_type", "general"),
+                            "confidence": complexity_assessment.get("complexity_score", 0.7),
+                            "reasoning": f"动态选择: {complexity_assessment.get('reasoning', '')}",
+                            "fallback_used": False,
+                            "dynamic_selection": True
+                        }
+                        model_selection_method = "dynamic_selection"
+
+                        logger.info(
+                            f"🎯 [DynamicModelSelected] server={selected_model['server_name']}, "
+                            f"model={selected_model['model_name']}, type={selected_model['model_type']}, "
+                            f"confidence={selected_model['confidence']:.2f}, "
+                            f"reasoning={selected_model['reasoning']}"
+                        )
+
+                except Exception as e:
+                    logger.warning(f"⚠️ [DynamicModelSelection] 动态模型选择失败: {e}")
+                    selected_model = None
+
+            # 2. 如果动态选择失败，使用数据库驱动选择
+            if not selected_model:
+                try:
+                    # 修正模型选择调用，只传递支持的参数
+                    sel = await select_best_model_for_user(
+                        user_id=user_id,
+                        task_type=stage,
+                        complexity=complexity,
+                        constraints=constraints,
+                        agent_id=policy.get("agent_id")
+                    )
+
+                    model_id = sel.get("model_id")
+                    if model_id and sel.get("model"):  # 使用 'model' 而不是 'model_name'
+                        selected_model = {
+                            "model_id": model_id,
+                            "model_name": sel.get("model"),
+                            "server_name": sel.get("server_name", "unknown"),
+                            "provider_name": sel.get("provider", "unknown"),
+                            "model_type": sel.get("model_type", "unknown"),
+                            "confidence": sel.get("confidence", 0.0),
+                            "reasoning": sel.get("reasoning", ""),
+                            "fallback_used": sel.get("fallback_used", False),
+                            "dynamic_selection": False
+                        }
+                        model_selection_method = "db_selection"
+
+                        # 🎯 记录详细的模型选择结果
+                        selection_context = sel.get("selection_context", {})
+                        logger.info(f"✅ [DBModelSelected] server={selected_model['server_name']}, "
+                                   f"model={selected_model['model_name']}, type={selected_model['model_type']}, "
+                                   f"confidence={selected_model['confidence']:.2f}, "
+                                   f"fallback={selected_model['fallback_used']}, "
+                                   f"context={selection_context}")
+
+                        # 如果使用了回退，记录警告
+                        if selected_model['fallback_used']:
+                            logger.warning(f"⚠️ [ModelFallback] 使用了回退模型选择，原因: {selected_model['reasoning']}")
+                    else:
+                        logger.warning(f"⚠️ [ModelSelection] 模型选择未返回有效结果: {sel}")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ [ModelSelection] DB selection failed: {e}")
+                    selected_model = None
 
             # 2) Execute with selected model or fallback
             execution_start = time.time()
@@ -281,6 +434,12 @@ class RealLLMServiceAdapter:
 
         logger.info(f"🔍 [JSONValidation] Validating JSON for user={user_id}, response_length={len(response)}, preview={response_preview}")
 
+        # 检查空响应
+        if not response or not response.strip():
+            logger.error(f"❌ [JSONValidation] Empty response from LLM for user={user_id}")
+            # 对于空响应，直接抛出异常而不是创建fallback
+            raise ValueError("LLM returned empty response")
+
         # Step 1: Try to parse as JSON directly
         try:
             json.loads(response)
@@ -351,7 +510,9 @@ class Container:
     def llm(self):
         """Get real LLM service"""
         if self._llm_service is None:
-            self._llm_service = RealLLMServiceAdapter()
+            self._llm_service = RealLLMServiceAdapter(container=self)
+        elif getattr(self._llm_service, "_container", None) is None:
+            self._llm_service.set_container(self)
         return self._llm_service
 
     @property

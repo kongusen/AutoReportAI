@@ -8,8 +8,8 @@ import logging
 import re
 import io
 import os
-from typing import Dict, Any, List, Optional
 from datetime import datetime
+from typing import Dict, Any, List, Optional
 
 # Word文档处理
 try:
@@ -29,6 +29,9 @@ try:
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
+
+from app.services.infrastructure.agents import StageAwareAgentAdapter
+from app.services.infrastructure.agents import TaskComplexity
 
 logger = logging.getLogger(__name__)
 
@@ -264,11 +267,14 @@ class WordTemplateService:
             self.logger.warning("没有提供服务容器，跳过文档内容优化")
             return
 
-        from app.services.infrastructure.agents import AgentService
-        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
-
         try:
-            agent_service = AgentService(container=container)
+            # 使用新的 StageAwareAgentAdapter
+            agent_adapter = StageAwareAgentAdapter(container=container)
+            await agent_adapter.initialize(
+                user_id=user_id or "system",
+                task_type="completion",
+                task_complexity=TaskComplexity.MEDIUM
+            )
 
             total_paragraphs = len(doc.paragraphs)
             self.logger.info(f"📄 开始文档优化，共 {total_paragraphs} 个段落")
@@ -329,32 +335,20 @@ class WordTemplateService:
 
 请直接输出优化后的段落文本："""
 
-                        # 准备Agent输入
-                        placeholder_spec = PlaceholderSpec(
-                            id=f"paragraph_{i}",
-                            description=f"段落优化: {paragraph_text[:30]}",
-                            type="text"
-                        )
-
-                        agent_input = AgentInput(
-                            user_prompt=optimization_prompt,
-                            placeholder=placeholder_spec,
-                            schema=SchemaInfo(tables=[], columns={}),
-                            context=TaskContext(task_time=None, timezone="Asia/Shanghai"),
-                            constraints=AgentConstraints(output_kind="text", max_attempts=1),
-                            data_source={"id": "", "type": "generated"},
-                            task_driven_context={
-                                "paragraph_text": paragraph_text,
-                                "related_data": related_placeholders
-                            },
-                            user_id=user_id or "system"
-                        )
-
                         # 调用Agent
-                        agent_result = await agent_service.execute(agent_input)
+                        doc_result = await agent_adapter.generate_document(
+                            paragraph_context=paragraph_text,
+                            placeholder_data=related_placeholders,
+                            user_id=user_id or "system",
+                            task_context={
+                                "optimization_type": "text_improvement",
+                                "paragraph_index": i,
+                                "related_data": related_placeholders
+                            }
+                        )
 
-                        if agent_result.success and hasattr(agent_result, 'result') and agent_result.result:
-                            optimized_text = str(agent_result.result).strip()
+                        if doc_result.get("success") and doc_result.get("document_text"):
+                            optimized_text = str(doc_result["document_text"]).strip()
 
                             # 清理可能的JSON或Markdown包裹
                             import json
@@ -406,7 +400,7 @@ class WordTemplateService:
                             else:
                                 self.logger.debug("Agent返回无效内容，保持原文不变")
                         else:
-                            error_msg = getattr(agent_result, 'metadata', {}).get('error', '优化失败')
+                            error_msg = doc_result.get('error', '优化失败')
                             self.logger.warning(f"⚠️ 段落优化失败: {error_msg}")
 
                     except Exception as opt_error:
@@ -421,26 +415,37 @@ class WordTemplateService:
 
     async def _replace_chart_placeholders_with_agent(self, doc, data: Dict[str, Any], container=None, user_id: Optional[str] = None):
         """
-        使用Agent替换图表占位符 - 更智能的图表生成
+        使用图表生成工具替换图表占位符 - 基于ETL数据生成图表
 
         Args:
             doc: Word文档对象
-            data: 占位符数据
+            data: 占位符数据（来自ETL阶段）
             container: 服务容器
             user_id: 用户UUID
         """
         if not DOCX_AVAILABLE:
             return
 
-        from app.services.infrastructure.agents import AgentService
-        from app.services.infrastructure.agents.types import AgentInput
+        # 使用专门的图表占位符处理器
+        from app.services.infrastructure.document.chart_placeholder_processor import ChartPlaceholderProcessor
 
-        # 如果没有容器，回退到传统方法
-        if not container:
-            self.logger.warning("没有提供服务容器，回退到传统图表生成")
-            return await self._replace_chart_placeholders_fallback(doc, data)
+        agent_adapter: Optional[StageAwareAgentAdapter] = None
+        if container:
+            try:
+                agent_adapter = StageAwareAgentAdapter(container=container)
+                await agent_adapter.initialize(
+                    user_id=user_id or "system",
+                    task_type="chart_generation",
+                    task_complexity=TaskComplexity.MEDIUM,
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.warning("StageAware 图表适配器初始化失败: %s", exc)
+                agent_adapter = None
 
-        agent_service = AgentService(container=container)
+        chart_processor = ChartPlaceholderProcessor(
+            user_id=user_id or "system",
+            agent_adapter=agent_adapter,
+        )
 
         for p in doc.paragraphs:
             placeholder = p.text.strip()
@@ -455,93 +460,72 @@ class WordTemplateService:
                     chart_data = data.get(placeholder_without_braces)
 
                 if chart_data is None:
-                    self.logger.warning(f"没有找到图表数据: {placeholder} (也尝试了 {placeholder_without_braces})")
+                    self.logger.warning(f"❌ 没有找到图表数据: {placeholder}")
+                    self.logger.info(f"   可用的数据键: {list(data.keys())[:10]}")
+                    p.text = f"[图表数据未找到: {placeholder}]"
                     continue
 
-                self.logger.info(f"🤖 使用Agent为 '{placeholder}' 生成图表...")
+                self.logger.info(f"📊 为 '{placeholder}' 生成图表（数据量: {len(chart_data) if isinstance(chart_data, list) else 'N/A'}）")
 
                 title = placeholder.replace("{{图表：", "").replace("}}", "")
                 p.text = ""
 
                 try:
-                    # 准备Agent输入 - 使用正确的数据结构
-                    from app.services.infrastructure.agents.types import PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
-
-                    placeholder_spec = PlaceholderSpec(
-                        id=placeholder,
-                        description=title,
-                        type="chart"
+                    # 使用图表处理器生成图表
+                    chart_result = await chart_processor.process_chart_placeholder(
+                        placeholder_text=placeholder,
+                        data=chart_data,
+                        output_dir=None
                     )
 
-                    schema_info = SchemaInfo(
-                        tables=[],
-                        columns={}
-                    )
-
-                    task_context = TaskContext(
-                        task_time=None,
-                        timezone="Asia/Shanghai"
-                    )
-
-                    constraints = AgentConstraints(
-                        output_kind="chart",
-                        max_attempts=3
-                    )
-
-                    data_rows = self._convert_data_to_rows(chart_data)
-                    data_columns = self._extract_columns_from_data(chart_data)
-
-                    agent_input = AgentInput(
-                        user_prompt=f"为以下数据生成图表：{title}",
-                        placeholder=placeholder_spec,
-                        schema=schema_info,
-                        context=task_context,
-                        constraints=constraints,
-                        data_source={"id": "", "type": "generated"},
-                        task_driven_context={
-                            "execution_result": {
-                                "rows": data_rows,
-                                "columns": data_columns
-                            },
-                            "chart_requirements": {
-                                "title": title,
-                                "placeholder": placeholder,
-                                "suggested_type": self._suggest_chart_type(placeholder, chart_data)
-                            }
-                        },
-                        user_id=user_id or "system"
-                    )
-
-                    # 使用Agent生成图表
-                    agent_result = await agent_service.execute(agent_input)
-
-                    if agent_result.success and hasattr(agent_result, 'result') and agent_result.result:
-                        # Agent成功生成了图表
-                        chart_image_path = agent_result.result
-                        self.logger.info(f"✅ Agent图表生成成功: {chart_image_path}")
+                    if chart_result.get("success"):
+                        # 图表生成成功
+                        chart_image_path = chart_result["chart_path"]
+                        self.logger.info(f"✅ 图表生成成功: {chart_image_path}")
+                        self.logger.info(f"   图表类型: {chart_result.get('chart_type')}")
+                        self.logger.info(f"   生成时间: {chart_result.get('generation_time_ms')}ms")
 
                         # 插入图表到文档
                         run = p.add_run()
                         run.add_picture(chart_image_path, width=Inches(6.0))
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    else:
-                        # Agent失败，记录错误并添加占位符
-                        error_msg = getattr(agent_result, 'metadata', {}).get('error', '图表生成失败')
-                        self.logger.error(f"❌ Agent图表生成失败: {error_msg}")
 
-                        p.add_run().text = f"[{title} - Agent图表生成失败: {error_msg}]"
-                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        stage_meta = (chart_result.get("metadata") or {}).get("stage_aware")
+                        if stage_meta:
+                            self.logger.info("   StageAware 分析: %s", stage_meta.get("analysis"))
+                    else:
+                        # 图表生成失败
+                        error_msg = chart_result.get('error', '图表生成失败')
+                        self.logger.error(f"❌ 图表生成失败: {error_msg}")
+
+                        # 尝试使用传统方法回退
+                        self.logger.info("尝试使用传统方法生成图表...")
+                        chart_buffer = self._create_chart_fallback(chart_data, title)
+                        if chart_buffer and chart_buffer.getbuffer().nbytes > 0:
+                            run = p.add_run()
+                            run.add_picture(chart_buffer, width=Inches(6.0))
+                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            self.logger.info("✅ 传统方法图表生成成功")
+                        else:
+                            p.add_run().text = f"[{title} - {error_msg}]"
+                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                 except Exception as e:
-                    self.logger.error(f"❌ Agent图表生成异常: {e}")
+                    self.logger.error(f"❌ 图表生成异常: {e}", exc_info=True)
                     # 异常情况下回退到传统方法
-                    chart_buffer = self._create_chart_fallback(chart_data, title)
-                    if chart_buffer and chart_buffer.getbuffer().nbytes > 0:
-                        run = p.add_run()
-                        run.add_picture(chart_buffer, width=Inches(6.0))
-                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    else:
-                        p.add_run().text = f"[{title} - 图表生成异常]"
+                    try:
+                        chart_buffer = self._create_chart_fallback(chart_data, title)
+                        if chart_buffer and chart_buffer.getbuffer().nbytes > 0:
+                            run = p.add_run()
+                            run.add_picture(chart_buffer, width=Inches(6.0))
+                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            self.logger.info("✅ 传统方法回退成功")
+                        else:
+                            p.add_run().text = f"[{title} - 图表生成异常]"
+                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    except Exception as fallback_error:
+                        self.logger.error(f"传统方法也失败: {fallback_error}")
+                        p.add_run().text = f"[{title} - 图表生成失败]"
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     async def _replace_chart_placeholders_fallback(self, doc, data: Dict[str, Any]):

@@ -12,11 +12,14 @@ Agent Input Bridge (Application Layer)
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any, Dict, Optional
 
 from ..context import ContextCoordinator
 from .builder import AgentInputBuilder
+from app.services.infrastructure.agents import StageAwareAgentAdapter
+
+from app.services.infrastructure.agents import TaskComplexity
 
 logger = logging.getLogger(__name__)
 
@@ -111,17 +114,40 @@ class AgentInputBridge:
 
         # 2) 执行 Agent（PTOF）
         try:
-            from app.services.infrastructure.agents import AgentService
-            from app.core.container import Container
+            adapter = StageAwareAgentAdapter(container=self.container)
 
-            container = self.container or Container()
-            service = AgentService(container=container)
-            result = await service.execute(ai)
+            ds_raw = (
+                ai.data_source.get("data_source_id")
+                if isinstance(ai.data_source, dict)
+                else None
+            )
+            if ds_raw is None and isinstance(ai.data_source, dict):
+                ds_raw = ai.data_source.get("id")
+            try:
+                data_source_numeric = int(ds_raw) if ds_raw is not None else 0
+            except (TypeError, ValueError):
+                data_source_numeric = 0
+
+            sql_stage = await adapter.generate_sql(
+                placeholder=ai.user_prompt,
+                data_source_id=data_source_numeric,
+                user_id=ai.user_id,
+                context=ai.task_driven_context,
+                complexity=TaskComplexity.MEDIUM,
+            )
+
+            if not sql_stage.get("success", False):
+                error_msg = sql_stage.get("error", "StageAware SQL 生成失败")
+                raise Exception(error_msg)
 
             return {
-                "success": result.success,
-                "result": result.result,
-                "metadata": result.metadata,
+                "success": True,
+                "result": sql_stage.get("result"),
+                "sql": sql_stage.get("sql"),
+                "metadata": sql_stage.get("metadata", {}),
+                "quality_score": sql_stage.get("quality_score"),
+                "iterations": sql_stage.get("iterations"),
+                "agent_response": sql_stage.get("response"),
                 "stage": build_res.get("meta", {}).get("stage"),
                 "available_tools": build_res.get("meta", {}).get("available_tools"),
                 "dynamic_user_prompt": build_res.get("dynamic_user_prompt"),

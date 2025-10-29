@@ -10,14 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_
 
 from app.models.table_schema import TableSchema, ColumnSchema, TableRelationship
-from app.services.infrastructure.agents import (
-    AgentService,
-    AgentInput,
-    PlaceholderSpec,
-    SchemaInfo,
-    TaskContext,
-    AgentConstraints
-)
+from app.services.infrastructure.agents import StageAwareAgentAdapter
+from app.services.infrastructure.agents import TaskComplexity
 from app.core.exceptions import (
     ValidationError, 
     NotFoundError, 
@@ -244,36 +238,34 @@ class SchemaAnalysisService:
         analysis_prompt = self._build_relationship_analysis_prompt(schema_data)
 
         try:
-            # 使用新的Agent系统进行Schema分析
+            # 使用新的StageAwareAgentAdapter进行Schema分析
             from app.core.container import Container
             container = Container()
-            agent_service = AgentService(container=container)
-
-            # 构建Agent输入
-            agent_input = AgentInput(
-                user_prompt=analysis_prompt,
-                placeholder=PlaceholderSpec(
-                    id="schema_relationship_analysis",
-                    description="分析数据库表结构和关系",
-                    type="analysis"
-                ),
-                schema=SchemaInfo(
-                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
-                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
-                ),
-                context=TaskContext(
-                    task_time=int(datetime.now().timestamp()),
-                    timezone="Asia/Shanghai"
-                ),
-                constraints=AgentConstraints(
-                    sql_only=False,
-                    output_kind="analysis"
-                )
+            agent_adapter = StageAwareAgentAdapter(container=container)
+            
+            await agent_adapter.initialize(
+                user_id="system",
+                task_type="sql_generation",
+                task_complexity=TaskComplexity.MEDIUM
             )
 
             # 执行Agent分析
-            result = await agent_service.execute(agent_input)
-            response = result.result if result.success else ""
+            result = await agent_adapter.generate_sql(
+                placeholder=analysis_prompt,
+                data_source_id=0,  # 系统分析使用0
+                user_id="system",
+                context={
+                    "schema_data": schema_data,
+                    "analysis_type": "relationship_analysis",
+                    "tables": [t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    "columns": {t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                }
+            )
+
+            if not result.get("success"):
+                raise Exception(f"Agent执行失败: {result.get('error', '未知错误')}")
+
+            response = result.get('result', '')
 
             # 完整解析AI响应
             parsed_result = self._parse_relationship_analysis_response(response, schema_data)
@@ -295,36 +287,34 @@ class SchemaAnalysisService:
         semantic_prompt = self._build_semantic_analysis_prompt(schema_data)
 
         try:
-            # 使用新的Agent系统进行语义分析
+            # 使用新的StageAwareAgentAdapter进行语义分析
             from app.core.container import Container
             container = Container()
-            agent_service = AgentService(container=container)
-
-            # 构建Agent输入
-            agent_input = AgentInput(
-                user_prompt=semantic_prompt,
-                placeholder=PlaceholderSpec(
-                    id="schema_semantic_analysis",
-                    description="分析表结构的业务语义和数据质量",
-                    type="analysis"
-                ),
-                schema=SchemaInfo(
-                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
-                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
-                ),
-                context=TaskContext(
-                    task_time=int(datetime.now().timestamp()),
-                    timezone="Asia/Shanghai"
-                ),
-                constraints=AgentConstraints(
-                    sql_only=False,
-                    output_kind="analysis"
-                )
+            agent_adapter = StageAwareAgentAdapter(container=container)
+            
+            await agent_adapter.initialize(
+                user_id="system",
+                task_type="sql_generation",
+                task_complexity=TaskComplexity.MEDIUM
             )
 
             # 执行Agent分析
-            result = await agent_service.execute(agent_input)
-            response = result.result if result.success else ""
+            result = await agent_adapter.generate_sql(
+                placeholder=semantic_prompt,
+                data_source_id=0,  # 系统分析使用0
+                user_id="system",
+                context={
+                    "schema_data": schema_data,
+                    "analysis_type": "semantic_analysis",
+                    "tables": [t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    "columns": {t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                }
+            )
+
+            if not result.get("success"):
+                raise Exception(f"Agent执行失败: {result.get('error', '未知错误')}")
+
+            response = result.get('result', '')
 
             # 完整解析AI响应
             parsed_result = self._parse_semantic_analysis_response(response, schema_data)
@@ -347,36 +337,34 @@ class SchemaAnalysisService:
         quality_prompt = self._build_quality_analysis_prompt(schema_data)
 
         try:
-            # 使用新的Agent系统进行数据质量分析
+            # 使用新的StageAwareAgentAdapter进行数据质量分析
             from app.core.container import Container
             container = Container()
-            agent_service = AgentService(container=container)
-
-            # 构建Agent输入
-            agent_input = AgentInput(
-                user_prompt=quality_prompt,
-                placeholder=PlaceholderSpec(
-                    id="schema_quality_analysis",
-                    description="分析表结构的数据质量和完整性",
-                    type="analysis"
-                ),
-                schema=SchemaInfo(
-                    tables=[t.get("table_name", "") for t in schema_data.get("tables", [])],
-                    columns={t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
-                ),
-                context=TaskContext(
-                    task_time=int(datetime.now().timestamp()),
-                    timezone="Asia/Shanghai"
-                ),
-                constraints=AgentConstraints(
-                    sql_only=False,
-                    output_kind="analysis"
-                )
+            agent_adapter = StageAwareAgentAdapter(container=container)
+            
+            await agent_adapter.initialize(
+                user_id="system",
+                task_type="sql_generation",
+                task_complexity=TaskComplexity.MEDIUM
             )
 
             # 执行Agent分析
-            result = await agent_service.execute(agent_input)
-            response = result.result if result.success else ""
+            result = await agent_adapter.generate_sql(
+                placeholder=quality_prompt,
+                data_source_id=0,  # 系统分析使用0
+                user_id="system",
+                context={
+                    "schema_data": schema_data,
+                    "analysis_type": "quality_analysis",
+                    "tables": [t.get("table_name", "") for t in schema_data.get("tables", [])],
+                    "columns": {t.get("table_name", ""): [c.get("column_name", "") for c in t.get("columns", [])] for t in schema_data.get("tables", [])}
+                }
+            )
+
+            if not result.get("success"):
+                raise Exception(f"Agent执行失败: {result.get('error', '未知错误')}")
+
+            response = result.get('result', '')
 
             # 完整解析AI响应
             parsed_result = self._parse_quality_analysis_response(response, schema_data)

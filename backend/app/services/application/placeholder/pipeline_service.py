@@ -93,7 +93,7 @@ class PlaceholderPipelineService:
             # generate SQL (pass ds id and user_id to business ctx for fallback introspect)
             gen = await self._sql_gen.generate_sql(q, schema_ctx, tw, business_ctx={"data_source_id": data_source_id, "template_id": template_id, "user_id": user_id})
             sql = gen.sql or "SELECT 1 AS stub"
-            exec_res = await self._sql_exec.execute(sql, data_source_id)
+            exec_res = await self._sql_exec.execute(sql=sql, connection_config={"data_source_id": data_source_id})
             if kind == "chart":
                 art = await self._chart.render(spec=None, data_columns=exec_res.columns, data_rows=exec_res.rows)  # adapter tolerates None spec
                 resolved[name] = {

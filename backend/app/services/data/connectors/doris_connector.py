@@ -361,6 +361,35 @@ class DorisConnector(BaseConnector):
         # 直接返回原密码（可能是明文）
         return password
     
+    def _is_doris_syntax_error(self, error_msg: str) -> bool:
+        """检查是否是Doris特定的语法错误"""
+        doris_error_patterns = [
+            "errCode = 2",
+            "Syntax error",
+            "Encountered: LIMIT",
+            "Expected",
+            "Column.*in field list is ambiguous"
+        ]
+        return any(pattern in error_msg for pattern in doris_error_patterns)
+    
+    def _fix_doris_sql_syntax(self, sql: str) -> str:
+        """修复Doris SQL语法问题"""
+        fixed_sql = sql
+        
+        # 修复1: 移除SHOW TABLE STATUS中的LIMIT子句
+        if "SHOW TABLE STATUS" in sql.upper() and "LIMIT" in sql.upper():
+            import re
+            fixed_sql = re.sub(r'\s+LIMIT\s+\d+', '', sql, flags=re.IGNORECASE)
+            self.logger.info(f"修复SHOW TABLE STATUS LIMIT: {sql} -> {fixed_sql}")
+        
+        # 修复2: 修复INFORMATION_SCHEMA查询中的列名歧义
+        if "INFORMATION_SCHEMA" in sql.upper() and "JOIN" in sql.upper():
+            # 这里可以添加更复杂的列名歧义修复逻辑
+            # 目前主要依赖前面的修复
+            pass
+        
+        return fixed_sql
+    
     def _clean_sql(self, sql: str) -> str:
         """清理和验证SQL查询"""
         if not sql:
@@ -666,11 +695,22 @@ class DorisConnector(BaseConnector):
                             fe_host=self.config.fe_hosts[self.current_fe_index]
                         )
                 except Exception as e:
-                    self.logger.error(f"MySQL协议查询失败: {e}")
+                    error_msg = str(e)
+                    self.logger.error(f"MySQL协议查询失败: {error_msg}")
+                    
+                    # 检查是否是Doris特定的语法错误，尝试修复
+                    if self._is_doris_syntax_error(error_msg):
+                        self.logger.warning("检测到Doris语法错误，尝试修复SQL后重试HTTP API")
+                        fixed_sql = self._fix_doris_sql_syntax(sql)
+                        if fixed_sql != sql:
+                            self.logger.info(f"SQL已修复: {sql} -> {fixed_sql}")
+                            sql = fixed_sql
+                    
                     execution_time = asyncio.get_event_loop().time() - start_time
-                    raise Exception(f"MySQL query failed: {str(e)}")
+                    # 不立即抛出异常，而是尝试HTTP API降级
+                    self.logger.warning("MySQL协议失败，尝试HTTP API降级")
             
-            # 如果没有MySQL连接，尝试HTTP API fallback
+            # HTTP API fallback
             self.logger.warning("MySQL connection not available, attempting HTTP API fallback")
             try:
                 # 清理SQL用于HTTP API

@@ -17,14 +17,8 @@ from typing import Any
 
 from ..deps import get_current_user
 # Updated imports for new simplified agent architecture
-from ...services.infrastructure.agents import (
-    AgentService,
-    AgentInput,
-    PlaceholderSpec,
-    SchemaInfo,
-    TaskContext,
-    AgentConstraints
-)
+from ...services.infrastructure.agents import StageAwareAgentAdapter
+from ...services.infrastructure.agents import TaskComplexity
 from ...core.container import Container
 from enum import Enum
 
@@ -132,9 +126,12 @@ async def agent_task_stream_generator(
         }
         coordination_mode = mode_mapping.get(task_request.coordination_mode, CoordinationMode.INTELLIGENT)
         
-        # 创建新的Agent系统组件
+        # 创建新的Stage-Aware Agent系统组件
         container = Container()
-        agent_service = AgentService(container=container)
+        agent_facade = create_stage_aware_facade(
+            container=container,
+            enable_context_retriever=True
+        )
 
         # 发送开始事件
         start_event = StreamEvent(
@@ -148,26 +145,28 @@ async def agent_task_stream_generator(
         )
         yield f"data: {start_event.json()}\n\n"
 
-        # 构建Agent输入
-        agent_input = AgentInput(
+        # 初始化Agent Facade
+        await agent_facade.initialize(
+            user_id=str(user.id),
+            task_type="stream_task",
+            task_complexity=TaskComplexity.MEDIUM
+        )
+
+        # 构建Agent请求
+        agent_request = AgentRequest(
             user_prompt=task_request.task_description,
-            placeholder=PlaceholderSpec(
-                id=f"stream_task_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                description=task_request.task_description,
-                type="stream_task"
-            ),
-            schema=SchemaInfo(
-                tables=task_request.context_data.get("tables", []),
-                columns=task_request.context_data.get("columns", {})
-            ),
-            context=TaskContext(
-                task_time=int(datetime.now().timestamp()),
-                timezone="Asia/Shanghai"
-            ),
-            constraints=AgentConstraints(
-                sql_only=task_request.context_data.get("sql_only", False),
-                output_kind=task_request.context_data.get("output_kind", "analysis")
-            )
+            task_type="stream_task",
+            task_complexity=TaskComplexity.MEDIUM,
+            execution_stage=ExecutionStage.SQL_GENERATION,
+            context={
+                "task_description": task_request.task_description,
+                "coordination_mode": task_request.coordination_mode,
+                "streaming_enabled": task_request.enable_streaming,
+                "tables": task_request.context_data.get("tables", []),
+                "columns": task_request.context_data.get("columns", {}),
+                "sql_only": task_request.context_data.get("sql_only", False),
+                "output_kind": task_request.context_data.get("output_kind", "analysis")
+            }
         )
 
         # 发送处理中事件
@@ -179,7 +178,19 @@ async def agent_task_stream_generator(
 
         # 执行Agent任务
         if task_request.enable_streaming:
-            result = await agent_service.execute(agent_input)
+            # 使用Stage-Aware系统执行
+            result = None
+            async for event in agent_facade.execute_sql_generation_stage(
+                placeholder=task_request.task_description,
+                data_source_id="stream_task",
+                user_id=str(user.id),
+                context=agent_request.task_context
+            ):
+                if event.event_type == 'execution_completed':
+                    result = event.data
+                    break
+                elif event.event_type == 'execution_failed':
+                    raise Exception(f"Agent执行失败: {event.data.get('error', '未知错误')}")
             
             # 模拟阶段进度事件（在实际实现中，这应该来自TT控制循环）
             phases = [
@@ -223,31 +234,45 @@ async def agent_task_stream_generator(
         
         else:
             # 非流式模式，直接执行
-            result = await agent_service.execute(agent_input)
+            result = None
+            async for event in agent_facade.execute_sql_generation_stage(
+                placeholder=task_request.task_description,
+                data_source_id="stream_task",
+                user_id=str(user.id),
+                context=agent_request.task_context
+            ):
+                if event.event_type == 'execution_completed':
+                    result = event.data
+                    break
+                elif event.event_type == 'execution_failed':
+                    raise Exception(f"Agent执行失败: {event.data.get('error', '未知错误')}")
+
+        if not result:
+            raise Exception("Agent执行未返回结果")
 
         # 发送最终结果
         final_event = StreamEvent(
             event_type="task_complete",
             progress=100,
             data={
-                "success": result.success,
-                "result": result.result,
+                "success": result.get('success', True),
+                "result": result.get('response'),
                 "task_id": f"agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 "execution_time": 0.0,  # TODO: 添加执行时间统计
                 "phases_completed": ["plan", "tool", "observe", "finalize"],
-                "metadata": result.metadata or {}
+                "metadata": result.get('metadata', {})
             }
         )
         yield f"data: {final_event.json()}\n\n"
         
         # 如果有SQL生成，发送SQL预览事件
-        if (task_request.sql_preview and result.success and
-            "SELECT" in str(result.result).upper()):
+        if (task_request.sql_preview and result.get('success', True) and
+            "SELECT" in str(result.get('response', '')).upper()):
 
             sql_event = StreamEvent(
                 event_type="sql_generated",
                 data={
-                    "sql_query": result.result,
+                    "sql_query": result.get('response'),
                     "query_explanation": "基于新Agent系统生成的SQL查询",
                     "estimated_rows": 1000,  # 模拟估算
                     "complexity": "standard",

@@ -19,7 +19,8 @@ from app.services.domain.placeholder.types import (
 )
 
 # 基础设施层导入 - 使用Loom Agent系统
-from app.services.infrastructure.agents import AgentService
+from app.services.infrastructure.agents import create_agent_facade, LoomAgentFacade
+from app.services.infrastructure.agents.types import AgentRequest, TaskComplexity
 from app.core.container import Container
 from app.services.domain.placeholder.services.placeholder_analysis_domain_service import (
     PlaceholderAnalysisDomainService,
@@ -32,17 +33,36 @@ logger = logging.getLogger(__name__)
 class PlaceholderApplicationService:
     """
     占位符应用服务
-    
+
     专注于业务流程编排，使用基础设施层提供的能力：
     - 使用 PromptManager 进行智能prompt生成
     - 使用 AgentController 进行任务编排
     - 使用 ToolExecutor 进行工具调用
+    - 🆕 使用 ContextRetriever 自动注入表结构上下文
     """
-    
-    def __init__(self, user_id: str = None):
-        # 基础设施组件 - 使用现有的PTOF agent系统
+
+    def __init__(
+        self,
+        user_id: str = None,
+        context_retriever: Optional[Any] = None  # 🆕 新增参数
+    ):
+        # 验证 user_id 必须提供
+        if not user_id:
+            raise ValueError("user_id 是必需的，不能为 None 或空字符串")
+        
+        # 基础设施组件 - 直接使用Agent Facade
         self.container = Container()
-        self.agent_service = AgentService(container=self.container)
+        self.context_retriever = context_retriever  # 保存上下文检索器
+
+        # 将 context_retriever 注入到 container（供工具使用）
+        if context_retriever:
+            setattr(self.container, 'context_retriever', context_retriever)
+
+        # ✅ 直接创建Agent Facade（Agent是核心，不需要兼容层）
+        self.agent_facade: LoomAgentFacade = create_agent_facade(
+            container=self.container,
+            enable_context_retriever=context_retriever is not None
+        )
 
         # 用户上下文
         self.user_id = user_id
@@ -59,6 +79,15 @@ class PlaceholderApplicationService:
         }
         # 领域服务
         self.domain_service = PlaceholderAnalysisDomainService()
+
+        # 🆕 阶段感知上下文管理
+        self.state_manager = getattr(context_retriever, 'state_manager', None)
+        self.tool_recorder = None
+
+        if self.state_manager:
+            from app.services.infrastructure.agents.tool_wrapper import ToolResultRecorder
+            self.tool_recorder = ToolResultRecorder(self.state_manager)
+            logger.info("✅ 已启用阶段感知上下文管理和工具结果记录")
     
     async def initialize(self):
         """初始化应用服务"""
@@ -92,6 +121,12 @@ class PlaceholderApplicationService:
         """
         await self.initialize()
 
+        # 🆕 设置初始阶段为PLANNING
+        if self.state_manager:
+            from app.services.infrastructure.agents.context_manager import ExecutionStage
+            self.state_manager.set_stage(ExecutionStage.PLANNING)
+            logger.info("🎯 设置Agent阶段为 PLANNING - 准备生成SQL")
+
         yield {
             "type": "analysis_started",
             "placeholder_id": request.placeholder_id,
@@ -105,156 +140,132 @@ class PlaceholderApplicationService:
 
             # 构建ReAct任务描述
             time_window_desc = ""
-            if isinstance(request.context, dict):
-                time_window = request.context.get("time_window") or request.context.get("time_context")
+            if isinstance(request.task_context, dict):
+                time_window = request.task_context.get("time_window") or request.task_context.get("time_context")
                 if time_window:
                     import json
                     time_window_desc = f"\n- 时间范围: {json.dumps(time_window, ensure_ascii=False)}"
 
-            # 构建Agent任务提示
+            # 🔥 真正的 ReAct prompt（目标导向，Agent 自主探索）
             task_prompt = f"""
-你是一个SQL生成专家Agent。请使用可用的工具完成以下任务：
-
-## 任务目标
-生成一个高质量的SQL查询来满足以下业务需求：
-
-### 业务需求
-{request.business_command}
-
-### 具体目标
-{request.target_objective or request.requirements}
+🎯 目标：{request.business_command}
 {time_window_desc}
 
-### 数据源信息
-- 数据源ID: {data_source_config.get('data_source_id', 'N/A')}
-- 数据库: {data_source_config.get('database_name', 'N/A')}
+📋 要求：
+1. 使用 Apache Doris 语法（CASE WHEN，不支持 FILTER）
+2. 必须包含时间过滤：WHERE col BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
+3. ⚠️ 关键：占位符周围不加引号！
+   - ✅ 正确：WHERE dt BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
+   - ❌ 错误：WHERE dt BETWEEN '{{{{start_date}}}}'
+4. 确保 SQL 正确性
 
-## ⚠️ 重要约束
-1. **必须包含时间过滤条件** - 这是基于时间周期的统计查询
-2. **只能使用实际存在的表和列** - 必须先探索schema
-3. **必须验证SQL正确性** - 确保SQL可执行
-4. **使用占位符格式** - 时间过滤使用 {{{{start_date}}}} 和 {{{{end_date}}}}
-   ⚠️ **关键要点：占位符周围不要加引号！**
-   - ✅ 正确: WHERE date BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
-   - ❌ 错误: WHERE date BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'
-   - **原因**: 占位符替换时会自动添加引号，如果SQL中已有引号会导致双重引号语法错误
+💡 重要提示：
+- 你当前不知道数据库有哪些表和列
+- 使用工具探索数据库结构、验证 SQL
+- 自己决定何时完成任务
+- 可以多次尝试和优化
 
-## 可用工具
-你有以下工具可用：
-1. **schema.list_tables** - 列出数据源中的所有表
-2. **schema.list_columns** - 获取指定表的列信息
-3. **sql.validate** - 验证SQL的正确性
-4. **sql.execute** - 执行SQL进行测试（使用LIMIT限制）
-5. **sql.refine** - 基于错误信息优化SQL
-
-## 推荐流程（ReAct循环）
-1. 使用 schema.list_tables 查看所有可用的表
-2. 根据业务需求选择相关的表
-3. 使用 schema.list_columns 获取这些表的列信息
-4. 生成SQL查询（确保包含时间过滤，**占位符不加引号**）
-5. 使用 sql.validate 验证SQL
-6. **如果验证失败（如双重引号错误）**：
-   - 检查SQL中占位符周围是否有引号
-   - 移除占位符周围的引号
-   - 使用 sql.refine 优化SQL
-   - 重新验证（最多重试3次）
-7. 验证成功后，可选择使用 sql.execute 测试SQL
-
-## 期望输出
-最终返回一个JSON格式的结果：
+📊 最终返回 JSON 格式：
 {{
-    "sql": "SELECT ... WHERE dt BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}",
-    "reasoning": "解释为什么这个SQL满足业务需求",
-    "tables_used": ["table1", "table2"],
-    "has_time_filter": true,
-    "time_column_used": "dt"
+  "sql": "你生成的 SQL 查询",
+  "reasoning": "你的推理过程（为什么选择这些表/列/计算方式）",
+  "tables_used": ["使用的表列表"],
+  "has_time_filter": true
 }}
-
-现在开始执行任务，使用工具进行推理和行动(ReAct)！
 """
 
             logger.info("🤖 启动ReAct模式 - Agent将自主使用工具生成SQL")
 
-            # 构建AgentInput
-            from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
-
-            agent_input = AgentInput(
-                user_prompt=task_prompt,
-                placeholder=PlaceholderSpec(
-                    id=request.placeholder_id,
-                    description=request.business_command,
-                    type="sql_generation_react",
-                    granularity="daily"
-                ),
-                schema=None,  # Agent自己探索schema
-                context=TaskContext(
-                    task_time=int(datetime.now().timestamp()),
-                    timezone="Asia/Shanghai"
-                ),
-                data_source=data_source_config,
-                task_driven_context={
-                    "mode": "react",
-                    "business_command": request.business_command,
-                    "requirements": request.requirements,
-                    "target_objective": request.target_objective,
-                    "enable_tools": True  # 明确启用工具使用
-                },
-                user_id=self.user_id
+            # ✅ 使用TT递归SQL生成函数（第一阶段）
+            logger.info("📞 调用TT递归SQL生成...")
+            
+            from app.services.infrastructure.agents import execute_sql_generation_tt
+            
+            # 构建任务上下文
+            task_context_dict = {
+                "mode": "react",
+                "business_command": request.business_command,
+                "requirements": request.requirements,
+                "target_objective": request.target_objective,
+                "enable_tools": True,
+                "data_source_config": data_source_config,
+                "disable_auto_schema": True  # Agent主动探索
+            }
+            
+            sql_result = await execute_sql_generation_tt(
+                placeholder=task_prompt,
+                data_source_id=request.data_source_info.get('data_source_id', 0) if request.data_source_info else 0,
+                user_id=self.user_id,
+                context=task_context_dict
             )
+            
+            if not sql_result:
+                raise RuntimeError("TT递归SQL生成失败")
+            
+            # 🔥 规范化Agent返回，兼容不同适配器输出
+            generated_sql = sql_result
 
-            # 调用Agent执行ReAct
-            logger.info("📞 调用Agent执行ReAct模式...")
-            result = await self.agent_service.execute(agent_input)
+            # 1) 如果是字典，提取 sql / result 字段
+            if isinstance(generated_sql, dict):
+                if isinstance(generated_sql.get("sql"), str) and generated_sql.get("sql").strip():
+                    generated_sql = generated_sql.get("sql")
+                elif isinstance(generated_sql.get("result"), str) and generated_sql.get("result").strip():
+                    generated_sql = generated_sql.get("result")
+                else:
+                    # 尝试兼容嵌套结构
+                    for key in ("data", "payload", "content"):
+                        inner = generated_sql.get(key)
+                        if isinstance(inner, dict) and isinstance(inner.get("sql"), str):
+                            generated_sql = inner.get("sql")
+                            break
 
-            if not result.success:
-                raise RuntimeError(f"Agent执行失败: {result.error}")
-
-            # 解析Agent的结果
-            output = result.result
-            generated_sql = None
-            reasoning = ""
-            metadata = {}
-
-            if isinstance(output, dict):
-                # 检查是否是错误响应
-                if output.get("success") is False or ("error" in output and "sql" not in output):
-                    error_msg = output.get("error", "Agent返回错误格式")
-                    logger.error(f"❌ Agent返回错误响应: {error_msg}, 完整输出: {output}")
-                    raise RuntimeError(f"Agent执行失败: {error_msg}")
-
-                generated_sql = output.get("sql", "")
-                reasoning = output.get("reasoning", "")
-                metadata = {
-                    "tables_used": output.get("tables_used", []),
-                    "has_time_filter": output.get("has_time_filter", False),
-                    "time_column_used": output.get("time_column_used", "")
-                }
-            elif isinstance(output, str):
-                try:
-                    import json
-                    parsed = json.loads(output)
-
-                    # 检查是否是错误响应
-                    if parsed.get("success") is False or ("error" in parsed and "sql" not in parsed):
-                        error_msg = parsed.get("error", "Agent返回错误格式")
-                        raise RuntimeError(f"Agent执行失败: {error_msg}")
-
-                    # ✅ 修复：如果没有sql键，返回空字符串而不是整个JSON
-                    generated_sql = parsed.get("sql", "")
-                    reasoning = parsed.get("reasoning", "")
-                    metadata = {
-                        "tables_used": parsed.get("tables_used", []),
-                        "has_time_filter": parsed.get("has_time_filter", False),
-                        "time_column_used": parsed.get("time_column_used", "")
-                    }
-                except json.JSONDecodeError:
-                    # 不是JSON，可能是直接的SQL语句
-                    generated_sql = output
-                    reasoning = "Agent自主生成"
-                except RuntimeError:
-                    # 重新抛出我们的错误检查
-                    raise
-
+            # 2) 如果是字符串但看起来像字典（单引号JSON），尝试解析
+            if isinstance(generated_sql, str):
+                sql_text = generated_sql.strip()
+                if sql_text.startswith("{") and sql_text.endswith("}") and "sql" in sql_text:
+                    import json as _json
+                    try:
+                        parsed = _json.loads(sql_text)
+                        if isinstance(parsed, dict):
+                            if isinstance(parsed.get("sql"), str) and parsed.get("sql").strip():
+                                generated_sql = parsed.get("sql")
+                            elif isinstance(parsed.get("result"), str) and parsed.get("result").strip():
+                                generated_sql = parsed.get("result")
+                    except Exception:
+                        # 尝试使用 ast.literal_eval 解析单引号字典
+                        try:
+                            import ast as _ast
+                            parsed = _ast.literal_eval(sql_text)
+                            if isinstance(parsed, dict):
+                                if isinstance(parsed.get("sql"), str) and parsed.get("sql").strip():
+                                    generated_sql = parsed.get("sql")
+                                elif isinstance(parsed.get("result"), str) and parsed.get("result").strip():
+                                    generated_sql = parsed.get("result")
+                        except Exception:
+                            # 忽略，继续后续校验
+                            pass
+            
+            # 检查是否是错误JSON格式
+            if isinstance(generated_sql, str):
+                sql_stripped = generated_sql.strip()
+                
+                # 检查是否是错误JSON
+                if sql_stripped.startswith("{") and sql_stripped.endswith("}"):
+                    try:
+                        parsed_json = json.loads(sql_stripped)
+                        # 检查是否是错误响应
+                        if parsed_json.get("success") is False or ("error" in parsed_json and "sql" not in parsed_json):
+                            error_msg = parsed_json.get("error", "Agent返回错误格式")
+                            logger.error(f"❌ Agent返回错误响应: {error_msg}, 完整输出: {parsed_json}")
+                            raise RuntimeError(f"Agent执行失败: {error_msg}")
+                        # 如果是成功响应但没有sql字段，也报错
+                        elif parsed_json.get("success") is True and "sql" not in parsed_json:
+                            logger.error(f"❌ Agent返回成功响应但缺少sql字段: {parsed_json}")
+                            raise RuntimeError("Agent返回的响应格式不正确，缺少sql字段")
+                    except json.JSONDecodeError:
+                        # 不是有效JSON，可能是特殊的SQL，继续验证
+                        pass
+            
             # 验证生成的SQL
             if not generated_sql or not generated_sql.strip():
                 raise RuntimeError("Agent未能生成有效的SQL")
@@ -274,8 +285,46 @@ class PlaceholderApplicationService:
             sql_upper = sql_stripped.upper()
             if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
                 raise RuntimeError(f"生成的内容不是有效的SQL查询: {sql_stripped[:100]}...")
+            
+            # 解析成功后的元数据
+            reasoning = "TT递归自动生成"
+            metadata = {
+                "tables_used": [],
+                "has_time_filter": False,
+                "time_column_used": "",
+                "generation_method": "tt_recursion"
+            }
 
             logger.info(f"✅ Agent生成SQL完成: {generated_sql[:100]}...")
+
+            # 🆕 切换到VALIDATION阶段
+            validation_status = "valid"
+            if self.state_manager:
+                from app.services.infrastructure.agents.context_manager import ExecutionStage
+                self.state_manager.set_stage(ExecutionStage.VALIDATION)
+                logger.info("🎯 切换到 VALIDATION 阶段 - 验证生成的SQL")
+
+                # 记录SQL生成结果（作为待验证的SQL）
+                if self.tool_recorder:
+                    self.tool_recorder.record_generic_tool_result(
+                        tool_name="sql_generation",
+                        result={
+                            "sql": generated_sql,
+                            "reasoning": reasoning,
+                            "metadata": metadata
+                        }
+                    )
+
+                # TODO: 这里可以调用实际的SQL验证逻辑
+                # validation_result = await self._validate_generated_sql(generated_sql, request)
+                # if self.tool_recorder:
+                #     self.tool_recorder.record_sql_validation("sql_validator", validation_result)
+                #
+                # if not validation_result.get("valid"):
+                #     # 切换到ERROR_RECOVERY阶段
+                #     self.state_manager.set_stage(ExecutionStage.ERROR_RECOVERY)
+                #     logger.warning("⚠️ 切换到 ERROR_RECOVERY 阶段 - SQL验证失败")
+                #     validation_status = "invalid"
 
             # 构建结果
             metadata.update({
@@ -287,7 +336,7 @@ class PlaceholderApplicationService:
 
             sql_result = SQLGenerationResult(
                 sql_query=generated_sql,
-                validation_status="valid",
+                validation_status=validation_status,
                 optimization_applied=True,
                 estimated_performance="good",
                 metadata=metadata
@@ -303,6 +352,23 @@ class PlaceholderApplicationService:
 
         except Exception as e:
             logger.error(f"占位符分析失败: {e}")
+
+            # 🆕 切换到ERROR_RECOVERY阶段
+            if self.state_manager:
+                from app.services.infrastructure.agents.context_manager import ExecutionStage, ContextType, ContextItem
+                self.state_manager.set_stage(ExecutionStage.ERROR_RECOVERY)
+                logger.warning("⚠️ 切换到 ERROR_RECOVERY 阶段 - 发生异常")
+
+                # 记录错误信息到上下文
+                self.state_manager.add_context(
+                    key="analysis_error",
+                    item=ContextItem(
+                        type=ContextType.ERROR_INFO,
+                        content=f"占位符分析失败: {str(e)}",
+                        metadata={"error_type": type(e).__name__},
+                        relevance_score=1.0
+                    )
+                )
 
             # ✅ 统一使用 sql_generation_failed 事件，方便下游处理
             yield {
@@ -825,6 +891,7 @@ class PlaceholderApplicationService:
                 placeholder_id=str(placeholder.id),
                 business_command=placeholder.placeholder_text,
                 requirements=placeholder.description or task_objective,
+                task_context=task_context or {},
                 context=context,  # 👈 使用统一构建的 context
                 target_objective=task_objective,
                 data_source_info=data_source_info
@@ -863,48 +930,78 @@ class PlaceholderApplicationService:
                             "error": last_error or "Agent未返回有效的SQL结果"
                         }
 
-                # 验证生成的SQL（检查双重引号等问题）
+                # 验证生成的SQL
                 generated_sql = sql_result.sql_query
-                validation_issues = self._validate_sql_placeholders(generated_sql)
 
-                if validation_issues:
-                    logger.warning(f"⚠️ SQL验证发现问题 (尝试 {retry_count + 1}/{MAX_RETRIES}): {validation_issues}")
+                # 1. 检查占位符格式（双重引号等问题）
+                placeholder_issues = self._validate_sql_placeholders(generated_sql)
+
+                # 2. 检查表名和列名是否存在
+                schema_issues = await self._validate_sql_schema(generated_sql)
+
+                # 合并所有验证问题
+                validation_issues = []
+                if placeholder_issues:
+                    validation_issues.append(f"占位符格式问题: {placeholder_issues}")
+                if schema_issues:
+                    validation_issues.append(f"Schema问题:\n{schema_issues}")
+
+                combined_issues = "\n".join(validation_issues) if validation_issues else None
+
+                if combined_issues:
+                    logger.warning(f"⚠️ SQL验证发现问题 (尝试 {retry_count + 1}/{MAX_RETRIES}): {combined_issues}")
                     retry_count += 1
 
                     if retry_count < MAX_RETRIES:
-                        # 尝试自动修复
-                        fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
-                        if fixed_sql != generated_sql:
-                            logger.info(f"✅ 自动修复SQL占位符引号问题")
+                        # 尝试自动修复占位符引号问题
+                        if placeholder_issues:
+                            fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
+                            if fixed_sql != generated_sql:
+                                # 重新验证修复后的SQL
+                                schema_issues_after_fix = await self._validate_sql_schema(fixed_sql)
+                                if not schema_issues_after_fix:
+                                    logger.info(f"✅ 自动修复SQL占位符引号问题")
+                                    return {
+                                        "success": True,
+                                        "sql": fixed_sql,
+                                        "confidence": sql_result.metadata.get('confidence_level', 0.9),
+                                        "auto_fixed": True
+                                    }
+
+                        # 无法自动修复，请求Agent重新生成
+                        retry_prompt = f"""{agent_request.requirements}
+
+⚠️ 重试 {retry_count}: 上次生成的SQL存在问题:
+{combined_issues}
+
+请特别注意：
+1. 只使用数据库中实际存在的表名和列名
+2. 占位符 {{{{start_date}}}} 和 {{{{end_date}}}} 周围**不要**加引号
+3. 正确格式: WHERE date BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
+4. 错误格式: WHERE date BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'"""
+                        agent_request.requirements = retry_prompt
+                        continue
+                    else:
+                        # 达到最大重试次数
+                        if placeholder_issues:
+                            # 尝试最后一次自动修复占位符
+                            fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
                             return {
                                 "success": True,
                                 "sql": fixed_sql,
-                                "confidence": sql_result.metadata.get('confidence_level', 0.9),
-                                "auto_fixed": True
+                                "confidence": sql_result.metadata.get('confidence_level', 0.7),
+                                "auto_fixed": True,
+                                "warning": f"达到最大重试次数，使用自动修复的SQL: {combined_issues}"
+                            }
+                        else:
+                            # Schema问题无法自动修复，返回失败
+                            return {
+                                "success": False,
+                                "error": f"SQL验证失败（达到最大重试次数）: {combined_issues}"
                             }
 
-                        # 无法自动修复，请求Agent重新生成
-                        agent_request.requirements = f"""{agent_request.requirements}
-
-⚠️ 重试 {retry_count}: 上次生成的SQL存在问题: {validation_issues}
-请特别注意：
-1. 占位符 {{{{start_date}}}} 和 {{{{end_date}}}} 周围**不要**加引号
-2. 正确格式: WHERE date BETWEEN {{{{start_date}}}} AND {{{{end_date}}}}
-3. 错误格式: WHERE date BETWEEN '{{{{start_date}}}}' AND '{{{{end_date}}}}'"""
-                        continue
-                    else:
-                        # 达到最大重试次数，尝试最后一次自动修复
-                        fixed_sql = self._fix_sql_placeholder_quotes(generated_sql)
-                        return {
-                            "success": True,
-                            "sql": fixed_sql,
-                            "confidence": sql_result.metadata.get('confidence_level', 0.7),
-                            "auto_fixed": True,
-                            "warning": f"达到最大重试次数，使用自动修复的SQL: {validation_issues}"
-                        }
-
                 # SQL验证通过
-                logger.info(f"✅ SQL验证通过: placeholder={agent_request.placeholder_id}")
+                logger.info(f"✅ SQL验证通过（占位符格式+Schema）: placeholder={agent_request.placeholder_id}")
                 return {
                     "success": True,
                     "sql": generated_sql,
@@ -971,6 +1068,63 @@ class PlaceholderApplicationService:
             logger.debug(f"   修复后: {fixed_sql[:200]}...")
 
         return fixed_sql
+
+    async def _validate_sql_schema(self, sql: str) -> Optional[str]:
+        """
+        验证SQL中的表名和列名是否存在于schema中
+
+        Args:
+            sql: 待验证的SQL
+
+        Returns:
+            如果有问题返回错误描述，否则返回None
+        """
+        if not self.context_retriever:
+            logger.warning("⚠️ context_retriever 未初始化，跳过 schema 验证")
+            return None
+
+        try:
+            # 从 context_retriever 获取 schema_cache
+            schema_cache = getattr(self.context_retriever.retriever, 'schema_cache', None)
+            if not schema_cache:
+                logger.warning("⚠️ schema_cache 未找到，跳过 schema 验证")
+                return None
+
+            # 构建 schema_context 格式
+            schema_context = {}
+            for table_name, table_info in schema_cache.items():
+                columns = [col.get('name') for col in table_info.get('columns', []) if col.get('name')]
+                schema_context[table_name] = {
+                    'columns': columns,
+                    'comment': table_info.get('table_comment', '')
+                }
+
+            # 调用验证工具
+            from app.services.infrastructure.agents.tools.validation_tools import SQLColumnValidatorTool
+
+            validator = SQLColumnValidatorTool(container=self.container)
+            result = await validator.run(sql=sql, schema_context=schema_context)
+
+            if not result.get('valid', True):
+                errors = result.get('errors', [])
+                suggestions = result.get('suggestions', {})
+
+                error_msg = "SQL验证失败：\n" + "\n".join(f"  - {err}" for err in errors)
+                if suggestions:
+                    error_msg += "\n\n建议修复：\n" + "\n".join(
+                        f"  - {wrong} -> {correct}" for wrong, correct in suggestions.items()
+                    )
+
+                logger.warning(f"⚠️ Schema 验证失败: {error_msg}")
+                return error_msg
+
+            logger.info("✅ Schema 验证通过")
+            return None
+
+        except Exception as e:
+            logger.error(f"❌ Schema 验证异常: {e}", exc_info=True)
+            # 验证异常不应阻止流程，返回None
+            return None
 
     def _build_unified_context(
         self,
@@ -1262,7 +1416,7 @@ class PlaceholderApplicationService:
         try:
             builder = DataSourceContextBuilder(container=self.container)
             context_result = await builder.build_data_source_context(
-                user_id=user_id or "system",
+                user_id=user_id,
                 data_source_id=data_source_id,
                 required_tables=None,
                 force_refresh=False,
@@ -1397,19 +1551,22 @@ class PlaceholderApplicationService:
         2. 使用Agent分析业务需求，选择相关表
         3. 获取相关表的列信息
         """
-        from app.services.infrastructure.agents.tools.schema_tools import SchemaListTablesTool, SchemaListColumnsTool
+        from app.services.infrastructure.agents.tools.schema.discovery import SchemaDiscoveryTool
         from app.services.infrastructure.agents.types import SchemaInfo
 
-        # 1. 获取所有表
-        schema_list_tables_tool = SchemaListTablesTool(container=self.container)
-        tables_result = await schema_list_tables_tool.execute({
-            "data_source": data_source_config
-        })
+        # 1. 获取所有表 - 使用新的 SchemaDiscoveryTool
+        schema_discovery_tool = SchemaDiscoveryTool(container=self.container)
+        tables_result = await schema_discovery_tool.execute(
+            connection_config=data_source_config,
+            discovery_type="tables",
+            max_tables=100
+        )
 
         if not tables_result.get("success"):
             raise RuntimeError(f"获取表列表失败: {tables_result.get('error')}")
 
-        all_tables = tables_result.get("tables", [])
+        # 兼容新旧字段名
+        all_tables = tables_result.get("tables", []) or tables_result.get("discovered", {}).get("tables", [])
         logger.info(f"📊 发现 {len(all_tables)} 个表: {all_tables[:10]}...")
 
         # 2. 选择相关表（简化版：使用关键词匹配或使用所有表）
@@ -1421,18 +1578,25 @@ class PlaceholderApplicationService:
 
         logger.info(f"🎯 选择了 {len(relevant_tables)} 个相关表: {relevant_tables}")
 
-        # 3. 获取相关表的列信息
-        schema_list_columns_tool = SchemaListColumnsTool(container=self.container)
-        columns_result = await schema_list_columns_tool.execute({
-            "data_source": data_source_config,
-            "tables": relevant_tables
-        })
+        # 3. 获取相关表的列信息 - 使用新的 SchemaDiscoveryTool
+        columns_result = await schema_discovery_tool.execute(
+            connection_config=data_source_config,
+            discovery_type="columns",
+            tables=relevant_tables,
+            include_metadata=True
+        )
 
         if not columns_result.get("success"):
             raise RuntimeError(f"获取列信息失败: {columns_result.get('error')}")
 
-        # 构建SchemaInfo
-        column_details = columns_result.get("column_details", {})
+        # 构建SchemaInfo - 兼容新旧字段名
+        columns_data = columns_result.get("columns", []) or columns_result.get("discovered", {}).get("columns", [])
+        column_details = {}
+        for col in columns_data:
+            table_name = col.get("table_name", "")
+            if table_name not in column_details:
+                column_details[table_name] = []
+            column_details[table_name].append(col)
         schema_info = SchemaInfo(
             tables=relevant_tables,
             columns={
@@ -1496,7 +1660,7 @@ class PlaceholderApplicationService:
         返回: (sql, reasoning)
         """
         import json
-        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec
 
         # 构建schema提示
         schema_prompt = self._build_schema_prompt(schema_info)
@@ -1507,8 +1671,8 @@ class PlaceholderApplicationService:
         # 构建时间信息和要求
         time_window = None
         time_requirement = ""
-        if isinstance(request.context, dict):
-            time_window = request.context.get("time_window") or request.context.get("time_context")
+        if isinstance(request.task_context, dict):
+            time_window = request.task_context.get("time_window") or request.task_context.get("time_context")
 
         if time_columns:
             time_col_list = ", ".join(time_columns)
@@ -1557,52 +1721,30 @@ class PlaceholderApplicationService:
 请生成SQL：
 """
 
-        # 构建AgentInput
-        agent_input = AgentInput(
-            user_prompt=user_prompt,
-            placeholder=PlaceholderSpec(
-                id=request.placeholder_id,
-                description=request.business_command,
-                type="sql_generation",
-                granularity="daily"
-            ),
-            schema=schema_info,
-            context=TaskContext(
-                task_time=int(datetime.now().timestamp()),
-                timezone="Asia/Shanghai"
-            ),
-            data_source=data_source_config,
-            task_driven_context={
-                "stage": "sql_generation",
-                "business_command": request.business_command,
-                "requirements": request.requirements,
-                "target_objective": request.target_objective
-            },
-            user_id=self.user_id
+        # ✅ 使用Agent Facade生成SQL
+        task_context_dict = {
+            "stage": "sql_generation",
+            "business_command": request.business_command,
+            "requirements": request.requirements,
+            "target_objective": request.target_objective,
+            "schema_info": schema_info,
+            "data_source_config": data_source_config
+        }
+
+        # 调用Agent生成SQL - generate_sql返回str类型
+        sql = await self.agent_facade.generate_sql(
+            business_requirement=user_prompt,
+            data_source_id=request.data_source_info.get('data_source_id', 0) if request.data_source_info else 0,
+            user_id=self.user_id,
+            schema_context=None,  # schema_info会通过task_context传递
+            task_context=task_context_dict
         )
 
-        # 调用Agent生成SQL
-        result = await self.agent_service.execute(agent_input)
+        if not sql or not sql.strip():
+            raise RuntimeError("SQL生成失败: 未返回有效SQL")
 
-        if not result.success:
-            raise RuntimeError(f"SQL生成失败: {result.error}")
-
-        # 解析结果
-        output = result.result
-        sql = ""
-        reasoning = ""
-
-        if isinstance(output, dict):
-            sql = output.get("sql", "")
-            reasoning = output.get("reasoning", "")
-        elif isinstance(output, str):
-            try:
-                parsed = json.loads(output)
-                sql = parsed.get("sql", output)
-                reasoning = parsed.get("reasoning", "")
-            except:
-                sql = output
-                reasoning = "直接生成"
+        # generate_sql直接返回SQL字符串
+        reasoning = "Agent自主生成"
 
         return sql, reasoning
 
@@ -1790,7 +1932,7 @@ class PlaceholderApplicationService:
         返回: (refined_sql, reasoning)
         """
         import json
-        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, TaskContext
+        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec
 
         time_columns = self._identify_time_columns(schema_info)
 
@@ -1832,54 +1974,30 @@ class PlaceholderApplicationService:
 请优化SQL：
 """
 
-        # 构建AgentInput
-        agent_input = AgentInput(
-            user_prompt=refinement_prompt,
-            placeholder=PlaceholderSpec(
-                id=request.placeholder_id,
-                description="SQL优化 - 添加时间过滤",
-                type="sql_refinement",
-                granularity="daily"
-            ),
-            schema=schema_info,
-            context=TaskContext(
-                task_time=int(datetime.now().timestamp()),
-                timezone="Asia/Shanghai"
-            ),
-            data_source=self._build_data_source_config(request),
-            task_driven_context={
-                "stage": "sql_refinement",
-                "refinement_type": "add_time_filter",
-                "original_sql": original_sql
-            },
-            user_id=self.user_id
-        )
+        # ✅ 使用Agent Facade优化SQL
+        task_context_dict = {
+            "stage": "sql_refinement",
+            "refinement_type": "add_time_filter",
+            "original_sql": original_sql,
+            "schema_info": schema_info,
+            "data_source_config": self._build_data_source_config(request)
+        }
 
         # 调用Agent优化SQL
         try:
-            result = await self.agent_service.execute(agent_input)
+            refined_sql = await self.agent_facade.generate_sql(
+                business_requirement=refinement_prompt,
+                data_source_id=request.data_source_info.get('data_source_id', 0) if request.data_source_info else 0,
+                user_id=self.user_id,
+                schema_context=None,
+                task_context=task_context_dict
+            )
 
-            if not result.success:
-                return original_sql, f"优化失败: {result.error}"
+            if not refined_sql or not refined_sql.strip():
+                return original_sql, "优化失败: 未返回有效SQL"
 
-            # 解析结果
-            output = result.result
-            refined_sql = ""
-            reasoning = ""
-
-            if isinstance(output, dict):
-                refined_sql = output.get("sql", "")
-                reasoning = output.get("reasoning", "")
-            elif isinstance(output, str):
-                try:
-                    parsed = json.loads(output)
-                    refined_sql = parsed.get("sql", output)
-                    reasoning = parsed.get("reasoning", "")
-                except:
-                    refined_sql = output
-                    reasoning = "自动添加时间过滤"
-
-            return refined_sql if refined_sql else original_sql, reasoning
+            reasoning = "自动添加时间过滤"
+            return refined_sql, reasoning
 
         except Exception as e:
             logger.error(f"SQL refinement失败: {e}")
@@ -1935,11 +2053,13 @@ class PlaceholderApplicationService:
 _global_service = None
 
 
-async def get_placeholder_service() -> PlaceholderApplicationService:
+async def get_placeholder_service(user_id: str = None) -> PlaceholderApplicationService:
     """获取全局占位符应用服务实例"""
     global _global_service
     if _global_service is None:
-        _global_service = PlaceholderApplicationService()
+        if not user_id:
+            raise ValueError("get_placeholder_service() 需要提供 user_id 参数")
+        _global_service = PlaceholderApplicationService(user_id=user_id)
         await _global_service.initialize()
     return _global_service
 
@@ -1978,7 +2098,12 @@ async def analyze_placeholder_simple(
         SQL生成结果
     """
 
-    service = await get_placeholder_service()
+    # 从 context 中提取 user_id，如果没有则使用默认值
+    user_id_from_context = context.get("user_id") if context else None
+    if not user_id_from_context:
+        raise ValueError("analyze_placeholder_simple() 需要 context 中包含 user_id")
+    
+    service = await get_placeholder_service(user_id=user_id_from_context)
 
     # 如果提供了existing_sql，加入到context中
     if existing_sql:
@@ -1989,6 +2114,7 @@ async def analyze_placeholder_simple(
         placeholder_id=placeholder_id,
         business_command=business_command,
         requirements=requirements,
+        task_context=context or {},
         context=context or {},
         target_objective=target_objective,
         data_source_info=data_source_info
@@ -2016,7 +2142,12 @@ async def update_placeholder_simple(
 ) -> PlaceholderUpdateResult:
     """简化的占位符更新接口 - 兼容性函数"""
     
-    service = await get_placeholder_service()
+    # 从 task_context 中提取 user_id
+    user_id_from_context = task_context.get("user_id") if task_context else None
+    if not user_id_from_context:
+        raise ValueError("update_placeholder_simple() 需要 task_context 中包含 user_id")
+    
+    service = await get_placeholder_service(user_id=user_id_from_context)
     
     request = PlaceholderUpdateRequest(
         placeholder_id=placeholder_id,
@@ -2044,6 +2175,10 @@ async def complete_placeholder_simple(
     target_chart_type: Optional[ChartType] = None
 ) -> Dict[str, Any]:
     """简化的占位符完成接口 - 兼容性函数"""
+    
+    # 这个函数没有 user_id 参数，需要从其他地方获取
+    # 暂时抛出一个错误，提示需要重构
+    raise NotImplementedError("complete_placeholder_simple() 需要重构以支持 user_id 参数")
     
     service = await get_placeholder_service()
     

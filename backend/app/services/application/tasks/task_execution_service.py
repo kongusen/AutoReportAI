@@ -398,19 +398,12 @@ class TaskExecutionService:
         request: TaskExecutionRequest,
         etl_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """生成图表"""
+        """使用TT递归生成图表（第二阶段）"""
         try:
-            from app.services.infrastructure.visualization.chart_generation_service import (
-                create_chart_generation_service
-            )
-            
-            chart_service = create_chart_generation_service(self.user_id)
+            from app.services.infrastructure.agents import execute_chart_generation_tt
             
             # 1. 分析模板中的图表占位符
-            chart_placeholders = await chart_service.analyze_chart_placeholders(
-                template_id=request.template_id,
-                placeholder_data={}
-            )
+            chart_placeholders = await self._analyze_chart_placeholders(request.template_id)
             
             if not chart_placeholders:
                 return {
@@ -419,11 +412,37 @@ class TaskExecutionService:
                     "message": "未找到图表占位符，跳过图表生成"
                 }
             
-            # 2. 为数据生成图表
-            chart_results = await chart_service.generate_charts_for_data(
-                etl_data=etl_data,
-                chart_placeholders=chart_placeholders
-            )
+            # 2. 使用TT递归为数据生成图表
+            chart_results = []
+            for placeholder in chart_placeholders:
+                try:
+                    chart_result = await execute_chart_generation_tt(
+                        chart_placeholder=placeholder.get('description', ''),
+                        etl_data=etl_data,
+                        user_id=self.user_id,
+                        context={
+                            "template_id": request.template_id,
+                            "placeholder_id": placeholder.get('id'),
+                            "chart_type": placeholder.get('chart_type', 'auto'),
+                            "etl_data_summary": self._summarize_etl_data(etl_data)
+                        }
+                    )
+                    
+                    chart_results.append({
+                        "success": True,
+                        "placeholder_id": placeholder.get('id'),
+                        "chart_content": chart_result,
+                        "generation_method": "tt_recursion"
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"TT递归图表生成失败 - 占位符: {placeholder.get('id')}, 错误: {e}")
+                    chart_results.append({
+                        "success": False,
+                        "placeholder_id": placeholder.get('id'),
+                        "error": str(e),
+                        "generation_method": "tt_recursion"
+                    })
             
             # 3. 整理结果
             successful_charts = [r for r in chart_results if r.success]
@@ -432,24 +451,76 @@ class TaskExecutionService:
             chart_data = {
                 "charts_generated": len(successful_charts),
                 "failed_charts": len(failed_charts),
-                "chart_files": [r.file_path for r in successful_charts if r.file_path],
                 "chart_results": chart_results,
-                "chart_placeholders": chart_placeholders
+                "chart_placeholders": chart_placeholders,
+                "generation_method": "tt_recursion"
             }
             
             return {
-                "success": len(successful_charts) > 0 or len(chart_placeholders) == 0,
+                "success": True,
                 "data": chart_data,
-                "message": f"成功生成 {len(successful_charts)} 个图表，失败 {len(failed_charts)} 个"
+                "message": f"TT递归图表生成完成: 成功{len(successful_charts)}个, 失败{len(failed_charts)}个"
             }
             
         except Exception as e:
-            logger.error(f"图表生成异常: {e}")
+            logger.error(f"TT递归图表生成异常: {e}")
             return {
                 "success": False,
                 "error": str(e),
                 "data": None
             }
+    
+    async def _analyze_chart_placeholders(self, template_id: str) -> List[Dict[str, Any]]:
+        """分析模板中的图表占位符"""
+        try:
+            with get_db_session() as db:
+                from app.models.template import Template
+                from uuid import UUID
+                
+                template = db.query(Template).filter(Template.id == UUID(template_id)).first()
+                if not template:
+                    return []
+                
+                # 简单的图表占位符分析（可以根据需要扩展）
+                import re
+                chart_patterns = [
+                    r'\{chart:([^}]+)\}',
+                    r'\{图表:([^}]+)\}',
+                    r'\{chart_([^}]+)\}'
+                ]
+                
+                placeholders = []
+                for pattern in chart_patterns:
+                    matches = re.findall(pattern, template.content or '')
+                    for match in matches:
+                        placeholders.append({
+                            "id": f"chart_{len(placeholders)}",
+                            "description": match,
+                            "chart_type": "auto"
+                        })
+                
+                return placeholders
+                
+        except Exception as e:
+            logger.error(f"分析图表占位符失败: {e}")
+            return []
+    
+    def _summarize_etl_data(self, etl_data: Dict[str, Any]) -> str:
+        """总结ETL数据"""
+        try:
+            if not etl_data or not etl_data.get('data'):
+                return "无数据"
+            
+            data = etl_data['data']
+            if isinstance(data, list):
+                return f"数据行数: {len(data)}, 列数: {len(data[0]) if data else 0}"
+            elif isinstance(data, dict):
+                return f"数据字段: {list(data.keys())}"
+            else:
+                return f"数据类型: {type(data)}"
+                
+        except Exception as e:
+            return f"数据总结失败: {e}"
     
     async def _export_document(
         self, 

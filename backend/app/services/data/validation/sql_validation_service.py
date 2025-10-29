@@ -166,11 +166,28 @@ class SQLValidationService:
         Returns:
             替换后的可执行SQL
         """
+        import re
+
         executable_sql = sql_template
 
-        # 替换基本日期占位符
-        executable_sql = executable_sql.replace("{{start_date}}", f"'{base_date}'")
-        executable_sql = executable_sql.replace("{{end_date}}", f"'{base_date}'")
+        # 智能替换占位符，避免双重引号
+        # 情况1: 占位符已经有引号 '{{start_date}}' -> '2025-10-23'
+        # 情况2: 占位符没有引号 {{start_date}} -> '2025-10-23'
+
+        for placeholder in ["start_date", "end_date"]:
+            pattern = r"['\"]?\{\{" + placeholder + r"\}\}['\"]?"
+
+            def replacer(match):
+                matched_text = match.group(0)
+                # 检查是否已有引号
+                if matched_text.startswith("'") or matched_text.startswith('"'):
+                    # 已有引号，只替换占位符内容
+                    return f"'{base_date}'"
+                else:
+                    # 没有引号，添加引号
+                    return f"'{base_date}'"
+
+            executable_sql = re.sub(pattern, replacer, executable_sql)
 
         # 如果需要支持日期范围，可以扩展
         # 例如：周报、月报等

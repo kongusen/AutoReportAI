@@ -6,7 +6,8 @@ pydantic-settings>=2.6.0
 email-validator>=2.0.0
 fastapi-limiter>=0.1.6
 
-loom-agent==0.0.1
+loom-agent==0.0.4
+tiktoken
 
 # 数据库和ORM
 SQLAlchemy>=2.0.36
@@ -36,6 +37,7 @@ celery[redis]>=5.4.0
 apscheduler>=3.11.0
 cron-validator>=1.0.8
 croniter>=1.4.1
+nest-asyncio>=1.6.0
 
 # 数据处理
 pandas>=2.2.3

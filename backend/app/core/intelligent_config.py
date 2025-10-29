@@ -116,10 +116,10 @@ class UserLLMConfigSchema(BaseModel):
                 "is_default": True,
                 "primary_llm": {
                     "provider": "openai",
-                    "model_name": "gpt-4",
+                    "model_name": "gpt-4o-mini",
                     "api_key": "sk-...",
-                    "max_tokens": 4096,
-                    "temperature": 0.7
+                    "max_tokens": 13368,
+                    "temperature": 0.3
                 },
                 "auto_fallback": True,
                 "cost_optimization": False,
@@ -141,7 +141,7 @@ class IntelligentConfigManager:
         if settings.OPENAI_API_KEY:
             default_openai = LLMModelConfig(
                 provider=LLMProvider.OPENAI,
-                model_name="gpt-3.5-turbo",
+                model_name="gpt-4o-mini",
                 api_key=settings.OPENAI_API_KEY,
                 api_base=getattr(settings, 'OPENAI_API_BASE', None),
                 max_tokens=4096,
@@ -219,7 +219,8 @@ class IntelligentConfigManager:
         if task_type in user_config.task_specific_llms:
             task_llm = user_config.task_specific_llms[task_type]
             if self._llm_supports_capabilities(task_llm, capabilities_required):
-                return task_llm
+                if not cost_limit or self._check_cost_limit(task_llm, cost_limit):
+                    return task_llm
         
         # 检查主要LLM
         if self._llm_supports_capabilities(user_config.primary_llm, capabilities_required):
@@ -232,7 +233,40 @@ class IntelligentConfigManager:
                 if not cost_limit or self._check_cost_limit(fallback_llm, cost_limit):
                     return fallback_llm
         
-        return user_config.primary_llm  # 兜底返回主要LLM
+        # 如果用户配置的模型都不满足要求，返回None而不是强制使用用户模型
+        # 这样可以避免给用户带来意外的成本
+        return None
+    
+    def get_optimal_llm_with_fallback(
+        self,
+        user_id: str,
+        task_type: str,
+        capabilities_required: List[ModelCapability],
+        cost_limit: Optional[float] = None,
+        allow_system_fallback: bool = False
+    ) -> Optional[LLMModelConfig]:
+        """为任务选择最优LLM，支持系统级兜底"""
+        # 首先尝试用户配置的模型
+        user_llm = self.get_optimal_llm_for_task(
+            user_id, task_type, capabilities_required, cost_limit
+        )
+        
+        if user_llm:
+            return user_llm
+        
+        # 如果用户配置的模型都不满足要求
+        if not allow_system_fallback:
+            return None
+        
+        # 系统级兜底：使用默认配置（如果存在）
+        default_config = self._user_configs.get("default")
+        if default_config:
+            # 检查默认配置是否满足要求
+            if self._llm_supports_capabilities(default_config.primary_llm, capabilities_required):
+                if not cost_limit or self._check_cost_limit(default_config.primary_llm, cost_limit):
+                    return default_config.primary_llm
+        
+        return None
     
     def _llm_supports_capabilities(
         self,
@@ -261,8 +295,35 @@ class IntelligentConfigManager:
         output_cost = (output_tokens / 1000) * llm.output_cost_per_1k
         return input_cost + output_cost
     
-    def get_provider_models(self, provider: LLMProvider) -> List[str]:
-        """获取提供商支持的模型列表"""
+    def get_provider_models(self, provider: LLMProvider, user_id: Optional[str] = None) -> List[str]:
+        """
+        基于数据库驱动获取指定provider支持的模型列表。
+        用户模型如有存储在数据库，应优先按user_id过滤检索，否则返回系统内置支持列表。
+        """
+        from app.services.infrastructure.llm.llm_model_registry import (
+            get_db_session,
+            LLMModelCatalog,
+        )
+        models = []
+        # 优先从数据库中查找可用的模型配置
+        try:
+            session = get_db_session()
+            query = session.query(LLMModelCatalog).filter(LLMModelCatalog.provider == provider.value)
+            if user_id:
+                # 尝试查找仅属于该用户的自定义LLM模型
+                query = query.filter((LLMModelCatalog.user_id == user_id) | (LLMModelCatalog.user_id == None))
+            else:
+                # 仅查公共模型
+                query = query.filter(LLMModelCatalog.user_id == None)
+            results = query.all()
+            models = [m.model_name for m in results if m.model_name]
+            if models:
+                return models
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"从数据库获取模型列表失败: {e}")
+        
+        # 数据库查不到或异常时回退为静态内置
         provider_models = {
             LLMProvider.OPENAI: [
                 "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", 
@@ -328,4 +389,17 @@ def get_optimal_llm_for_task(
     """为任务获取最优LLM的便捷函数"""
     return intelligent_config_manager.get_optimal_llm_for_task(
         user_id, task_type, capabilities_required, cost_limit
+    )
+
+
+def get_optimal_llm_with_fallback(
+    user_id: str,
+    task_type: str,
+    capabilities_required: List[ModelCapability],
+    cost_limit: Optional[float] = None,
+    allow_system_fallback: bool = False
+) -> Optional[LLMModelConfig]:
+    """为任务获取最优LLM的便捷函数，支持系统级兜底"""
+    return intelligent_config_manager.get_optimal_llm_with_fallback(
+        user_id, task_type, capabilities_required, cost_limit, allow_system_fallback
     )

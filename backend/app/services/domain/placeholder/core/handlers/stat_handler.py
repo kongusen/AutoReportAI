@@ -30,7 +30,7 @@ class StatisticalHandler:
         schema_ctx = SchemaContext(tables=schema.get("tables", []), columns=schema.get("columns", {}))
         tw = TimeWindow(start_date=time_ctx.get("start_date") or time_ctx.get("data_start_date"), end_date=time_ctx.get("end_date") or time_ctx.get("data_end_date"))
         sql_res = await self._gen.generate_sql(query, schema_ctx, tw, business_ctx={"data_source_id": data_source_id})
-        exec_res = await self._exec.execute(sql_res.sql, data_source_id)
+        exec_res = await self._exec.execute(sql=sql_res.sql, connection_config={"data_source_id": data_source_id})
         return {
             "sql": sql_res.sql,
             "columns": exec_res.columns,

@@ -9,7 +9,7 @@ from datetime import datetime
 import asyncio
 
 from app.core.container import container
-from app.services.infrastructure.agents import AgentService
+from app.services.infrastructure.agents import StageAwareAgentAdapter
 from app.services.application.facades.unified_service_facade import create_unified_service_facade
 from app.db.session import get_db_session
 
@@ -67,36 +67,35 @@ class PipelineHealthService:
     async def _check_agent_system(self) -> Dict[str, Any]:
         """检查Agent系统"""
         try:
-            agent_service = AgentService(container=container)
+            agent_adapter = StageAwareAgentAdapter(container=container)
+            
+            await agent_adapter.initialize(
+                user_id="health_check",
+                task_type="sql_generation",
+                task_complexity=0.1
+            )
 
             # 简单的Agent执行测试
-            from app.services.infrastructure.agents.types import (
-                AgentInput, PlaceholderSpec, SchemaInfo, TaskContext, AgentConstraints
+            result = await agent_adapter.generate_sql(
+                placeholder="健康检查：生成简单查询",
+                data_source_id=0,  # 测试使用0
+                user_id="health_check",
+                context={
+                    "test_mode": True,
+                    "tables": ["test_table"],
+                    "columns": {"test_table": ["id", "name"]}
+                }
             )
 
-            test_input = AgentInput(
-                user_prompt="健康检查：生成简单查询",
-                placeholder=PlaceholderSpec(id="test", description="测试占位符", type="stat"),
-                schema=SchemaInfo(tables=["test_table"], columns={"test_table": ["id", "name"]}),
-                context=TaskContext(),
-                constraints=AgentConstraints(sql_only=True, output_kind="sql")
-            )
-
-            # 测试执行（允许失败，记录状态）
-            try:
-                result = await agent_service.execute(test_input)
-                agent_status = "healthy" if result.success else "degraded"
-                error_msg = None if result.success else result.metadata.get("error", "执行失败")
-            except Exception as e:
-                agent_status = "unhealthy"
-                error_msg = f"Agent执行异常: {str(e)}"
+            agent_status = "healthy" if result.get('success') else "degraded"
+            error_msg = None if agent_status == "healthy" else "执行失败"
 
             return {
                 "status": agent_status,
                 "message": error_msg or "Agent系统正常",
                 "tested_at": datetime.now().isoformat(),
                 "details": {
-                    "facade_available": True,
+                    "adapter_available": True,
                     "container_available": True,
                     "execution_successful": agent_status == "healthy"
                 }

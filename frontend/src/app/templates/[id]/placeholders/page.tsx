@@ -331,13 +331,17 @@ export default function TemplatePlaceholdersPage() {
       
       if (response.data?.success) {
         const validationResult = response.data.data
+        const columnsFallback = validationResult.columns 
+          || validationResult.execution_result?.metadata?.columns 
+          || (Array.isArray(validationResult.rows) && validationResult.rows.length > 0 ? Object.keys(validationResult.rows[0]) : [])
+        const executionTimeMs = Math.round(((validationResult.execution_result?.metadata?.execution_time ?? 0) as number) * 1000)
         const testResult = {
           success: validationResult.validation_passed || validationResult.success || false,
           error: validationResult.error || '',
-          data: validationResult.rows || [],  // 🔑 使用正确的字段 rows
-          columns: validationResult.columns || [],
-          row_count: validationResult.row_count || 0,
-          execution_time_ms: validationResult.execution_result?.metadata?.execution_time_ms || 0,
+          data: validationResult.rows || [],
+          columns: columnsFallback,
+          row_count: validationResult.row_count || validationResult.execution_result?.row_count || 0,
+          execution_time_ms: executionTimeMs,
           sql_after_substitution: validationResult.executable_sql || sql,
           primary_value: validationResult.primary_value
         }
@@ -847,6 +851,16 @@ export default function TemplatePlaceholdersPage() {
                                   {testResult.execution_time_ms}ms
                                 </span>
                               </div>
+
+                              {/* 主值展示（聚合查询优先显示） */}
+                              {typeof testResult.primary_value !== 'undefined' && testResult.primary_value !== null && (
+                                <div className="bg-white border border-gray-200 rounded p-2 text-center">
+                                  <div className="text-sm font-semibold text-gray-900">
+                                    {String(testResult.primary_value)}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 mt-0.5">primary_value</div>
+                                </div>
+                              )}
 
                               {/* 周期性占位符 */}
                               {testResult.result_type === 'period_value' ? (

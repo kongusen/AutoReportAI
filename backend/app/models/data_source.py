@@ -103,6 +103,10 @@ class DataSource(Base):
     def connection_config(self) -> dict:
         """动态构建连接配置以兼容现有代码"""
         if self.source_type == DataSourceType.doris:
+            # 解密密码 - 使用统一的密码管理器
+            from app.core.data_source_utils import DataSourcePasswordManager
+            decrypted_password = DataSourcePasswordManager.get_password(self.doris_password)
+
             return {
                 "source_type": "doris",
                 "fe_hosts": self.doris_fe_hosts or ["localhost"],
@@ -110,7 +114,7 @@ class DataSource(Base):
                 "query_port": self.doris_query_port or 9030,
                 "database": self.doris_database or "default",
                 "username": self.doris_username or "root",
-                "password": self.doris_password or ""
+                "password": decrypted_password
             }
         elif self.source_type == DataSourceType.sql:
             return {

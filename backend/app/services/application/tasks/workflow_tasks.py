@@ -259,18 +259,12 @@ def analyze_placeholder_workflow(
             }
         )
 
-        # 使用Agent系统进行占位符分析
+        # 使用TT递归SQL生成函数（第一阶段）
         import asyncio
-        from app.services.infrastructure.agents import AgentService
-        from app.services.infrastructure.agents.types import AgentInput, PlaceholderSpec, SchemaInfo, TaskContext
-        from app.core.container import Container
+        from app.services.infrastructure.agents import execute_sql_generation_tt
         from app.db.session import get_db_session
 
         async def run_analysis():
-            # 创建Agent门面
-            container = Container()
-            agent_service = AgentService(container=container)
-
             # 获取数据源信息和模板信息
             with get_db_session() as db:
                 from app.models.data_source import DataSource
@@ -306,26 +300,22 @@ def analyze_placeholder_workflow(
                 "password": getattr(data_source, 'password', None)
             }
 
-            # 构建Agent输入
-            agent_input = AgentInput(
-                user_prompt=f"分析模板 {template.name} 的占位符，生成或验证对应的数据查询SQL",
-                placeholder=PlaceholderSpec(
-                    description=f"模板占位符分析 - {template.name}",
-                    type="template_analysis"
-                ),
-                schema=SchemaInfo(
-                    database_name=getattr(data_source, 'doris_database', 'default_db'),
-                    host=data_source.doris_fe_hosts[0] if data_source.doris_fe_hosts else None,
-                    port=getattr(data_source, 'doris_fe_http_port', 8030),
-                    username=getattr(data_source, 'username', None),
-                    password=getattr(data_source, 'password', None)
-                ),
-                context=TaskContext(
-                    task_time=int(datetime.now().timestamp()),
-                    timezone="Asia/Shanghai"
-                ),
-                data_source=data_source_config,
-                task_driven_context={
+            # 更新进度
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current_step': '执行TT递归SQL生成',
+                    'progress': 50,
+                    'mode': 'tt_recursion_sql_generation'
+                }
+            )
+
+            # 🎯 使用TT递归SQL生成阶段
+            sql_result = await execute_sql_generation_tt(
+                placeholder=f"分析模板 {template.name} 的占位符，生成或验证对应的数据查询SQL",
+                data_source_id=data_source_id,
+                user_id=user_id,
+                context={
                     "template_id": template_id,
                     "template_name": template.name,
                     "template_content": template.content[:1000] if template.content else "",
@@ -334,25 +324,23 @@ def analyze_placeholder_workflow(
                     "data_source_type": data_source.source_type.value if hasattr(data_source.source_type, 'value') else str(data_source.source_type),
                     "current_sql": existing_sql,
                     "force_reanalyze": force_reanalyze,
-                    "analysis_type": "placeholder_workflow"
-                },
-                user_id=user_id
-            )
-
-            # 更新进度
-            self.update_state(
-                state='PROGRESS',
-                meta={
-                    'current_step': '执行智能分析和验证',
-                    'progress': 50,
-                    'mode': 'task_validation_intelligent'
+                    "analysis_type": "placeholder_workflow",
+                    "data_source_config": data_source_config
                 }
             )
 
-            # 🎯 使用任务验证智能模式 - 核心调用
-            result = await agent_service.execute_task_validation(agent_input)
+            if not sql_result:
+                raise Exception("TT递归SQL生成未返回结果")
 
-            return result
+            return {
+                "success": True,
+                "response": sql_result,
+                "metadata": {
+                    "generation_method": "tt_recursion",
+                    "template_id": template_id,
+                    "data_source_id": data_source_id
+                }
+            }
 
         # 执行异步分析
         analysis_result = asyncio.run(run_analysis())

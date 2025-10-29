@@ -70,6 +70,7 @@ celery_app.autodiscover_tasks([
     'app.services.domain.tasks',
     'app.services.application.tasks',
     'app.services.infrastructure.task_queue.tasks',
+    'app.services.infrastructure.task_queue.placeholder_tasks',
     'app.services.data.tasks',
 ])
 

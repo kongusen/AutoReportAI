@@ -40,7 +40,8 @@ def get_database_url():
     # 根据环境动态生成URL
     env = detect_environment()
     db_user = os.getenv("POSTGRES_USER", "postgres")
-    db_password = os.getenv("POSTGRES_PASSWORD", "postgres123")  # 修改默认密码以匹配Docker配置
+    # 强制通过环境变量提供数据库密码，避免弱默认值
+    db_password = os.getenv("POSTGRES_PASSWORD", "")
     db_name = os.getenv("POSTGRES_DB", "autoreport")
     db_port = os.getenv("POSTGRES_PORT", "5432")
     
@@ -165,7 +166,8 @@ class Settings(BaseSettings):
     )
 
     # Security settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "a_very_secret_key")
+    # 强制通过环境变量提供密钥，避免弱默认值
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
     ALGORITHM: str = "HS256"
     access_token_expire_minutes: int = 60
@@ -291,8 +293,8 @@ class Settings(BaseSettings):
         else:
             return "localhost:9000"  # 本地环境
     
-    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
     MINIO_BUCKET_NAME: str = os.getenv("MINIO_BUCKET_NAME", "autoreport")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     
@@ -345,7 +347,7 @@ class Settings(BaseSettings):
     # 用户初始化配置
     FIRST_SUPERUSER: str = os.getenv("FIRST_SUPERUSER", "admin")
     FIRST_SUPERUSER_EMAIL: str = os.getenv("FIRST_SUPERUSER_EMAIL", "admin@autoreportai.com")
-    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "password")
+    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "")
     
     # 系统用户UUID配置 - 用于系统级别的任务执行
     SYSTEM_USER_ID: str = os.getenv("SYSTEM_USER_ID", "94ba5da3-ee9d-40fe-b34d-ea3a90553f54")

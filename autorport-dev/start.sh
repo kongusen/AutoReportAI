@@ -100,8 +100,11 @@ configure_env_interactive() {
     # 数据库配置
     echo ""
     echo -e "${YELLOW}2. 数据库配置${NC}"
-    read -p "数据库密码 (默认: postgres123): " db_password
-    db_password=${db_password:-postgres123}
+    # 生成强随机密码作为默认值
+    local default_db_password=$(openssl rand -base64 24 2>/dev/null | tr -d '\n' | tr -d '/+=' | cut -c1-24)
+    [ -z "$default_db_password" ] && default_db_password="Auto$RANDOM$RANDOM!Db"
+    read -p "数据库密码 (默认: 自动生成强密码): " db_password
+    db_password=${db_password:-$default_db_password}
     
     # 管理员配置
     echo ""
@@ -112,8 +115,10 @@ configure_env_interactive() {
     read -p "管理员邮箱 (默认: admin@autoreportai.com): " admin_email
     admin_email=${admin_email:-admin@autoreportai.com}
     
-    read -p "管理员密码 (默认: password): " admin_password
-    admin_password=${admin_password:-password}
+    local default_admin_password=$(openssl rand -base64 24 2>/dev/null | tr -d '\n' | tr -d '/+=' | cut -c1-24)
+    [ -z "$default_admin_password" ] && default_admin_password="Adm$RANDOM$RANDOM!Pw"
+    read -p "管理员密码 (默认: 自动生成强密码): " admin_password
+    admin_password=${admin_password:-$default_admin_password}
     
     # 应用配置到.env文件
     echo ""
@@ -229,6 +234,39 @@ setup_env() {
     
     sed -i.bak "s|SECRET_KEY=.*|SECRET_KEY=$secret_key|g" .env
     sed -i.bak "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$encryption_key|g" .env
+    rm -f .env.bak
+
+    # 生成并设置强密码（如果模板中存在占位符则替换，否则追加）
+    echo -e "${YELLOW}生成服务密码...${NC}"
+    local generated_db_password=$(openssl rand -base64 24 2>/dev/null | tr -d '\n' | tr -d '/+=' | cut -c1-24)
+    [ -z "$generated_db_password" ] && generated_db_password="Db$RANDOM$RANDOM!Pw"
+    local generated_minio_password=$(openssl rand -base64 24 2>/dev/null | tr -d '\n' | tr -d '/+=' | cut -c1-24)
+    [ -z "$generated_minio_password" ] && generated_minio_password="Mn$RANDOM$RANDOM!Pw"
+    local generated_admin_password=$(openssl rand -base64 24 2>/dev/null | tr -d '\n' | tr -d '/+=' | cut -c1-24)
+    [ -z "$generated_admin_password" ] && generated_admin_password="Su$RANDOM$RANDOM!Pw"
+
+    if grep -q '^POSTGRES_PASSWORD=' .env; then
+        sed -i.bak "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$generated_db_password|g" .env
+    else
+        echo "POSTGRES_PASSWORD=$generated_db_password" >> .env
+    fi
+    
+    if grep -q '^MINIO_ROOT_PASSWORD=' .env; then
+        sed -i.bak "s|^MINIO_ROOT_PASSWORD=.*|MINIO_ROOT_PASSWORD=$generated_minio_password|g" .env
+    else
+        echo "MINIO_ROOT_PASSWORD=$generated_minio_password" >> .env
+    fi
+
+    # 确保 MINIO_ROOT_USER 存在（默认使用 minioadmin 用户名，便于识别）
+    if ! grep -q '^MINIO_ROOT_USER=' .env; then
+        echo "MINIO_ROOT_USER=minioadmin" >> .env
+    fi
+
+    if grep -q '^FIRST_SUPERUSER_PASSWORD=' .env; then
+        sed -i.bak "s|^FIRST_SUPERUSER_PASSWORD=.*|FIRST_SUPERUSER_PASSWORD=$generated_admin_password|g" .env
+    else
+        echo "FIRST_SUPERUSER_PASSWORD=$generated_admin_password" >> .env
+    fi
     rm -f .env.bak
     
     # 配置代理模式特定设置

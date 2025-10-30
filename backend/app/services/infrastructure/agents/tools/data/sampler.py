@@ -12,9 +12,10 @@ from loom.interfaces.tool import BaseTool
 import logging
 import random
 import math
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -90,6 +91,22 @@ class DataSamplerTool(BaseTool):
         self.description = "从数据源中采样数据进行分析" 
         self.container = container
         self._data_source_service = None
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class DataSamplerArgs(BaseModel):
+            sql: str = Field(description="要采样的 SQL 查询")
+            connection_config: Dict[str, Any] = Field(description="数据源连接配置")
+            strategy: Literal["random", "systematic", "stratified", "cluster", "convenience"] = Field(
+                default="random", description="采样策略"
+            )
+            sample_size: int = Field(default=1000, description="采样大小")
+            random_seed: Optional[int] = Field(default=None, description="随机种子")
+            strata_column: Optional[str] = Field(default=None, description="分层列名（用于分层采样）")
+            cluster_column: Optional[str] = Field(default=None, description="聚类列名（用于聚类采样）")
+            max_total_size: int = Field(default=100000, description="最大总数据量")
+            analyze_data_types: bool = Field(default=True, description="是否分析数据类型")
+
+        self.args_schema = DataSamplerArgs
     
     async def _get_data_source_service(self):
         """获取数据源服务"""
@@ -100,60 +117,18 @@ class DataSamplerTool(BaseTool):
         return self._data_source_service
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "data_sampler",
                 "description": "从数据源中采样数据进行分析",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql": {
-                            "type": "string",
-                            "description": "要采样的 SQL 查询"
-                        },
-                        "connection_config": {
-                            "type": "object",
-                            "description": "数据源连接配置"
-                        },
-                        "strategy": {
-                            "type": "string",
-                            "enum": ["random", "systematic", "stratified", "cluster", "convenience"],
-                            "default": "random",
-                            "description": "采样策略"
-                        },
-                        "sample_size": {
-                            "type": "integer",
-                            "default": 1000,
-                            "description": "采样大小"
-                        },
-                        "random_seed": {
-                            "type": "integer",
-                            "description": "随机种子"
-                        },
-                        "strata_column": {
-                            "type": "string",
-                            "description": "分层列名（用于分层采样）"
-                        },
-                        "cluster_column": {
-                            "type": "string",
-                            "description": "聚类列名（用于聚类采样）"
-                        },
-                        "max_total_size": {
-                            "type": "integer",
-                            "default": 100000,
-                            "description": "最大总数据量"
-                        },
-                        "analyze_data_types": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否分析数据类型"
-                        }
-                    },
-                    "required": ["sql", "connection_config"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

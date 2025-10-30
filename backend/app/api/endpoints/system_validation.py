@@ -53,7 +53,10 @@ async def validate_agent_charts(
 
         # 2. 测试图表工具
         try:
-            from app.services.infrastructure.agents.tools.chart_tools import ChartSpecTool, WordChartGeneratorTool
+            from app.services.infrastructure.agents.tools.chart import (
+                ChartGeneratorTool,
+                ChartAnalyzerTool
+            )
             validation_results["chart_tools"] = True
             logger.info("✅ 图表工具导入成功")
         except Exception as e:

@@ -10,10 +10,11 @@ from loom.interfaces.tool import BaseTool
 
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -87,60 +88,37 @@ class TimeWindowTool(BaseTool):
 
         self.description = "处理时间窗口相关的数据操作" 
         self.container = container
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class TimeWindowArgs(BaseModel):
+            data: List[Dict[str, Any]] = Field(description="要处理的数据")
+            window_type: Literal["tumbling", "sliding", "session", "custom"] = Field(
+                default="tumbling", description="窗口类型"
+            )
+            size: int = Field(default=1, description="窗口大小")
+            time_unit: Literal["second", "minute", "hour", "day", "week", "month", "year"] = Field(
+                default="hour", description="时间单位"
+            )
+            slide_size: Optional[int] = Field(default=None, description="滑动大小（用于滑动窗口）")
+            session_timeout: Optional[int] = Field(default=None, description="会话超时时间（秒）")
+            time_column: str = Field(default="timestamp", description="时间列名")
+            aggregation: Optional[Dict[str, str]] = Field(default=None, description="聚合配置")
+
+        self.args_schema = TimeWindowArgs
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "time_window",
                 "description": "处理时间窗口相关的数据操作",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "data": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "description": "要处理的数据"
-                        },
-                        "window_type": {
-                            "type": "string",
-                            "enum": ["tumbling", "sliding", "session", "custom"],
-                            "default": "tumbling",
-                            "description": "窗口类型"
-                        },
-                        "size": {
-                            "type": "integer",
-                            "default": 1,
-                            "description": "窗口大小"
-                        },
-                        "time_unit": {
-                            "type": "string",
-                            "enum": ["second", "minute", "hour", "day", "week", "month", "year"],
-                            "default": "hour",
-                            "description": "时间单位"
-                        },
-                        "slide_size": {
-                            "type": "integer",
-                            "description": "滑动大小（用于滑动窗口）"
-                        },
-                        "session_timeout": {
-                            "type": "integer",
-                            "description": "会话超时时间（秒）"
-                        },
-                        "time_column": {
-                            "type": "string",
-                            "default": "timestamp",
-                            "description": "时间列名"
-                        },
-                        "aggregation": {
-                            "type": "object",
-                            "description": "聚合配置"
-                        }
-                    },
-                    "required": ["data"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

@@ -257,6 +257,12 @@ class Settings(BaseSettings):
     # ETL配置
     ETL_BATCH_SIZE: int = int(os.getenv("ETL_BATCH_SIZE", 10000))
     ETL_QUERY_TIMEOUT: int = int(os.getenv("ETL_QUERY_TIMEOUT", 900))  # 15分钟
+
+    # 报告生成容错配置
+    # 允许的失败占位符数量（不含跳过）上限，<= 此数仍生成文档
+    REPORT_MAX_FAILED_PLACEHOLDERS_FOR_DOC: int = int(os.getenv("REPORT_MAX_FAILED_PLACEHOLDERS_FOR_DOC", 5))
+    # 质量闸门是否允许放行（当存在质量问题时亦可生成文档）
+    REPORT_ALLOW_QUALITY_ISSUES: bool = os.getenv("REPORT_ALLOW_QUALITY_ISSUES", "false").lower() == "true"
     
     # 缓存配置
     CACHE_DEFAULT_EXPIRE: int = int(os.getenv("CACHE_DEFAULT_EXPIRE", 3600))  # 1小时

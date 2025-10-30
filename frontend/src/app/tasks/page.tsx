@@ -116,7 +116,8 @@ export default function TasksPage() {
     for (const [taskId, update] of taskUpdates) {
       if (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled') {
         hasCompletedTasks = true
-        completedTaskIds.push(parseInt(taskId))
+        const parsed = parseInt(taskId)
+        if (!Number.isNaN(parsed)) completedTaskIds.push(parsed)
       }
     }
 
@@ -128,12 +129,9 @@ export default function TasksPage() {
         return newSet
       })
 
-      // 延迟刷新，确保后端状态已更新
-      const refreshTimer = setTimeout(() => {
-        fetchTasks()
-      }, 2000)
-
-      return () => clearTimeout(refreshTimer)
+      // 同步清理本地进度并立即刷新
+      completedTaskIds.forEach(id => clearTaskProgress(id.toString()))
+      fetchTasks()
     }
   }, [taskUpdates, fetchTasks])
 
@@ -461,8 +459,9 @@ export default function TasksPage() {
         const apiProgress = (record as any).current_execution_progress || 0
         const apiCurrentStep = (record as any).current_execution_step
 
-        // 如果API显示正在执行，显示进度条
-        if (apiExecutionStatus === 'processing' || progress || isExecuting) {
+        // 仅当API为processing，或本地/WS进度处于进行中时展示进度条
+        const isProgressRunning = progress && !['completed', 'failed', 'cancelled'].includes((progress as any).status)
+        if (apiExecutionStatus === 'processing' || isProgressRunning || isExecuting) {
           return (
             <div className="space-y-1 min-w-0">
               <Badge variant="info" className="text-xs">执行中</Badge>
@@ -557,7 +556,8 @@ export default function TasksPage() {
       render: (_: any, record: Task) => {
         // 使用多种状态源来判断执行状态
         const apiExecutionStatus = (record as any).current_execution_status
-        const isExecutingFromAPI = apiExecutionStatus === 'processing' || apiExecutionStatus === 'pending'
+        // 仅在真正执行中时认为处于执行态，'pending' 不再视为执行中
+        const isExecutingFromAPI = apiExecutionStatus === 'processing'
         const isExecutingFromLocal = executingTasks.has(record.id)
 
         // 检查WebSocket任务更新状态

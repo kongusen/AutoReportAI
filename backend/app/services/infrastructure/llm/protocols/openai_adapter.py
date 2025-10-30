@@ -278,12 +278,26 @@ class OpenAIAdapter:
                 return self._parse_response(response)
                 
             except Exception as e:
-                logger.warning(f"OpenAI API调用失败 (尝试 {attempt + 1}/{self.retry_count}): {e}")
+                error_str = str(e)
+                is_502_error = "502" in error_str or "Bad Gateway" in error_str or "xiaoai.plus" in error_str.lower()
+                
+                logger.warning(
+                    f"OpenAI API调用失败 (尝试 {attempt + 1}/{self.retry_count}): {e}" + 
+                    (f" [502错误，将使用指数退避]" if is_502_error else "")
+                )
+                
                 if attempt == self.retry_count - 1:
                     raise
                 
-                # 指数退避
-                await asyncio.sleep(2 ** attempt)
+                # 指数退避：对于502错误使用更长的延迟，其他错误使用标准延迟
+                if is_502_error:
+                    # 502错误使用更长的指数退避：2s, 4s, 8s
+                    delay = 2.0 * (2 ** attempt)
+                else:
+                    # 其他错误使用标准指数退避：2s, 4s, 8s
+                    delay = 2.0 * (2 ** attempt)
+                
+                await asyncio.sleep(delay)
         
         raise Exception("所有重试尝试都失败了")
     

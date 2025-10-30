@@ -197,11 +197,14 @@ class WordTemplateService:
                             value = data[placeholder_without_braces]
                             matched_key = placeholder_without_braces
 
-                    if value is None:
+                    if matched_key is None:
                         self.logger.warning(f"⚠️ 未找到占位符数据: {placeholder}")
                         continue
 
-                    self.logger.info(f"✅ 找到匹配: {placeholder} -> {matched_key} = {str(value)[:50]}")
+                    if value is None:
+                        self.logger.warning(f"⚠️ 占位符 {matched_key} 数据为空，使用空字符串替换")
+                    else:
+                        self.logger.info(f"✅ 找到匹配: {placeholder} -> {matched_key} = {str(value)[:50]}")
                     replaced_count += 1
 
                     str_value = str(value) if value is not None else ""

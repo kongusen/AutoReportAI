@@ -11,9 +11,10 @@ from loom.interfaces.tool import BaseTool
 
 import logging
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -95,83 +96,42 @@ class ChartGeneratorTool(BaseTool):
 
         self.description = "基于数据生成各种类型的图表" 
         self.container = container
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class ChartGeneratorArgs(BaseModel):
+            data: List[Dict[str, Any]] = Field(description="要可视化的数据")
+            chart_type: Literal["bar", "line", "pie", "scatter", "area", "histogram", "box", "heatmap", "radar", "gauge"] = Field(
+                default="bar", description="图表类型"
+            )
+            title: Optional[str] = Field(default=None, description="图表标题")
+            x_axis: Optional[str] = Field(default=None, description="X轴列名")
+            y_axis: Optional[str] = Field(default=None, description="Y轴列名")
+            color_column: Optional[str] = Field(default=None, description="颜色分组列名")
+            size_column: Optional[str] = Field(default=None, description="大小映射列名")
+            theme: Literal["light", "dark", "colorful", "minimal"] = Field(
+                default="light", description="图表主题"
+            )
+            width: int = Field(default=800, description="图表宽度")
+            height: int = Field(default=600, description="图表高度")
+            show_legend: bool = Field(default=True, description="是否显示图例")
+            show_grid: bool = Field(default=True, description="是否显示网格")
+            auto_detect_axes: bool = Field(default=True, description="是否自动检测坐标轴")
+
+        self.args_schema = ChartGeneratorArgs
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "chart_generator",
                 "description": "基于数据生成各种类型的图表",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "data": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "description": "要可视化的数据"
-                        },
-                        "chart_type": {
-                            "type": "string",
-                            "enum": ["bar", "line", "pie", "scatter", "area", "histogram", "box", "heatmap", "radar", "gauge"],
-                            "default": "bar",
-                            "description": "图表类型"
-                        },
-                        "title": {
-                            "type": "string",
-                            "description": "图表标题"
-                        },
-                        "x_axis": {
-                            "type": "string",
-                            "description": "X轴列名"
-                        },
-                        "y_axis": {
-                            "type": "string",
-                            "description": "Y轴列名"
-                        },
-                        "color_column": {
-                            "type": "string",
-                            "description": "颜色分组列名"
-                        },
-                        "size_column": {
-                            "type": "string",
-                            "description": "大小映射列名"
-                        },
-                        "theme": {
-                            "type": "string",
-                            "enum": ["light", "dark", "colorful", "minimal"],
-                            "default": "light",
-                            "description": "图表主题"
-                        },
-                        "width": {
-                            "type": "integer",
-                            "default": 800,
-                            "description": "图表宽度"
-                        },
-                        "height": {
-                            "type": "integer",
-                            "default": 600,
-                            "description": "图表高度"
-                        },
-                        "show_legend": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否显示图例"
-                        },
-                        "show_grid": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否显示网格"
-                        },
-                        "auto_detect_axes": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否自动检测坐标轴"
-                        }
-                    },
-                    "required": ["data"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

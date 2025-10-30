@@ -150,7 +150,7 @@ class EnhancedQualityScorer:
             self.config.weights.update(normalized_weights)
             logger.warning(f"⚠️ 权重已归一化: {self.config.weights}")
 
-    def calculate_quality_score(
+    async def calculate_quality_score(
         self,
         content: str,
         execution_result: Optional[Dict[str, Any]] = None,
@@ -179,7 +179,7 @@ class EnhancedQualityScorer:
         if execution_result is None and data_source_service and connection_config and self._is_sql_content(content):
             logger.info("🔍 [质量评分] 尝试执行SQL验证")
             try:
-                execution_result = self._execute_sql_for_validation(content, data_source_service, connection_config)
+                execution_result = await self._execute_sql_for_validation(content, data_source_service, connection_config)
                 if execution_result:
                     logger.info(f"✅ [质量评分] SQL执行验证成功: {execution_result.get('success', False)}")
                 else:

@@ -251,15 +251,15 @@ class StageConfigManager:
 
 # Doris SQL示例
 ```sql
--- ✅ 正确示例
+-- ✅ 正确示例（使用 <TABLE_NAME> 和 <DATE_COLUMN> 占位符，实际使用时替换为上下文中的真实表名和列名）
 SELECT COUNT(*) AS total_count
-FROM sales_table 
-WHERE sale_date >= '{{start_date}}' 
-  AND sale_date <= '{{end_date}}'
+FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> >= '{{start_date}}' 
+  AND <DATE_COLUMN> <= '{{end_date}}'
 
 -- ❌ 错误示例（硬编码日期）
-SELECT COUNT(*) FROM sales_table 
-WHERE sale_date >= '2024-01-01' AND sale_date <= '2024-01-31'
+SELECT COUNT(*) FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> >= '2024-01-01' AND <DATE_COLUMN> <= '2024-01-31'
 ```
 
 # 重要原则

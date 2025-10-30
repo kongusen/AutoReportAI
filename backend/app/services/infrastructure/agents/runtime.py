@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional, AsyncGenerator, Callable, Tuple
 
 from loom import Agent, agent as build_agent
@@ -73,57 +75,65 @@ class ContextAwareAgentExecutor(AgentExecutor):
         for attr_name in dir(original_executor):
             if not attr_name.startswith('_') and not callable(getattr(original_executor, attr_name)):
                 setattr(self, attr_name, getattr(original_executor, attr_name))
-        
+
         # 保存原始executor的引用
         self._original_executor = original_executor
         self._context_retriever = context_retriever
-        
+
         # 复制所有方法
         for attr_name in dir(original_executor):
             if not attr_name.startswith('_') and callable(getattr(original_executor, attr_name)):
                 if attr_name not in ['_prepare_recursive_messages']:  # 重写这个方法
                     setattr(self, attr_name, getattr(original_executor, attr_name))
-    
-    def _prepare_recursive_messages(
+
+    def _check_recursion_termination(
         self,
-        messages: List[Message],
-        tool_results: List[ToolResult],
         turn_state: TurnState,
-        context: ExecutionContext,
-    ) -> List[Message]:
+        tool_results: List[ToolResult],
+        tt_context: Dict[str, Any]
+    ) -> Optional[str]:
         """
-        🔥 重写递归消息准备逻辑 - 增强 TT 上下文管理
-        
-        确保工具结果和历史消息能正确传递到下一轮递归中
-        支持深度感知的上下文优先级调整和智能截断
+        检查是否需要终止递归
+
+        Returns:
+            Optional[str]: 终止原因，None表示继续执行
         """
-        # 从 ExecutionContext metadata 中提取 TT 上下文信息
-        tt_context = context.metadata.get("tt", {}) if context.metadata else {}
         current_turn = tt_context.get("turn_counter", turn_state.turn_counter)
-        priority_hints = tt_context.get("priority_hints", {})
-        task_type = tt_context.get("task_type", "general")
-        complexity = tt_context.get("complexity", "medium")
-        
-        logger.info(f"🔄 [ContextAwareExecutor] 准备递归消息（第{current_turn}轮）")
-        logger.info(f"   任务类型: {task_type}, 复杂度: {complexity}")
-        logger.info(f"   优先级提示: {priority_hints}")
-        
-        # 🔥 增强的循环检测和终止机制
         deep_recursion_threshold = 3
-        max_recursion_threshold = 5  # 最大递归次数
-        is_deep_recursion = current_turn > deep_recursion_threshold
-        is_max_recursion = current_turn > max_recursion_threshold
-        
-        # 🔥 检查工具调用历史，检测重复调用
+        max_recursion_threshold = 5
+
+        # 检查工具调用历史，检测重复调用
         tool_call_history = getattr(turn_state, 'tool_call_history', [])
         if tool_call_history:
             tool_names = [getattr(call, 'tool_name', 'unknown') for call in tool_call_history]
             schema_discovery_count = tool_names.count('schema_discovery')
-            
+
             # 如果schema_discovery被调用超过2次，强制终止
             if schema_discovery_count > 2:
                 logger.warning(f"🚨 [ContextAwareExecutor] 检测到重复调用schema_discovery（{schema_discovery_count}次），强制终止")
-                return [Message(role="system", content="""# 重复工具调用检测
+                return "duplicate_tool_calls"
+
+        # 检查最大递归次数
+        if current_turn > max_recursion_threshold:
+            logger.warning(f"🚨 [ContextAwareExecutor] 达到最大递归次数（第{current_turn}轮），强制终止循环")
+            return "max_recursion"
+
+        # 检查深度递归
+        if current_turn > deep_recursion_threshold:
+            logger.info(f"🔍 [ContextAwareExecutor] 检测到深度递归（第{current_turn}轮），调整上下文策略")
+            return "deep_recursion"
+
+        return None
+
+    def _build_termination_message(self, reason: str) -> Message:
+        """
+        构建递归终止消息
+
+        Args:
+            reason: 终止原因 (duplicate_tool_calls, max_recursion, deep_recursion)
+        """
+        if reason == "duplicate_tool_calls":
+            content = """# 重复工具调用检测
 
 ⚠️ 检测到重复调用schema_discovery工具，系统强制终止！
 
@@ -137,12 +147,10 @@ class ContextAwareAgentExecutor(AgentExecutor):
 }
 ```
 
-不要再调用任何工具！""")]
-        
-        if is_max_recursion:
-            logger.warning(f"🚨 [ContextAwareExecutor] 达到最大递归次数（第{current_turn}轮），强制终止循环")
-            # 强制终止，返回简单的SQL
-            return [Message(role="system", content="""# 紧急终止指令
+不要再调用任何工具！"""
+
+        elif reason == "max_recursion":
+            content = """# 紧急终止指令
 
 ⚠️ 检测到无限循环，系统强制终止！
 
@@ -156,40 +164,52 @@ class ContextAwareAgentExecutor(AgentExecutor):
 }
 ```
 
-不要再调用任何工具！""")]
-        
-        if is_deep_recursion:
-            logger.info(f"🔍 [ContextAwareExecutor] 检测到深度递归（第{current_turn}轮），调整上下文策略")
-            # 深度递归时，优先保留核心指令，减少示例和历史消息
-            priority_hints = {
-                "base_instructions": "CRITICAL",
-                "tool_definitions": "HIGH", 
-                "examples": "LOW",  # 降低示例优先级
-                "history": "LOW"   # 降低历史消息优先级
-            }
-            
-            # 🔥 添加循环检测警告
-            warning_message = Message(role="system", content=f"""# 循环检测警告
+不要再调用任何工具！"""
 
-⚠️ 检测到深度递归（第{current_turn}轮），请立即生成SQL，不要再调用工具！
+        else:  # deep_recursion - 这个不是完全终止，只是警告
+            content = f"""# 循环检测警告
+
+⚠️ 检测到深度递归，请立即生成SQL，不要再调用工具！
 
 如果已经获取了表结构信息，请直接生成SQL：
 ```json
 {{
   "reasoning": "已获取表结构，生成SQL查询",
-  "action": "finish", 
+  "action": "finish",
   "content": "SELECT COUNT(*) FROM ods_refund WHERE status = '退货成功'"
 }}
 ```
 
-不要再调用 schema_discovery 或其他工具！""")
-            
-            # 将警告消息添加到消息列表开头
-            messages = [warning_message] + messages
-        
-        # 1. 获取历史消息（从Memory中）- 支持智能截断
+不要再调用 schema_discovery 或其他工具！"""
+
+        return Message(role="system", content=content)
+
+    def _prepare_history_messages(
+        self,
+        turn_state: TurnState,
+        priority_hints: Dict[str, str],
+        is_deep_recursion: bool
+    ) -> List[Message]:
+        """
+        准备历史消息（支持智能截断）
+
+        Args:
+            turn_state: 回合状态
+            priority_hints: 优先级提示
+            is_deep_recursion: 是否深度递归
+
+        Returns:
+            历史消息列表
+        """
         history_messages = []
-        if self.memory and priority_hints.get("history", "MEDIUM") != "LOW":
+
+        # 如果历史优先级为LOW，跳过获取
+        if priority_hints.get("history", "MEDIUM") == "LOW":
+            logger.info(f"📚 [ContextAwareExecutor] 历史优先级为LOW，跳过获取")
+            return []
+
+        # 从Memory中获取历史消息
+        if self.memory:
             try:
                 # 同步调用get_messages（因为这是同步方法）
                 import asyncio
@@ -205,7 +225,7 @@ class ContextAwareAgentExecutor(AgentExecutor):
             except Exception as e:
                 logger.warning(f"⚠️ [ContextAwareExecutor] 获取历史消息失败: {e}")
                 history_messages = []
-        
+
         # 根据优先级和深度调整历史消息数量
         if is_deep_recursion:
             max_history = 3  # 深度递归时只保留最近3条
@@ -213,17 +233,28 @@ class ContextAwareAgentExecutor(AgentExecutor):
             max_history = 15  # 高优先级时保留更多历史
         else:
             max_history = 10  # 默认保留10条
-            
+
         if history_messages:
             recent_history = history_messages[-max_history:]
             logger.info(f"📚 [ContextAwareExecutor] 从Memory获取到 {len(history_messages)} 条历史消息，保留 {len(recent_history)} 条")
+            return recent_history
         else:
-            recent_history = []
             logger.info(f"📚 [ContextAwareExecutor] 未获取到历史消息")
-        
-        # 2. 准备工具结果消息
+            return []
+
+    def _prepare_tool_messages(self, tool_results: List[ToolResult]) -> Tuple[List[Message], List[FormattedToolResult]]:
+        """
+        准备工具结果消息
+
+        Args:
+            tool_results: 工具执行结果列表
+
+        Returns:
+            Tuple[工具消息列表, 格式化结果列表]
+        """
         tool_messages = []
         formatted_results: List[FormattedToolResult] = []
+
         for result in tool_results:
             formatted = format_tool_result(result)
             formatted_results.append(formatted)
@@ -233,45 +264,91 @@ class ContextAwareAgentExecutor(AgentExecutor):
                 tool_call_id=result.tool_call_id,
             )
             tool_messages.append(tool_msg)
-        
+
         logger.info(f"🔧 [ContextAwareExecutor] 准备了 {len(tool_messages)} 条工具结果消息")
-        
-        # 3. 生成智能指导消息 - 支持任务类型感知
+
+        return tool_messages, formatted_results
+    
+    def _prepare_recursive_messages(
+        self,
+        messages: List[Message],
+        tool_results: List[ToolResult],
+        turn_state: TurnState,
+        context: ExecutionContext,
+    ) -> List[Message]:
+        """
+        🔥 重写递归消息准备逻辑 - 增强 TT 上下文管理（已优化拆分）
+
+        确保工具结果和历史消息能正确传递到下一轮递归中
+        支持深度感知的上下文优先级调整和智能截断
+        """
+        # 从 ExecutionContext metadata 中提取 TT 上下文信息
+        tt_context = context.metadata.get("tt", {}) if context.metadata else {}
+        current_turn = tt_context.get("turn_counter", turn_state.turn_counter)
+        priority_hints = tt_context.get("priority_hints", {})
+        task_type = tt_context.get("task_type", "general")
+        complexity = tt_context.get("complexity", "medium")
+
+        logger.info(f"🔄 [ContextAwareExecutor] 准备递归消息（第{current_turn}轮）")
+        logger.info(f"   任务类型: {task_type}, 复杂度: {complexity}")
+        logger.info(f"   优先级提示: {priority_hints}")
+
+        # 1. 检查是否需要终止递归
+        termination_reason = self._check_recursion_termination(turn_state, tool_results, tt_context)
+
+        # 处理深度递归（特殊情况：不完全终止，只是调整策略）
+        is_deep_recursion = termination_reason == "deep_recursion"
+        if is_deep_recursion:
+            # 深度递归时，调整优先级
+            priority_hints = {
+                "base_instructions": "CRITICAL",
+                "tool_definitions": "HIGH",
+                "examples": "LOW",
+                "history": "LOW"
+            }
+            # 添加警告消息
+            warning_message = self._build_termination_message("deep_recursion")
+            messages = [warning_message] + messages
+        elif termination_reason:
+            # 其他终止原因：直接返回终止消息
+            return [self._build_termination_message(termination_reason)]
+
+        # 2. 准备历史消息（支持智能截断）
+        history_messages = self._prepare_history_messages(
+            turn_state, priority_hints, is_deep_recursion
+        )
+
+        # 3. 准备工具结果消息
+        tool_messages, formatted_results = self._prepare_tool_messages(tool_results)
+
+        # 4. 生成智能指导消息
         guidance_message = self._generate_context_aware_guidance(
-            messages, formatted_results, turn_state, recent_history, 
+            messages, formatted_results, turn_state, history_messages,
             task_type=task_type, complexity=complexity, is_deep_recursion=is_deep_recursion
         )
-        
-        # 4. 组装完整的递归消息
+
+        # 5. 组装完整的递归消息
         recursive_messages = []
-        
-        # 添加历史消息（已根据优先级调整数量）
-        recursive_messages.extend(recent_history)
-        
-        # 添加当前轮的消息
-        recursive_messages.extend(messages)
-        
-        # 添加工具结果消息
-        recursive_messages.extend(tool_messages)
-        
-        # 添加智能指导消息
-        recursive_messages.append(Message(role="user", content=guidance_message))
-        
-        # 5. 上下文大小监控和日志记录
+        recursive_messages.extend(history_messages)  # 历史消息
+        recursive_messages.extend(messages)  # 当前轮消息
+        recursive_messages.extend(tool_messages)  # 工具结果消息
+        recursive_messages.append(Message(role="user", content=guidance_message))  # 指导消息
+
+        # 6. 上下文大小监控和日志记录
         total_messages = len(recursive_messages)
         total_chars = sum(len(msg.content) for msg in recursive_messages if hasattr(msg, 'content'))
         estimated_tokens = total_chars // 4  # 粗略估算：4字符≈1token
-        
+
         logger.info(f"✅ [ContextAwareExecutor] 递归消息准备完成")
         logger.info(f"   总消息数: {total_messages}")
         logger.info(f"   总字符数: {total_chars}")
         logger.info(f"   估算Token数: {estimated_tokens}")
         logger.info(f"   深度递归模式: {'是' if is_deep_recursion else '否'}")
-        
+
         # 如果上下文过大，记录警告
         if estimated_tokens > 8000:  # 假设模型上下文限制为8K
             logger.warning(f"⚠️ [ContextAwareExecutor] 上下文可能过大（{estimated_tokens} tokens），建议优化")
-        
+
         return recursive_messages
     
     def _generate_context_aware_guidance(
@@ -381,12 +458,14 @@ class ToolInstanceCache:
     def _generate_cache_key(self, tool_name: str, connection_config: Optional[Dict] = None) -> str:
         """生成工具缓存键"""
         # 🔥 优化：只有真正需要connection_config的工具才区分配置
+        # 必须与 _create_tools_from_config 中的 tools_requiring_connection 保持一致
         tools_requiring_connection = {
             "schema_discovery",
-            "schema_retrieval", 
-            "sql_executor"
+            "schema_retrieval",
+            "sql_executor",
+            "sql_validator"  # 🔥 关键修复：添加 sql_validator
         }
-        
+
         if connection_config and tool_name in tools_requiring_connection:
             # 基于连接配置生成键 - 使用实际的字段名
             host = connection_config.get('fe_hosts', [''])[0] if connection_config.get('fe_hosts') else ''
@@ -479,7 +558,8 @@ def _create_tools_from_config(container: Any, config: AgentConfig) -> List[BaseT
     tools_requiring_connection = {
         "schema_discovery",
         "schema_retrieval", 
-        "sql_executor"
+        "sql_executor",
+        "sql_validator"  # 🔥 关键修复：添加 sql_validator 到需要 connection_config 的工具列表
     }
 
     # 🔥 使用缓存机制创建工具
@@ -533,32 +613,676 @@ def _extract_response_metrics(response_payload: Any) -> Tuple[float, int]:
     return 0.0, 0
 
 
-class IterationTracker:
-    """迭代跟踪器"""
-    
-    def __init__(self):
-        self.count = 0
+class ActionType(Enum):
+    """下一步行动类型"""
+    CONTINUE = "continue"  # 继续当前策略
+    RETRY = "retry"  # 重试当前步骤
+    FALLBACK = "fallback"  # 使用备用方案
+    CHANGE_STRATEGY = "change_strategy"  # 改变策略
+    EXPLORE = "explore"  # 探索新方法
+    TERMINATE = "terminate"  # 终止执行
+
+
+@dataclass
+class IterationStep:
+    """单次迭代步骤记录"""
+    iteration: int
+    timestamp: float
+    tool_calls: List[str] = field(default_factory=list)
+    has_error: bool = False
+    error_message: Optional[str] = None
+    error_type: Optional[str] = None
+    quality_score: Optional[float] = None
+    result_summary: Optional[str] = None
+    tokens_used: int = 0
+
+    @property
+    def is_successful(self) -> bool:
+        """是否成功"""
+        return not self.has_error and self.quality_score and self.quality_score > 0.7
+
+
+@dataclass
+class ActionPlan:
+    """行动计划"""
+    type: ActionType
+    reason: str
+    suggestion: str = ""
+    priority: int = 1  # 1-5, 5最高
+
+    def __str__(self):
+        return f"[{self.type.value}] {self.reason} - {self.suggestion}"
+
+
+class AdaptiveIterationTracker:
+    """
+    自适应迭代跟踪器 - 动态调整策略
+
+    功能：
+    - 跟踪每次迭代的详细信息
+    - 分析错误模式和质量趋势
+    - 基于历史建议下一步行动
+    - 检测循环和卡顿
+    """
+
+    def __init__(self, goal: str, max_iterations: int = 10):
+        self.goal = goal
+        self.max_iterations = max_iterations
+
+        # 历史记录
+        self.iteration_history: List[IterationStep] = []
+        self.quality_trend: List[float] = []
+        self.error_count = 0
+        self.consecutive_errors = 0
+
+        # 工具调用统计
         self.tool_call_count = 0
+        self.tool_call_frequency: Dict[str, int] = {}
+
+        # 目标进度
+        self.goal_progress: float = 0.0
+
+        # 状态
+        self.is_stuck = False
         self.last_tool_call_time = 0
-        
-    def on_tool_call(self):
+
+    def record_step(
+        self,
+        iteration: int,
+        tool_calls: List[str],
+        result: Any = None,
+        error: Optional[Exception] = None,
+        quality_score: Optional[float] = None
+    ):
+        """
+        记录一次迭代步骤
+
+        Args:
+            iteration: 迭代次数
+            tool_calls: 本轮调用的工具列表
+            result: 执行结果
+            error: 错误（如果有）
+            quality_score: 质量评分
+        """
+        # 创建步骤记录
+        step = IterationStep(
+            iteration=iteration,
+            timestamp=time.time(),
+            tool_calls=tool_calls,
+            has_error=error is not None,
+            error_message=str(error) if error else None,
+            error_type=type(error).__name__ if error else None,
+            quality_score=quality_score,
+            result_summary=str(result)[:200] if result else None
+        )
+
+        # 添加到历史
+        self.iteration_history.append(step)
+
+        # 更新统计
+        if error:
+            self.error_count += 1
+            self.consecutive_errors += 1
+        else:
+            self.consecutive_errors = 0
+
+        # 更新工具调用统计
+        for tool in tool_calls:
+            self.tool_call_count += 1
+            self.tool_call_frequency[tool] = self.tool_call_frequency.get(tool, 0) + 1
+
+        # 更新质量趋势
+        if quality_score is not None:
+            self.quality_trend.append(quality_score)
+            self._update_goal_progress(quality_score)
+
+        # 检测是否卡住
+        self._check_if_stuck()
+
+        logger.info(f"📊 [AdaptiveTracker] 记录第{iteration}轮: "
+                   f"工具={len(tool_calls)}, 错误={step.has_error}, 质量={quality_score:.2f if quality_score else 'N/A'}")
+
+    def on_tool_call(self, tool_name: str):
         """工具调用时调用"""
-        self.tool_call_count += 1
         self.last_tool_call_time = time.time()
-        
+        self.tool_call_frequency[tool_name] = self.tool_call_frequency.get(tool_name, 0) + 1
+
+    def suggest_next_action(self) -> ActionPlan:
+        """
+        基于历史建议下一步行动
+
+        Returns:
+            ActionPlan: 行动计划
+        """
+        # 1. 检查是否应该终止
+        if len(self.iteration_history) >= self.max_iterations:
+            return ActionPlan(
+                type=ActionType.TERMINATE,
+                reason="达到最大迭代次数",
+                suggestion=f"已执行{len(self.iteration_history)}轮，建议终止",
+                priority=5
+            )
+
+        # 2. 检查是否卡住
+        if self.is_stuck:
+            return ActionPlan(
+                type=ActionType.FALLBACK,
+                reason="检测到重复循环",
+                suggestion="建议切换到备用策略或简化任务",
+                priority=5
+            )
+
+        # 3. 检查连续错误
+        if self.consecutive_errors >= 2:
+            return ActionPlan(
+                type=ActionType.CHANGE_STRATEGY,
+                reason=f"连续{self.consecutive_errors}次错误",
+                suggestion="建议改变当前方法，尝试不同的工具组合",
+                priority=4
+            )
+
+        # 4. 检查质量趋势
+        if len(self.quality_trend) >= 3:
+            recent_trend = self._analyze_quality_trend()
+            if recent_trend == "improving":
+                return ActionPlan(
+                    type=ActionType.CONTINUE,
+                    reason="质量持续提升",
+                    suggestion="继续当前策略",
+                    priority=2
+                )
+            elif recent_trend == "declining":
+                return ActionPlan(
+                    type=ActionType.CHANGE_STRATEGY,
+                    reason="质量下降",
+                    suggestion="建议调整方法或回退到之前的状态",
+                    priority=3
+                )
+
+        # 5. 检查单个工具调用频率
+        if self._has_tool_overuse():
+            overused_tool = max(self.tool_call_frequency, key=self.tool_call_frequency.get)
+            return ActionPlan(
+                type=ActionType.CHANGE_STRATEGY,
+                reason=f"工具 {overused_tool} 被过度使用",
+                suggestion=f"避免重复调用 {overused_tool}，尝试其他工具",
+                priority=4
+            )
+
+        # 6. 默认：探索
+        return ActionPlan(
+            type=ActionType.EXPLORE,
+            reason="正常执行中",
+            suggestion="继续探索，使用合适的工具完成任务",
+            priority=1
+        )
+
     def estimate_iteration_count(self) -> int:
-        """估算迭代次数"""
-        # 基于工具调用次数估算迭代次数
-        # 假设每次迭代平均调用 1-2 个工具
-        if self.tool_call_count == 0:
-            return 1  # 至少有一次迭代
-        return max(1, self.tool_call_count // 2)
-        
+        """估算迭代次数（保持兼容性）"""
+        return len(self.iteration_history) or max(1, self.tool_call_count // 2)
+
     def reset(self):
-        """重置计数器"""
-        self.count = 0
+        """重置跟踪器"""
+        self.iteration_history.clear()
+        self.quality_trend.clear()
+        self.error_count = 0
+        self.consecutive_errors = 0
         self.tool_call_count = 0
-        self.last_tool_call_time = 0
+        self.tool_call_frequency.clear()
+        self.goal_progress = 0.0
+        self.is_stuck = False
+
+    def get_summary(self) -> Dict[str, Any]:
+        """获取执行摘要"""
+        return {
+            "total_iterations": len(self.iteration_history),
+            "total_tool_calls": self.tool_call_count,
+            "error_count": self.error_count,
+            "error_rate": self.error_count / len(self.iteration_history) if self.iteration_history else 0,
+            "goal_progress": self.goal_progress,
+            "quality_trend": self._analyze_quality_trend(),
+            "most_used_tools": sorted(
+                self.tool_call_frequency.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:3],
+            "is_stuck": self.is_stuck
+        }
+
+    # ===== 私有方法 =====
+
+    def _update_goal_progress(self, quality_score: float):
+        """更新目标进度"""
+        # 基于质量评分和迭代次数综合计算
+        iteration_progress = len(self.iteration_history) / self.max_iterations
+        quality_weight = 0.7
+        iteration_weight = 0.3
+
+        self.goal_progress = min(1.0,
+            quality_weight * quality_score + iteration_weight * iteration_progress
+        )
+
+    def _check_if_stuck(self):
+        """检测是否卡住（循环）"""
+        if len(self.iteration_history) < 3:
+            return
+
+        # 检查最近3次迭代是否有重复的工具调用模式
+        recent_steps = self.iteration_history[-3:]
+        tool_patterns = [set(step.tool_calls) for step in recent_steps]
+
+        # 如果所有模式都相同，认为卡住了
+        if len(set(map(frozenset, tool_patterns))) == 1:
+            self.is_stuck = True
+            logger.warning("🚨 [AdaptiveTracker] 检测到循环：最近3次迭代使用相同工具")
+
+    def _analyze_quality_trend(self) -> str:
+        """分析质量趋势"""
+        if len(self.quality_trend) < 2:
+            return "insufficient_data"
+
+        recent = self.quality_trend[-3:]
+
+        # 检查是否持续提升
+        if all(recent[i] >= recent[i-1] for i in range(1, len(recent))):
+            return "improving"
+
+        # 检查是否持续下降
+        if all(recent[i] <= recent[i-1] for i in range(1, len(recent))):
+            return "declining"
+
+        # 检查是否稳定
+        variance = sum((x - sum(recent)/len(recent))**2 for x in recent) / len(recent)
+        if variance < 0.01:
+            return "stable"
+
+        return "fluctuating"
+
+    def _has_tool_overuse(self) -> bool:
+        """检查是否有工具被过度使用"""
+        if not self.tool_call_frequency:
+            return False
+
+        max_calls = max(self.tool_call_frequency.values())
+        total_calls = sum(self.tool_call_frequency.values())
+
+        # 如果某个工具占比超过60%，认为过度使用
+        return max_calls / total_calls > 0.6 and max_calls > 3
+
+
+class AdaptivePromptGenerator:
+    """
+    自适应提示词生成器 - 根据执行状态动态生成提示
+
+    功能：
+    - 根据目标和当前进度生成提示
+    - 基于错误历史提供修复建议
+    - 根据质量趋势调整策略
+    - 动态调整提示内容和优先级
+
+    集成 prompts 模块：
+    - SystemPromptBuilder: 系统级提示词
+    - StagePromptManager: 阶段感知提示
+    - PromptTemplateManager: 模板化内容
+    - ContextFormatter: 上下文格式化
+    """
+
+    def __init__(
+        self,
+        goal: str,
+        tracker: AdaptiveIterationTracker,
+        stage: Optional[ExecutionStage] = None,
+        complexity: Optional[TaskComplexity] = None,
+        context: Optional[ContextInfo] = None,
+        base_system_prompt: Optional[str] = None
+    ):
+        """
+        Args:
+            goal: 任务目标描述
+            tracker: 自适应迭代跟踪器
+            stage: 当前执行阶段（可选）
+            complexity: 任务复杂度（可选）
+            context: 上下文信息（可选）
+            base_system_prompt: 自定义系统提示（可选，覆盖默认）
+        """
+        self.goal = goal
+        self.tracker = tracker
+        self.stage = stage
+        self.complexity = complexity
+        self.context = context
+
+        # ✅ 导入并初始化 prompts 组件
+        from .prompts import (
+            SystemPromptBuilder,
+            StagePromptManager,
+            PromptTemplateManager,
+            ContextFormatter
+        )
+
+        self._system_builder = SystemPromptBuilder()
+        self._stage_manager = StagePromptManager()
+        self._template_manager = PromptTemplateManager()
+        self._context_formatter = ContextFormatter()
+
+        # 如果提供了自定义系统提示，使用它；否则使用 SystemPromptBuilder 生成
+        if base_system_prompt:
+            self.base_system_prompt = base_system_prompt
+        else:
+            self.base_system_prompt = self._system_builder.build_system_prompt(
+                stage=stage,
+                complexity=complexity
+            )
+
+    def generate_next_prompt(
+        self,
+        last_error: Optional[Exception] = None,
+        last_result: Optional[str] = None
+    ) -> str:
+        """
+        基于当前状态生成下一步提示
+
+        Args:
+            last_error: 上一步的错误（如果有）
+            last_result: 上一步的结果
+
+        Returns:
+            生成的提示词
+        """
+        prompt_parts = []
+
+        # 1. 基础系统提示（如果有）
+        if self.base_system_prompt:
+            prompt_parts.append(self.base_system_prompt)
+
+        # 2. 目标和进度提醒
+        progress = self.tracker.goal_progress
+        prompt_parts.append(self._generate_goal_section(progress))
+
+        # 3. 当前状态分析
+        if last_error:
+            prompt_parts.append(self._generate_error_guidance(last_error))
+        elif last_result:
+            prompt_parts.append(self._generate_progress_feedback(last_result))
+
+        # 4. 下一步行动建议
+        action_plan = self.tracker.suggest_next_action()
+        prompt_parts.append(self._generate_action_guidance(action_plan))
+
+        # 5. 动态约束条件
+        constraints = self._generate_dynamic_constraints()
+        if constraints:
+            prompt_parts.append(constraints)
+
+        # 6. 执行摘要（如果有历史）
+        if self.tracker.iteration_history:
+            prompt_parts.append(self._generate_execution_summary())
+
+        return "\n\n".join(prompt_parts)
+
+    def generate_initial_prompt(self, task_description: str) -> str:
+        """
+        生成初始提示词
+
+        Args:
+            task_description: 任务描述
+
+        Returns:
+            初始提示词
+        """
+        prompt_parts = []
+
+        # 1. 系统提示
+        if self.base_system_prompt:
+            prompt_parts.append(self.base_system_prompt)
+
+        # 2. 任务目标
+        prompt_parts.append(f"# 任务目标\n\n{self.goal}")
+
+        # 3. 任务描述
+        prompt_parts.append(f"# 任务描述\n\n{task_description}")
+
+        # 4. 初始指导
+        prompt_parts.append(self._generate_initial_guidance())
+
+        return "\n\n".join(prompt_parts)
+
+    # ===== 私有方法：生成各部分提示 =====
+
+    def _generate_goal_section(self, progress: float) -> str:
+        """生成目标和进度部分"""
+        progress_bar = "█" * int(progress * 10) + "░" * (10 - int(progress * 10))
+        progress_emoji = "🎯" if progress < 0.3 else "📈" if progress < 0.7 else "✨"
+
+        return f"""# 目标追踪
+
+{progress_emoji} **当前目标**: {self.goal}
+**进度**: [{progress_bar}] {progress:.0%}
+**迭代**: 第 {len(self.tracker.iteration_history) + 1} / {self.tracker.max_iterations} 轮"""
+
+    def _generate_error_guidance(self, error: Exception) -> str:
+        """生成错误指导"""
+        error_type = type(error).__name__
+        error_msg = str(error)
+
+        # 分析错误模式
+        if self.tracker.consecutive_errors > 1:
+            pattern = f"⚠️ **警告**: 已连续{self.tracker.consecutive_errors}次错误，建议改变策略"
+        else:
+            pattern = ""
+
+        # 根据错误类型提供建议
+        suggestions = self._get_error_fix_suggestions(error_type, error_msg)
+
+        return f"""# ⚠️ 上一步执行失败
+
+**错误类型**: {error_type}
+**错误信息**: {error_msg}
+{pattern}
+
+## 建议修复方案
+
+{suggestions}"""
+
+    def _generate_progress_feedback(self, result: str) -> str:
+        """生成进度反馈"""
+        # 分析质量趋势
+        trend = self.tracker._analyze_quality_trend()
+        trend_emoji = {
+            "improving": "📈",
+            "stable": "➡️",
+            "declining": "📉",
+            "fluctuating": "〰️",
+            "insufficient_data": "❓"
+        }.get(trend, "❓")
+
+        latest_quality = self.tracker.quality_trend[-1] if self.tracker.quality_trend else 0.0
+
+        return f"""# ✅ 上一步执行成功
+
+**质量评分**: {latest_quality:.2f}
+**趋势**: {trend_emoji} {trend}
+
+**结果摘要**: {result[:150]}{"..." if len(result) > 150 else ""}"""
+
+    def _generate_action_guidance(self, action_plan: ActionPlan) -> str:
+        """生成行动指导"""
+        priority_emoji = "🔴" if action_plan.priority >= 4 else "🟡" if action_plan.priority >= 2 else "🟢"
+
+        return f"""# 下一步行动计划
+
+{priority_emoji} **策略**: {action_plan.type.value}
+**原因**: {action_plan.reason}
+**建议**: {action_plan.suggestion or "继续执行任务"}"""
+
+    def _generate_dynamic_constraints(self) -> str:
+        """生成动态约束"""
+        constraints = []
+
+        # 基于工具使用频率的约束
+        if self.tracker.tool_call_frequency:
+            overused_tools = [
+                tool for tool, count in self.tracker.tool_call_frequency.items()
+                if count > 3
+            ]
+            if overused_tools:
+                constraints.append(
+                    f"- ⚠️ 避免过度使用以下工具: {', '.join(overused_tools)}"
+                )
+
+        # 基于错误历史的约束
+        if self.tracker.error_count > 0:
+            constraints.append(
+                f"- 💡 已发生 {self.tracker.error_count} 次错误，请仔细验证每个步骤"
+            )
+
+        # 基于迭代次数的约束
+        remaining = self.tracker.max_iterations - len(self.tracker.iteration_history)
+        if remaining <= 2:
+            constraints.append(
+                f"- ⏰ 剩余迭代次数: {remaining}，请尽快完成任务"
+            )
+
+        if not constraints:
+            return ""
+
+        return f"""# 执行约束
+
+{chr(10).join(constraints)}"""
+
+    def _generate_execution_summary(self) -> str:
+        """生成执行摘要"""
+        summary = self.tracker.get_summary()
+
+        most_used = ", ".join([f"{tool}({count})" for tool, count in summary["most_used_tools"][:3]])
+
+        return f"""# 执行摘要
+
+- **总迭代**: {summary['total_iterations']}
+- **工具调用**: {summary['total_tool_calls']} 次
+- **错误率**: {summary['error_rate']:.1%}
+- **常用工具**: {most_used}
+- **质量趋势**: {summary['quality_trend']}"""
+
+    def _generate_initial_guidance(self) -> str:
+        """
+        生成初始指导
+
+        ✅ 集成 StagePromptManager，支持阶段感知的初始指导
+
+        Returns:
+            初始指导文本
+        """
+        # 如果有指定阶段，使用阶段特定的指导
+        if self.stage:
+            try:
+                stage_prompt = self._stage_manager.get_stage_prompt(
+                    stage=self.stage,
+                    context=self.context,
+                    complexity=self.complexity
+                )
+                return f"""# 执行指导
+
+## 当前阶段: {self.stage.value}
+
+{stage_prompt}
+
+## 通用原则
+
+1. **理解需求**: 仔细分析任务目标和描述
+2. **制定计划**: 确定需要使用的工具和执行顺序
+3. **逐步执行**: 使用合适的工具，验证每一步的结果
+4. **持续优化**: 根据反馈调整策略，向目标靠拢
+5. **质量验证**: 确保最终结果符合要求
+
+**重要提示**:
+- 每次只执行一个关键步骤
+- 遇到错误时，分析原因并调整方法
+- 使用工具前先确认其适用性
+- 保持输出的准确性和完整性"""
+            except Exception as e:
+                logger.warning(f"⚠️ 获取阶段提示失败: {e}，使用默认指导")
+
+        # 默认通用指导
+        return """# 执行指导
+
+请按照以下步骤完成任务：
+
+1. **理解需求**: 仔细分析任务目标和描述
+2. **制定计划**: 确定需要使用的工具和执行顺序
+3. **逐步执行**: 使用合适的工具，验证每一步的结果
+4. **持续优化**: 根据反馈调整策略，向目标靠拢
+5. **质量验证**: 确保最终结果符合要求
+
+**重要提示**:
+- 每次只执行一个关键步骤
+- 遇到错误时，分析原因并调整方法
+- 使用工具前先确认其适用性
+- 保持输出的准确性和完整性"""
+
+    # ===== 类常量：错误修复建议映射 =====
+    ERROR_FIX_SUGGESTIONS = {
+        "TableNotFoundError": """
+- 检查表名是否正确（可能需要使用 schema_discovery 工具）
+- 确认数据库连接配置是否正确
+- 使用上下文中提供的表名，避免猜测""",
+
+        "ColumnNotFoundError": """
+- 使用 schema_retrieval 工具获取表的列信息
+- 检查列名拼写是否正确
+- 确认该列是否存在于目标表中""",
+
+        "SyntaxError": """
+- 检查 SQL 语法是否符合 Doris 规范
+- 使用 sql_validator 工具验证 SQL
+- 参考系统提示中的 SQL 示例""",
+
+        "ConnectionError": """
+- 检查数据库连接配置
+- 确认网络连接是否正常
+- 稍后重试操作""",
+
+        "TimeoutError": """
+- 简化查询逻辑
+- 减少数据量
+- 优化查询性能""",
+
+        "ValidationError": """
+- 检查输入数据的格式和类型
+- 确认所有必需字段都已提供
+- 验证数据是否符合约束条件""",
+
+        "ToolExecutionError": """
+- 检查工具参数是否正确
+- 确认工具的前置条件已满足
+- 查看工具文档了解正确用法"""
+    }
+
+    DEFAULT_ERROR_SUGGESTION = """
+- 仔细阅读错误信息，理解问题根源
+- 检查上一步的操作是否正确
+- 尝试使用不同的方法或工具
+- 如果问题持续，考虑简化任务或使用备用方案"""
+
+    def _get_error_fix_suggestions(self, error_type: str, error_msg: str) -> str:
+        """
+        根据错误类型提供修复建议
+
+        ✅ 使用类常量替代硬编码字典，提高可维护性
+
+        Args:
+            error_type: 错误类型名称
+            error_msg: 错误信息
+
+        Returns:
+            修复建议文本
+        """
+        # 查找匹配的错误类型
+        for key, suggestion in self.ERROR_FIX_SUGGESTIONS.items():
+            if key in error_type or key.lower() in error_msg.lower():
+                return suggestion
+
+        # 默认建议
+        return self.DEFAULT_ERROR_SUGGESTION
 
 
 class LoomAgentRuntime:
@@ -576,6 +1300,7 @@ class LoomAgentRuntime:
         tools: List[BaseTool],
         config: AgentConfig,
         context_retriever: Optional[SchemaContextRetriever] = None,
+        container: Optional[Any] = None,
     ):
         """
         Args:
@@ -583,16 +1308,21 @@ class LoomAgentRuntime:
             tools: 工具列表
             config: Agent 配置
             context_retriever: 上下文检索器
+            container: 服务容器（用于高级功能）
         """
         self._agent = agent
         self._tools = tools
         self._config = config
         self._context_retriever = context_retriever
+        self.container = container  # 添加 container 属性
 
         # 执行状态
         self._current_state: Optional[ExecutionState] = None
         self._event_callbacks: List[Callable[[AgentEvent], None]] = []
-        self._iteration_tracker = IterationTracker()
+
+        # 🔥 使用增强的自适应迭代跟踪器（待初始化，需要goal信息）
+        self._iteration_tracker: Optional[AdaptiveIterationTracker] = None
+        self._prompt_generator: Optional[AdaptivePromptGenerator] = None
 
         # 质量评分器
         self._quality_scorer = create_quality_scorer()
@@ -639,12 +1369,36 @@ class LoomAgentRuntime:
         """
         start_time = time.time()
         max_iterations = max_iterations or request.max_iterations
-        
+
         logger.info(f"🚀 [LoomAgentRuntime] 开始 TT 递归执行")
         logger.info(f"   占位符: {request.placeholder[:100]}...")
         logger.info(f"   数据源ID: {request.data_source_id}")
         logger.info(f"   用户ID: {request.user_id}")
         logger.info(f"   最大迭代次数: {max_iterations}")
+
+        # 🔥 初始化自适应跟踪器和提示词生成器
+        goal = f"完成{request.stage.value}阶段任务: {request.placeholder[:50]}"
+        self._iteration_tracker = AdaptiveIterationTracker(
+            goal=goal,
+            max_iterations=max_iterations
+        )
+
+        # ✅ 创建初始上下文（从请求中获取）
+        initial_context = ContextInfo()
+        if hasattr(request, 'context') and request.context:
+            initial_context = request.context
+
+        # ✅ 初始化自适应提示词生成器，传入 stage, complexity, context
+        self._prompt_generator = AdaptivePromptGenerator(
+            goal=goal,
+            tracker=self._iteration_tracker,
+            stage=request.stage,  # ✅ 传入阶段信息
+            complexity=getattr(request, 'complexity', None),  # ✅ 传入复杂度
+            context=initial_context,  # ✅ 传入上下文
+            base_system_prompt=self._config.system_prompt  # 可选：覆盖默认系统提示
+        )
+
+        logger.info(f"🎯 [AdaptiveRuntime] 目标: {goal}")
 
         # 初始化执行状态
         self._current_state = ExecutionState(
@@ -655,9 +1409,6 @@ class LoomAgentRuntime:
             max_iterations=max_iterations,
             max_context_tokens=self._config.max_context_tokens
         )
-        
-        # 重置迭代跟踪器
-        self._iteration_tracker.reset()
 
         # 发送初始化事件
         init_event = AgentEvent(
@@ -805,98 +1556,65 @@ class LoomAgentRuntime:
     async def _build_initial_prompt(self, request: AgentRequest) -> str:
         """构建初始 prompt"""
         prompt_parts = []
-        
+
         # 1. 系统指令（🔥 关键修复：确保系统提示被包含）
+        # ✅ 使用 SystemPromptBuilder 生成系统提示（去除硬编码）
+        from .prompts import SystemPromptBuilder
+
+        system_builder = SystemPromptBuilder()
+
         if self._config.system_prompt:
+            # 使用配置的系统提示
             prompt_parts.append(f"# 系统指令\n{self._config.system_prompt}")
         else:
-            # 如果没有系统提示，添加默认的SQL生成指导
-            prompt_parts.append("""# 系统指令
+            # 使用 SystemPromptBuilder 动态生成
+            system_prompt = system_builder.build_system_prompt(
+                stage=request.stage,
+                complexity=getattr(request, 'complexity', None)
+            )
+            prompt_parts.append(f"# 系统指令\n{system_prompt}")
 
-你是一个Doris SQL生成专家，专门负责根据业务需求生成准确、高效的Doris SQL查询。
+        # 🔥 关键修复：手动调用 context_retriever 并注入 Schema 信息
+        if self._context_retriever:
+            try:
+                logger.info("🔍 [_build_initial_prompt] 手动调用 ContextRetriever 获取 Schema")
+                # 调用 retrieve 方法获取相关表结构
+                documents = await self._context_retriever.retrieve(
+                    query=request.placeholder,
+                    top_k=5  # 获取最相关的5个表
+                )
 
-## 🔥 核心任务（必须完成）
-根据占位符中的业务需求，**最终必须生成并返回纯Doris SQL查询语句**。
+                if documents:
+                    logger.info(f"✅ [_build_initial_prompt] 检索到 {len(documents)} 个表结构")
+                    # 构建 Schema 上下文部分
+                    schema_lines = ["# 数据库 Schema 信息", ""]
+                    for doc in documents:
+                        schema_lines.append(doc.content)
+                        schema_lines.append("")  # 空行分隔
 
-## ⚠️ 关键要求
-- **最终输出必须是纯SQL**：不能包含中文解释、注释或其他文本
-- **必须使用Doris兼容的SQL语法**
-- **必须包含时间占位符 {{start_date}} 和 {{end_date}}**
-- **禁止硬编码任何日期值**
-- **所有时间相关查询必须使用时间过滤条件**
+                    schema_context = "\n".join(schema_lines)
+                    prompt_parts.append(schema_context)
 
-## TT递归执行流程
-你将使用TT递归机制自动迭代优化，直到达到质量阈值：
+                    logger.info(f"✅ [_build_initial_prompt] Schema 信息已注入到 prompt（{len(schema_context)} 字符）")
+                else:
+                    logger.warning("⚠️ [_build_initial_prompt] ContextRetriever 未返回任何表结构")
+            except Exception as e:
+                logger.error(f"❌ [_build_initial_prompt] 调用 ContextRetriever 失败: {e}", exc_info=True)
 
-1. **Thought**: 分析业务需求，理解数据关系和时间要求
-2. **Tool**: 使用schema工具了解表结构和字段信息
-3. **Thought**: 设计查询逻辑和SQL结构，确定时间过滤条件
-4. **Tool**: 使用sql_generator生成初始Doris SQL
-5. **Thought**: 评估SQL的语法和逻辑正确性，检查时间占位符使用
-6. **Tool**: 使用sql_validator验证Doris语法和字段存在性
-7. **Thought**: 如果有问题，分析具体原因
-8. **Tool**: 使用sql_auto_fixer修复发现的问题
-9. **Thought**: 再次验证，确保SQL质量和时间占位符正确性
-10. **Tool**: 使用sql_executor进行干运行测试（如果可能）
-11. **Thought**: 评估最终质量，决定是否继续迭代
-
-## 🎯 最终输出格式（必须遵守）
-**最终必须使用以下格式返回纯SQL：**
-```json
-{
-  "reasoning": "SQL已生成并验证通过",
-  "action": "finish",
-  "content": "SELECT COUNT(*) AS total_count FROM sales_table WHERE sale_date >= '{{start_date}}' AND sale_date <= '{{end_date}}'"
-}
-```
-
-**❌ 错误输出（禁止）：**
-```json
-{
-  "reasoning": "我需要先了解数据库结构，所以调用 schema_discovery...",
-  "action": "tool_call",
-  "tool_calls": [...]
-}
-```
-
-## Doris SQL示例
-```sql
--- ✅ 正确示例
-SELECT COUNT(*) AS total_count
-FROM sales_table 
-WHERE sale_date >= '{{start_date}}' 
-  AND sale_date <= '{{end_date}}'
-
--- ❌ 错误示例（硬编码日期）
-SELECT COUNT(*) FROM sales_table 
-WHERE sale_date >= '2024-01-01' AND sale_date <= '2024-01-31'
-```
-
-## 重要原则
-1. **最终必须返回纯SQL**：不能返回中文解释或工具调用
-2. **优先使用工具**: 始终先使用schema工具获取准确的表结构信息
-3. **时间占位符优先**: 所有时间相关查询必须使用 {{start_date}} 和 {{end_date}}
-4. **迭代优化**: 使用TT递归机制持续改进，直到达到质量阈值
-5. **错误处理**: 遇到问题时，使用相应的修复工具
-6. **验证优先**: 每次生成SQL后都要进行验证
-7. **性能考虑**: 在保证正确性的前提下，优化查询性能
-
-**记住：最终必须返回纯Doris SQL查询语句，不能包含任何中文解释！**""")
-        
         # 2. 任务描述
         prompt_parts.append(f"# 任务描述\n{request.placeholder}")
-        
+
         # 3. 上下文信息
         if request.task_context:
             prompt_parts.append(f"# 任务上下文\n{self._format_context(request.task_context)}")
-        
+
         # 4. 约束条件
         if request.constraints:
             prompt_parts.append(f"# 约束条件\n{self._format_constraints(request.constraints)}")
-        
+
         # 5. 执行指导
         prompt_parts.append(self._get_execution_guidance(request))
-        
+
         return "\n\n".join(prompt_parts)
 
     def _format_context(self, context: Dict[str, Any]) -> str:

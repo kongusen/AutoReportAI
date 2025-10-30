@@ -11,9 +11,10 @@ SQL 执行工具
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -96,6 +97,18 @@ class SQLExecutorTool(BaseTool):
         self.container = container
         self._connection_config = connection_config  # 🔥 保存连接配置
         self._data_source_service = None
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SQLExecutorArgs(BaseModel):
+            sql: str = Field(description="要执行的 SQL 查询")
+            timeout: float = Field(default=30.0, description="执行超时时间（秒）")
+            max_rows: Optional[int] = Field(default=None, description="最大返回行数")
+            fetch_size: int = Field(default=1000, description="每次获取的行数")
+            auto_commit: bool = Field(default=True, description="是否自动提交")
+            isolation_level: Optional[str] = Field(default=None, description="事务隔离级别")
+            validate_before_execute: bool = Field(default=True, description="执行前是否验证 SQL")
+
+        self.args_schema = SQLExecutorArgs
     
     async def _get_data_source_service(self):
         """获取数据源服务"""
@@ -106,52 +119,18 @@ class SQLExecutorTool(BaseTool):
         return self._data_source_service
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "sql_executor",
                 "description": "执行 SQL 查询并返回结果",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql": {
-                            "type": "string",
-                            "description": "要执行的 SQL 查询"
-                        },
-                        # 🔥 移除 connection_config 参数，由工具内部自动获取
-                        "timeout": {
-                            "type": "number",
-                            "default": 30.0,
-                            "description": "执行超时时间（秒）"
-                        },
-                        "max_rows": {
-                            "type": "integer",
-                            "description": "最大返回行数"
-                        },
-                        "fetch_size": {
-                            "type": "integer",
-                            "default": 1000,
-                            "description": "每次获取的行数"
-                        },
-                        "auto_commit": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否自动提交"
-                        },
-                        "isolation_level": {
-                            "type": "string",
-                            "description": "事务隔离级别"
-                        },
-                        "validate_before_execute": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "执行前是否验证 SQL"
-                        }
-                    },
-                    "required": ["sql"]  # 🔥 只要求 SQL 参数
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

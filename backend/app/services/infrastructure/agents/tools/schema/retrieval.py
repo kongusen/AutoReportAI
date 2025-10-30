@@ -10,8 +10,9 @@ Schema 检索工具
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -69,6 +70,33 @@ class SchemaRetrievalTool(BaseTool):
         self.container = container
         self._connection_config = connection_config  # 🔥 保存连接配置
         self._data_source_service = None
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SchemaRetrievalArgs(BaseModel):
+            table_names: Optional[List[str]] = Field(
+                default=None, description="要检索的表名列表"
+            )
+            column_names: Optional[List[str]] = Field(
+                default=None, description="要检索的列名列表"
+            )
+            data_types: Optional[List[str]] = Field(
+                default=None, description="要检索的数据类型列表"
+            )
+            include_relationships: bool = Field(
+                default=True, description="是否包含关系信息"
+            )
+            include_constraints: bool = Field(
+                default=True, description="是否包含约束信息"
+            )
+            include_indexes: bool = Field(
+                default=False, description="是否包含索引信息"
+            )
+            format: Literal["detailed", "summary", "minimal"] = Field(
+                default="detailed", description="输出格式"
+            )
+
+        # 向 Loom 暴露标准的 args_schema
+        self.args_schema = SchemaRetrievalArgs
     
     async def _get_data_source_service(self):
         """获取数据源服务"""
@@ -78,57 +106,108 @@ class SchemaRetrievalTool(BaseTool):
             ) or getattr(self.container, 'data_source_service', None)
         return self._data_source_service
     
+    async def _get_context_selected_tables(self) -> Optional[List[str]]:
+        """从上下文中获取已选择的表"""
+        try:
+            # 尝试从容器中获取上下文检索器
+            context_retriever = getattr(self.container, 'context_retriever', None)
+            if context_retriever:
+                # 获取最近检索的表
+                recent_tables = getattr(context_retriever, 'recent_selected_tables', None)
+                if recent_tables:
+                    logger.info(f"🔍 [SchemaRetrievalTool] 从上下文检索器获取到表: {recent_tables}")
+                    return recent_tables
+            
+            # 尝试从全局状态中获取
+            import threading
+            thread_local = getattr(threading.current_thread(), 'agent_context', None)
+            if thread_local and 'selected_tables' in thread_local:
+                tables = thread_local['selected_tables']
+                logger.info(f"🔍 [SchemaRetrievalTool] 从线程上下文获取到表: {tables}")
+                return tables
+            
+            return None
+        except Exception as e:
+            logger.debug(f"⚠️ [SchemaRetrievalTool] 获取上下文表信息失败: {e}")
+            return None
+    
+    async def _validate_table_names_against_context(
+        self, 
+        table_names: Optional[List[str]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        验证请求的表名是否在上下文中
+        
+        Args:
+            table_names: 请求的表名列表
+            
+        Returns:
+            如果有验证问题，返回错误信息字典；否则返回 None
+        """
+        if not table_names:
+            return None
+        
+        context_tables = await self._get_context_selected_tables()
+        if not context_tables:
+            # 如果无法获取上下文，不阻止执行（可能是首次调用）
+            logger.debug("⚠️ [SchemaRetrievalTool] 无法获取上下文表信息，跳过验证")
+            return None
+        
+        # 标准化表名（转为小写进行比较）
+        context_tables_normalized = [t.lower() for t in context_tables]
+        requested_tables_normalized = [t.lower() for t in table_names]
+        
+        # 找出不在上下文中的表
+        invalid_tables = [
+            t for t in requested_tables_normalized 
+            if t not in context_tables_normalized
+        ]
+        
+        if invalid_tables:
+            # 找到对应的原始表名（保持大小写）
+            original_invalid = [
+                table_names[i] 
+                for i, normalized in enumerate(requested_tables_normalized)
+                if normalized in invalid_tables
+            ]
+            
+            logger.warning(
+                f"🚨 [SchemaRetrievalTool] 检测到不在上下文中的表: {original_invalid}。"
+                f"上下文中的表: {context_tables}"
+            )
+            
+            return {
+                "success": False,
+                "error": f"表 {original_invalid} 不在系统已检索的上下文中",
+                "invalid_tables": original_invalid,
+                "available_tables": context_tables,
+                "suggestion": f"请使用以下上下文中的表名: {', '.join(context_tables)}",
+                "result": {
+                    "tables": [],
+                    "columns": [],
+                    "relationships": [],
+                    "constraints": [],
+                    "indexes": []
+                }
+            }
+        
+        return None
+    
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()  # pydantic v2
+        except Exception:
+            # 兼容 pydantic v1
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
+
         return {
             "type": "function",
             "function": {
                 "name": "schema_retrieval",
                 "description": "检索和获取特定的表结构信息",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        # 🔥 移除 connection_config 参数，由工具内部自动获取
-                        "table_names": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "要检索的表名列表"
-                        },
-                        "column_names": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "要检索的列名列表"
-                        },
-                        "data_types": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "要检索的数据类型列表"
-                        },
-                        "include_relationships": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否包含关系信息"
-                        },
-                        "include_constraints": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否包含约束信息"
-                        },
-                        "include_indexes": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "是否包含索引信息"
-                        },
-                        "format": {
-                            "type": "string",
-                            "enum": ["detailed", "summary", "minimal"],
-                            "default": "detailed",
-                            "description": "输出格式"
-                        }
-                    },
-                    "required": []  # 🔥 所有参数都是可选的
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(
@@ -170,6 +249,15 @@ class SchemaRetrievalTool(BaseTool):
                 "error": "未配置数据源连接，请在初始化工具时提供 connection_config",
                 "result": {}
             }
+        
+        # 🔥 新增：验证请求的表名是否在上下文中
+        if table_names:
+            validation_result = await self._validate_table_names_against_context(table_names)
+            if validation_result:
+                logger.warning(
+                    f"⚠️ [SchemaRetrievalTool] 表名验证失败，返回纠正消息: {validation_result.get('error')}"
+                )
+                return validation_result
         
         try:
             data_source_service = await self._get_data_source_service()

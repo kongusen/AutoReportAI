@@ -12,9 +12,10 @@ from loom.interfaces.tool import BaseTool
 import logging
 import math
 import statistics
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -108,60 +109,34 @@ class DataAnalyzerTool(BaseTool):
 
         self.description = "分析数据特征、统计信息和模式" 
         self.container = container
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class DataAnalyzerArgs(BaseModel):
+            data: List[Dict[str, Any]] = Field(description="要分析的数据")
+            analysis_types: Optional[List[Literal[
+                "descriptive", "correlation", "distribution", "outlier", "trend", "pattern"
+            ]]] = Field(default=["descriptive", "correlation", "outlier"], description="要执行的分析类型")
+            target_columns: Optional[List[str]] = Field(default=None, description="目标分析列")
+            confidence_level: float = Field(default=0.95, description="置信水平")
+            outlier_method: Literal["iqr", "zscore", "modified_zscore"] = Field(default="iqr", description="异常值检测方法")
+            correlation_method: Literal["pearson", "spearman", "kendall"] = Field(default="pearson", description="相关性分析方法")
+            generate_insights: bool = Field(default=True, description="是否生成洞察")
+
+        self.args_schema = DataAnalyzerArgs
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "data_analyzer",
                 "description": "分析数据特征、统计信息和模式",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "data": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "description": "要分析的数据"
-                        },
-                        "analysis_types": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "enum": ["descriptive", "correlation", "distribution", "outlier", "trend", "pattern"],
-                            "default": ["descriptive", "correlation", "outlier"],
-                            "description": "要执行的分析类型"
-                        },
-                        "target_columns": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "目标分析列"
-                        },
-                        "confidence_level": {
-                            "type": "number",
-                            "default": 0.95,
-                            "description": "置信水平"
-                        },
-                        "outlier_method": {
-                            "type": "string",
-                            "enum": ["iqr", "zscore", "modified_zscore"],
-                            "default": "iqr",
-                            "description": "异常值检测方法"
-                        },
-                        "correlation_method": {
-                            "type": "string",
-                            "enum": ["pearson", "spearman", "kendall"],
-                            "default": "pearson",
-                            "description": "相关性分析方法"
-                        },
-                        "generate_insights": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否生成洞察"
-                        }
-                    },
-                    "required": ["data"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

@@ -10,8 +10,9 @@ Schema 发现工具
 
 import logging
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 from loom.interfaces.tool import BaseTool
 from ...types import ToolCategory, ContextInfo
@@ -106,6 +107,18 @@ class SchemaDiscoveryTool(BaseTool):
         self._columns_cache: Dict[str, List[Dict[str, Any]]] = {}
         self._cache_initialized = False
         self._result_cache: Dict[str, Dict[str, Any]] = {}
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SchemaDiscoveryArgs(BaseModel):
+            discovery_type: Literal["tables", "columns", "relationships", "all"] = Field(
+                default="all", description="发现类型"
+            )
+            table_pattern: Optional[str] = Field(default=None, description="表名模式过滤（支持通配符）")
+            include_metadata: bool = Field(default=True, description="是否包含元数据信息")
+            max_tables: int = Field(default=100, description="最大表数量限制")
+            tables: Optional[List[str]] = Field(default=None, description="指定要处理的表名列表")
+
+        self.args_schema = SchemaDiscoveryArgs
     
     async def _get_data_source_service(self):
         """获取数据源服务"""
@@ -317,40 +330,18 @@ class SchemaDiscoveryTool(BaseTool):
         return {name: self._columns_cache[name] for name in table_names if name in self._columns_cache}
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "schema_discovery",
                 "description": "发现数据源中的表结构和关系",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        # 🔥 移除 connection_config 参数，由工具内部自动获取
-                        "discovery_type": {
-                            "type": "string",
-                            "enum": ["tables", "columns", "relationships", "all"],
-                            "default": "all",
-                            "description": "发现类型：tables(表), columns(列), relationships(关系), all(全部)"
-                        },
-                        "table_pattern": {
-                            "type": "string",
-                            "description": "表名模式过滤（支持通配符）"
-                        },
-                        "include_metadata": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否包含元数据信息"
-                        },
-                        "max_tables": {
-                            "type": "integer",
-                            "default": 100,
-                            "description": "最大表数量限制"
-                        }
-                    },
-                    "required": []  # 🔥 所有参数都是可选的
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

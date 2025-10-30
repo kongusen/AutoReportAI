@@ -39,7 +39,8 @@ class SchemaContextRetriever(BaseRetriever):
         top_k: int = 5,
         enable_stage_aware: bool = True,
         use_intelligent_retrieval: bool = True,
-        enable_lazy_loading: bool = True
+        enable_lazy_loading: bool = True,
+        target_tables: Optional[List[str]] = None
     ):
         """
         Args:
@@ -50,6 +51,7 @@ class SchemaContextRetriever(BaseRetriever):
             enable_stage_aware: 是否启用阶段感知
             use_intelligent_retrieval: 是否使用智能检索（TF-IDF）
             enable_lazy_loading: 是否启用懒加载（启动时只获取表名）
+            target_tables: 目标表列表（可选）。如果指定，只加载这些表的schema，用于单表优化
         """
         self.data_source_id = data_source_id
         self.connection_config = connection_config
@@ -58,6 +60,7 @@ class SchemaContextRetriever(BaseRetriever):
         self.enable_stage_aware = enable_stage_aware
         self.use_intelligent_retrieval = use_intelligent_retrieval
         self.enable_lazy_loading = enable_lazy_loading
+        self.target_tables = target_tables  # 🆕 单表优化：目标表过滤
 
         # Schema 缓存
         self.schema_cache: Dict[str, Dict[str, Any]] = {}
@@ -126,6 +129,20 @@ class SchemaContextRetriever(BaseRetriever):
 
             self.table_names = tables
             logger.info(f"✅ 发现 {len(tables)} 个表")
+
+            # 🆕 单表优化：如果指定了目标表，只加载这些表
+            if self.target_tables:
+                filtered_tables = [t for t in tables if t in self.target_tables]
+                logger.info(
+                    f"🎯 单表优化模式启用: 目标表 {self.target_tables}, "
+                    f"过滤后 {len(filtered_tables)} 个表"
+                )
+                tables = filtered_tables
+
+                # 如果指定的表不存在，发出警告
+                missing_tables = set(self.target_tables) - set(filtered_tables)
+                if missing_tables:
+                    logger.warning(f"⚠️ 指定的目标表不存在: {missing_tables}")
 
             if self.enable_lazy_loading:
                 # 懒加载模式：只缓存表名，不获取列信息
@@ -1193,11 +1210,12 @@ def create_schema_context_retriever(
     # 兼容调用方传入，但本实现不直接使用
     inject_as: Optional[str] = None,
     enable_stage_aware: bool = True,
-    enable_lazy_loading: bool = True
+    enable_lazy_loading: bool = True,
+    target_tables: Optional[List[str]] = None
 ) -> SchemaContextRetriever:
     """
     创建 Schema 上下文检索器
-    
+
     Args:
         data_source_id: 数据源ID
         connection_config: 连接配置
@@ -1205,7 +1223,8 @@ def create_schema_context_retriever(
         top_k: 默认返回表数量
         enable_stage_aware: 是否启用阶段感知
         enable_lazy_loading: 是否启用懒加载优化
-        
+        target_tables: 目标表列表（可选）。如果指定，只加载这些表的schema，用于单表优化
+
     Returns:
         SchemaContextRetriever 实例
     """
@@ -1215,7 +1234,8 @@ def create_schema_context_retriever(
         container=container,
         top_k=top_k,
         enable_stage_aware=enable_stage_aware,
-        enable_lazy_loading=enable_lazy_loading
+        enable_lazy_loading=enable_lazy_loading,
+        target_tables=target_tables  # 🆕 传递目标表过滤参数
     )
 
 

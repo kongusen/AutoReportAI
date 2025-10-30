@@ -24,6 +24,16 @@ class ChartPlaceholderProcessor:
         self.user_id = user_id
         self.agent_adapter = agent_adapter
         self.logger = logging.getLogger(self.__class__.__name__)
+        # 从 agent_adapter 获取 container（如果可用）
+        self.container = getattr(agent_adapter, 'container', None) if agent_adapter else None
+        # 如果没有 container，尝试从全局导入
+        if self.container is None:
+            try:
+                from app.core.container import container as global_container
+                self.container = global_container
+            except ImportError:
+                self.logger.warning("无法获取 container，图表工具可能无法正常工作")
+                self.container = None
 
     async def process_chart_placeholder(
         self,
@@ -100,31 +110,57 @@ class ChartPlaceholderProcessor:
                     }
 
             # 3. 调用图表生成工具（若 StageAware 未直接生成）
-            from app.services.infrastructure.agents.tools.chart_tools import (
-                ChartGenerationTool,
-                ChartDataAnalyzerTool
-            )
+            ChartGeneratorTool = None
+            ChartAnalyzerTool = None
+            try:
+                from app.services.infrastructure.agents.tools.chart import (
+                    ChartGeneratorTool,
+                    ChartAnalyzerTool,
+                )
+            except ModuleNotFoundError:
+                try:
+                    from app.services.infrastructure.agents.tools.chart_tools import (
+                        ChartGenerationTool as ChartGeneratorTool,
+                        ChartDataAnalyzerTool as ChartAnalyzerTool,
+                    )
+                except ModuleNotFoundError as import_err:
+                    self.logger.error("图表工具模块缺失，无法生成图表: %s", import_err)
+                    return {
+                        "success": False,
+                        "error": "图表工具模块缺失",
+                    }
 
             # Step 1: 分析数据并推荐图表类型
-            analyzer = ChartDataAnalyzerTool()
-            analysis_result = await analyzer.execute({
-                "data": data,
-                "intent": chart_intent["description"]
-            })
-
-            if not analysis_result.get("success"):
-                self.logger.warning(f"数据分析失败，使用默认图表类型: {analysis_result.get('error')}")
-                recommended_chart_type = agent_chart_config.get("chart_type", chart_intent.get("chart_type", "bar"))
+            if self.container is None:
+                self.logger.error("Container 不可用，无法使用图表分析工具")
+                recommended_chart_type = chart_intent.get("chart_type", "bar")
             else:
-                recommended_chart_type = agent_chart_config.get(
-                    "chart_type",
-                    analysis_result.get("recommended_chart_type", chart_intent.get("chart_type", "bar"))
-                )
-                self.logger.info(f"推荐图表类型: {recommended_chart_type}")
-                self.logger.info(f"推荐理由: {analysis_result.get('reasoning')}")
+                analyzer = ChartAnalyzerTool(self.container)
+                analysis_result = await analyzer.execute({
+                    "data": data,
+                    "intent": chart_intent["description"]
+                })
+
+                if not analysis_result.get("success"):
+                    self.logger.warning(f"数据分析失败，使用默认图表类型: {analysis_result.get('error')}")
+                    recommended_chart_type = agent_chart_config.get("chart_type", chart_intent.get("chart_type", "bar"))
+                else:
+                    recommended_chart_type = agent_chart_config.get(
+                        "chart_type",
+                        analysis_result.get("recommended_chart_type", chart_intent.get("chart_type", "bar"))
+                    )
+                    self.logger.info(f"推荐图表类型: {recommended_chart_type}")
+                    self.logger.info(f"推荐理由: {analysis_result.get('reasoning')}")
 
             # Step 2: 生成图表
-            chart_tool = ChartGenerationTool()
+            if self.container is None:
+                self.logger.error("Container 不可用，无法使用图表生成工具")
+                return {
+                    "success": False,
+                    "error": "Container 不可用，无法生成图表"
+                }
+            
+            chart_tool = ChartGeneratorTool(self.container)
 
             # 准备图表生成参数
             chart_params = {

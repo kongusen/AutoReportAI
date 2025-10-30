@@ -159,27 +159,27 @@ ${schema_info}
 
 ### Doris 时间过滤示例
 ```sql
--- ✅ 正确：使用时间占位符
+-- ✅ 正确：使用时间占位符（使用 <TABLE_NAME> 和 <DATE_COLUMN> 占位符，实际使用时替换为上下文中的真实表名和列名）
 SELECT COUNT(*) as total_count
-FROM sales_table 
-WHERE sale_date >= '{{start_date}}' 
-  AND sale_date <= '{{end_date}}'
+FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> >= '{{start_date}}' 
+  AND <DATE_COLUMN> <= '{{end_date}}'
 
 -- ✅ 正确：单日期过滤
 SELECT SUM(amount) as total_amount
-FROM transactions 
-WHERE transaction_date = '{{start_date}}'
+FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> = '{{start_date}}'
 
 -- ✅ 正确：使用 BETWEEN
-SELECT * FROM orders 
-WHERE order_date BETWEEN '{{start_date}}' AND '{{end_date}}'
+SELECT * FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> BETWEEN '{{start_date}}' AND '{{end_date}}'
 
 -- ❌ 错误：硬编码日期
-SELECT COUNT(*) FROM sales_table 
-WHERE sale_date >= '2024-01-01' AND sale_date <= '2024-01-31'
+SELECT COUNT(*) FROM <TABLE_NAME> 
+WHERE <DATE_COLUMN> >= '2024-01-01' AND <DATE_COLUMN> <= '2024-01-31'
 
 -- ❌ 错误：缺少时间过滤
-SELECT COUNT(*) FROM sales_table
+SELECT COUNT(*) FROM <TABLE_NAME>
 ```
 
 ### Doris 数据类型处理
@@ -368,6 +368,61 @@ ${metadata_info}
                 variables={
                     "completion_status": "已完成"
                 }
+            ),
+
+            # SQL 纠错分析模板
+            "sql_error_analysis": PromptTemplate(
+                template="""
+# SQL 纠错专家任务
+
+你是一个SQL纠错专家。请分析以下SQL查询的错误，并提供修复后的SQL。
+
+## 原始SQL
+```sql
+${current_sql}
+```
+
+## 验证错误信息
+${error_message}
+
+## 采样数据信息
+${sample_info}
+
+## 占位符需求
+${placeholder_text}
+
+## Doris 数据库约束
+- 使用标准 SQL 语法，兼容 MySQL
+- 支持 OLAP 分析查询
+- 时间字段必须使用占位符：{{start_date}}、{{end_date}}
+- 支持聚合函数：SUM, COUNT, AVG, MAX, MIN, GROUP_CONCAT
+- 支持窗口函数：ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD
+
+## 任务要求
+1. **错误分析**：分析错误原因（语法、语义、表/列不存在等）
+2. **数据结构理解**：根据采样数据了解实际的表结构和列名
+3. **SQL修复**：生成修复后的SQL，确保：
+   - 语法正确（符合Doris规范）
+   - 表名和列名存在（参考采样数据）
+   - 符合占位符需求
+   - 能够成功执行
+
+## 输出格式（仅返回JSON）
+```json
+{
+    "error_analysis": "详细的错误分析...",
+    "fix_strategy": "修复策略说明...",
+    "fixed_sql": "修复后的完整SQL语句",
+    "changes_made": ["修改1：描述", "修改2：描述", ...]
+}
+```
+
+**重要提示**：
+- 请严格按照JSON格式输出
+- fixed_sql字段必须包含完整可执行的SQL
+- 确保修复后的SQL能通过验证
+""",
+                variables={}
             )
         }
     

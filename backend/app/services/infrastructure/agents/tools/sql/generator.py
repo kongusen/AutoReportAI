@@ -10,9 +10,10 @@ SQL 生成工具
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 from loom.interfaces.tool import BaseTool
 from ...types import ToolCategory, ContextInfo
@@ -93,6 +94,24 @@ class SQLGeneratorTool(BaseTool):
         self.description = "基于业务需求和 Schema 信息生成 SQL 查询" 
         self.container = container
         self._schema_cache = None
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SQLGeneratorArgs(BaseModel):
+            business_requirement: str = Field(description="业务需求描述")
+            connection_config: Dict[str, Any] = Field(description="数据源连接配置")
+            table_names: Optional[List[str]] = Field(default=None, description="要查询的表名列表")
+            column_names: Optional[List[str]] = Field(default=None, description="要查询的列名列表")
+            filters: Optional[Dict[str, Any]] = Field(default=None, description="过滤条件")
+            aggregations: Optional[Dict[str, str]] = Field(default=None, description="聚合函数配置")
+            group_by: Optional[List[str]] = Field(default=None, description="分组字段")
+            order_by: Optional[List[str]] = Field(default=None, description="排序字段")
+            limit: Optional[int] = Field(default=None, description="结果数量限制")
+            query_type: Literal["SELECT", "INSERT", "UPDATE", "DELETE"] = Field(
+                default="SELECT", description="查询类型"
+            )
+            optimize: bool = Field(default=True, description="是否优化查询")
+
+        self.args_schema = SQLGeneratorArgs
     
     async def _get_schema_cache(self):
         """获取 Schema 缓存"""
@@ -102,70 +121,18 @@ class SQLGeneratorTool(BaseTool):
         return self._schema_cache
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "sql_generator",
                 "description": "基于业务需求和 Schema 信息生成 SQL 查询",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "business_requirement": {
-                            "type": "string",
-                            "description": "业务需求描述"
-                        },
-                        "connection_config": {
-                            "type": "object",
-                            "description": "数据源连接配置"
-                        },
-                        "table_names": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "要查询的表名列表"
-                        },
-                        "column_names": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "要查询的列名列表"
-                        },
-                        "filters": {
-                            "type": "object",
-                            "description": "过滤条件"
-                        },
-                        "aggregations": {
-                            "type": "object",
-                            "description": "聚合函数配置"
-                        },
-                        "group_by": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "分组字段"
-                        },
-                        "order_by": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "排序字段"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "结果数量限制"
-                        },
-                        "query_type": {
-                            "type": "string",
-                            "enum": ["SELECT", "INSERT", "UPDATE", "DELETE"],
-                            "default": "SELECT",
-                            "description": "查询类型"
-                        },
-                        "optimize": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否优化查询"
-                        }
-                    },
-                    "required": ["business_requirement", "connection_config"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(
@@ -262,12 +229,15 @@ class SQLGeneratorTool(BaseTool):
         """获取 Schema 信息"""
         try:
             # 使用 Schema 检索工具获取信息
-            from .schema.retrieval import create_schema_retrieval_tool
-            
-            retrieval_tool = create_schema_retrieval_tool(self.container)
-            
-            result = await retrieval_tool.execute(
-                connection_config=connection_config,
+            from ..schema.retrieval import create_schema_retrieval_tool
+
+            # 🔥 修复：传递 connection_config 以便工具能正确初始化
+            retrieval_tool = create_schema_retrieval_tool(
+                self.container,
+                connection_config=connection_config
+            )
+
+            result = await retrieval_tool.run(
                 table_names=table_names,
                 include_relationships=True,
                 include_constraints=True,

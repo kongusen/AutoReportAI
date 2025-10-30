@@ -155,17 +155,28 @@ export function useWebSocket(config: UseWebSocketConfig = {}): UseWebSocketResul
   }, [])
 
   const handleTaskUpdate = useCallback((message: TaskUpdateMessage) => {
+    // 统一从 data 读取任务更新负载
+    const data: any = (message as any).data ?? message
+    const wsTaskId: string | undefined = data?.task_id
+    const internalTaskId: string | number | undefined = data?.details?.task_internal_id
+
     setTaskUpdates(prev => {
       const newMap = new Map(prev)
-      newMap.set(message.task_id, message)
+      if (wsTaskId) {
+        newMap.set(String(wsTaskId), data)
+      }
+      // 同时用内部任务ID（数值型任务ID）进行键控，便于页面以任务ID直接读取
+      if (internalTaskId !== undefined && internalTaskId !== null) {
+        newMap.set(String(internalTaskId), data)
+      }
       return newMap
     })
 
     // 显示任务进度更新
-    if (message.status === 'completed') {
-      toast.success(`任务完成: ${message.task_id}`)
-    } else if (message.status === 'failed') {
-      toast.error(`任务失败: ${message.task_id}`)
+    if (data?.status === 'completed') {
+      toast.success(`任务完成: ${wsTaskId || internalTaskId}`)
+    } else if (data?.status === 'failed') {
+      toast.error(`任务失败: ${wsTaskId || internalTaskId}`)
     }
   }, [])
 

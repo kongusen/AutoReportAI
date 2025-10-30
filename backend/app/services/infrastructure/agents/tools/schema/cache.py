@@ -12,9 +12,10 @@ Schema 缓存工具
 import logging
 import time
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass, asdict
 from collections import OrderedDict
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -90,42 +91,32 @@ class SchemaCacheTool(BaseTool):
             "miss_count": 0,
             "total_entries": 0
         }
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SchemaCacheArgs(BaseModel):
+            action: Literal["get", "set", "delete", "clear", "stats", "list"] = Field(
+                description="缓存操作"
+            )
+            key: Optional[str] = Field(default=None, description="缓存键")
+            data: Optional[Any] = Field(default=None, description="要缓存的数据（仅用于 set 操作）")
+            ttl: Optional[float] = Field(default=None, description="TTL时间（秒），默认3600")
+            pattern: Optional[str] = Field(default=None, description="键模式（用于 list 操作）")
+
+        self.args_schema = SchemaCacheArgs
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "schema_cache",
                 "description": "缓存和管理 Schema 信息",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": ["get", "set", "delete", "clear", "stats", "list"],
-                            "description": "缓存操作：get(获取), set(设置), delete(删除), clear(清空), stats(统计), list(列表)"
-                        },
-                        "key": {
-                            "type": "string",
-                            "description": "缓存键"
-                        },
-                        "data": {
-                            "type": "object",
-                            "description": "要缓存的数据（仅用于 set 操作）"
-                        },
-                        "ttl": {
-                            "type": "number",
-                            "description": "TTL时间（秒），默认3600"
-                        },
-                        "pattern": {
-                            "type": "string",
-                            "description": "键模式（用于 list 操作）"
-                        }
-                    },
-                    "required": ["action"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

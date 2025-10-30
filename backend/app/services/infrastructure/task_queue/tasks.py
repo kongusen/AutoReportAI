@@ -8,7 +8,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from celery import Task as CeleryTask
@@ -28,6 +28,10 @@ from app.services.infrastructure.storage.hybrid_storage_service import (
     get_hybrid_storage_service,
 )
 from app.services.infrastructure.task_queue.celery_config import celery_app
+from app.services.infrastructure.agents.messaging import (
+    TaskMessageOrchestrator,
+    PromptConfigManager
+)
 from app.services.infrastructure.task_queue.progress_recorder import TaskProgressRecorder
 from app.services.infrastructure.websocket.pipeline_notifications import (
     PipelineTaskStatus,
@@ -39,29 +43,44 @@ logger = logging.getLogger(__name__)
 
 def run_async(coro):
     """
-    在同步上下文中安全地执行异步代码
+    在同步上下文中安全地执行异步代码。
 
-    处理 Celery worker 中可能已存在的事件循环问题
+    规则：
+    - 若当前线程没有运行中的事件循环：直接 asyncio.run(coro)
+    - 若已有运行中的事件循环（如 Celery/WSGI 环境）：在新线程创建独立事件循环执行并返回结果
     """
     try:
-        # 尝试获取当前运行的事件循环
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
-        # 没有运行的事件循环，可以使用 asyncio.run()
+        # 当前线程没有运行中的事件循环
         return asyncio.run(coro)
     else:
-        # 已经有运行的事件循环，需要使用 nest_asyncio 或创建新线程
-        # 使用 nest_asyncio 允许嵌套事件循环
-        try:
-            import nest_asyncio
-            nest_asyncio.apply()
-            return asyncio.run(coro)
-        except ImportError:
-            # 如果 nest_asyncio 不可用，使用线程池执行
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, coro)
-                return future.result()
+        # 当前线程已存在事件循环，转移到新线程执行
+        import threading
+        from queue import Queue
+
+        result_queue: "Queue[Tuple[bool, Any]]" = Queue(maxsize=1)
+
+        def _runner():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                res = loop.run_until_complete(coro)
+                result_queue.put((True, res))
+            except Exception as exc:  # noqa: BLE001
+                result_queue.put((False, exc))
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        ok, payload = result_queue.get()
+        if ok:
+            return payload
+        raise payload
 
 class DatabaseTask(CeleryTask):
     """带数据库会话的基础任务类"""
@@ -140,7 +159,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             task=task,
             task_execution=task_execution,
         )
-        progress_recorder.start("任务开始")
+        # ✅ 初始化消息编排器
+        msg_orchestrator = TaskMessageOrchestrator()
+        config = PromptConfigManager()
+
+        progress_recorder.start(msg_orchestrator.task_started())
 
         # 定义进度更新函数
         def update_progress(
@@ -190,9 +213,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             from app.services.infrastructure.agents.context_retriever import (
                 create_schema_context_retriever
             )
+            from app.services.infrastructure.agents.tools.table_detector import (
+                create_table_detector
+            )
             from app.models.data_source import DataSource
 
-            logger.info(f"📋 初始化 Schema Context for data_source={task.data_source_id}")
+            logger.info(msg_orchestrator.schema_init_log(str(task.data_source_id)))
 
             update_progress(
                 8,
@@ -200,6 +226,62 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 stage="schema_initialization",
                 pipeline_status=PipelineTaskStatus.SCANNING,
             )
+
+            # 🆕 表检测优化：检测是否为单表场景
+            target_tables_for_optimization = None
+            table_detection_enabled = True  # 可以通过配置控制
+            existing_placeholders = []  # 初始化变量，防止作用域问题
+
+            if table_detection_enabled:
+                logger.info("🔍 开始表检测优化流程...")
+                try:
+                    # 获取模板的占位符
+                    from app.crud import template_placeholder as crud_template_placeholder
+                    existing_placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id)) or []
+
+                    if existing_placeholders and len(existing_placeholders) > 0:
+                        # 使用表检测器分析
+                        detector = create_table_detector()
+                        detection_result = detector.detect_from_placeholders(
+                            placeholders=existing_placeholders,
+                            template_content=None  # 可选：传递模板内容辅助分析
+                        )
+
+                        logger.info(f"📊 表检测结果: {detection_result.recommendation}")
+                        logger.info(
+                            f"   - 单表场景: {detection_result.is_single_table}\n"
+                            f"   - 主要表: {detection_result.primary_table}\n"
+                            f"   - 涉及表: {detection_result.all_tables}\n"
+                            f"   - 置信度: {detection_result.confidence:.2%}"
+                        )
+
+                        # 🔥 单表优化决策
+                        if detection_result.is_single_table and detection_result.primary_table:
+                            target_tables_for_optimization = [detection_result.primary_table]
+                            logger.info(
+                                f"✅ 启用单表优化模式: 只加载表 '{detection_result.primary_table}' 的 schema"
+                            )
+                            update_progress(
+                                8,
+                                f"检测到单表场景，启用优化模式（表：{detection_result.primary_table}）",
+                                stage="schema_initialization",
+                                pipeline_status=PipelineTaskStatus.SCANNING,
+                            )
+                        else:
+                            logger.info(
+                                f"⚠️ 多表场景或检测置信度不足，使用完整Schema加载模式"
+                            )
+                            update_progress(
+                                8,
+                                "检测到多表场景，加载完整Schema",
+                                stage="schema_initialization",
+                                pipeline_status=PipelineTaskStatus.SCANNING,
+                            )
+                    else:
+                        logger.info("⚠️ 暂无占位符数据，跳过表检测优化")
+                except Exception as detection_error:
+                    logger.warning(f"⚠️ 表检测失败，降级到完整Schema加载: {detection_error}", exc_info=True)
+                    target_tables_for_optimization = None
 
             # 获取数据源配置
             data_source = db.query(DataSource).filter(DataSource.id == task.data_source_id).first()
@@ -211,33 +293,58 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             if not connection_config:
                 raise RuntimeError(f"数据源 {task.data_source_id} 缺少连接配置")
 
-            # 🆕 启用阶段感知的智能上下文管理
+            # 🆕 启用阶段感知的智能上下文管理 + 单表优化
             schema_context_retriever = create_schema_context_retriever(
                 data_source_id=str(task.data_source_id),
                 connection_config=connection_config,
                 container=container,
                 top_k=10,  # Task 批量分析，多缓存一些表
                 inject_as="system",
-                enable_stage_aware=True  # 🔥 启用阶段感知
+                enable_stage_aware=True,  # 🔥 启用阶段感知
+                target_tables=target_tables_for_optimization  # 🔥 单表优化参数
             )
 
             # 预加载所有表结构（缓存）
             run_async(schema_context_retriever.initialize())
 
             table_count = len(schema_context_retriever.schema_cache)
-            logger.info(f"✅ Schema Context 初始化完成，缓存了 {table_count} 个表")
+
+            # 🆕 单表优化效果统计
+            optimization_info = ""
+            if target_tables_for_optimization:
+                # 估算节省的 token（假设每张表约 500 tokens，每个占位符调用 2 次 Agent）
+                estimated_full_schema_tokens = table_count * 500
+                estimated_optimized_tokens = len(target_tables_for_optimization) * 500
+                estimated_saved_tokens_per_call = max(0, estimated_full_schema_tokens - estimated_optimized_tokens)
+                total_placeholders = len(existing_placeholders) if existing_placeholders else 0
+                estimated_total_saved = estimated_saved_tokens_per_call * 2 * total_placeholders  # 2次调用/占位符
+
+                optimization_info = (
+                    f" | 单表优化已启用 ✅\n"
+                    f"   预计节省: ~{estimated_total_saved:,} tokens "
+                    f"({estimated_saved_tokens_per_call} tokens/调用 × 2次/占位符 × {total_placeholders}占位符)"
+                )
+                logger.info(
+                    f"📊 单表优化效果估算:\n"
+                    f"   - 完整Schema: {estimated_full_schema_tokens} tokens\n"
+                    f"   - 优化后Schema: {estimated_optimized_tokens} tokens\n"
+                    f"   - 每次调用节省: {estimated_saved_tokens_per_call} tokens\n"
+                    f"   - 总计节省: ~{estimated_total_saved:,} tokens"
+                )
+
+            logger.info(msg_orchestrator.schema_init_completed(table_count) + optimization_info)
 
             update_progress(
                 9,
-                f"数据表结构缓存完成（{table_count} 个表）",
+                msg_orchestrator.schema_init_progress(table_count),
                 stage="schema_initialization",
                 pipeline_status=PipelineTaskStatus.SCANNING,
             )
 
         except Exception as e:
-            logger.warning(f"⚠️ Schema Context 初始化失败: {e}", exc_info=True)
+            logger.warning(msg_orchestrator.schema_init_failed(e), exc_info=True)
             # 不要让整个任务失败，允许降级运行（Agent 可能会使用旧的 schema 工具或猜测表结构）
-            logger.info("💡 将在没有 Schema Context 的情况下继续执行（可能需要 Agent 调用其他工具获取表结构）")
+            logger.info(msg_orchestrator.schema_init_fallback())
 
             # 创建一个空的 schema_context_retriever 以避免后续代码出错
             schema_context_retriever = None
@@ -350,7 +457,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             total_content_placeholders = len(content_placeholders)
             total_existing_placeholders = len(existing_placeholders or [])
 
-            logger.info(f"模板内容中发现 {total_content_placeholders} 个占位符，数据库中已有 {total_existing_placeholders} 个占位符记录")
+            logger.info(msg_orchestrator.placeholder_status_summary(total_content_placeholders, total_existing_placeholders))
 
             # 找出需要新建的占位符（在内容中但不在数据库中）
             new_placeholders_to_create = content_placeholders - existing_placeholder_names
@@ -359,11 +466,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             if new_placeholders_to_create:
                 update_progress(
                     22,
-                    f"发现 {len(new_placeholders_to_create)} 个新占位符，正在创建记录...",
+                    msg_orchestrator.placeholders_creating(len(new_placeholders_to_create)),
                     stage="placeholder_precheck",
                     details={"new_placeholders": len(new_placeholders_to_create)},
                 )
-                logger.info(f"Creating {len(new_placeholders_to_create)} new placeholder records")
+                logger.info(msg_orchestrator.placeholders_creating_log(len(new_placeholders_to_create)))
 
                 from app.models.template_placeholder import TemplatePlaceholder
                 import uuid
@@ -439,7 +546,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             if placeholders_need_analysis:
                 update_progress(
                     25,
-                    f"需要分析 {len(placeholders_need_analysis)} 个占位符（共 {total_placeholders} 个）...",
+                    msg_orchestrator.placeholder_needs_analysis(len(placeholders_need_analysis), total_placeholders),
                     stage="placeholder_analysis",
                     details={
                         "pending": len(placeholders_need_analysis),
@@ -488,7 +595,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             # 使用PlaceholderApplicationService单个处理每个占位符
             update_progress(
                 30,
-                f"正在逐个分析 {len(placeholders_need_analysis)} 个占位符...",
+                msg_orchestrator.placeholder_analysis_start(len(placeholders_need_analysis)),
                 stage="placeholder_analysis",
                 details={
                     "pending": len(placeholders_need_analysis),
@@ -517,7 +624,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                         update_progress(
                             30 + int(30 * processed_count / total_count),
-                            f"正在分析占位符: {ph.placeholder_name} ({processed_count + 1}/{total_count})",
+                            msg_orchestrator.placeholder_analysis_progress(ph.placeholder_name, processed_count + 1, total_count),
                             stage="placeholder_analysis",
                             placeholder=ph.placeholder_name,
                             details={
@@ -547,7 +654,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             # 使用新的 Celery 占位符分析任务
                             from app.services.infrastructure.task_queue.placeholder_tasks import analyze_single_placeholder_task
                             
-                            logger.info(f"🔄 使用 Celery 任务分析占位符: {ph.placeholder_name}")
+                            logger.info(msg_orchestrator.placeholder_analysis_celery(ph.placeholder_name))
                             
                             # 触发 Celery 任务
                             celery_task = analyze_single_placeholder_task.delay(
@@ -556,7 +663,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 template_id=str(task.template_id),
                                 data_source_id=str(task.data_source_id),
                                 user_id=str(task.owner_id),
-                                template_context=real_task_context.get("template_context"),
+                                template_context=real_task_context,
                                 time_window=real_task_context.get("time_window"),
                                 time_column=real_task_context.get("time_column"),
                                 data_range=real_task_context.get("data_range", "day"),
@@ -602,8 +709,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                     template_id=template_id,
                                     data_source_id=data_source_id,
                                     template_context=template_context,
-                                    user_id=user_id,
-                                    **template_context
+                                    user_id=user_id
                                 )
                                 
                                 # 转换为当前任务期望的格式（用于后续ETL步骤）
@@ -623,28 +729,80 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                         "error": analysis_result.get("error", "占位符分析失败")
                                     }
 
-                            sql_result = run_async(_analyze_placeholder_async(
-                                placeholder_name=ph.placeholder_name,
-                                placeholder_text=ph.placeholder_text,
-                                template_id=str(tpl_meta['id']),
-                                data_source_id=data_source_id,
-                                template_context=real_task_context,
-                                user_id=str(task.owner_id)
-                            ))
+                            template_id_for_analysis: Optional[str] = None
+                            if getattr(task, "template_id", None):
+                                template_id_for_analysis = str(task.template_id)
+                            elif getattr(ph, "template_id", None):
+                                template_id_for_analysis = str(ph.template_id)
+
+                            if not template_id_for_analysis:
+                                logger.warning(
+                                    "占位符 %s 缺少 template_id，跳过分析阶段",
+                                    ph.placeholder_name,
+                                )
+                                sql_result = {
+                                    "success": False,
+                                    "error": "缺少模板上下文，无法分析占位符"
+                                }
+                            else:
+                                sql_result = run_async(_analyze_placeholder_async(
+                                    placeholder_name=ph.placeholder_name,
+                                    placeholder_text=ph.placeholder_text,
+                                    template_id=template_id_for_analysis,
+                                    data_source_id=str(task.data_source_id),
+                                    template_context=real_task_context,
+                                    user_id=str(task.owner_id)
+                                ))
 
                         if sql_result.get("success"):
-                            # 👇 更新占位符SQL（不立即提交）
-                            ph.generated_sql = sql_result["sql"]
-                            # 只有当SQL真正验证通过时才标记为已验证
-                            ph.sql_validated = sql_result.get("validated", True)
-                            ph.agent_analyzed = True
-                            ph.analyzed_at = datetime.utcnow()
+                            # 🔍 SQL LLM 输出过滤：检查是否为有效SQL而非中文说明
+                            raw_sql = sql_result.get("sql", "").strip()
+                            
+                            def _is_valid_sql_structure(sql: str) -> bool:
+                                """检查SQL是否为有效的SQL结构，而非中文说明串"""
+                                if not sql:
+                                    return False
+                                
+                                # 检查SQL起始关键字
+                                sql_upper = sql[:20].upper()
+                                valid_starters = ("SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "EXPLAIN")
+                                if not any(sql_upper.startswith(s) for s in valid_starters):
+                                    return False
+                                
+                                # 检查是否包含大量中文且无SQL结构关键字
+                                chinese_chars = sum(1 for ch in sql[:200] if '\u4e00' <= ch <= '\u9fff')
+                                if chinese_chars > 10:  # 如果前200字符中有超过10个中文
+                                    sql_upper_full = sql.upper()
+                                    # 必须有SQL结构关键字
+                                    sql_structure_keywords = (" FROM ", " WHERE ", " JOIN ", " INTO ", " VALUES ", " SET ", " WHERE", "FROM", "JOIN")
+                                    if not any(kw in sql_upper_full for kw in sql_structure_keywords):
+                                        return False
+                                
+                                return True
+                            
+                            if not _is_valid_sql_structure(raw_sql):
+                                logger.error(
+                                    msg_orchestrator.sql_rejected_chinese(ph.placeholder_name, raw_sql[:100])
+                                )
+                                sql_result = {
+                                    "success": False,
+                                    "error": "LLM输出为中文说明或非SQL文本，而非有效SQL",
+                                    "sql": raw_sql
+                                }
+                            
+                            if sql_result.get("success"):
+                                # 👇 更新占位符SQL（不立即提交）
+                                ph.generated_sql = sql_result["sql"]
+                                # 只有当SQL真正验证通过时才标记为已验证
+                                ph.sql_validated = sql_result.get("validated", True)
+                                ph.agent_analyzed = True
+                                ph.analyzed_at = datetime.utcnow()
 
-                            # 如果SQL被自动修复，记录到metadata
-                            if sql_result.get("auto_fixed"):
-                                ph.agent_config = ph.agent_config or {}
-                                ph.agent_config["auto_fixed"] = True
-                                ph.agent_config["auto_fix_warning"] = sql_result.get("warning")
+                                # 如果SQL被自动修复，记录到metadata
+                                if sql_result.get("auto_fixed"):
+                                    ph.agent_config = ph.agent_config or {}
+                                    ph.agent_config["auto_fixed"] = True
+                                    ph.agent_config["auto_fix_warning"] = sql_result.get("warning")
 
                             # 🆕 记录SQL生成结果（作为验证成功）
                             if tool_recorder:
@@ -672,17 +830,23 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                             validation_status = "✅ 验证通过" if ph.sql_validated else "⚠️ 未验证"
                             auto_fix_info = " (自动修复)" if sql_result.get("auto_fixed") else ""
-                            logger.info(f"✅ 占位符 {ph.placeholder_name} SQL生成成功{auto_fix_info} {validation_status} (批次: {len(batch_updates)}/{BATCH_SIZE})")
+                            logger.info(msg_orchestrator.sql_generation_success_batch(
+                                ph.placeholder_name,
+                                len(batch_updates),
+                                BATCH_SIZE,
+                                auto_fix_info,
+                                validation_status
+                            ))
 
                             # 👇 达到批量大小时提交
                             if len(batch_updates) >= BATCH_SIZE:
                                 db.commit()
-                                logger.info(f"📦 批量提交 {len(batch_updates)} 个占位符到数据库")
+                                logger.info(msg_orchestrator.sql_generation_batch_commit(len(batch_updates)))
                                 batch_updates.clear()
 
                         else:
                             error_msg = sql_result.get("error", "SQL生成失败")
-                            logger.error(f"❌ 占位符 {ph.placeholder_name} SQL生成失败: {error_msg}")
+                            logger.error(msg_orchestrator.sql_generation_failed(ph.placeholder_name, error_msg))
 
                             # 🆕 切换到ERROR_RECOVERY阶段并记录错误
                             if state_manager:
@@ -708,7 +872,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                             update_progress(
                                 task_execution.progress_percentage or 30,
-                                f"占位符 {ph.placeholder_name} SQL生成失败",
+                                msg_orchestrator.sql_generation_failed_progress(ph.placeholder_name),
                                 stage="placeholder_analysis",
                                 status="failed",
                                 placeholder=ph.placeholder_name,
@@ -721,7 +885,11 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             )
 
                     except Exception as e:
-                        logger.error(f"❌ 处理占位符 {ph.placeholder_name} 时异常: {e}")
+                        # 记录完整堆栈，便于定位例如 KeyError('template_id') 的来源
+                        logger.error(
+                            msg_orchestrator.placeholder_exception(ph.placeholder_name, str(e)),
+                            exc_info=True
+                        )
                         events.append({
                             "type": "placeholder_processing_error",
                             "placeholder_name": ph.placeholder_name,
@@ -731,7 +899,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                         update_progress(
                             task_execution.progress_percentage or 30,
-                            f"占位符 {ph.placeholder_name} 处理异常",
+                            msg_orchestrator.placeholder_exception_progress(ph.placeholder_name),
                             stage="placeholder_analysis",
                             status="failed",
                             placeholder=ph.placeholder_name,
@@ -748,7 +916,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 # 👇 提交剩余的占位符
                 if batch_updates:
                     db.commit()
-                    logger.info(f"📦 最终批量提交 {len(batch_updates)} 个占位符到数据库")
+                    logger.info(msg_orchestrator.sql_generation_batch_commit(len(batch_updates)))
                     batch_updates.clear()
 
                 return processed_count
@@ -794,7 +962,45 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         try:
             # 重新加载最新的占位符数据（可能在Agent分析后有更新）
             placeholders = crud_template_placeholder.get_by_template(db, str(task.template_id))
-            etl_results = {}
+            etl_results: Dict[str, Dict[str, Any]] = {}
+            etl_stats = {
+                "processed": 0,
+                "success": 0,
+                "failed": 0,
+                "skipped": 0,
+            }
+            # 监控指标：SQL执行、模型调用、图表生成
+            metrics = {
+                "sql_execution": {"total": 0, "success": 0, "failed": 0},
+                "model_call": {"total": 0, "success": 0, "failed": 0},
+                "chart_generation": {"total": 0, "generated": 0, "failed": 0},
+            }
+
+            def _set_etl_result(
+                name: str,
+                *,
+                success: bool,
+                value: Any = None,
+                error: Optional[str] = None,
+                metadata: Optional[Dict[str, Any]] = None,
+                skipped: bool = False,
+            ) -> Dict[str, Any]:
+                entry = {
+                    "success": success,
+                    "value": value,
+                    "error": error,
+                    "metadata": metadata or {},
+                    "skipped": skipped,
+                }
+                etl_results[name] = entry
+                etl_stats["processed"] += 1
+                if skipped:
+                    etl_stats["skipped"] += 1
+                elif success:
+                    etl_stats["success"] += 1
+                else:
+                    etl_stats["failed"] += 1
+                return entry
 
             # 导入SQL占位符替换器
             from app.utils.sql_placeholder_utils import SqlPlaceholderReplacer
@@ -813,14 +1019,13 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 # sql_validated 应该在执行成功后设置，而不是作为执行的前提条件
                 if not ph.generated_sql or (ph.generated_sql and ph.generated_sql.strip() == ""):
                     logger.warning(f"跳过占位符 {ph.placeholder_name}: 无有效SQL")
-                    etl_results[ph.placeholder_name] = {
-                        "success": False,
-                        "error": "无有效SQL",
-                        "data": [],
-                        "metadata": {},
-                        "execution_time": 0,
-                        "row_count": 0
-                    }
+                    _set_etl_result(
+                        ph.placeholder_name,
+                        success=False,
+                        error="无有效SQL",
+                        metadata={"reason": "missing_sql"},
+                        skipped=True,
+                    )
                     update_progress(
                         task_execution.progress_percentage or 75,
                         f"跳过占位符 {ph.placeholder_name}: 无有效SQL",
@@ -1008,7 +1213,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                                 # 如果自动修复失败，记录错误并跳过执行
                                 if not validation_passed:
                                     error_msg = "\n".join(validation_result.get("errors", ["列验证失败"]))
-                                    etl_results[ph.placeholder_name] = f"ERROR: {error_msg}"
+                                    _set_etl_result(
+                                        ph.placeholder_name,
+                                        success=False,
+                                        error=error_msg,
+                                        metadata={"reason": "column_validation_failed"},
+                                    )
 
                                     update_progress(
                                         task_execution.progress_percentage or 75,
@@ -1051,11 +1261,15 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                         finally:
                             await connector.disconnect()
 
+                    # 📊 记录SQL执行指标
+                    metrics["sql_execution"]["total"] += 1
+                    
                     query_result = run_async(_execute_query_async())
 
                     # 4. 解包查询结果，提取实际数据值
                     # DorisQueryResult 没有 success 属性，只要没抛异常就是成功
                     if hasattr(query_result, 'data') and query_result.data is not None and not query_result.data.empty:
+                        metrics["sql_execution"]["success"] += 1
                         # 将DataFrame转换为字典列表
                         result_data = query_result.data.to_dict('records')
 
@@ -1090,11 +1304,27 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             )
 
                         # 存储实际的数据值
-                        etl_results[ph.placeholder_name] = actual_value
+                        _set_etl_result(
+                            ph.placeholder_name,
+                            success=True,
+                            value=actual_value,
+                            metadata={
+                                "reason": "query_success",
+                                "row_count": len(result_data),
+                            },
+                        )
                     else:
                         # 查询成功但无数据
                         logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 查询成功但无数据返回")
-                        etl_results[ph.placeholder_name] = None
+                        _set_etl_result(
+                            ph.placeholder_name,
+                            success=True,
+                            value=None,
+                            metadata={
+                                "reason": "query_success_empty",
+                                "row_count": 0,
+                            },
+                        )
 
                     # 更新进度
                     progress_increment = 10 / total_placeholders_count if total_placeholders_count else 0
@@ -1112,7 +1342,13 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
                 except Exception as e:
                     logger.error(f"Failed to execute SQL for placeholder {ph.placeholder_name}: {e}")
-                    etl_results[ph.placeholder_name] = f"ERROR: {str(e)}"
+                    metrics["sql_execution"]["failed"] += 1
+                    _set_etl_result(
+                        ph.placeholder_name,
+                        success=False,
+                        error=str(e),
+                        metadata={"reason": "execution_error"},
+                    )
 
                     update_progress(
                         task_execution.progress_percentage or int(current_progress),
@@ -1136,18 +1372,63 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
             # 构建执行结果
             # 统计成功的占位符（不是ERROR开头的）
-            successful_placeholders = [k for k, v in etl_results.items() if not str(v).startswith("ERROR")]
+            successful_placeholders = [k for k, v in etl_results.items() if v.get("success")]
+            failed_placeholders = {k: v for k, v in etl_results.items() if not v.get("success") and not v.get("skipped")}
+            skipped_placeholders = {k: v for k, v in etl_results.items() if v.get("skipped")}
 
+            # 计算成功率指标
+            placeholder_total = len(etl_results) if etl_results else 1
+            placeholder_success_rate = len(successful_placeholders) / placeholder_total if placeholder_total > 0 else 0
+            
+            sql_exec_total = metrics["sql_execution"]["total"]
+            sql_exec_success_rate = metrics["sql_execution"]["success"] / sql_exec_total if sql_exec_total > 0 else 0
+            
+            model_call_total = metrics["model_call"]["total"]
+            model_call_success_rate = metrics["model_call"]["success"] / model_call_total if model_call_total > 0 else 0
+            
+            chart_gen_total = metrics["chart_generation"]["total"]
+            chart_gen_rate = metrics["chart_generation"]["generated"] / chart_gen_total if chart_gen_total > 0 else 0
+            
             execution_result = {
-                "success": len(successful_placeholders) > 0,
+                "success": len(successful_placeholders) > 0 and not failed_placeholders,
                 "events": events,
                 "etl_results": etl_results,
                 "time_window": time_window,
                 "placeholders_processed": len(etl_results),
-                "placeholders_success": len(successful_placeholders)
+                "placeholders_success": len(successful_placeholders),
+                "placeholders_failed": list(failed_placeholders.keys()),
+                "placeholders_skipped": list(skipped_placeholders.keys()),
+                "stats": etl_stats,
+                "metrics": {
+                    "placeholder_success_rate": placeholder_success_rate,
+                    "sql_execution": {
+                        "total": sql_exec_total,
+                        "success": metrics["sql_execution"]["success"],
+                        "failed": metrics["sql_execution"]["failed"],
+                        "success_rate": sql_exec_success_rate,
+                    },
+                    "model_call": {
+                        "total": model_call_total,
+                        "success": metrics["model_call"]["success"],
+                        "failed": metrics["model_call"]["failed"],
+                        "success_rate": model_call_success_rate,
+                    },
+                    "chart_generation": {
+                        "total": chart_gen_total,
+                        "generated": metrics["chart_generation"]["generated"],
+                        "failed": metrics["chart_generation"]["failed"],
+                        "generation_rate": chart_gen_rate,
+                    },
+                },
             }
 
-            logger.info(f"📊 ETL处理完成: {len(successful_placeholders)}/{len(etl_results)} 个占位符成功")
+            logger.info(
+                "📊 ETL处理完成: 成功 %s, 失败 %s, 跳过 %s / 总计 %s",
+                etl_stats["success"],
+                etl_stats["failed"],
+                etl_stats["skipped"],
+                etl_stats["processed"],
+            )
 
         except Exception as e:
             logger.error(f"ETL processing failed: {e}")
@@ -1157,6 +1438,47 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                 "error": str(e),
                 "time_window": time_window,
             }
+
+        placeholder_render_data: Dict[str, Any] = {}
+        placeholder_errors: Dict[str, str] = {}
+        etl_result_entries = execution_result.get("etl_results") or {}
+        for placeholder_name, result_entry in etl_result_entries.items():
+            if isinstance(result_entry, dict) and "success" in result_entry:
+                if result_entry.get("success"):
+                    value = result_entry.get("value")
+                    placeholder_render_data[placeholder_name] = value
+                else:
+                    # 仅将非 skipped 的占位符计入错误
+                    if not result_entry.get("skipped"):
+                        placeholder_errors[placeholder_name] = result_entry.get("error") or "未知错误"
+                    placeholder_render_data[placeholder_name] = None
+            else:
+                placeholder_render_data[placeholder_name] = result_entry
+
+        execution_result["placeholder_errors"] = placeholder_errors
+        execution_result["render_placeholder_data"] = placeholder_render_data
+
+        # 数据质量闸门：检查占位符数据中是否包含错误关键词
+        def _check_data_quality_gate(data: Dict[str, Any]) -> Tuple[bool, List[str]]:
+            """
+            数据质量闸门：检查占位符数据中是否包含错误关键词
+            返回 (是否通过, 错误列表)
+            """
+            error_keywords = ["ERROR:", "无有效SQL", "执行失败", "验证失败", "SQL 验证失败", "占位符分析失败"]
+            quality_issues = []
+            
+            for name, value in data.items():
+                if value is None:
+                    continue
+                str_value = str(value)
+                # 检查是否为错误文本（长度限制：避免检查过大的数据）
+                if len(str_value) < 500:  # 只检查较短的数据值（通常是错误消息）
+                    for keyword in error_keywords:
+                        if keyword in str_value:
+                            quality_issues.append(f"{name}: 包含错误关键词 '{keyword}'")
+                            break  # 每个占位符只记录一次
+            
+            return len(quality_issues) == 0, quality_issues
 
         # 8. 生成文档（使用模板 + doc_assembler）
         update_progress(
@@ -1171,116 +1493,151 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
         tpl_meta = None  # 初始化模板元数据，用于后续清理
         report_generation_error: Optional[str] = None
-        try:
-            from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path, cleanup_template_temp_dir
-            from app.services.infrastructure.document.word_template_service import WordTemplateService
-            from io import BytesIO
-            from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+        etl_phase_success = execution_result.get("success", False)
+        
+        # 数据质量闸门检查
+        quality_passed, quality_issues = _check_data_quality_gate(placeholder_render_data)
+        if not quality_passed:
+            logger.error(f"数据质量检查失败: {quality_issues}")
+            etl_phase_success = False  # 将质量检查失败视为 ETL 失败
+        
+        # 🆕 文档生成容错策略（通过 settings 配置）
+        failed_placeholders = execution_result.get("placeholders_failed", [])
+        skipped_placeholders = execution_result.get("placeholders_skipped", [])
+        successful_placeholders_count = execution_result.get("placeholders_success", 0)
 
-            # 仅在有模板文件时生成
-            if getattr(task, 'template_id', None):
-                tpl_meta = resolve_docx_template_path(db, str(task.template_id))
+        max_failed_allowed = getattr(settings, "REPORT_MAX_FAILED_PLACEHOLDERS_FOR_DOC", 0)
+        allow_quality_issues = getattr(settings, "REPORT_ALLOW_QUALITY_ISSUES", False)
 
-                # 检查是否使用直接存储模式（优化版本）
-                use_direct_storage = getattr(settings, 'USE_DIRECT_STORAGE', True)
+        # 允许在有限失败下继续生成（需至少有部分成功数据）
+        tolerance_passed = (
+            len(failed_placeholders) <= max_failed_allowed and successful_placeholders_count > 0
+        )
 
-                if use_direct_storage:
-                    # 新模式：使用WordTemplateService直接处理
-                    word_service = WordTemplateService()
+        # 质量闸门可配置放行
+        quality_gate_passed = quality_passed or allow_quality_issues
 
-                    # 准备任务信息用于存储键生成
-                    from app.models.user import User
-                    user = db.query(User).filter(User.id == task.owner_id).first()
-                    tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
+        should_generate_document = etl_phase_success or (tolerance_passed and quality_gate_passed)
 
+        # 🆕 若在容错条件下继续生成文档，则为失败占位符注入友好占位文本，避免文档出现空白
+        if should_generate_document and not etl_phase_success and tolerance_passed:
+            for failed_name in failed_placeholders:
+                # 仅在当前渲染数据为空时注入占位文本
+                if placeholder_render_data.get(failed_name) in (None, ""):
+                    # 注意：避免触发质量闸门的关键词（不要包含 “ERROR/失败/验证失败/无有效SQL” 等字样）
+                    placeholder_render_data[failed_name] = f"【占位提示：数据暂不可用，系统将在后续自动补充（{failed_name}）】"
+
+        if not should_generate_document:
+            # 构建详细的失败原因
+            failure_reasons = []
+            # 仅统计真实失败（不包含 skipped）
+            failed_count = len(failed_placeholders)
+            skipped_count = len(skipped_placeholders)
+            if failed_count:
+                failure_reasons.append(f"占位符错误(不含跳过): {failed_count}个")
+            if skipped_count:
+                failure_reasons.append(f"跳过: {skipped_count}个")
+            if not quality_passed and not allow_quality_issues:
+                failure_reasons.append(f"数据质量检查失败: {', '.join(quality_issues[:3])}")  # 最多显示前3个
+
+            report_generation_error = "ETL阶段存在失败，占位符数据不完整，已跳过文档生成"
+            if failure_reasons:
+                report_generation_error += f" ({'; '.join(failure_reasons)})"
+            
+            logger.warning(report_generation_error)
+            execution_result["report"] = {
+                "error": report_generation_error,
+                "generation_mode": "skipped_due_to_etl_failure",
+                "placeholder_errors": placeholder_errors,
+                "quality_issues": quality_issues if not quality_passed else [],
+            }
+        else:
+            try:
+                from app.services.infrastructure.document.template_path_resolver import resolve_docx_template_path, cleanup_template_temp_dir
+                from app.services.infrastructure.document.word_template_service import WordTemplateService
+                from io import BytesIO
+                from app.services.infrastructure.storage.hybrid_storage_service import get_hybrid_storage_service
+
+                if not getattr(task, "template_id", None):
+                    report_generation_error = "任务未配置模板，跳过文档生成"
+                    logger.warning(report_generation_error)
+                    execution_result["report"] = {
+                        "error": report_generation_error,
+                        "generation_mode": "skipped"
+                    }
+                else:
+                    tpl_meta = resolve_docx_template_path(db, str(task.template_id))
                     safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
                     os.makedirs(safe_tmp_dir, exist_ok=True)
-                    docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
+                    docx_out = os.path.join(
+                        safe_tmp_dir,
+                        f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx",
+                    )
 
-                    # 使用WordTemplateService处理文档
-                    assemble_res = run_async(word_service.process_document_template(
-                        template_path=tpl_meta['path'],
-                        placeholder_data=etl_results,
-                        output_path=docx_out,
-                        container=container,
-                        use_agent_charts=True,
-                        use_agent_optimization=True,
-                        user_id=str(task.owner_id)
-                    ))
+                    word_service = WordTemplateService()
+                    assemble_res = run_async(
+                        word_service.process_document_template(
+                            template_path=tpl_meta["path"],
+                            placeholder_data=placeholder_render_data,
+                            output_path=docx_out,
+                            container=container,
+                            use_agent_charts=True,
+                            use_agent_optimization=True,
+                            user_id=str(task.owner_id),
+                        )
+                    )
 
-                    if assemble_res.get('success'):
-                        # 上传到存储
-                        storage = get_hybrid_storage_service()
-                        with open(docx_out, 'rb') as f:
-                            file_bytes = f.read()
-
-                        ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                        # 使用任务名称作为路径和文件名
-                        import re
-                        safe_task_name = re.sub(r'[<>:"/\\|?*]', '_', task.name or f'task_{task.id}')
-                        object_key = f"reports/{tenant_id}/{safe_task_name}/report_{ts}.docx"
-                        upload_result = storage.upload_with_key(BytesIO(file_bytes), object_key, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-                        storage_path = upload_result.get("file_path")
-
-                        execution_result["report"] = {
-                            "storage_path": storage_path,
-                            "backend": upload_result.get("backend"),
-                            "size": upload_result.get("size", len(file_bytes)),
-                            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "generation_mode": "word_template_service"
-                        }
-                        logger.info(f"✅ 报告生成并存储完成: {storage_path}")
-                    else:
-                        report_generation_error = assemble_res.get('error') or "文档处理失败"
-                        logger.error(f"文档生成失败: {report_generation_error}")
+                    if not assemble_res.get("success"):
+                        report_generation_error = assemble_res.get("error") or "文档处理失败"
+                        logger.error("文档生成失败: %s", report_generation_error)
                         execution_result["report"] = {
                             "error": report_generation_error,
-                            "generation_mode": "word_template_service"
+                            "generation_mode": assemble_res.get("generation_mode", "word_template_service"),
                         }
+                    else:
+                        payload_bytes: Optional[bytes] = None
+                        document_bytes = assemble_res.get("document_bytes")
+                        if document_bytes:
+                            payload_bytes = document_bytes
+                        else:
+                            output_path = assemble_res.get("output_path") or docx_out
+                            if os.path.exists(output_path):
+                                with open(output_path, "rb") as f:
+                                    payload_bytes = f.read()
 
-                else:
-                    # 传统模式：本地生成后上传
-                    word_service_traditional = WordTemplateService()
-                    safe_tmp_dir = os.path.join(os.path.expanduser('~'), ".autoreportai", "tmp")
-                    os.makedirs(safe_tmp_dir, exist_ok=True)
-                    docx_out = os.path.join(safe_tmp_dir, f"report_{task.id}_{int(datetime.utcnow().timestamp())}.docx")
-                    assemble_res = run_async(word_service_traditional.process_document_template(
-                        template_path=tpl_meta['path'],
-                        placeholder_data=etl_results,
-                        output_path=docx_out,
-                        container=container,
-                        use_agent_charts=True,
-                        use_agent_optimization=True,
-                        user_id=str(task.owner_id)
-                    ))
+                        if not payload_bytes:
+                            raise ValueError("模板组装成功但未生成可用的文档内容")
 
-                    if assemble_res.get('success') and assemble_res.get('output_path'):
-                        # 上传到存储
-                        storage = get_hybrid_storage_service()
-                        with open(assemble_res['output_path'], 'rb') as f:
-                            file_bytes = f.read()
-                        # 采用对象键: reports/{tenant_id}/{task_name}/report_{timestamp}.docx
-                        ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                        # 获取租户（若无租户字段，则使用用户ID代替）
                         from app.models.user import User
+
                         user = db.query(User).filter(User.id == task.owner_id).first()
-                        tenant_id = getattr(user, 'tenant_id', str(task.owner_id)) if user else str(task.owner_id)
-                        # 使用任务名称作为路径和文件名
+                        tenant_id = getattr(user, "tenant_id", str(task.owner_id)) if user else str(task.owner_id)
+
                         import re
-                        slug = re.sub(r'[^\w\-]+', '-', (task.name or f'task_{task.id}')).strip('-')[:50]
+
+                        slug = re.sub(r"[^\w\-]+", "-", (task.name or f"task_{task.id}")).strip("-")[:50]
+                        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
                         object_name = f"reports/{tenant_id}/{slug}/report_{ts}.docx"
+                        friendly_name = assemble_res.get("friendly_file_name") or f"{slug}_{ts}.docx"
+
+                        storage = get_hybrid_storage_service()
                         update_progress(
                             92,
                             "正在上传文档到存储...",
                             stage="document_generation",
                             pipeline_status=PipelineTaskStatus.ASSEMBLING,
                         )
-                        upload = storage.upload_with_key(BytesIO(file_bytes), object_name, content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        upload_result = storage.upload_with_key(
+                            BytesIO(payload_bytes),
+                            object_name,
+                            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        )
+
                         execution_result["report"] = {
-                            "storage_path": upload.get("file_path"),
-                            "backend": upload.get("backend"),
-                            "friendly_name": f"{slug}_{ts}.docx",
-                            "generation_mode": "traditional_upload"
+                            "storage_path": upload_result.get("file_path"),
+                            "backend": upload_result.get("backend"),
+                            "friendly_name": friendly_name,
+                            "generation_mode": assemble_res.get("generation_mode", "word_template_service"),
                         }
                         update_progress(
                             95,
@@ -1288,36 +1645,23 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             stage="document_generation",
                             pipeline_status=PipelineTaskStatus.ASSEMBLING,
                         )
-                    else:
-                        report_generation_error = assemble_res.get('error') or "传统模式生成失败"
-                        logger.error(f"传统模式文档生成失败: {report_generation_error}")
-                        execution_result["report"] = {
-                            "error": report_generation_error,
-                            "generation_mode": "traditional_upload"
-                        }
-            else:
-                report_generation_error = "任务未配置模板，跳过文档生成"
-                logger.warning(report_generation_error)
+                        logger.info("✅ 报告生成并存储完成: %s", upload_result.get("file_path"))
+            except Exception as e:
+                report_generation_error = str(e)
+                logger.error(f"Document assembly failed: {e}")
+                existing_mode = (execution_result.get("report") or {}).get("generation_mode")
                 execution_result["report"] = {
                     "error": report_generation_error,
-                    "generation_mode": "skipped"
+                    "generation_mode": existing_mode or "assembly_error"
                 }
-        except Exception as e:
-            report_generation_error = str(e)
-            logger.error(f"Document assembly failed: {e}")
-            existing_mode = (execution_result.get("report") or {}).get("generation_mode")
-            execution_result["report"] = {
-                "error": report_generation_error,
-                "generation_mode": existing_mode or "assembly_error"
-            }
-        finally:
-            # 清理模板临时文件
-            if tpl_meta:
-                try:
-                    cleanup_template_temp_dir(tpl_meta)
-                    logger.info("✅ 模板临时文件已清理")
-                except Exception as cleanup_error:
-                    logger.warning(f"清理模板临时文件失败: {cleanup_error}")
+            finally:
+                # 清理模板临时文件
+                if tpl_meta:
+                    try:
+                        cleanup_template_temp_dir(tpl_meta)
+                        logger.info("✅ 模板临时文件已清理")
+                    except Exception as cleanup_error:
+                        logger.warning(f"清理模板临时文件失败: {cleanup_error}")
         
         report_info = execution_result.get("report") or {}
         if not report_info:
@@ -1332,7 +1676,7 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             if not report_info.get("error"):
                 report_info["error"] = report_generation_error or "报告文档未生成"
 
-        etl_success = execution_result.get("success", False)
+        etl_success = etl_phase_success
         execution_result["etl_success"] = etl_success
         overall_success = etl_success and report_generated
         execution_result["success"] = overall_success

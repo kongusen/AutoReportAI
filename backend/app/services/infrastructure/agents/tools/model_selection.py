@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from dataclasses import dataclass, asdict, is_dataclass
 
 from loom.interfaces.tool import BaseTool
@@ -71,6 +71,28 @@ class TaskComplexityAssessmentTool(BaseTool):
         - factors: 影响复杂度的因素
         - confidence: 评估置信度
         """
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class AssessComplexityArgs(BaseModel):
+            task_description: str = Field(description="任务描述")
+            context: Optional[Dict[str, Any]] = Field(default=None, description="任务上下文信息")
+
+        self.args_schema = AssessComplexityArgs
+
+    def get_schema(self) -> Dict[str, Any]:
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
+        return {
+            "type": "function",
+            "function": {
+                "name": "assess_task_complexity",
+                "description": "使用LLM评估任务复杂度",
+                "parameters": parameters,
+            },
+        }
     
     async def run(self, task_description: str, context: Optional[Dict[str, Any]] = None, **kwargs) -> LLMTaskComplexityAssessment:
         """Loom框架要求的run方法"""
@@ -159,6 +181,30 @@ class ModelSelectionTool(BaseTool):
         - expected_performance: 预期性能
         - fallback_model: 备用模型
         """
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class ModelSelectionArgs(BaseModel):
+            task_description: str = Field(description="任务描述")
+            complexity_score: float = Field(description="任务复杂度评分 (0.0-1.0)", ge=0.0, le=1.0)
+            user_id: str = Field(description="用户ID")
+            task_type: str = Field(default="placeholder_analysis", description="任务类型")
+
+        self.args_schema = ModelSelectionArgs
+
+    def get_schema(self) -> Dict[str, Any]:
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
+        return {
+            "type": "function",
+            "function": {
+                "name": "select_optimal_model",
+                "description": "使用LLM选择最合适的模型",
+                "parameters": parameters,
+            },
+        }
     
     async def run(self, task_description: str, complexity_score: float, user_id: str, task_type: str = "placeholder_analysis", **kwargs) -> LLMModelSelectionDecision:
         """Loom框架要求的run方法"""

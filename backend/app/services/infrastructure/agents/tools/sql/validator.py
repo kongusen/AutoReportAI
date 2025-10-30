@@ -11,9 +11,10 @@ SQL 验证工具
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -68,16 +69,32 @@ class ValidationReport:
 class SQLValidatorTool(BaseTool):
     """SQL 验证工具"""
     
-    def __init__(self, container: Any):
+    def __init__(self, container: Any, connection_config: Optional[Dict[str, Any]] = None):
         """
         Args:
             container: 服务容器
+            connection_config: 数据源连接配置（在初始化时注入，优先使用内部的配置）
         """
         super().__init__()
         self.name = "sql_validator"
         self.category = ToolCategory.SQL
         self.description = "验证 SQL 查询的语法正确性和逻辑合理性"
         self.container = container
+        # 🔥 关键修复：在初始化时注入 connection_config
+        self._connection_config = connection_config
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SQLValidatorArgs(BaseModel):
+            sql: str = Field(description="要验证的 SQL 查询")
+            validation_level: Literal["basic", "strict", "comprehensive"] = Field(
+                default="comprehensive", description="验证级别"
+            )
+            check_syntax: bool = Field(default=True, description="是否检查语法")
+            check_semantics: bool = Field(default=True, description="是否检查语义")
+            check_performance: bool = Field(default=False, description="是否检查性能")
+            schema_info: Optional[Dict[str, Any]] = Field(default=None, description="Schema 信息（可选）")
+
+        self.args_schema = SQLValidatorArgs
         
         # SQL 关键字
         self.sql_keywords = {
@@ -99,58 +116,24 @@ class SQLValidatorTool(BaseTool):
         }
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "sql_validator",
                 "description": "验证 SQL 查询的语法正确性和逻辑合理性",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql": {
-                            "type": "string",
-                            "description": "要验证的 SQL 查询"
-                        },
-                        "connection_config": {
-                            "type": "object",
-                            "description": "数据源连接配置"
-                        },
-                        "validation_level": {
-                            "type": "string",
-                            "enum": ["basic", "strict", "comprehensive"],
-                            "default": "comprehensive",
-                            "description": "验证级别"
-                        },
-                        "check_syntax": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否检查语法"
-                        },
-                        "check_semantics": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否检查语义"
-                        },
-                        "check_performance": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "是否检查性能"
-                        },
-                        "schema_info": {
-                            "type": "object",
-                            "description": "Schema 信息（可选）"
-                        }
-                    },
-                    "required": ["sql", "connection_config"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(
         self,
         sql: str,
-        connection_config: Dict[str, Any],
+        connection_config: Optional[Dict[str, Any]] = None,
         validation_level: str = "comprehensive",
         check_syntax: bool = True,
         check_semantics: bool = True,
@@ -163,7 +146,7 @@ class SQLValidatorTool(BaseTool):
         
         Args:
             sql: 要验证的 SQL 查询
-            connection_config: 数据源连接配置
+            connection_config: 数据源连接配置（可选，优先使用初始化时注入的配置）
             validation_level: 验证级别
             check_syntax: 是否检查语法
             check_semantics: 是否检查语义
@@ -176,6 +159,15 @@ class SQLValidatorTool(BaseTool):
         logger.info(f"🔍 [SQLValidatorTool] 验证 SQL")
         logger.info(f"   验证级别: {validation_level}")
         logger.info(f"   SQL 长度: {len(sql)} 字符")
+        
+        # 🔥 关键修复：优先使用初始化时注入的 connection_config，允许从 kwargs 临时传入以便验证/测试
+        connection_config = self._connection_config or connection_config or kwargs.get("connection_config")
+        if not connection_config:
+            return {
+                "success": False,
+                "error": "未配置数据源连接，请在初始化工具时提供 connection_config",
+                "report": None
+            }
         
         try:
             # 🔧 在验证阶段安全替换时间占位符，避免语法校验误报
@@ -263,12 +255,15 @@ class SQLValidatorTool(BaseTool):
     async def _get_schema_info(self, connection_config: Dict[str, Any]) -> Dict[str, Any]:
         """获取 Schema 信息"""
         try:
-            from .schema.retrieval import create_schema_retrieval_tool
-            
-            retrieval_tool = create_schema_retrieval_tool(self.container)
-            
-            result = await retrieval_tool.execute(
-                connection_config=connection_config,
+            from ..schema.retrieval import create_schema_retrieval_tool
+
+            # 🔥 修复：传递 connection_config 以便工具能正确初始化
+            retrieval_tool = create_schema_retrieval_tool(
+                self.container,
+                connection_config=self._connection_config or connection_config
+            )
+
+            result = await retrieval_tool.run(
                 include_relationships=True,
                 include_constraints=True,
                 format="detailed"
@@ -660,17 +655,21 @@ class SQLValidatorTool(BaseTool):
         return issues
 
 
-def create_sql_validator_tool(container: Any) -> SQLValidatorTool:
+def create_sql_validator_tool(
+    container: Any,
+    connection_config: Optional[Dict[str, Any]] = None
+) -> SQLValidatorTool:
     """
     创建 SQL 验证工具
     
     Args:
         container: 服务容器
+        connection_config: 数据源连接配置（在初始化时注入）
         
     Returns:
         SQLValidatorTool 实例
     """
-    return SQLValidatorTool(container)
+    return SQLValidatorTool(container, connection_config=connection_config)
 
 
 # 导出

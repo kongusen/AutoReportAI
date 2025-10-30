@@ -11,9 +11,10 @@ SQL 自动修复工具
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -85,6 +86,19 @@ class SQLAutoFixerTool(BaseTool):
         self.description = "自动修复 SQL 查询中的常见问题" 
         self.container = container
         
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class SQLAutoFixerArgs(BaseModel):
+            sql: str = Field(description="要修复的 SQL 查询")
+            connection_config: Dict[str, Any] = Field(description="数据源连接配置")
+            fix_types: Optional[List[Literal["syntax", "semantic", "performance", "style"]]] = Field(
+                default=["syntax", "semantic", "performance"], description="要执行的修复类型"
+            )
+            auto_apply: bool = Field(default=False, description="是否自动应用修复")
+            confidence_threshold: float = Field(default=0.8, description="自动应用修复的置信度阈值")
+            schema_info: Optional[Dict[str, Any]] = Field(default=None, description="Schema 信息（可选）")
+
+        self.args_schema = SQLAutoFixerArgs
+        
         # 常见错误模式
         self.error_patterns = {
             "missing_from": r'SELECT\s+.*?(?=\s+WHERE|\s+GROUP|\s+ORDER|\s+HAVING|\s+LIMIT|$)',
@@ -113,48 +127,18 @@ class SQLAutoFixerTool(BaseTool):
         }
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "sql_auto_fixer",
                 "description": "自动修复 SQL 查询中的常见问题",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "sql": {
-                            "type": "string",
-                            "description": "要修复的 SQL 查询"
-                        },
-                        "connection_config": {
-                            "type": "object",
-                            "description": "数据源连接配置"
-                        },
-                        "fix_types": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "enum": ["syntax", "semantic", "performance", "style"],
-                            "default": ["syntax", "semantic", "performance"],
-                            "description": "要执行的修复类型"
-                        },
-                        "auto_apply": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "是否自动应用修复"
-                        },
-                        "confidence_threshold": {
-                            "type": "number",
-                            "default": 0.8,
-                            "description": "自动应用修复的置信度阈值"
-                        },
-                        "schema_info": {
-                            "type": "object",
-                            "description": "Schema 信息（可选）"
-                        }
-                    },
-                    "required": ["sql", "connection_config"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(
@@ -258,12 +242,15 @@ class SQLAutoFixerTool(BaseTool):
     async def _get_schema_info(self, connection_config: Dict[str, Any]) -> Dict[str, Any]:
         """获取 Schema 信息"""
         try:
-            from .schema.retrieval import create_schema_retrieval_tool
-            
-            retrieval_tool = create_schema_retrieval_tool(self.container)
-            
-            result = await retrieval_tool.execute(
-                connection_config=connection_config,
+            from ..schema.retrieval import create_schema_retrieval_tool
+
+            # 🔥 修复：传递 connection_config 以便工具能正确初始化
+            retrieval_tool = create_schema_retrieval_tool(
+                self.container,
+                connection_config=connection_config
+            )
+
+            result = await retrieval_tool.run(
                 include_relationships=True,
                 include_constraints=True,
                 format="detailed"

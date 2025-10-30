@@ -11,9 +11,10 @@ from loom.interfaces.tool import BaseTool
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 from dataclasses import dataclass
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 from ...types import ToolCategory, ContextInfo
@@ -98,46 +99,32 @@ class ChartAnalyzerTool(BaseTool):
 
         self.description = "分析图表数据特征和模式" 
         self.container = container
+        
+        # 使用 Pydantic 定义参数模式（args_schema）
+        class ChartAnalyzerArgs(BaseModel):
+            chart_data: Dict[str, Any] = Field(description="图表数据")
+            chart_config: Optional[Dict[str, Any]] = Field(default=None, description="图表配置")
+            analysis_focus: Optional[List[Literal[
+                "patterns", "trends", "outliers", "correlations", "distribution", "optimization"
+            ]]] = Field(default=["patterns", "trends", "outliers"], description="分析重点")
+            sensitivity: float = Field(default=0.5, description="分析敏感度 (0-1)")
+            include_recommendations: bool = Field(default=True, description="是否包含建议")
+
+        self.args_schema = ChartAnalyzerArgs
     
     def get_schema(self) -> Dict[str, Any]:
-        """获取工具参数模式"""
+        """获取工具参数模式（基于 args_schema 生成）"""
+        try:
+            parameters = self.args_schema.model_json_schema()
+        except Exception:
+            parameters = self.args_schema.schema()  # type: ignore[attr-defined]
         return {
             "type": "function",
             "function": {
                 "name": "chart_analyzer",
                 "description": "分析图表数据特征和模式",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "chart_data": {
-                            "type": "object",
-                            "description": "图表数据"
-                        },
-                        "chart_config": {
-                            "type": "object",
-                            "description": "图表配置"
-                        },
-                        "analysis_focus": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "enum": ["patterns", "trends", "outliers", "correlations", "distribution", "optimization"],
-                            "default": ["patterns", "trends", "outliers"],
-                            "description": "分析重点"
-                        },
-                        "sensitivity": {
-                            "type": "number",
-                            "default": 0.5,
-                            "description": "分析敏感度 (0-1)"
-                        },
-                        "include_recommendations": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "是否包含建议"
-                        }
-                    },
-                    "required": ["chart_data"]
-                }
-            }
+                "parameters": parameters,
+            },
         }
     
     async def run(

@@ -102,32 +102,29 @@ columns_sql = f"SHOW FULL COLUMNS FROM `{table_name}`"
 
 **实现方案:**
 ```python
-# runtime.py:29-55
-class IterationTracker:
-    """迭代跟踪器"""
+# runtime.py:655+
+class AdaptiveIterationTracker:
+    """自适应迭代跟踪器 - 根据目标和复杂度智能跟踪迭代"""
 
-    def __init__(self):
-        self.count = 0
-        self.tool_call_count = 0
-        self.last_tool_call_time = 0
-
-    def on_tool_call(self):
-        """工具调用时调用"""
-        self.tool_call_count += 1
-        self.last_tool_call_time = time.time()
+    def __init__(self, goal: str, max_iterations: int = 20, ...):
+        self.goal = goal
+        self.max_iterations = max_iterations
+        # 提供完整的自适应迭代跟踪功能
 
     def estimate_iteration_count(self) -> int:
-        """估算迭代次数 - 基于工具调用次数"""
-        if self.tool_call_count == 0:
-            return 1
-        return max(1, self.tool_call_count // 2)
+        """智能估算迭代次数 - 基于目标和复杂度"""
+        # 实现了基于复杂度的智能估算
 ```
 
 **使用位置:**
 ```python
-# runtime.py:182-184
-estimated_iterations = self._iteration_tracker.estimate_iteration_count()
-self._current_state.iteration_count = estimated_iterations
+# runtime.py:1276+
+self._iteration_tracker = AdaptiveIterationTracker(
+    goal=request.goal,
+    max_iterations=request.max_iterations or 20,
+    Framework=...
+)
+# 使用 AdaptiveIterationTracker 进行智能迭代跟踪
 ```
 
 **验证结果:** ✅ **已实现**

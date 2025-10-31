@@ -39,10 +39,18 @@ logger = logging.getLogger(__name__)
 class WordTemplateService:
     """Word文档模板处理服务"""
 
-    def __init__(self, font_path: Optional[str] = None):
+    def __init__(self, font_path: Optional[str] = None, chart_dpi: int = 150):
+        """
+        初始化 Word 模板服务
+
+        Args:
+            font_path: 字体文件路径（可选）
+            chart_dpi: 图表分辨率，默认 150
+        """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.font_path = font_path
         self.font_prop = None
+        self.chart_dpi = chart_dpi  # 配置化 DPI
 
         if not DOCX_AVAILABLE:
             self.logger.warning("python-docx 未安装，Word文档功能将受限")
@@ -205,7 +213,6 @@ class WordTemplateService:
                         self.logger.warning(f"⚠️ 占位符 {matched_key} 数据为空，使用空字符串替换")
                     else:
                         self.logger.info(f"✅ 找到匹配: {placeholder} -> {matched_key} = {str(value)[:50]}")
-                    replaced_count += 1
 
                     str_value = str(value) if value is not None else ""
 
@@ -239,15 +246,34 @@ class WordTemplateService:
 
                         # 执行替换
                         if start_run is not None and end_run is not None:
-                            start_run_obj = p.runs[start_run]
-                            start_run_obj.text = start_run_obj.text[:start_run_char_index] + str_value
+                            try:
+                                # 检查索引有效性
+                                if start_run >= len(p.runs) or end_run >= len(p.runs):
+                                    self.logger.warning(f"Run索引超出范围: start={start_run}, end={end_run}, total={len(p.runs)}")
+                                    continue
+                                
+                                start_run_obj = p.runs[start_run]
+                                # 保留第一个 run 的格式，只更新文本
+                                original_start_text = start_run_obj.text
+                                start_run_obj.text = original_start_text[:start_run_char_index] + str_value
 
-                            end_run_obj = p.runs[end_run]
-                            end_run_obj.text = end_run_obj.text[end_run_char_index:]
+                                if end_run > start_run:
+                                    end_run_obj = p.runs[end_run]
+                                    original_end_text = end_run_obj.text
+                                    end_run_obj.text = original_end_text[end_run_char_index:]
 
-                            # 清空中间的runs
-                            for i in range(start_run + 1, end_run):
-                                p.runs[i].text = ""
+                                    # 清空中间的runs
+                                    for i in range(start_run + 1, end_run):
+                                        if i < len(p.runs):
+                                            p.runs[i].text = ""
+
+                                replaced_count += 1
+                            except IndexError as idx_error:
+                                self.logger.warning(f"替换占位符时索引错误: {idx_error}, placeholder={placeholder}")
+                                continue
+                            except Exception as replace_error:
+                                self.logger.warning(f"替换占位符时异常: {replace_error}, placeholder={placeholder}")
+                                continue
 
         # 处理表格
         for table in doc.tables:
@@ -643,61 +669,120 @@ class WordTemplateService:
         创建图表
         参考用户提供的create_chart逻辑
         """
+        if not MATPLOTLIB_AVAILABLE:
+            self.logger.warning("matplotlib 不可用，无法生成图表")
+            return None
+        
         try:
-            if not data or not isinstance(data, list) or not all(isinstance(i, dict) for i in data):
-                self.logger.warning(f"⚠️ 警告: '{title}' 的图表数据格式不正确，跳过生成。")
+            if not data or not isinstance(data, list):
+                self.logger.warning(f"⚠️ 警告: '{title}' 的图表数据为空或不是列表，跳过生成。")
+                return None
+
+            # 验证数据格式
+            if not all(isinstance(i, dict) for i in data):
+                self.logger.warning(f"⚠️ 警告: '{title}' 的图表数据格式不正确（期望字典列表），跳过生成。")
                 return None
 
             first_item = data[0]
+            if not isinstance(first_item, dict) or not first_item:
+                self.logger.warning(f"⚠️ 警告: '{title}' 的首个数据项无效，跳过生成。")
+                return None
+            
             label_key = None
             value_key = None
 
-            # 自动识别标签和数值列
+            # 自动识别标签和数值列（优先字符串作为标签，数值作为值）
             for key, value in first_item.items():
-                if isinstance(value, str):
+                if label_key is None and isinstance(value, str):
                     label_key = key
-                elif isinstance(value, (int, float)):
+                if value_key is None and isinstance(value, (int, float)):
                     value_key = key
+                # 如果都找到了，提前退出
+                if label_key and value_key:
+                    break
 
             if label_key is None or value_key is None:
                 self.logger.warning(f"⚠️ 警告: 无法从 '{title}' 的数据中识别标签和数值列，跳过生成。")
                 return None
 
-            # 提取数据
-            labels = [item.get(label_key, '') for item in data]
-            values = [float(item.get(value_key, 0)) for item in data]
+            # 提取数据（过滤无效值）
+            labels = []
+            values = []
+            for item in data:
+                label_val = item.get(label_key, '')
+                value_val = item.get(value_key)
+                
+                # 转换标签
+                if label_val is None:
+                    label_val = ''
+                labels.append(str(label_val))
+                
+                # 转换数值
+                try:
+                    if value_val is None:
+                        value_val = 0.0
+                    num_val = float(value_val)
+                    values.append(num_val)
+                except (ValueError, TypeError):
+                    self.logger.debug(f"跳过无效数值: {value_val}")
+                    values.append(0.0)
+            
+            if not labels or not values:
+                self.logger.warning(f"⚠️ 警告: '{title}' 提取的数据为空，跳过生成。")
+                return None
 
             # 创建图表
-            fig, ax = plt.subplots(figsize=(10, 6) if chart_type == 'bar' else (8, 8))
-            ax.set_title(title, fontsize=16, fontproperties=self.font_prop)
+            fig_size = (10, 6) if chart_type == 'bar' else (8, 8)
+            fig, ax = plt.subplots(figsize=fig_size)
+            
+            try:
+                ax.set_title(str(title)[:50], fontsize=16, fontproperties=self.font_prop)
 
-            if chart_type == 'bar':
-                ax.bar(labels, values)
-                ax.set_ylabel("数量", fontsize=12, fontproperties=self.font_prop)
-                plt.xticks(rotation=45, ha="right")
+                if chart_type == 'bar':
+                    ax.bar(labels, values)
+                    ax.set_ylabel("数量", fontsize=12, fontproperties=self.font_prop)
+                    plt.xticks(rotation=45, ha="right")
 
-                # 设置x轴标签字体
-                for tick_label in ax.get_xticklabels():
-                    if self.font_prop:
-                        tick_label.set_fontproperties(self.font_prop)
+                    # 设置x轴标签字体
+                    for tick_label in ax.get_xticklabels():
+                        if self.font_prop:
+                            tick_label.set_fontproperties(self.font_prop)
 
-                fig.tight_layout()
+                    fig.tight_layout()
 
-            elif chart_type == 'pie':
-                text_props = {'fontproperties': self.font_prop} if self.font_prop else {}
-                ax.pie(values, labels=labels, autopct='%1.1f%%', startangle=90, textprops=text_props)
-                ax.axis('equal')
+                elif chart_type == 'pie':
+                    text_props = {'fontproperties': self.font_prop} if self.font_prop else {}
+                    ax.pie(values, labels=labels, autopct='%1.1f%%', startangle=90, textprops=text_props)
+                    ax.axis('equal')
+                else:
+                    self.logger.warning(f"不支持的图表类型: {chart_type}，使用柱状图")
+                    ax.bar(labels, values)
+                    fig.tight_layout()
 
-            # 保存到内存缓冲区
-            img_buffer = io.BytesIO()
-            fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
-            img_buffer.seek(0)
-            plt.close(fig)
-
-            return img_buffer
+                # 保存到内存缓冲区
+                img_buffer = io.BytesIO()
+                # 使用配置的 DPI 值
+                fig.savefig(img_buffer, format='png', dpi=self.chart_dpi, bbox_inches='tight')
+                img_buffer.seek(0)
+                
+                # 验证生成的图片大小
+                buffer_size = img_buffer.getbuffer().nbytes
+                if buffer_size == 0:
+                    self.logger.error(f"生成的图表文件为空")
+                    plt.close(fig)
+                    return None
+                
+                self.logger.debug(f"图表生成成功: {title}, 大小: {buffer_size} bytes")
+                plt.close(fig)
+                return img_buffer
+                
+            except Exception as plot_error:
+                self.logger.error(f"绘图过程失败: {plot_error}", exc_info=True)
+                plt.close(fig)
+                return None
 
         except Exception as e:
-            self.logger.error(f"❌ 图表生成失败: {e}")
+            self.logger.error(f"❌ 图表生成失败: {e}", exc_info=True)
             return None
 
     def extract_placeholders_from_template(self, template_path: str) -> List[str]:
@@ -853,24 +938,55 @@ class WordTemplateService:
 word_template_service = WordTemplateService()
 
 
-def create_word_template_service(font_path: Optional[str] = None) -> WordTemplateService:
-    """创建Word模板服务实例"""
-    return WordTemplateService(font_path=font_path)
+def create_word_template_service(
+    font_path: Optional[str] = None,
+    chart_dpi: int = 150
+) -> WordTemplateService:
+    """
+    创建Word模板服务实例
+
+    Args:
+        font_path: 字体文件路径（可选）
+        chart_dpi: 图表分辨率，默认 150
+
+    Returns:
+        WordTemplateService 实例
+    """
+    return WordTemplateService(font_path=font_path, chart_dpi=chart_dpi)
 
 
 def create_agent_enhanced_word_service(
     font_path: Optional[str] = None,
+    chart_dpi: int = 150,
     container=None
 ) -> 'AgentEnhancedWordService':
-    """创建Agent增强的Word服务实例"""
-    return AgentEnhancedWordService(font_path=font_path, container=container)
+    """
+    创建Agent增强的Word服务实例
+
+    Args:
+        font_path: 字体文件路径（可选）
+        chart_dpi: 图表分辨率，默认 150
+        container: 服务容器
+
+    Returns:
+        AgentEnhancedWordService 实例
+    """
+    return AgentEnhancedWordService(font_path=font_path, chart_dpi=chart_dpi, container=container)
 
 
 class AgentEnhancedWordService(WordTemplateService):
     """Agent增强的Word服务，默认使用Agent生成图表"""
 
-    def __init__(self, font_path: Optional[str] = None, container=None):
-        super().__init__(font_path)
+    def __init__(self, font_path: Optional[str] = None, chart_dpi: int = 150, container=None):
+        """
+        初始化 Agent 增强的 Word 服务
+
+        Args:
+            font_path: 字体文件路径（可选）
+            chart_dpi: 图表分辨率，默认 150
+            container: 服务容器
+        """
+        super().__init__(font_path, chart_dpi)
         self.container = container
 
     async def process_document_template_enhanced(

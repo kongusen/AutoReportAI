@@ -40,7 +40,12 @@ class DocumentConfig:
     header: Optional[str] = None
     footer: Optional[str] = None
     watermark: Optional[str] = None
-    
+
+    # 图表配置
+    max_chart_width_inches: float = 6.5  # 最大图表宽度（英寸）
+    chart_dpi: int = 150  # 图表分辨率
+    chart_alignment: str = "center"  # 图表对齐方式
+
     def __post_init__(self):
         if self.margins is None:
             self.margins = {"top": 2.54, "bottom": 2.54, "left": 3.17, "right": 3.17}  # cm
@@ -136,10 +141,10 @@ class WordExportService:
             
             # 2. 处理占位符替换
             await self._replace_placeholders(template_doc, placeholder_data, etl_data)
-            
+
             # 3. 插入图表
-            await self._insert_charts(template_doc, chart_data)
-            
+            await self._insert_charts(template_doc, chart_data, config)
+
             # 4. 应用文档格式
             self._apply_document_formatting(template_doc, config)
             
@@ -179,45 +184,56 @@ class WordExportService:
     
     async def _load_template_document(self, template_id: str):
         """加载模板文档"""
+        db = None
         try:
             from app.crud import template as crud_template
             from app.db.session import SessionLocal
             
             db = SessionLocal()
-            try:
-                template = crud_template.get(db, id=template_id)
-                if not template:
-                    raise ValueError(f"模板不存在: {template_id}")
-                
-                # 如果有模板文件路径，加载文档
-                if hasattr(template, 'file_path') and template.file_path:
-                    if os.path.exists(template.file_path):
-                        return self.Document(template.file_path)
-                
-                # 否则创建新文档并使用模板内容
-                doc = self.Document()
-                
-                # 添加标题
-                title = doc.add_heading(template.name or '报告', 0)
-                title.alignment = self.WD_PARAGRAPH_ALIGNMENT.CENTER
-                
-                # 添加模板内容
-                if template.content:
-                    # 按段落分割内容
-                    paragraphs = template.content.split('\n')
-                    for paragraph_text in paragraphs:
-                        if paragraph_text.strip():
-                            doc.add_paragraph(paragraph_text.strip())
-                
-                return doc
-                
-            finally:
-                db.close()
+            template = crud_template.get(db, id=template_id)
+            if not template:
+                logger.error(f"模板不存在: {template_id}")
+                raise ValueError(f"模板不存在: {template_id}")
+            
+            # 如果有模板文件路径，加载文档
+            if hasattr(template, 'file_path') and template.file_path:
+                if os.path.exists(template.file_path):
+                    logger.info(f"从文件加载模板: {template.file_path}")
+                    return self.Document(template.file_path)
+                else:
+                    logger.warning(f"模板文件不存在: {template.file_path}，将创建新文档")
+            
+            # 否则创建新文档并使用模板内容
+            doc = self.Document()
+            
+            # 添加标题
+            title = doc.add_heading(template.name or '报告', 0)
+            title.alignment = self.WD_PARAGRAPH_ALIGNMENT.CENTER
+            
+            # 添加模板内容
+            if template.content:
+                # 按段落分割内容，保留空行作为段落间距
+                paragraphs = template.content.split('\n')
+                for paragraph_text in paragraphs:
+                    if paragraph_text.strip():
+                        doc.add_paragraph(paragraph_text.strip())
+                    else:
+                        # 空行作为段落间距
+                        doc.add_paragraph()
+            
+            logger.info(f"创建新文档模板，段落数: {len(doc.paragraphs)}")
+            return doc
                 
         except Exception as e:
-            logger.error(f"加载模板文档失败: {e}")
+            logger.error(f"加载模板文档失败: {e}", exc_info=True)
             # 返回空文档作为后备
             return self.Document()
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception as close_error:
+                    logger.warning(f"关闭数据库会话失败: {close_error}")
     
     async def _replace_placeholders(
         self,
@@ -225,21 +241,24 @@ class WordExportService:
         placeholder_data: Dict[str, Any],
         etl_data: Dict[str, Any]
     ):
-        """替换文档中的占位符"""
+        """替换文档中的占位符（保持格式）"""
         try:
             # 构建替换映射
             replacement_map = {}
 
-            # 优先使用调用方提供的直接替换值（保持“能用原值尽量用原值”）
+            # 优先使用调用方提供的直接替换值（保持"能用原值尽量用原值"）
             # 支持两种占位符格式：{{name}} 和 {name}
             direct_values = placeholder_data.get('direct_values') if isinstance(placeholder_data, dict) else None
             if isinstance(direct_values, dict):
                 for name, value in direct_values.items():
                     try:
-                        text_value = str(value) if value is not None else ""
-                        replacement_map[f"{{{{{name}}}}}"] = text_value
-                        replacement_map[f"{{{name}}}"] = text_value
-                    except Exception:
+                        # 数据类型验证和转换
+                        text_value = self._validate_and_convert_placeholder_value(name, value)
+                        if text_value is not None:
+                            replacement_map[f"{{{{{name}}}}}"] = text_value
+                            replacement_map[f"{{{name}}}"] = text_value
+                    except Exception as e:
+                        logger.warning(f"占位符 {name} 数据验证失败: {e}")
                         continue
             
             # 如果未提供direct_values或某个占位符仍无值，则回退到从ETL数据推断
@@ -253,25 +272,106 @@ class WordExportService:
                     replacement_map[key_braced] = replacement_value
                     replacement_map[key_single] = replacement_value
             
-            # 替换文档中的占位符
-            for paragraph in doc.paragraphs:
-                for placeholder, value in replacement_map.items():
-                    if placeholder in paragraph.text:
-                        paragraph.text = paragraph.text.replace(placeholder, str(value))
+            if not replacement_map:
+                logger.warning("没有找到可替换的占位符")
+                return
             
-            # 替换表格中的占位符
+            replaced_count = 0
+
+            # 替换段落中的占位符（保持格式，支持多个占位符）
+            for paragraph in doc.paragraphs:
+                if not paragraph.runs:
+                    continue
+
+                # 使用简化策略：在每个 run 内直接替换占位符
+                # 这种方法适用于大多数情况，且能保留格式
+                for run in paragraph.runs:
+                    original_text = run.text
+                    if not original_text:
+                        continue
+
+                    # 替换所有匹配的占位符
+                    modified_text = original_text
+                    for placeholder, value in replacement_map.items():
+                        if placeholder in modified_text:
+                            modified_text = modified_text.replace(placeholder, str(value))
+                            replaced_count += 1
+
+                    # 只有文本被修改时才更新
+                    if modified_text != original_text:
+                        run.text = modified_text
+            
+            # 替换表格中的占位符（保持格式）
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:
-                        for placeholder, value in replacement_map.items():
-                            if placeholder in cell.text:
-                                cell.text = cell.text.replace(placeholder, str(value))
+                        if not cell.paragraphs:
+                            continue
+
+                        for paragraph in cell.paragraphs:
+                            full_text = "".join(run.text for run in paragraph.runs)
+                            if not full_text:
+                                continue
+
+                            for placeholder, value in replacement_map.items():
+                                if placeholder in full_text:
+                                    # 在 run 级别替换，保留格式
+                                    for run in paragraph.runs:
+                                        if placeholder in run.text:
+                                            run.text = run.text.replace(placeholder, str(value))
+                                            replaced_count += 1
+                                            break
+                                    break
             
-            logger.debug(f"已替换 {len(replacement_map)} 个占位符")
+            logger.info(f"已替换 {replaced_count} 个占位符实例（共 {len(replacement_map)} 种占位符）")
             
         except Exception as e:
-            logger.error(f"替换占位符失败: {e}")
-    
+            logger.error(f"替换占位符失败: {e}", exc_info=True)
+
+    def _validate_and_convert_placeholder_value(self, name: str, value: Any) -> Optional[str]:
+        """
+        验证和转换占位符值为字符串
+
+        Args:
+            name: 占位符名称
+            value: 占位符值
+
+        Returns:
+            转换后的字符串，如果验证失败返回 None
+        """
+        try:
+            # 跳过二进制数据
+            if isinstance(value, (bytes, bytearray)):
+                logger.warning(f"占位符 {name} 包含二进制数据，已跳过")
+                return None
+
+            # 跳过不可序列化的复杂对象
+            if hasattr(value, '__dict__') and not hasattr(value, '__str__'):
+                logger.warning(f"占位符 {name} 包含不可序列化对象，已跳过")
+                return None
+
+            # None 转换为空字符串
+            if value is None:
+                return ""
+
+            # 列表和字典转换为简化表示
+            if isinstance(value, (list, dict)):
+                # 对于简单的列表/字典，可以转换
+                if isinstance(value, list) and len(value) < 10:
+                    return ", ".join(str(v) for v in value)
+                elif isinstance(value, dict) and len(value) < 5:
+                    return ", ".join(f"{k}: {v}" for k, v in value.items())
+                else:
+                    logger.warning(f"占位符 {name} 包含复杂数据结构，已简化")
+                    return f"[包含 {len(value)} 项数据]"
+
+            # 标准类型转换
+            return str(value)
+
+        except Exception as e:
+            logger.warning(f"占位符 {name} 值转换失败: {e}")
+            return None
+
     def _get_placeholder_value(
         self,
         placeholder_result: Dict[str, Any],
@@ -307,71 +407,135 @@ class WordExportService:
             logger.error(f"获取占位符值失败: {e}")
             return f"[{placeholder_name}]"
     
-    async def _insert_charts(self, doc, chart_data: Dict[str, Any]):
+    async def _insert_charts(self, doc, chart_data: Dict[str, Any], config: DocumentConfig):
         """在文档中插入图表"""
         try:
             chart_results = chart_data.get('data', [])
-            
+            if not chart_results:
+                logger.debug("没有图表数据需要插入")
+                return
+
+            inserted_count = 0
             for chart_result in chart_results:
-                if chart_result.get('success') and chart_result.get('file_path'):
-                    chart_path = chart_result['file_path']
+                try:
+                    if not chart_result.get('success'):
+                        logger.debug(f"跳过未成功的图表: {chart_result.get('error', 'unknown')}")
+                        continue
+
+                    chart_path = chart_result.get('file_path')
+                    if not chart_path or not os.path.exists(chart_path):
+                        logger.warning(f"图表文件不存在: {chart_path}")
+                        continue
+
+                    # 验证文件大小
+                    file_size = os.path.getsize(chart_path)
+                    if file_size == 0:
+                        logger.warning(f"图表文件为空: {chart_path}")
+                        continue
+
+                    # 验证文件类型
+                    if not chart_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+                        logger.warning(f"不支持的图表文件格式: {chart_path}")
+                        continue
+
+                    # 添加图表段落
+                    chart_paragraph = doc.add_paragraph()
+
+                    # 使用配置的对齐方式
+                    alignment_map = {
+                        "left": self.WD_PARAGRAPH_ALIGNMENT.LEFT,
+                        "center": self.WD_PARAGRAPH_ALIGNMENT.CENTER,
+                        "right": self.WD_PARAGRAPH_ALIGNMENT.RIGHT
+                    }
+                    chart_paragraph.alignment = alignment_map.get(
+                        config.chart_alignment.lower(),
+                        self.WD_PARAGRAPH_ALIGNMENT.CENTER
+                    )
+
+                    # 插入图片
+                    try:
+                        run = chart_paragraph.add_run()
+                        # 使用配置的图表宽度
+                        run.add_picture(chart_path, width=self.Inches(config.max_chart_width_inches))
+                        logger.debug(f"成功插入图表: {chart_path} ({file_size} bytes, 宽度: {config.max_chart_width_inches}英寸)")
+                    except Exception as pic_error:
+                        logger.error(f"插入图片失败: {pic_error}", exc_info=True)
+                        chart_paragraph.add_run().text = f"[图表: {os.path.basename(chart_path)}]"
+                        continue
                     
-                    if os.path.exists(chart_path):
-                        # 添加图表段落
-                        chart_paragraph = doc.add_paragraph()
-                        chart_paragraph.alignment = self.WD_PARAGRAPH_ALIGNMENT.CENTER
-                        
-                        # 插入图片
-                        run = chart_paragraph.runs[0] if chart_paragraph.runs else chart_paragraph.add_run()
-                        run.add_picture(chart_path, width=self.Inches(6))
-                        
-                        # 添加图表标题
-                        if chart_result.get('metadata', {}).get('title'):
-                            title_paragraph = doc.add_paragraph()
-                            title_paragraph.alignment = self.WD_PARAGRAPH_ALIGNMENT.CENTER
-                            title_run = title_paragraph.add_run(chart_result['metadata']['title'])
-                            title_run.font.bold = True
-                        
-                        # 添加空行
-                        doc.add_paragraph()
+                    # 添加图表标题
+                    chart_title = chart_result.get('metadata', {}).get('title')
+                    if chart_title:
+                        title_paragraph = doc.add_paragraph()
+                        title_paragraph.alignment = self.WD_PARAGRAPH_ALIGNMENT.CENTER
+                        title_run = title_paragraph.add_run(str(chart_title))
+                        title_run.font.bold = True
+                    
+                    # 添加空行作为间距
+                    doc.add_paragraph()
+                    inserted_count += 1
+                    
+                except Exception as chart_error:
+                    logger.error(f"处理单个图表失败: {chart_error}", exc_info=True)
+                    continue
             
-            logger.debug(f"已插入 {len([r for r in chart_results if r.get('success')])} 个图表")
+            logger.info(f"已插入 {inserted_count}/{len(chart_results)} 个图表")
             
         except Exception as e:
-            logger.error(f"插入图表失败: {e}")
+            logger.error(f"插入图表失败: {e}", exc_info=True)
     
     def _apply_document_formatting(self, doc, config: DocumentConfig):
         """应用文档格式"""
         try:
-            # 设置默认字体
-            style = doc.styles['Normal']
-            font = style.font
-            font.name = config.font_name
-            font.size = self.Pt(config.font_size)
+            # 设置默认样式
+            try:
+                style = doc.styles['Normal']
+                font = style.font
+                font.name = config.font_name
+                font.size = self.Pt(config.font_size)
+                
+                # 设置段落格式
+                paragraph_format = style.paragraph_format
+                paragraph_format.line_spacing = config.line_spacing
+            except Exception as style_error:
+                logger.warning(f"设置默认样式失败: {style_error}，继续应用格式")
             
-            # 设置段落格式
-            paragraph_format = style.paragraph_format
-            paragraph_format.line_spacing = config.line_spacing
-            
-            # 应用到所有段落
+            # 应用到所有段落（逐个处理，避免整体替换导致格式丢失）
+            applied_count = 0
             for paragraph in doc.paragraphs:
-                paragraph.style = style
-                for run in paragraph.runs:
-                    run.font.name = config.font_name
-                    run.font.size = self.Pt(config.font_size)
+                try:
+                    # 只更新字体，不替换样式（保留原有格式如粗体、斜体等）
+                    for run in paragraph.runs:
+                        try:
+                            run.font.name = config.font_name
+                            run.font.size = self.Pt(config.font_size)
+                        except Exception as run_error:
+                            logger.debug(f"更新 run 字体失败: {run_error}")
+                            continue
+                    applied_count += 1
+                except Exception as para_error:
+                    logger.debug(f"处理段落格式失败: {para_error}")
+                    continue
             
             # 设置页面边距
-            sections = doc.sections
-            for section in sections:
-                section.top_margin = self.Inches(config.margins['top'] / 2.54)  # 转换cm到英寸
-                section.bottom_margin = self.Inches(config.margins['bottom'] / 2.54)
-                section.left_margin = self.Inches(config.margins['left'] / 2.54)
-                section.right_margin = self.Inches(config.margins['right'] / 2.54)
+            try:
+                sections = doc.sections
+                for section in sections:
+                    try:
+                        section.top_margin = self.Inches(config.margins['top'] / 2.54)  # 转换cm到英寸
+                        section.bottom_margin = self.Inches(config.margins['bottom'] / 2.54)
+                        section.left_margin = self.Inches(config.margins['left'] / 2.54)
+                        section.right_margin = self.Inches(config.margins['right'] / 2.54)
+                    except Exception as section_error:
+                        logger.debug(f"设置章节边距失败: {section_error}")
+                        continue
+            except Exception as sections_error:
+                logger.warning(f"设置页面边距失败: {sections_error}")
             
-            logger.debug("文档格式应用完成")
+            logger.debug(f"文档格式应用完成，处理了 {applied_count} 个段落")
             
         except Exception as e:
-            logger.error(f"应用文档格式失败: {e}")
+            logger.error(f"应用文档格式失败: {e}", exc_info=True)
     
     async def _save_document(
         self,

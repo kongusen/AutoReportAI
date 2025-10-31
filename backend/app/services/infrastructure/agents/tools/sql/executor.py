@@ -374,14 +374,13 @@ class SQLExecutorTool(BaseTool):
         start_time = time.time()
         
         try:
-            # 构建查询参数
+            # 构建查询参数（注意：DataSourceAdapter.run_query 不支持 timeout 参数）
             query_params = {
                 "connection_config": connection_config,
                 "sql": sql,
-                "limit": options.max_rows,
-                "timeout": options.timeout
+                "limit": options.max_rows
             }
-            
+
             # 执行查询
             result = await data_source_service.run_query(**query_params)
             

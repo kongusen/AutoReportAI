@@ -20,6 +20,7 @@ from app.services.infrastructure.document.word_export_service import create_word
 from app.utils.time_context import TimeContextManager
 import time as _time
 import os as _os
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -968,7 +969,12 @@ async def run_task_report_pipeline(
             if not getattr(p, 'is_active', True) or not p.generated_sql:
                 continue
             q_start = _time.time()
-            qres = await query_executor_service.execute_query(p.generated_sql, {"data_source_id": str(task.data_source_id)})
+            # 使用带占位符替换的执行方法，确保时间窗口被正确替换
+            qres = await query_executor_service.execute_query_with_placeholders(
+                p.generated_sql,
+                time_ctx or {},
+                {"data_source_id": str(task.data_source_id)}
+            )
             etl_results[p.placeholder_name] = {
                 "success": bool(qres.get("success")),
                 "data": qres.get("data", []),
@@ -994,52 +1000,168 @@ async def run_task_report_pipeline(
             import matplotlib.pyplot as plt
             _os.makedirs(f"/tmp/charts/{user_id}", exist_ok=True)
 
+            def _is_numeric_value(v):
+                if isinstance(v, (int, float, Decimal)):
+                    return True
+                if isinstance(v, str):
+                    try:
+                        float(v.strip())
+                        return True
+                    except Exception:
+                        return False
+                return False
+
+            def _sanitize_filename(name: str) -> str:
+                safe = ''.join(ch if ch.isalnum() or ch in ('_', '-', '.') else '_' for ch in str(name))
+                return safe[:100] if len(safe) > 100 else safe
+
             for p in placeholders:
                 if str(getattr(p, 'content_type', '')).lower() != 'chart':
                     continue
                 pres = etl_results.get(p.placeholder_name)
                 if not pres or not pres.get("data"):
+                    chart_results.append({
+                        "success": False,
+                        "chart_type": "bar",
+                        "file_path": None,
+                        "metadata": {"title": p.description or p.placeholder_name},
+                        "error": "no_data"
+                    })
                     continue
                 rows = pres["data"]
+                # 推断列
                 columns = pres.get("columns") or (list(rows[0].keys()) if isinstance(rows[0], dict) else None)
                 if not columns:
+                    chart_results.append({
+                        "success": False,
+                        "chart_type": "bar",
+                        "file_path": None,
+                        "metadata": {"title": p.description or p.placeholder_name},
+                        "error": "no_columns"
+                    })
                     continue
                 x_col = columns[0]
                 y_col = None
                 for c in columns[1:]:
                     try:
-                        if any(isinstance(r.get(c), (int, float)) for r in rows if isinstance(r, dict)):
+                        if any(_is_numeric_value(r.get(c)) for r in rows if isinstance(r, dict)):
                             y_col = c
                             break
                     except Exception:
                         continue
                 if not y_col:
+                    chart_results.append({
+                        "success": False,
+                        "chart_type": "bar",
+                        "file_path": None,
+                        "metadata": {"title": p.description or p.placeholder_name},
+                        "error": "no_numeric_column"
+                    })
                     continue
 
+                # 构造绘图数据
                 x_vals = [r.get(x_col) for r in rows if isinstance(r, dict)]
                 y_vals = [r.get(y_col) for r in rows if isinstance(r, dict)]
-                plt.figure(figsize=(8, 5))
+
+                # 清洗与转换数值
+                cleaned_y = []
+                for v in y_vals:
+                    if isinstance(v, (int, float, Decimal)):
+                        cleaned_y.append(float(v))
+                    elif isinstance(v, str):
+                        try:
+                            cleaned_y.append(float(v.strip()))
+                        except Exception:
+                            cleaned_y.append(float('nan'))
+                    else:
+                        cleaned_y.append(float('nan'))
+
+                # 处理过多类目：保留前N（按值降序），默认N=20
+                N = 20
                 try:
-                    plt.bar(x_vals, y_vals)
+                    pairs = list(zip(x_vals, cleaned_y))
+                    pairs = [p2 for p2 in pairs if p2[0] is not None]
+                    pairs.sort(key=lambda t: (t[1] if t[1] == t[1] else float('-inf')), reverse=True)
+                    if len(pairs) > N:
+                        pairs = pairs[:N]
+                    x_vals_plot, y_vals_plot = zip(*pairs) if pairs else ([], [])
+                except Exception:
+                    x_vals_plot, y_vals_plot = x_vals[:N], cleaned_y[:N]
+
+                # 若类目较多，切换为水平条形图
+                use_barh = len(x_vals_plot) > 10
+
+                plt.figure(figsize=(10, 6))
+                try:
+                    if use_barh:
+                        plt.barh(list(map(lambda s: str(s)[:50], x_vals_plot)), y_vals_plot)
+                    else:
+                        plt.bar(list(map(lambda s: str(s)[:50], x_vals_plot)), y_vals_plot)
                     plt.title(p.description or p.placeholder_name)
-                    plt.xticks(rotation=30, ha='right')
+                    if not use_barh:
+                        plt.xticks(rotation=30, ha='right')
                     plt.tight_layout()
-                    fname = f"/tmp/charts/{user_id}/chart_{p.placeholder_name}_{int(_time.time())}.png"
+                    safe_name = _sanitize_filename(p.placeholder_name)
+                    fname = f"/tmp/charts/{user_id}/chart_{safe_name}_{int(_time.time())}.png"
                     plt.savefig(fname, dpi=150)
                     chart_results.append({
                         "success": True,
-                        "chart_type": "bar",
+                        "chart_type": "barh" if use_barh else "bar",
                         "file_path": fname,
-                        "metadata": {"title": p.description or p.placeholder_name}
+                        "metadata": {
+                            "title": p.description or p.placeholder_name,
+                            "x_col": x_col,
+                            "y_col": y_col,
+                            "top_n": len(x_vals_plot)
+                        }
+                    })
+                except Exception as _plot_err:
+                    chart_results.append({
+                        "success": False,
+                        "chart_type": "bar",
+                        "file_path": None,
+                        "metadata": {"title": p.description or p.placeholder_name},
+                        "error": str(_plot_err)
                     })
                 finally:
                     plt.close()
-        except Exception:
-            chart_results = []
+        except Exception as _chart_block_err:
+            # 不清空已有结果，仅记录块级错误
+            chart_results.append({
+                "success": False,
+                "chart_type": "bar",
+                "file_path": None,
+                "metadata": {"title": "chart_block"},
+                "error": str(_chart_block_err)
+            })
 
         # 6) 生成用于文本占位符的直接替换值（优先原值，其次单句改写）
         direct_values: Dict[str, str] = {}
         end_for_sentence = time_ctx.get("end_date") or time_ctx.get("execution_time") or "本期"
+
+        def _format_scalar(value: Any) -> str:
+            try:
+                # 数值格式：千分位，最多保留2位小数
+                if isinstance(value, (int, float, Decimal)):
+                    num = float(value)
+                    if abs(num) >= 1000:
+                        return f"{num:,.2f}".rstrip('0').rstrip('.')
+                    return f"{num:.2f}".rstrip('0').rstrip('.')
+                # 日期/时间格式
+                if hasattr(value, 'isoformat'):
+                    try:
+                        return value.strftime('%Y-%m-%d')
+                    except Exception:
+                        return str(value)
+                # 字符串：去除首尾空白并限制长度
+                if isinstance(value, str):
+                    s = value.strip()
+                    return s if len(s) <= 120 else (s[:117] + '...')
+                # 其它可序列化类型
+                return str(value)
+            except Exception:
+                return str(value)
+
         for p in placeholders:
             # 跳过图表类占位符（由chart_results处理）
             if str(getattr(p, 'content_type', '')).lower() == 'chart':
@@ -1064,12 +1186,15 @@ async def run_task_report_pipeline(
                             scalar_value = first.get(cols[0])
                         else:
                             # 找第一个数值列，否则第一个非空值
+                            preferred = None
                             for c in cols:
                                 v = first.get(c)
-                                if isinstance(v, (int, float)):
-                                    scalar_value = v
+                                if isinstance(v, (int, float, Decimal)):
+                                    preferred = v
                                     break
-                            if scalar_value is None:
+                            if preferred is not None:
+                                scalar_value = preferred
+                            else:
                                 for c in cols:
                                     v = first.get(c)
                                     if v not in (None, ""):
@@ -1081,7 +1206,7 @@ async def run_task_report_pipeline(
                 scalar_value = None
 
             if scalar_value is not None:
-                direct_values[name] = str(scalar_value)
+                direct_values[name] = _format_scalar(scalar_value)
             else:
                 # 单句改写（极简）：
                 if not rows:
@@ -1093,13 +1218,13 @@ async def run_task_report_pipeline(
                         y = None
                         for c in cols[1:]:
                             v = rows[0].get(c)
-                            if isinstance(v, (int, float)):
+                            if isinstance(v, (int, float, Decimal)) or (isinstance(v, str) and v.strip()):
                                 y = v
                                 break
                         if y is not None:
-                            direct_values[name] = f"{p.description or name}（{str(x)}）：{y}"
+                            direct_values[name] = f"{p.description or name}（{_format_scalar(x)}）：{_format_scalar(y)}"
                         else:
-                            direct_values[name] = f"{p.description or name}（示例：{str(x)}）"
+                            direct_values[name] = f"{p.description or name}（示例：{_format_scalar(x)}）"
                     else:
                         direct_values[name] = f"{p.description or name}数据已更新"
 

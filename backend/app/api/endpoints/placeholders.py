@@ -1262,6 +1262,9 @@ class PlaceholderOrchestrationService:
         # SQL 执行验证
         if self._sql_execute_tool and execution_window.get("start_date") and execution_window.get("end_date"):
             execute_payload = dict(base_payload)
+            # 🔧 确保传递 connection_config 参数
+            if "data_source" in execute_payload:
+                execute_payload["connection_config"] = execute_payload["data_source"]
             execute_payload.update(
                 {
                     "window": execution_window,
@@ -2055,13 +2058,17 @@ class PlaceholderOrchestrationService:
             attempt_record["sample_data"] = sample_data
 
             # 步骤3: 分析错误并生成修复方案
+            # 避免参数重复：排除已显式传递的参数
+            excluded_keys = {"current_sql", "validation_error", "sample_data", "placeholder_text", "connection_config"}
+            clean_kwargs = {k: v for k, v in kwargs.items() if k not in excluded_keys}
+
             fix_result = await self._analyze_and_fix_sql_error(
                 current_sql=current_sql,
                 validation_error=validation_result.get("error") or validation_result.get("report", {}),
                 sample_data=sample_data,
                 placeholder_text=placeholder_text,
                 connection_config=connection_config,
-                **kwargs
+                **clean_kwargs
             )
 
             attempt_record["fix_result"] = fix_result
@@ -2156,12 +2163,16 @@ class PlaceholderOrchestrationService:
 
                 if result.get("success"):
                     exec_result = result.get("result")
+                    # 安全地获取 data，确保不为 None
+                    data = exec_result.data if hasattr(exec_result, 'data') and exec_result.data is not None else []
+                    columns = exec_result.columns if hasattr(exec_result, 'columns') and exec_result.columns is not None else []
+
                     samples[table_name] = {
-                        "columns": exec_result.columns if hasattr(exec_result, 'columns') else [],
-                        "rows": exec_result.data if hasattr(exec_result, 'data') else [],
-                        "row_count": len(exec_result.data) if hasattr(exec_result, 'data') and exec_result.data else 0
+                        "columns": columns,
+                        "rows": data,
+                        "row_count": len(data)
                     }
-                    logger.info(f"✅ [数据采样] 表 {table_name} 采样成功: {len(samples[table_name]['rows'])}行")
+                    logger.info(f"✅ [数据采样] 表 {table_name} 采样成功: {len(data)}行")
                 else:
                     logger.warning(f"⚠️ [数据采样] 表 {table_name} 采样失败: {result.get('error')}")
                     samples[table_name] = {"error": result.get("error")}

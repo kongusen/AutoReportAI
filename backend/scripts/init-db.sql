@@ -978,6 +978,12 @@ CREATE INDEX IF NOT EXISTS ix_template_placeholders_content_hash ON template_pla
 CREATE INDEX IF NOT EXISTS ix_placeholder_values_cache_key ON placeholder_values (cache_key);
 CREATE INDEX IF NOT EXISTS ix_placeholder_values_expires_at ON placeholder_values (expires_at);
 CREATE INDEX IF NOT EXISTS ix_placeholder_values_placeholder_datasource ON placeholder_values (placeholder_id, data_source_id);
+-- Additional indexes for placeholder_values table (from migration 004)
+CREATE INDEX IF NOT EXISTS idx_placeholder_values_batch ON placeholder_values(execution_batch_id);
+CREATE INDEX IF NOT EXISTS idx_placeholder_values_cache ON placeholder_values(cache_key, expires_at) WHERE cache_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_placeholder_values_latest ON placeholder_values(placeholder_id, data_source_id, is_latest_version, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_placeholder_values_placeholder_source ON placeholder_values(placeholder_id, data_source_id);
+CREATE INDEX IF NOT EXISTS idx_placeholder_values_created ON placeholder_values(created_at DESC);
 
 -- Template Execution History table indexes
 CREATE INDEX IF NOT EXISTS ix_template_execution_history_template_time ON template_execution_history (template_id, start_time);

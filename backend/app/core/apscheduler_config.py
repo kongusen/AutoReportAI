@@ -106,7 +106,7 @@ class APSchedulerTaskManager:
 
         Args:
             task_id: 任务ID
-            cron_expression: Cron表达式
+            cron_expression: Cron表达式 (格式: "分 时 日 月 周"，如 "0 9 * * 1-5")
 
         Returns:
             下次执行时间
@@ -114,21 +114,40 @@ class APSchedulerTaskManager:
         job_id = f"task_{task_id}"
 
         try:
+            # 清理和验证 cron 表达式
+            if not cron_expression or not isinstance(cron_expression, str):
+                raise ValueError(f"无效的Cron表达式: {cron_expression}")
+            
+            # 去除前后空格并标准化空白字符
+            cron_expression = cron_expression.strip()
+            if not cron_expression:
+                raise ValueError("Cron表达式不能为空")
+            
             # 解析 cron 表达式
             parts = cron_expression.split()
             if len(parts) != 5:
-                raise ValueError(f"Invalid cron expression: {cron_expression}")
+                raise ValueError(
+                    f"无效的Cron表达式格式: {cron_expression}。"
+                    f"应为5个字段 (分 时 日 月 周)，实际为 {len(parts)} 个字段"
+                )
 
             minute, hour, day, month, day_of_week = parts
 
-            trigger = CronTrigger(
-                minute=minute,
-                hour=hour,
-                day=day,
-                month=month,
-                day_of_week=day_of_week,
-                timezone='Asia/Shanghai'
-            )
+            # 尝试创建 CronTrigger，让 APScheduler 验证表达式的有效性
+            try:
+                trigger = CronTrigger(
+                    minute=minute,
+                    hour=hour,
+                    day=day,
+                    month=month,
+                    day_of_week=day_of_week,
+                    timezone='Asia/Shanghai'
+                )
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"无效的Cron表达式: {cron_expression}。"
+                    f"APScheduler解析失败: {str(e)}"
+                ) from e
 
             # 移除旧任务（如果存在）
             if self.scheduler.get_job(job_id):

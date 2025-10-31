@@ -1188,7 +1188,7 @@ class PlaceholderOrchestrationService:
 
                 logger.info(f"🔍 [SQL验证] 开始验证，检测到{len(table_names)}个表: {table_names}")
 
-                # 使用纠错循环机制（最多3次重试）
+                # 单次验证（信任 DAG 内部已完成验证+修复）
                 validation_payload = dict(base_payload)
                 if "data_source" in validation_payload:
                     validation_payload["connection_config"] = validation_payload["data_source"]
@@ -1196,52 +1196,32 @@ class PlaceholderOrchestrationService:
                 # 添加上下文用于时间占位符解析
                 validation_payload["task_context"] = {"time_window": execution_window}
 
-                # 保存需要显式传递的参数值
                 connection_config_value = validation_payload.get("connection_config") or validation_payload.get("data_source")
-                placeholder_text_value = validation_payload.get("placeholder_text", "")
 
-                # 避免在显式参数和展开参数中同时传入相同参数，导致重复关键字错误
-                # 构建新的参数字典，排除已经显式传递的参数
-                excluded_keys = {"sql", "connection_config", "placeholder_text", "max_retries", "table_names"}
-                clean_validation_payload = {
-                    k: v for k, v in validation_payload.items()
-                    if k not in excluded_keys
-                }
-
-                fix_result = await self._validate_and_fix_sql_with_retry(
+                # 进行一次语法/语义验证（不做自动修复循环）
+                single_validation = await self._validate_sql_internal(
                     sql=normalized_sql,
                     connection_config=connection_config_value,
-                    table_names=table_names,
-                    placeholder_text=placeholder_text_value,
-                    max_retries=3,
-                    **clean_validation_payload
+                    context=validation_payload.get("context"),
+                    task_context=validation_payload.get("task_context"),
+                    template_context=validation_payload.get("template_context"),
                 )
 
-                # 处理纠错结果
-                if fix_result.get("success"):
+                if single_validation.get("success"):
                     validation_result = {
                         "success": True,
-                        "sql": fix_result.get("sql"),
+                        "sql": single_validation.get("sql", normalized_sql),
                         "validated": True,
-                        "fix_attempts": fix_result.get("fix_attempts", []),
-                        "fixed_count": fix_result.get("fixed_count", 0)
                     }
-                    normalized_sql = fix_result.get("sql")
-
-                    fix_count = fix_result.get("fixed_count", 0)
-                    if fix_count > 0:
-                        logger.info(f"✅ [SQL验证] SQL经过{fix_count}次纠错后验证通过")
-                    else:
-                        logger.info(f"✅ [SQL验证] SQL直接验证通过")
+                    normalized_sql = single_validation.get("sql", normalized_sql)
+                    logger.info("✅ [SQL验证] SQL验证通过（DAG已保证质量，API层仅做一次检查）")
                 else:
                     validation_result = {
                         "success": False,
-                        "error": fix_result.get("error", "验证失败"),
+                        "error": single_validation.get("error", "验证失败"),
                         "validated": False,
-                        "fix_attempts": fix_result.get("fix_attempts", []),
-                        "fixed_count": fix_result.get("fixed_count", 0)
                     }
-                    logger.warning(f"❌ [SQL验证] SQL验证失败，经过{fix_result.get('fixed_count', 0)}次纠错仍未通过")
+                    logger.warning("❌ [SQL验证] SQL验证未通过（不进行API层修复循环），请检查DAG阶段配置和质量阈值")
 
             except Exception as exc:
                 validation_result = {"success": False, "error": str(exc), "validated": False}
@@ -1965,142 +1945,6 @@ class PlaceholderOrchestrationService:
         return any(keyword in str(error_message) + str(reasoning)
                   for keyword in sql_validation_keywords)
 
-    async def _validate_and_fix_sql_with_retry(
-        self,
-        sql: str,
-        connection_config: Dict[str, Any],
-        table_names: List[str],
-        placeholder_text: str,
-        max_retries: int = 3,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        SQL验证+自动纠错循环机制
-
-        验证失败后自动进入纠错流程：
-        1. 查询表中5行数据进行分析
-        2. 分析错误原因
-        3. 生成修复后的SQL
-        4. 再次验证
-        5. 最多循环3次
-
-        Returns:
-            {
-                "success": bool,
-                "sql": str,  # 最终SQL（验证通过）
-                "validated": bool,
-                "fix_attempts": List[Dict],  # 纠错历史记录
-                "final_validation": Dict,  # 最终验证结果
-                "error": Optional[str]
-            }
-        """
-        logger.info(f"🔍 [SQL验证+纠错] 开始验证SQL，最多重试{max_retries}次")
-
-        fix_attempts = []
-        current_sql = sql
-
-        for attempt in range(max_retries + 1):
-            logger.info(f"🔄 [SQL验证+纠错] 第{attempt + 1}次尝试")
-
-            # 步骤1: 执行SQL验证
-            validation_result = await self._validate_sql_internal(
-                current_sql, connection_config, **kwargs
-            )
-
-            # 记录本次尝试
-            attempt_record = {
-                "attempt_number": attempt + 1,
-                "sql": current_sql,
-                "validation_result": validation_result,
-                "timestamp": datetime.now().isoformat()
-            }
-
-            # 验证成功，返回结果
-            if validation_result.get("success"):
-                report = validation_result.get("report") or validation_result.get("metadata", {}).get("report")
-                if report and (report.get("is_valid") if isinstance(report, dict) else getattr(report, 'is_valid', True)):
-                    logger.info(f"✅ [SQL验证+纠错] 验证通过（第{attempt + 1}次尝试）")
-                    attempt_record["result"] = "success"
-                    fix_attempts.append(attempt_record)
-
-                    return {
-                        "success": True,
-                        "sql": current_sql,
-                        "validated": True,
-                        "fix_attempts": fix_attempts,
-                        "final_validation": validation_result,
-                        "fixed_count": attempt
-                    }
-
-            # 验证失败，进入纠错流程
-            logger.warning(f"❌ [SQL验证+纠错] 验证失败（第{attempt + 1}次尝试）")
-
-            # 如果已经是最后一次尝试，直接返回失败
-            if attempt >= max_retries:
-                logger.error(f"❌ [SQL验证+纠错] 已达到最大重试次数({max_retries})，停止纠错")
-                attempt_record["result"] = "max_retries_exceeded"
-                fix_attempts.append(attempt_record)
-
-                return {
-                    "success": False,
-                    "sql": current_sql,
-                    "validated": False,
-                    "fix_attempts": fix_attempts,
-                    "final_validation": validation_result,
-                    "error": f"SQL验证失败，已尝试{max_retries + 1}次纠错",
-                    "fixed_count": attempt
-                }
-
-            # 步骤2: 采样表数据，辅助错误分析
-            sample_data = await self._sample_table_data(
-                connection_config, table_names, limit=5
-            )
-            attempt_record["sample_data"] = sample_data
-
-            # 步骤3: 分析错误并生成修复方案
-            # 避免参数重复：排除已显式传递的参数
-            excluded_keys = {"current_sql", "validation_error", "sample_data", "placeholder_text", "connection_config"}
-            clean_kwargs = {k: v for k, v in kwargs.items() if k not in excluded_keys}
-
-            fix_result = await self._analyze_and_fix_sql_error(
-                current_sql=current_sql,
-                validation_error=validation_result.get("error") or validation_result.get("report", {}),
-                sample_data=sample_data,
-                placeholder_text=placeholder_text,
-                connection_config=connection_config,
-                **clean_kwargs
-            )
-
-            attempt_record["fix_result"] = fix_result
-            attempt_record["result"] = "fixed" if fix_result.get("success") else "fix_failed"
-            fix_attempts.append(attempt_record)
-
-            # 如果纠错失败，直接返回
-            if not fix_result.get("success"):
-                logger.error(f"❌ [SQL验证+纠错] 纠错失败: {fix_result.get('error')}")
-                return {
-                    "success": False,
-                    "sql": current_sql,
-                    "validated": False,
-                    "fix_attempts": fix_attempts,
-                    "final_validation": validation_result,
-                    "error": fix_result.get("error"),
-                    "fixed_count": attempt + 1
-                }
-
-            # 获取修复后的SQL，继续下一轮验证
-            current_sql = fix_result.get("fixed_sql", current_sql)
-            logger.info(f"🔧 [SQL验证+纠错] SQL已修复，准备第{attempt + 2}次验证")
-
-        # 理论上不会到达这里
-        return {
-            "success": False,
-            "sql": current_sql,
-            "validated": False,
-            "fix_attempts": fix_attempts,
-            "error": "Unexpected exit from retry loop"
-        }
-
     async def _validate_sql_internal(
         self,
         sql: str,
@@ -2132,231 +1976,6 @@ class PlaceholderOrchestrationService:
         except Exception as exc:
             logger.error(f"❌ [SQL验证] 验证异常: {exc}", exc_info=True)
             return {"success": False, "error": str(exc)}
-
-    async def _sample_table_data(
-        self,
-        connection_config: Dict[str, Any],
-        table_names: List[str],
-        limit: int = 5
-    ) -> Dict[str, Any]:
-        """
-        采样表数据，用于辅助错误分析
-
-        查询每个表的前5行数据，了解数据结构和内容
-        """
-        logger.info(f"📊 [数据采样] 开始采样表数据: {table_names}")
-
-        if not self._sql_execute_tool:
-            return {"success": False, "error": "SQL执行工具不可用", "samples": {}}
-
-        samples = {}
-
-        for table_name in table_names[:3]:  # 最多采样3个表
-            try:
-                sample_sql = f"SELECT * FROM {table_name} LIMIT {limit}"
-                result = await self._sql_execute_tool.execute(
-                    sql=sample_sql,
-                    connection_config=connection_config,
-                    validate_before_execute=False,
-                    max_rows=limit
-                )
-
-                if result.get("success"):
-                    exec_result = result.get("result")
-                    # 安全地获取 data，确保不为 None
-                    data = exec_result.data if hasattr(exec_result, 'data') and exec_result.data is not None else []
-                    columns = exec_result.columns if hasattr(exec_result, 'columns') and exec_result.columns is not None else []
-
-                    samples[table_name] = {
-                        "columns": columns,
-                        "rows": data,
-                        "row_count": len(data)
-                    }
-                    logger.info(f"✅ [数据采样] 表 {table_name} 采样成功: {len(data)}行")
-                else:
-                    logger.warning(f"⚠️ [数据采样] 表 {table_name} 采样失败: {result.get('error')}")
-                    samples[table_name] = {"error": result.get("error")}
-
-            except Exception as exc:
-                logger.error(f"❌ [数据采样] 表 {table_name} 采样异常: {exc}")
-                samples[table_name] = {"error": str(exc)}
-
-        return {
-            "success": len(samples) > 0,
-            "samples": samples,
-            "table_count": len(samples)
-        }
-
-    async def _analyze_and_fix_sql_error(
-        self,
-        current_sql: str,
-        validation_error: Any,
-        sample_data: Dict[str, Any],
-        placeholder_text: str,
-        connection_config: Dict[str, Any],
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        分析SQL错误并生成修复方案
-
-        使用LLM分析：
-        1. 验证错误信息
-        2. 采样数据结构
-        3. 占位符需求
-
-        生成修复后的SQL
-        """
-        logger.info(f"🔍 [错误分析] 开始分析SQL错误并生成修复方案")
-
-        try:
-            # 使用提示词管理器
-            from app.services.infrastructure.agents.prompts import PromptTemplateManager
-
-            prompt_manager = PromptTemplateManager()
-
-            # 准备错误分析数据
-            error_message = self._extract_error_message(validation_error)
-            sample_info = self._format_sample_data_for_analysis(sample_data)
-
-            # 使用统一的提示词模板
-            analysis_prompt = prompt_manager.format_template(
-                "sql_error_analysis",
-                current_sql=current_sql,
-                error_message=error_message,
-                sample_info=sample_info,
-                placeholder_text=placeholder_text
-            )
-
-            # 调用LLM进行分析和修复
-            from app.services.infrastructure.llm import ask_agent_for_user
-            
-            user_id = self.app_service.user_id if self.app_service else "system"
-
-            # 使用 LLM 生成响应
-            response_text = await ask_agent_for_user(
-                user_id=user_id,
-                question=analysis_prompt,
-                agent_type="sql_fixer",
-                task_type="sql_analysis",
-                complexity="medium",
-                enable_agent_mode=False  # 禁用Agent模式，直接调用LLM
-            )
-
-            # 解析LLM响应
-            fixed_result = self._parse_fix_response(response_text)
-
-            if fixed_result.get("success"):
-                logger.info(f"✅ [错误分析] SQL修复成功")
-                logger.info(f"   错误分析: {fixed_result.get('error_analysis', '')[:100]}")
-                logger.info(f"   修复策略: {fixed_result.get('fix_strategy', '')[:100]}")
-                return {
-                    "success": True,
-                    "fixed_sql": fixed_result.get("fixed_sql"),
-                    "error_analysis": fixed_result.get("error_analysis"),
-                    "fix_strategy": fixed_result.get("fix_strategy"),
-                    "changes_made": fixed_result.get("changes_made", [])
-                }
-            else:
-                return {"success": False, "error": "LLM未能生成有效的修复方案"}
-
-        except Exception as exc:
-            logger.error(f"❌ [错误分析] 分析失败: {exc}", exc_info=True)
-            return {"success": False, "error": str(exc)}
-
-    def _extract_error_message(self, validation_error: Any) -> str:
-        """从验证结果中提取错误信息"""
-        if isinstance(validation_error, str):
-            return validation_error
-
-        if isinstance(validation_error, dict):
-            # 尝试多种可能的错误字段
-            if "error" in validation_error:
-                return str(validation_error["error"])
-            if "errors" in validation_error:
-                errors = validation_error["errors"]
-                if isinstance(errors, list):
-                    return "\n".join([str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors])
-                return str(errors)
-            if "report" in validation_error:
-                report = validation_error["report"]
-                if hasattr(report, 'errors'):
-                    return "\n".join([e.message for e in report.errors])
-                elif isinstance(report, dict) and "errors" in report:
-                    errors = report["errors"]
-                    if isinstance(errors, list):
-                        return "\n".join([str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors])
-
-        return str(validation_error)
-
-    def _format_sample_data_for_analysis(self, sample_data: Dict[str, Any]) -> str:
-        """格式化采样数据用于LLM分析"""
-        if not sample_data.get("success") or not sample_data.get("samples"):
-            return "无可用采样数据"
-
-        formatted_parts = []
-        for table_name, data in sample_data.get("samples", {}).items():
-            if "error" in data:
-                formatted_parts.append(f"表 {table_name}: 采样失败 - {data['error']}")
-                continue
-
-            columns = data.get("columns", [])
-            rows = data.get("rows", [])
-            row_count = data.get("row_count", 0)
-
-            formatted_parts.append(f"表 {table_name}:")
-            formatted_parts.append(f"  列: {', '.join(columns)}")
-            formatted_parts.append(f"  行数: {row_count}")
-
-            if rows and len(rows) > 0:
-                formatted_parts.append("  示例数据:")
-                for i, row in enumerate(rows[:3], 1):
-                    formatted_parts.append(f"    行{i}: {row}")
-
-        return "\n".join(formatted_parts)
-
-    def _parse_fix_response(self, response: str) -> Dict[str, Any]:
-        """解析LLM的修复响应"""
-        try:
-            # 尝试提取JSON块
-            import json
-            import re
-
-            # 查找JSON代码块
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # 尝试直接解析整个响应
-                json_str = response.strip()
-
-            result = json.loads(json_str)
-
-            # 验证必需字段
-            if "fixed_sql" in result:
-                return {
-                    "success": True,
-                    "fixed_sql": result["fixed_sql"],
-                    "error_analysis": result.get("error_analysis", ""),
-                    "fix_strategy": result.get("fix_strategy", ""),
-                    "changes_made": result.get("changes_made", [])
-                }
-            else:
-                return {"success": False, "error": "响应中缺少fixed_sql字段"}
-
-        except Exception as exc:
-            logger.error(f"❌ [解析修复响应] 解析失败: {exc}")
-            # 尝试直接从响应中提取SQL
-            sql_match = re.search(r'```sql\s*(.*?)\s*```', response, re.DOTALL)
-            if sql_match:
-                return {
-                    "success": True,
-                    "fixed_sql": sql_match.group(1).strip(),
-                    "error_analysis": "从响应中提取的SQL",
-                    "fix_strategy": "直接提取",
-                    "changes_made": []
-                }
-
-            return {"success": False, "error": f"无法解析修复响应: {exc}"}
 
     async def _generate_basic_sql_fallback(
         self,

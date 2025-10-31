@@ -72,12 +72,13 @@ class StageConfigManager:
             ],
             system_prompt=self._get_sql_stage_prompt(),
             execution_guidance=self._get_sql_execution_guidance(),
-            quality_threshold=0.8,
-            max_iterations=8,
+            quality_threshold=0.85,
+            max_iterations=10,
             stage_goal="生成准确、高效的SQL查询",
             constraints={
                 "output_format": "sql",
                 "validation_required": True,
+                "validation_passed": True,
                 "performance_check": True,
             },
             metadata={
@@ -405,6 +406,9 @@ WHERE <DATE_COLUMN> >= '2024-01-01' AND <DATE_COLUMN> <= '2024-01-31'
 - 字段名错误 → 使用sql_column_checker检查
 - 语法错误 → 使用sql_auto_fixer修复
 - 性能问题 → 优化查询结构"""
+
+        """
+        .strip() + "\n\n⚠️ 重要：只有当 SQL 通过验证 (validation_passed=true) 后才能输出最终结果！"
     
     def _get_chart_execution_guidance(self) -> str:
         """图表阶段执行指导"""

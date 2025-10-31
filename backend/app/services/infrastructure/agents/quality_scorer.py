@@ -223,6 +223,19 @@ class EnhancedQualityScorer:
         # 计算总体评分（加权平均）
         overall_score = self._calculate_overall_score(dimension_scores)
 
+        # 严格规则：SQL 验证必须通过，否则直接判定为不通过并限制分数
+        if self._is_sql_content(content):
+            validation_success = None
+            is_valid_flag = None
+            if execution_result is not None and isinstance(execution_result, dict):
+                validation_success = execution_result.get("success")
+                # 兼容不同验证器字段
+                is_valid_flag = execution_result.get("is_valid", execution_result.get("validated"))
+
+            if validation_success is False or is_valid_flag is False:
+                overall_score = min(overall_score, 0.49)
+                logger.info("⚠️ [质量评分] SQL验证未通过，限制总体评分 ≤ 0.49")
+
         # 收集所有建议
         all_suggestions = []
         for dim_score in dimension_scores.values():

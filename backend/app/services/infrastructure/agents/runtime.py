@@ -1,7 +1,7 @@
 """
 TT 递归执行运行时
 
-基于 Loom 0.0.3 的 tt 函数实现自动迭代推理
+基于 Loom tt 函数实现自动迭代推理
 这是整个 Agent 系统的核心执行引擎
 """
 
@@ -1705,9 +1705,22 @@ class LoomAgentRuntime:
         """
         计算质量评分
 
-        使用增强的多维度质量评分系统
+        使用增强的多维度质量评分系统，支持阶段感知的质量阈值
         """
         try:
+            # 🔥 获取当前阶段的质量阈值（优先使用阶段配置）
+            quality_threshold = 0.8  # 默认阈值
+            if hasattr(self, 'stage_config_manager'):
+                stage_config = self.stage_config_manager.get_stage_config(request.stage)
+                if stage_config:
+                    quality_threshold = stage_config.quality_threshold
+                    logger.debug(f"🎯 [质量评分] 使用阶段阈值: {quality_threshold} (阶段: {request.stage.value})")
+            
+            # 动态更新质量评分器的阈值
+            if hasattr(self._quality_scorer, 'config'):
+                self._quality_scorer.config.passing_threshold = quality_threshold
+                logger.debug(f"📝 [质量评分] 质量评分器阈值已更新为: {quality_threshold}")
+
             # 准备执行结果（如果有）
             execution_result = None
             if hasattr(self._current_state, 'accumulated_results') and self._current_state.accumulated_results:
@@ -1750,20 +1763,31 @@ class LoomAgentRuntime:
                     "complexity": request.complexity.value,
                     "stage": request.stage.value,
                     "constraints": request.constraints,
+                    "quality_threshold": quality_threshold,  # 🔥 传递质量阈值到上下文
                 },
                 data_source_service=data_source_service,
                 connection_config=connection_config
             )
 
-            # 记录详细评分信息
-            logger.info(f"📊 [质量评分] 总体评分: {quality_score_result.overall_score:.2f} ({quality_score_result.grade})")
-            for dimension, dim_score in quality_score_result.dimension_scores.items():
-                logger.debug(f"   {dimension.value}: {dim_score.score:.2f} (权重: {dim_score.weight:.2f})")
-
+            # 🔥 增强的日志记录：显示阈值和是否通过
+            passed_status = "✅ 通过" if quality_score_result.passed else "❌ 未通过"
+            logger.info(f"📊 [质量评分] 总体评分: {quality_score_result.overall_score:.2f}/{quality_threshold:.2f} ({quality_score_result.grade}) {passed_status}")
+            
+            # 记录各维度评分（仅在debug模式下或未通过时显示）
+            if not quality_score_result.passed or logger.isEnabledFor(logging.DEBUG):
+                for dimension, dim_score in quality_score_result.dimension_scores.items():
+                    logger.debug(f"   📈 {dimension.value}: {dim_score.score:.2f} (权重: {dim_score.weight:.2f})")
+            
+            # 记录建议（仅在未通过或debug模式下显示）
             if quality_score_result.suggestions:
-                logger.info(f"💡 [质量建议] {len(quality_score_result.suggestions)} 条建议:")
-                for suggestion in quality_score_result.suggestions[:3]:  # 只显示前3条
-                    logger.info(f"   - {suggestion}")
+                if not quality_score_result.passed:
+                    logger.warning(f"💡 [质量建议] {len(quality_score_result.suggestions)} 条改进建议:")
+                    for suggestion in quality_score_result.suggestions[:5]:  # 显示前5条
+                        logger.warning(f"   - {suggestion}")
+                elif logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"💡 [质量建议] {len(quality_score_result.suggestions)} 条优化建议:")
+                    for suggestion in quality_score_result.suggestions[:3]:  # debug模式下只显示前3条
+                        logger.debug(f"   - {suggestion}")
 
             return quality_score_result.overall_score
 
@@ -2069,11 +2093,13 @@ class StageAwareRuntime(LoomAgentRuntime):
         # 应用阶段配置
         self._apply_stage_config(stage_config)
         
+        # 🔥 增强的阶段进入日志
         logger.info(f"🎯 [StageAwareRuntime] 进入阶段: {stage.value}")
-        logger.info(f"   启用工具: {len(stage_config.enabled_tools)} 个")
-        logger.info(f"   质量阈值: {stage_config.quality_threshold}")
-        logger.info(f"   最大迭代: {stage_config.max_iterations}")
-        logger.info(f"   阶段目标: {stage_config.stage_goal}")
+        logger.info(f"   🔧 启用工具: {len(stage_config.enabled_tools)} 个 - {', '.join(stage_config.enabled_tools[:3])}{'...' if len(stage_config.enabled_tools) > 3 else ''}")
+        logger.info(f"   🎯 质量阈值: {stage_config.quality_threshold:.2f} (必须达到此阈值才能通过)")
+        logger.info(f"   🔢 最大迭代: {stage_config.max_iterations} 次")
+        logger.info(f"   📌 阶段目标: {stage_config.stage_goal}")
+        logger.info(f"   ✅ 约束条件: {list(stage_config.constraints.keys())}")
         
         # 2. 更新请求配置
         stage_request = AgentRequest(
@@ -2112,17 +2138,24 @@ class StageAwareRuntime(LoomAgentRuntime):
         # 切换系统提示
         self._config.system_prompt = stage_config.system_prompt
         
-        # 切换质量阈值（如果有质量评分器）
+        # 🔥 切换质量阈值（如果有质量评分器）- 增强日志
+        old_threshold = None
         if hasattr(self, '_quality_scorer') and hasattr(self._quality_scorer, 'config'):
-            self._quality_scorer.config.quality_threshold = stage_config.quality_threshold
+            old_threshold = getattr(self._quality_scorer.config, 'passing_threshold', None)
+            self._quality_scorer.config.passing_threshold = stage_config.quality_threshold
+            if old_threshold != stage_config.quality_threshold:
+                logger.info(f"🔄 [质量阈值] 已更新: {old_threshold:.2f} → {stage_config.quality_threshold:.2f}")
         
         # 切换迭代次数
         self._config.max_iterations = stage_config.max_iterations
         
-        logger.debug(f"📝 [StageAwareRuntime] 已应用阶段配置")
-        logger.debug(f"   系统提示长度: {len(stage_config.system_prompt)} 字符")
-        logger.debug(f"   质量阈值: {stage_config.quality_threshold}")
-        logger.debug(f"   最大迭代: {stage_config.max_iterations}")
+        # 🔥 增强的配置应用日志
+        logger.info(f"📝 [StageAwareRuntime] 已应用阶段配置")
+        logger.info(f"   📋 系统提示长度: {len(stage_config.system_prompt)} 字符")
+        logger.info(f"   🎯 质量阈值: {stage_config.quality_threshold:.2f}")
+        logger.info(f"   🔢 最大迭代: {stage_config.max_iterations}")
+        logger.info(f"   🔧 启用工具数: {len(stage_config.enabled_tools)} 个")
+        logger.info(f"   📌 阶段目标: {stage_config.stage_goal}")
     
     def _restore_original_config(self):
         """恢复原始配置"""

@@ -107,24 +107,69 @@ class SchemaRetrievalTool(BaseTool):
         return self._data_source_service
     
     async def _get_context_selected_tables(self) -> Optional[List[str]]:
-        """从上下文中获取已选择的表"""
+        """从上下文中获取已选择的表（增强版：支持多种数据源）"""
         try:
-            # 尝试从容器中获取上下文检索器
+            # 方法1: 从上下文检索器获取
             context_retriever = getattr(self.container, 'context_retriever', None)
             if context_retriever:
-                # 获取最近检索的表
                 recent_tables = getattr(context_retriever, 'recent_selected_tables', None)
                 if recent_tables:
                     logger.info(f"🔍 [SchemaRetrievalTool] 从上下文检索器获取到表: {recent_tables}")
                     return recent_tables
             
-            # 尝试从全局状态中获取
+            # 方法2: 从容器中获取schema缓存（如果schema_discovery已执行）
+            schema_cache = getattr(context_retriever, 'schema_cache', None) if context_retriever else None
+            if schema_cache and isinstance(schema_cache, dict):
+                # 从schema缓存中提取表名
+                tables_from_cache = list(schema_cache.keys())
+                if tables_from_cache:
+                    logger.info(f"🔍 [SchemaRetrievalTool] 从schema缓存获取到表: {tables_from_cache[:5]}")
+                    return tables_from_cache
+            
+            # 方法3: 从全局状态中获取
             import threading
             thread_local = getattr(threading.current_thread(), 'agent_context', None)
             if thread_local and 'selected_tables' in thread_local:
                 tables = thread_local['selected_tables']
                 logger.info(f"🔍 [SchemaRetrievalTool] 从线程上下文获取到表: {tables}")
                 return tables
+            
+            # 方法4: 尝试从SQL中提取表名（如果有最近执行的SQL）
+            # 这需要从容器中获取runtime或tool_call_history
+            runtime = getattr(self.container, 'runtime', None)
+            if runtime and hasattr(runtime, '_current_state'):
+                state = getattr(runtime, '_current_state', None)
+                if state and hasattr(state, 'tool_call_history'):
+                    # 从工具调用历史中查找schema_discovery或sql_validator的结果
+                    for tool_call in getattr(state, 'tool_call_history', [])[-5:]:  # 只看最近5个
+                        tool_name = getattr(tool_call, 'tool_name', '')
+                        result = getattr(tool_call, 'result', None)
+                        
+                        # 从schema_discovery结果中提取表名
+                        if tool_name == 'schema_discovery' and result:
+                            if isinstance(result, dict):
+                                structured = result.get('structured_summary') or result.get('result', {})
+                                tables_preview = structured.get('tables_preview') or structured.get('tables', [])
+                                if tables_preview:
+                                    table_names = [t.get('name', t) if isinstance(t, dict) else t for t in tables_preview[:10]]
+                                    if table_names:
+                                        logger.info(f"🔍 [SchemaRetrievalTool] 从schema_discovery工具结果获取到表: {table_names}")
+                                        return table_names
+                        
+                        # 从SQL验证器中提取表名
+                        if tool_name == 'sql_validator' and result:
+                            if isinstance(result, dict):
+                                sql = result.get('sql') or result.get('query', '')
+                                if sql:
+                                    # 简单的表名提取
+                                    import re
+                                    from_pattern = r'FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)'
+                                    join_pattern = r'JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)'
+                                    tables = list(set(re.findall(from_pattern, sql, re.IGNORECASE) + 
+                                                     re.findall(join_pattern, sql, re.IGNORECASE)))
+                                    if tables:
+                                        logger.info(f"🔍 [SchemaRetrievalTool] 从SQL验证器结果提取到表: {tables}")
+                                        return tables
             
             return None
         except Exception as e:
@@ -249,6 +294,22 @@ class SchemaRetrievalTool(BaseTool):
                 "error": "未配置数据源连接，请在初始化工具时提供 connection_config",
                 "result": {}
             }
+        
+        # 🔥 关键修复：如果 table_names 为 None，尝试从上下文自动获取
+        if not table_names:
+            logger.info("🔍 [SchemaRetrievalTool] 表名为空，尝试从上下文自动获取")
+            context_tables = await self._get_context_selected_tables()
+            if context_tables:
+                table_names = context_tables
+                logger.info(f"✅ [SchemaRetrievalTool] 从上下文自动获取到表名: {table_names}")
+            else:
+                logger.warning("⚠️ [SchemaRetrievalTool] 无法从上下文获取表名，将返回错误")
+                return {
+                    "success": False,
+                    "error": "未提供表名且无法从上下文获取。请先调用 schema_discovery 获取表列表，或显式传入 table_names 参数",
+                    "suggestion": "请先使用 schema_discovery 工具发现表，或在使用 schema_retrieval 时显式传入 table_names 参数",
+                    "result": {}
+                }
         
         # 🔥 新增：验证请求的表名是否在上下文中
         if table_names:

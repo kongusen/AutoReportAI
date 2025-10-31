@@ -17,7 +17,10 @@ from app.services.infrastructure.task_queue.celery_config import celery_app
 from app.services.application.factories import create_placeholder_validation_service
 from app.services.data.query.query_executor_service import query_executor_service
 from app.services.infrastructure.document.word_export_service import create_word_export_service
+from app.services.data.persistence.etl_persistence_service import ETLPersistenceService
+from app.schemas.placeholder_value import PlaceholderValueCreate
 from app.utils.time_context import TimeContextManager
+from app import crud
 import time as _time
 import os as _os
 from decimal import Decimal
@@ -1255,6 +1258,143 @@ async def run_task_report_pipeline(
             etl_data={str(task.data_source_id): {"transform": {"success": True, "data": [v for v in etl_results.values()]}}},
             chart_data={"data": chart_results},
         )
+
+        # 7.5) 💾 持久化 direct_values 和图表数据到 placeholder_values 表
+        # 仅在文档生成成功后持久化
+        if export_res.success:
+            try:
+                batch_id = ETLPersistenceService.generate_batch_id()
+                values_to_save = []
+
+                # 解析时间上下文
+                execution_time = None
+                period_start = None
+                period_end = None
+                try:
+                    if time_ctx.get("execution_time"):
+                        execution_time = datetime.fromisoformat(str(time_ctx["execution_time"]).replace("Z", "+00:00"))
+                    if time_ctx.get("start_date"):
+                        period_start = datetime.fromisoformat(str(time_ctx["start_date"]).replace("Z", "+00:00"))
+                    if time_ctx.get("end_date"):
+                        period_end = datetime.fromisoformat(str(time_ctx["end_date"]).replace("Z", "+00:00"))
+                except Exception as time_parse_err:
+                    logger.warning(f"⚠️ 解析时间上下文失败: {time_parse_err}")
+                    execution_time = datetime.utcnow()
+
+                # 持久化文本占位符（direct_values）
+                for p in placeholders:
+                    name = p.placeholder_name
+
+                    # 跳过图表占位符，稍后单独处理
+                    if str(getattr(p, 'content_type', '')).lower() == 'chart':
+                        continue
+
+                    # 只保存有 direct_values 的占位符
+                    if name not in direct_values:
+                        continue
+
+                    etl_result = etl_results.get(name, {})
+
+                    values_to_save.append(PlaceholderValueCreate(
+                        placeholder_id=p.id,
+                        data_source_id=task.data_source_id,
+                        # 🔑 核心：使用精细格式化的 formatted_text
+                        formatted_text=direct_values[name],
+                        raw_query_result=etl_result.get("data"),
+                        processed_value={
+                            "columns": etl_result.get("columns", []),
+                            "row_count": len(etl_result.get("data", [])),
+                            "metadata": etl_result.get("metadata", {})
+                        },
+                        execution_sql=p.generated_sql,
+                        row_count=len(etl_result.get("data", [])),
+                        success=True,
+                        source="run_report",
+                        confidence_score=1.0,
+                        analysis_metadata={
+                            "content_type": str(getattr(p, 'content_type', 'text')),
+                            "placeholder_type": str(getattr(p, 'placeholder_type', 'unknown')),
+                            "formatting_applied": "千分位,小数精度,智能改写"
+                        },
+                        execution_time=execution_time or datetime.utcnow(),
+                        period_start=period_start,
+                        period_end=period_end,
+                        report_period=time_ctx.get("report_period"),
+                        sql_parameters_snapshot=time_ctx,
+                        execution_batch_id=batch_id,
+                        is_latest_version=True,
+                        cache_key=f"ph_{p.id}_{time_ctx.get('start_date', 'default')}",
+                        expires_at=datetime.utcnow() + timedelta(hours=getattr(p, 'cache_ttl_hours', 24))
+                    ))
+
+                # 持久化图表占位符
+                for chart_result in chart_results:
+                    if not chart_result.get("success"):
+                        continue
+
+                    chart_name = chart_result.get("placeholder_name")
+                    if not chart_name:
+                        continue
+
+                    # 找到对应的占位符
+                    chart_placeholder = next((p for p in placeholders if p.placeholder_name == chart_name), None)
+                    if not chart_placeholder:
+                        continue
+
+                    etl_result = etl_results.get(chart_name, {})
+                    chart_metadata = chart_result.get("metadata", {})
+
+                    values_to_save.append(PlaceholderValueCreate(
+                        placeholder_id=chart_placeholder.id,
+                        data_source_id=task.data_source_id,
+                        # 图表的 formatted_text 记录关键信息
+                        formatted_text=f"图表：{chart_metadata.get('title', chart_name)} | "
+                                      f"X轴：{chart_metadata.get('x_column')} | "
+                                      f"Y轴：{chart_metadata.get('y_column')} | "
+                                      f"Top-{chart_metadata.get('top_n', 'All')}",
+                        raw_query_result=etl_result.get("data"),
+                        processed_value={
+                            "chart_type": chart_metadata.get("chart_type"),
+                            "file_path": chart_result.get("file_path"),
+                            "columns": etl_result.get("columns", []),
+                            "row_count": len(etl_result.get("data", [])),
+                            "chart_metadata": chart_metadata
+                        },
+                        execution_sql=chart_placeholder.generated_sql,
+                        row_count=len(etl_result.get("data", [])),
+                        success=True,
+                        source="run_report_chart",
+                        confidence_score=1.0,
+                        analysis_metadata={
+                            "content_type": "chart",
+                            "chart_generated": True,
+                            "chart_path": chart_result.get("file_path"),
+                            **chart_metadata
+                        },
+                        execution_time=execution_time or datetime.utcnow(),
+                        period_start=period_start,
+                        period_end=period_end,
+                        report_period=time_ctx.get("report_period"),
+                        sql_parameters_snapshot=time_ctx,
+                        execution_batch_id=batch_id,
+                        is_latest_version=True,
+                        cache_key=f"ph_{chart_placeholder.id}_{time_ctx.get('start_date', 'default')}",
+                        expires_at=datetime.utcnow() + timedelta(hours=getattr(chart_placeholder, 'cache_ttl_hours', 24))
+                    ))
+
+                # 🔑 批量插入数据库
+                if values_to_save:
+                    crud.placeholder_value.create_batch(db, values=values_to_save)
+                    db.commit()
+                    logger.info(f"✅ 已持久化 {len(values_to_save)} 个占位符值到数据库 (batch_id={batch_id})")
+                else:
+                    logger.warning("⚠️ 没有需要持久化的占位符值")
+
+            except Exception as persist_err:
+                logger.error(f"❌ 持久化占位符值失败: {persist_err}")
+                logger.exception(persist_err)
+                # 持久化失败不影响主流程，继续执行
+                db.rollback()
 
         payload["document"] = {
             "success": export_res.success,

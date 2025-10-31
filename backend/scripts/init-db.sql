@@ -613,6 +613,9 @@ CREATE TABLE IF NOT EXISTS placeholder_values (
     row_count INTEGER NOT NULL DEFAULT 0,
     success BOOLEAN NOT NULL DEFAULT TRUE,
     error_message TEXT,
+    source VARCHAR(50) DEFAULT 'agent',
+    confidence_score REAL DEFAULT 0.0,
+    analysis_metadata JSONB DEFAULT '{}'::jsonb,
     -- Cache management
     cache_key VARCHAR(255),
     expires_at TIMESTAMP WITH TIME ZONE,

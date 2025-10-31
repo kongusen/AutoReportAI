@@ -175,7 +175,9 @@ class SQLValidatorTool(BaseTool):
 
             # 获取 Schema 信息
             if schema_info is None:
-                schema_info = await self._get_schema_info(connection_config)
+                # 🔥 修复：从SQL中提取表名，传给SchemaRetrievalTool
+                table_names = self._extract_table_names(resolved_sql)
+                schema_info = await self._get_schema_info(connection_config, table_names=table_names)
             
             # 执行验证
             report = await self._validate_sql(
@@ -252,8 +254,13 @@ class SQLValidatorTool(BaseTool):
         """向后兼容的execute方法"""
         return await self.run(**kwargs)
     
-    async def _get_schema_info(self, connection_config: Dict[str, Any]) -> Dict[str, Any]:
-        """获取 Schema 信息"""
+    async def _get_schema_info(self, connection_config: Dict[str, Any], table_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        """获取 Schema 信息
+        
+        Args:
+            connection_config: 连接配置
+            table_names: 可选的表名列表，如果提供则只获取这些表的结构信息
+        """
         try:
             from ..schema.retrieval import create_schema_retrieval_tool
 
@@ -263,7 +270,15 @@ class SQLValidatorTool(BaseTool):
                 connection_config=self._connection_config or connection_config
             )
 
+            # 🔥 修复：如果提供了表名，传入SchemaRetrievalTool；否则尝试从上下文获取
+            logger.info(f"🔍 [SQL验证] 开始检索 Schema 信息")
+            if table_names:
+                logger.info(f"   表名: {table_names}")
+            else:
+                logger.info(f"   表名: None (将从上下文获取)")
+
             result = await retrieval_tool.run(
+                table_names=table_names,  # 🔥 关键修复：传入从SQL中提取的表名
                 include_relationships=True,
                 include_constraints=True,
                 format="detailed"
@@ -273,10 +288,17 @@ class SQLValidatorTool(BaseTool):
                 return result.get("result", {})
             else:
                 logger.warning(f"⚠️ 获取 Schema 信息失败: {result.get('error')}")
-                return {}
+                # 🔥 如果SchemaRetrievalTool失败且没有表名，尝试返回空字典让验证继续进行
+                if not table_names:
+                    logger.warning(f"⚠️ SchemaRetrievalTool无法从上下文获取表名，将使用空Schema信息继续验证")
+                    return {}
+                else:
+                    logger.error(f"❌ SchemaRetrievalTool失败，即使传入了表名: {result.get('error')}")
+                    return {}
                 
         except Exception as e:
             logger.warning(f"⚠️ 获取 Schema 信息失败: {e}")
+            # 🔥 即使失败，也返回空字典让验证继续进行（使用语法验证）
             return {}
     
     async def _validate_sql(

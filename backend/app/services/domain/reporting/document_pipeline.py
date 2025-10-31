@@ -789,6 +789,37 @@ class TemplateParser:
         
         return styles
     
+    def _is_period_placeholder(self, placeholder_name: str) -> bool:
+        """
+        判断是否为周期类占位符（需要进行时间维度分组）
+        
+        只有明确的周期类占位符才应该进行时间维度分组，不包括：
+        - "时间范围内"、"时间范围"（只是查询条件，不是分组）
+        - 单独的"时间"、"日期"（可能只是描述，不是分组维度）
+        
+        Args:
+            placeholder_name: 占位符名称
+            
+        Returns:
+            是否为周期类占位符
+        """
+        name_lower = placeholder_name.lower()
+        
+        # 明确的周期类关键词（需要时间维度分组）
+        period_keywords = [
+            "周期"
+        ]
+        
+        # 排除不是周期类的关键词（只是时间条件）
+        exclude_keywords = ["时间范围", "时间范围内", "日期范围", "日期范围内"]
+        
+        # 如果包含排除关键词，则不是周期类
+        if any(exclude_keyword in name_lower for exclude_keyword in exclude_keywords):
+            return False
+        
+        # 检查是否包含周期类关键词
+        return any(keyword in name_lower for keyword in period_keywords)
+    
     def parse_doc_placeholders(self, doc_path: str) -> Dict[str, Any]:
         """解析DOC文档中的占位符（API兼容方法）"""
         try:
@@ -832,7 +863,7 @@ class TemplateParser:
                     placeholder_dict["analysis_requirements"] = {
                         "data_operation": self._infer_data_operation(placeholder.name),
                         "aggregation_type": self._infer_aggregation_type(placeholder.name),
-                        "time_dimension": "时间" in placeholder.name or "年" in placeholder.name or "月" in placeholder.name,
+                        "time_dimension": self._is_period_placeholder(placeholder.name),
                         "geographic_dimension": "地区" in placeholder.name or "区域" in placeholder.name,
                         "requires_grouping": "分组" in placeholder.name or "按" in placeholder.name
                     }

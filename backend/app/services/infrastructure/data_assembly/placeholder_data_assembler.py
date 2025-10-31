@@ -109,13 +109,46 @@ class PlaceholderDataAssembler:
         return assembled_data
 
     def _determine_placeholder_type(self, placeholder_name: str) -> PlaceholderType:
-        """确定占位符类型"""
-        if '周期' in placeholder_name or '时间' in placeholder_name:
-            return PlaceholderType.TIME
-        elif '统计' in placeholder_name or '数量' in placeholder_name or '占比' in placeholder_name:
+        """
+        确定占位符类型
+        
+        注意：PlaceholderType.TIME 用于时间显示占位符（如时间范围），
+        而不是用于时间维度分组的占位符。包含"时间范围内"的统计占位符
+        应该归类为 STATISTIC 类型。
+        """
+        name_lower = placeholder_name.lower()
+        
+        # 排除不是时间显示类型的占位符（只是时间条件）
+        exclude_keywords = ["时间范围", "时间范围内", "日期范围", "日期范围内"]
+        if any(exclude_keyword in name_lower for exclude_keyword in exclude_keywords):
+            # 包含排除关键词，不归类为时间显示类型，继续判断其他类型
+            pass
+        else:
+            # 明确的时间显示类关键词（如"统计开始日期"、"统计结束日期"等）
+            time_display_keywords = [
+                "统计开始日期", "统计结束日期", "开始日期", "结束日期",
+                "报告日期", "数据日期", "查询日期"
+            ]
+            if any(keyword in name_lower for keyword in time_display_keywords):
+                return PlaceholderType.TIME
+        
+        # 判断统计类型
+        if '统计' in placeholder_name or '数量' in placeholder_name or '占比' in placeholder_name:
             return PlaceholderType.STATISTIC
+        # 判断图表类型
         elif '图表' in placeholder_name or '表格' in placeholder_name:
             return PlaceholderType.VISUALIZATION
+        # 判断时间显示类型（需要更严格的判断）
+        elif '周期' in placeholder_name:
+            # 只识别明确的周期类占位符，用于时间显示
+            period_keywords = [
+                "周期", "统计周期", "报告周期", "数据周期",
+                "日报", "月报", "年报"
+            ]
+            if any(keyword in name_lower for keyword in period_keywords):
+                return PlaceholderType.TIME
+            else:
+                return PlaceholderType.TEXT
         else:
             return PlaceholderType.TEXT
 

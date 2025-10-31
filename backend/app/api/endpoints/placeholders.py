@@ -1680,9 +1680,24 @@ class PlaceholderOrchestrationService:
             return obj
 
     def _is_period_placeholder(self, placeholder_text: str) -> bool:
-        """检查是否为周期性占位符"""
+        """
+        检查是否为周期性占位符（需要进行时间维度分组）
+        
+        只有明确的周期类占位符才应该进行时间维度分组，不包括：
+        - "时间范围内"、"时间范围"（只是查询条件，不是分组）
+        - 单独的"时间"、"日期"（可能只是描述，不是分组维度）
+        """
         text_lower = placeholder_text.lower()
-        period_keywords = ["周期", "日期", "时间", "period", "date", "统计周期", "报告周期", "数据周期"]
+        
+        # 排除不是周期类的关键词（只是时间条件）
+        exclude_keywords = ["时间范围", "时间范围内", "日期范围", "日期范围内"]
+        if any(exclude_keyword in text_lower for exclude_keyword in exclude_keywords):
+            return False
+        
+        # 明确的周期类关键词（需要时间维度分组）
+        period_keywords = [
+            "周期"
+        ]
         return any(keyword in text_lower for keyword in period_keywords)
 
     async def _handle_period_placeholder(

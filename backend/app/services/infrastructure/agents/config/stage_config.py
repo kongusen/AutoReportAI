@@ -403,12 +403,9 @@ WHERE <DATE_COLUMN> >= '2024-01-01' AND <DATE_COLUMN> <= '2024-01-31'
 - 性能优化程度
 
 ## 常见问题处理
-- 字段名错误 → 使用sql_column_checker检查
-- 语法错误 → 使用sql_auto_fixer修复
-- 性能问题 → 优化查询结构"""
-
-        """
-        .strip() + "\n\n⚠️ 重要：只有当 SQL 通过验证 (validation_passed=true) 后才能输出最终结果！"
+- 字段名错误 -> 使用sql_column_checker检查
+- 语法错误 -> 使用sql_auto_fixer修复
+- 性能问题 -> 优化查询结构""".strip() + "\n\n⚠️ 重要：只有当 SQL 通过验证 (validation_passed=true) 后才能输出最终结果！"
     
     def _get_chart_execution_guidance(self) -> str:
         """图表阶段执行指导"""
@@ -429,10 +426,10 @@ WHERE <DATE_COLUMN> >= '2024-01-01' AND <DATE_COLUMN> <= '2024-01-31'
 - 视觉效果合理性
 
 ## 图表类型选择指南
-- 时间序列 → 折线图、面积图
-- 分类对比 → 柱状图、条形图
-- 比例展示 → 饼图、环形图
-- 关系分析 → 散点图、气泡图"""
+- 时间序列 -> 折线图、面积图
+- 分类对比 -> 柱状图、条形图
+- 比例展示 -> 饼图、环形图
+- 关系分析 -> 散点图、气泡图"""
     
     def _get_document_execution_guidance(self) -> str:
         """文档阶段执行指导"""

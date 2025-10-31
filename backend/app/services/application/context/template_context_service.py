@@ -492,13 +492,23 @@ class TemplateContextBuilder:
         if any(keyword in name_lower for keyword in chart_keywords):
             return "图表类"
 
-        # 周期类/日期类关键词
-        period_keywords = [
-            "日期", "时间", "年", "月", "日", "周", "季度", "period", "date", "time",
-            "year", "month", "day", "week", "quarter", "当前", "本月", "今年"
-        ]
-        if any(keyword in name_lower for keyword in period_keywords):
-            return "周期类"
+        # 周期类/日期类关键词（只识别明确的周期类占位符）
+        # 排除"时间范围"、"时间范围内"等只是查询条件的占位符
+        exclude_keywords = ["时间范围", "时间范围内", "日期范围", "日期范围内"]
+        if any(exclude_keyword in name_lower for exclude_keyword in exclude_keywords):
+            # 包含排除关键词，不归类为周期类，继续判断其他类型
+            pass
+        else:
+            # 明确的周期类关键词（需要时间维度分组）
+            period_keywords = [
+                "周期", "统计周期", "报告周期", "数据周期",
+                "按时间", "按日期", "按年", "按月", "按周", "按季度",
+                "趋势", "增长率", "变化率", "同比", "环比",
+                "年度", "月度", "季度", "周度", "日报", "月报", "年报",
+                "period", "trend", "growth", "yearly", "monthly", "quarterly", "weekly", "daily"
+            ]
+            if any(keyword in name_lower for keyword in period_keywords):
+                return "周期类"
 
         # 统计类关键词（默认类型，用于需要SQL查询的数据）
         stat_keywords = [

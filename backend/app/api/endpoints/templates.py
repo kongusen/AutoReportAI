@@ -902,9 +902,6 @@ async def reparse_template_placeholders(
         placeholders_data = structure.get('placeholders', [])
 
         # 🔑 保存占位符到数据库
-        from app.services.application.placeholder.placeholder_service import PlaceholderApplicationService
-        placeholder_service = PlaceholderApplicationService()
-
         saved_count = 0
         for ph in placeholders_data:
             try:

@@ -2228,22 +2228,22 @@ class PlaceholderOrchestrationService:
             )
 
             # 调用LLM进行分析和修复
-            if not self.app_service:
-                raise ValueError("ApplicationService未初始化")
+            from app.services.infrastructure.llm import ask_agent_for_user
+            
+            user_id = self.app_service.user_id if self.app_service else "system"
 
-            llm_service = self.app_service.llm_service
-            if not llm_service:
-                raise ValueError("LLM服务不可用")
-
-            response = await llm_service.generate_response(
-                prompt=analysis_prompt,
-                system_prompt="你是一个SQL纠错专家，擅长分析和修复SQL查询错误。严格按照JSON格式返回结果。",
-                temperature=0.3,
-                max_tokens=1500
+            # 使用 LLM 生成响应
+            response_text = await ask_agent_for_user(
+                user_id=user_id,
+                question=analysis_prompt,
+                agent_type="sql_fixer",
+                task_type="sql_analysis",
+                complexity="medium",
+                enable_agent_mode=False  # 禁用Agent模式，直接调用LLM
             )
 
             # 解析LLM响应
-            fixed_result = self._parse_fix_response(response)
+            fixed_result = self._parse_fix_response(response_text)
 
             if fixed_result.get("success"):
                 logger.info(f"✅ [错误分析] SQL修复成功")

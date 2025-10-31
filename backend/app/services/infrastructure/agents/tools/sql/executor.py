@@ -281,15 +281,33 @@ class SQLExecutorTool(BaseTool):
             
             if result.get("success"):
                 report = result.get("report")
-                if report and report.get("is_valid"):
-                    return {"success": True}
+                if report:
+                    # 处理 ValidationReport 对象（dataclass）或字典
+                    if isinstance(report, dict):
+                        is_valid = report.get("is_valid", True)
+                        errors = report.get("errors", [])
+                    else:
+                        # ValidationReport 是 dataclass 对象
+                        is_valid = getattr(report, "is_valid", True)
+                        errors = getattr(report, "errors", [])
+                    
+                    if is_valid:
+                        return {"success": True}
+                    else:
+                        # 提取错误消息
+                        error_messages = []
+                        for error in errors:
+                            if isinstance(error, dict):
+                                error_messages.append(error.get("message", ""))
+                            else:
+                                # ValidationIssue 是 dataclass 对象
+                                error_messages.append(getattr(error, "message", str(error)))
+                        return {
+                            "success": False,
+                            "error": "; ".join(error_messages)
+                        }
                 else:
-                    errors = report.get("errors", []) if report else []
-                    error_messages = [error.get("message", "") for error in errors]
-                    return {
-                        "success": False,
-                        "error": "; ".join(error_messages)
-                    }
+                    return {"success": True}  # 没有报告时默认通过
             else:
                 return {
                     "success": False,

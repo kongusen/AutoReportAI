@@ -4,6 +4,7 @@ from .crud_etl_job import crud_etl_job
 from .crud_llm_server import crud_llm_server
 from .crud_llm_model import crud_llm_model
 from .crud_placeholder_mapping import crud_placeholder_mapping as placeholder_mapping
+from .crud_placeholder_value import placeholder_value
 from .crud_report_history import report_history
 from .crud_task import crud_task as task
 from .crud_task_execution import crud_task_execution
@@ -24,7 +25,7 @@ template_placeholder = CRUDTemplatePlaceholder(TemplatePlaceholder)
 
 __all__ = [
     # 原有CRUD
-    "analytics_data", 
+    "analytics_data",
     "data_source",
     "crud_etl_job",
     "etl_job",
@@ -34,6 +35,7 @@ __all__ = [
     "crud_user_llm_preference",
     "crud_user_llm_usage_quota",
     "placeholder_mapping",
+    "placeholder_value",
     "report_history",
     "task",
     "crud_task_execution",

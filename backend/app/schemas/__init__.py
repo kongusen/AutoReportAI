@@ -1,5 +1,6 @@
 from .data_source import DataSource, DataSourceCreate, DataSourceUpdate
 from .etl_job import ETLJob, ETLJobCreate, ETLJobUpdate
+from .placeholder_value import PlaceholderValueCreate, PlaceholderValueUpdate, PlaceholderValueInDB, PlaceholderValueResponse
 from .report_history import ReportHistory, ReportHistoryCreate
 from .task import Task, TaskCreate, TaskRead, TaskUpdate
 from .template import Template, TemplateCreate, TemplateUpdate, TemplateUpload
@@ -25,6 +26,10 @@ __all__ = [
     "ETLJob",
     "ETLJobCreate",
     "ETLJobUpdate",
+    "PlaceholderValueCreate",
+    "PlaceholderValueUpdate",
+    "PlaceholderValueInDB",
+    "PlaceholderValueResponse",
     "ReportHistory",
     "ReportHistoryCreate",
     "Task",

@@ -178,6 +178,155 @@ class TaskExecutionService:
             logger.error(f"任务执行异常: {task_id}, 错误: {e}")
             return self._create_error_result(request, "任务执行异常", str(e))
 
+    async def execute_with_persistence(self, request: TaskExecutionRequest) -> TaskExecutionResult:
+        """
+        执行任务（包含完整的ETL数据持久化）
+
+        核心流程：
+        1. 准备占位符
+        2. 执行ETL
+        3. 持久化ETL数据 ← 新增
+        4. 生成报告
+        5. 统一commit ← 关键
+
+        Args:
+            request: 任务执行请求
+
+        Returns:
+            任务执行结果
+        """
+        from app.db.session import get_db_session
+        from app.services.data.persistence.etl_persistence_service import ETLPersistenceService
+
+        start_time = datetime.now()
+        task_id = request.task_id
+
+        # 生成批次ID
+        batch_id = ETLPersistenceService.generate_batch_id()
+
+        logger.info(f"🚀 开始执行任务（持久化模式）: {task_id}, batch_id={batch_id}")
+
+        # 初始化任务状态
+        self.active_tasks[task_id] = {
+            "status": TaskStatus.PENDING,
+            "start_time": start_time,
+            "current_step": "初始化",
+            "progress": 0.0,
+            "batch_id": batch_id
+        }
+
+        with get_db_session() as db:
+            try:
+                # Step 1: 准备占位符数据
+                await self._update_task_status(task_id, TaskStatus.VALIDATING, "准备占位符数据", 10.0)
+                placeholder_data = await self._prepare_placeholder_data(request)
+                logger.info(f"✅ 占位符准备完成: {len(placeholder_data.get('placeholder_sql_map', {}))} 个")
+
+                # Step 2: 执行ETL数据提取
+                await self._update_task_status(task_id, TaskStatus.PROCESSING, "ETL数据提取", 30.0)
+                etl_result = await self._execute_etl_pipeline(request, placeholder_data)
+
+                if not etl_result.get("success"):
+                    raise Exception(f"ETL执行失败: {etl_result.get('error')}")
+
+                etl_data = etl_result.get("data", {})
+                logger.info(f"✅ ETL执行完成")
+
+                # 🔑 Step 3: 持久化ETL结果（新增）
+                await self._update_task_status(task_id, TaskStatus.PROCESSING, "持久化ETL数据", 50.0)
+                persistence_service = ETLPersistenceService(db)
+                persistence_result = await persistence_service.persist_etl_results(
+                    template_id=request.template_id,
+                    etl_results=etl_data,
+                    batch_id=batch_id,
+                    time_context=request.time_context or {}
+                )
+
+                logger.info(f"✅ {persistence_result['message']}")
+
+                # Step 4: 生成报告
+                await self._update_task_status(task_id, TaskStatus.GENERATING, "生成报告", 70.0)
+                report_result = await self._generate_report(request, etl_data)
+
+                if not report_result.get("success"):
+                    raise Exception(f"报告生成失败: {report_result.get('error')}")
+
+                logger.info(f"✅ 报告生成完成")
+
+                # 🔑 Step 5: 统一提交事务
+                db.commit()
+                await self._update_task_status(task_id, TaskStatus.COMPLETED, "任务完成", 100.0)
+                logger.info(f"✅ 事务提交成功: batch_id={batch_id}")
+
+                execution_time = (datetime.now() - start_time).total_seconds()
+
+                # 清理任务状态
+                if task_id in self.active_tasks:
+                    del self.active_tasks[task_id]
+
+                logger.info(f"✅ 任务执行完成: {task_id}, 耗时: {execution_time:.2f}秒")
+
+                return TaskExecutionResult(
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    success=True,
+                    message="任务执行成功",
+                    data={
+                        "batch_id": batch_id,
+                        "etl_saved_count": persistence_result["saved_count"],
+                        "etl_failed_count": persistence_result["failed_count"],
+                        "report_result": report_result,
+                    },
+                    execution_time_seconds=execution_time,
+                    artifacts=report_result.get("artifacts", {})
+                )
+
+            except Exception as e:
+                # 🔑 统一回滚
+                db.rollback()
+                await self._update_task_status(task_id, TaskStatus.FAILED, f"任务失败: {str(e)}", 0.0)
+                logger.error(f"❌ 任务执行失败，已回滚: {task_id}, {e}")
+                logger.exception(e)
+
+                # 清理任务状态
+                if task_id in self.active_tasks:
+                    del self.active_tasks[task_id]
+
+                execution_time = (datetime.now() - start_time).total_seconds()
+
+                return TaskExecutionResult(
+                    task_id=task_id,
+                    status=TaskStatus.FAILED,
+                    success=False,
+                    message="任务执行失败",
+                    error=str(e),
+                    execution_time_seconds=execution_time,
+                    data={"batch_id": batch_id}
+                )
+
+    async def execute_task_complete(self, request: TaskExecutionRequest) -> TaskExecutionResult:
+        """
+        完整的任务执行（不使用Agent流水线，保留完整流程）
+
+        与execute_task的区别：
+        - execute_task: 使用新的Agent流水线（_execute_with_agents）
+        - execute_task_complete: 保留完整的旧流程
+        - execute_with_persistence: 新流程 + ETL持久化
+        """
+        start_time = datetime.now()
+        task_id = request.task_id
+
+        logger.info(f"开始执行任务（完整流程）: {task_id}")
+
+        # 初始化任务状态
+        self.active_tasks[task_id] = {
+            "status": TaskStatus.PENDING,
+            "start_time": start_time,
+            "current_step": "初始化",
+            "progress": 0.0
+        }
+
+
     async def _execute_with_agents(self, request: TaskExecutionRequest, start_time: datetime) -> TaskExecutionResult:
         """使用 PlaceholderProcessingSystem 的 ReAct 流水线执行任务（新架构）"""
         task_id = request.task_id

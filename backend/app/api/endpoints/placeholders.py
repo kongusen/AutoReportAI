@@ -1196,15 +1196,17 @@ class PlaceholderOrchestrationService:
                 # 添加上下文用于时间占位符解析
                 validation_payload["task_context"] = {"time_window": execution_window}
 
-                # 保存需要显式传递的参数值（在移除之前）
+                # 保存需要显式传递的参数值
                 connection_config_value = validation_payload.get("connection_config") or validation_payload.get("data_source")
                 placeholder_text_value = validation_payload.get("placeholder_text", "")
 
                 # 避免在显式参数和展开参数中同时传入相同参数，导致重复关键字错误
-                # 移除已经显式传递的参数
-                for key in ["sql", "connection_config", "placeholder_text", "max_retries"]:
-                    if key in validation_payload:
-                        validation_payload.pop(key)
+                # 构建新的参数字典，排除已经显式传递的参数
+                excluded_keys = {"sql", "connection_config", "placeholder_text", "max_retries", "table_names"}
+                clean_validation_payload = {
+                    k: v for k, v in validation_payload.items()
+                    if k not in excluded_keys
+                }
 
                 fix_result = await self._validate_and_fix_sql_with_retry(
                     sql=normalized_sql,
@@ -1212,7 +1214,7 @@ class PlaceholderOrchestrationService:
                     table_names=table_names,
                     placeholder_text=placeholder_text_value,
                     max_retries=3,
-                    **validation_payload
+                    **clean_validation_payload
                 )
 
                 # 处理纠错结果

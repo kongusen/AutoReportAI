@@ -84,6 +84,13 @@ try:
 except ImportError as e:
     logger.warning(f"⚠️ Failed to import some tasks: {e}")
 
+# 手动导入 Application 层工作流任务以确保正确注册
+try:
+    from app.services.application.tasks import workflow_tasks  # noqa: F401
+    logger.info("✅ Application workflow tasks imported successfully")
+except ImportError as e:
+    logger.warning(f"⚠️ Failed to import workflow tasks: {e}")
+
 # 健康检查任务
 @celery_app.task(name='infrastructure.health.ping')
 def health_ping():

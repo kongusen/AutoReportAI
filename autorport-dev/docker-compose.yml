@@ -288,6 +288,16 @@ services:
       - DDD_WORKER_CACHE_ENABLED=true
       - WORKER_CACHE_DIR=./cache/worker
       
+      # MinIO对象存储配置 - 与backend服务一致
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-autoreport}
+      - MINIO_SECURE=false
+      - MINIO_REGION=${MINIO_REGION:-us-east-1}
+      - FILE_STORAGE_BACKEND=minio
+      - PREFER_MINIO_STORAGE=true
+      
     volumes:
       - ./data/backend/logs:/app/logs
       - ./data/backend/cache:/app/cache

@@ -291,10 +291,13 @@ class WordTemplateService:
             doc: Word文档对象
             data: 占位符数据
             container: 服务容器
+            user_id: 用户ID
         """
         if not container:
-            self.logger.warning("没有提供服务容器，跳过文档内容优化")
+            self.logger.warning("⚠️ 没有提供服务容器，跳过文档内容优化")
             return
+        
+        self.logger.info("🤖 开始使用 Agent 优化文档内容")
 
         try:
             # 使用新的 StageAwareAgentAdapter

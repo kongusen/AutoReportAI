@@ -35,6 +35,13 @@ except ImportError:
     # 编排任务还未创建时的占位符
     _orchestration_tasks = []
 
+# 工作流任务 - 必须导入以注册 Celery 任务
+try:
+    from . import workflow_tasks  # noqa: F401
+    _workflow_tasks_imported = True
+except ImportError:
+    _workflow_tasks_imported = False
+
 # 导出所有任务相关组件
 __all__ = [
     # 任务服务

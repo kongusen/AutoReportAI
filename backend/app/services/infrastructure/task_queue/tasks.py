@@ -1389,8 +1389,18 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             chart_gen_total = metrics["chart_generation"]["total"]
             chart_gen_rate = metrics["chart_generation"]["generated"] / chart_gen_total if chart_gen_total > 0 else 0
             
+            # 判断 ETL 是否成功：至少有一个成功占位符且没有任何失败占位符
+            etl_success_flag = len(successful_placeholders) > 0 and not failed_placeholders
+            if not etl_success_flag:
+                failure_reason_parts = []
+                if len(successful_placeholders) == 0:
+                    failure_reason_parts.append("没有成功占位符")
+                if failed_placeholders:
+                    failure_reason_parts.append(f"存在{len(failed_placeholders)}个失败占位符: {list(failed_placeholders.keys())[:5]}")  # 最多显示5个
+                logger.warning(f"⚠️ ETL执行被标记为失败: {'; '.join(failure_reason_parts)}")
+            
             execution_result = {
-                "success": len(successful_placeholders) > 0 and not failed_placeholders,
+                "success": etl_success_flag,
                 "events": events,
                 "etl_results": etl_results,
                 "time_window": time_window,
@@ -1495,16 +1505,28 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         report_generation_error: Optional[str] = None
         etl_phase_success = execution_result.get("success", False)
         
-        # 数据质量闸门检查
-        quality_passed, quality_issues = _check_data_quality_gate(placeholder_render_data)
-        if not quality_passed:
-            logger.error(f"数据质量检查失败: {quality_issues}")
-            etl_phase_success = False  # 将质量检查失败视为 ETL 失败
-        
         # 🆕 文档生成容错策略（通过 settings 配置）
         failed_placeholders = execution_result.get("placeholders_failed", [])
         skipped_placeholders = execution_result.get("placeholders_skipped", [])
         successful_placeholders_count = execution_result.get("placeholders_success", 0)
+        
+        # 详细记录 ETL 阶段状态（用于诊断）
+        logger.info(
+            f"📊 ETL阶段状态检查: success={etl_phase_success}, "
+            f"成功占位符={successful_placeholders_count}, "
+            f"失败占位符={len(failed_placeholders)}, "
+            f"跳过占位符={len(skipped_placeholders)}"
+        )
+        if failed_placeholders:
+            logger.warning(f"⚠️ 失败占位符列表: {failed_placeholders}")
+        
+        # 数据质量闸门检查
+        quality_passed, quality_issues = _check_data_quality_gate(placeholder_render_data)
+        if not quality_passed:
+            logger.error(f"❌ 数据质量检查失败: {quality_issues}")
+            etl_phase_success = False  # 将质量检查失败视为 ETL 失败
+        else:
+            logger.info("✅ 数据质量检查通过")
 
         max_failed_allowed = getattr(settings, "REPORT_MAX_FAILED_PLACEHOLDERS_FOR_DOC", 0)
         allow_quality_issues = getattr(settings, "REPORT_ALLOW_QUALITY_ISSUES", False)
@@ -1682,6 +1704,18 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         execution_result["success"] = overall_success
         report_info["generated"] = report_generated
         
+        # 详细记录最终状态判断（用于诊断）
+        logger.info(
+            f"🎯 最终状态判断: etl_success={etl_success}, "
+            f"report_generated={report_generated}, "
+            f"overall_success={overall_success}"
+        )
+        if not overall_success:
+            if not etl_success:
+                logger.warning("⚠️ 任务失败原因: ETL阶段未完全成功")
+            if not report_generated:
+                logger.warning("⚠️ 任务失败原因: 报告文档未生成")
+        
         # 7. 更新执行结果
         final_status = TaskStatus.COMPLETED if overall_success else TaskStatus.FAILED
         task_execution.execution_status = final_status
@@ -1816,12 +1850,26 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             )
             logger.info(f"Task {task_id} completed successfully in {task_execution.total_duration}s")
         else:
+            # 根据实际失败原因生成准确错误消息
+            failure_reasons = []
+            if not etl_success:
+                failure_reasons.append("ETL阶段失败")
+            if not report_generated:
+                failure_reasons.append("报告生成失败")
+            elif report_info.get("error"):
+                failure_reasons.append(f"报告生成问题: {report_info.get('error')}")
+            
+            if not failure_reasons:
+                failure_reasons.append("未知错误")
+            
+            error_message = "任务执行失败: " + "，".join(failure_reasons)
+            
             progress_recorder.fail(
-                message="任务执行失败: 报告生成失败",
-                stage="document_generation",
-                error_details={"error": report_info.get("error")},
+                message=error_message,
+                stage="document_generation" if not report_generated else ("etl_processing" if not etl_success else "unknown"),
+                error_details={"error": report_info.get("error") or "ETL阶段失败" if not etl_success else "报告生成失败"},
             )
-            logger.warning(f"Task {task_id} completed with failures in {task_execution.total_duration}s: {report_info.get('error')}")
+            logger.warning(f"Task {task_id} completed with failures in {task_execution.total_duration}s: {error_message}")
 
         return {
             "status": "completed" if overall_success else "failed",

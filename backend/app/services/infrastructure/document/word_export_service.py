@@ -12,7 +12,7 @@ Word文档导出服务
 import logging
 import os
 import asyncio
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum

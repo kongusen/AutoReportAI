@@ -241,27 +241,33 @@ class WordExportService:
         placeholder_data: Dict[str, Any],
         etl_data: Dict[str, Any]
     ):
-        """替换文档中的占位符（保持格式）"""
+        """替换文档中的占位符（智能改写，保持格式）"""
         try:
             # 构建替换映射
             replacement_map = {}
+            # 🆕 记录需要智能改写的占位符（值为0或null）
+            smart_rewrite_needed = {}
 
-            # 优先使用调用方提供的直接替换值（保持"能用原值尽量用原值"）
-            # 支持两种占位符格式：{{name}} 和 {name}
+            # 优先使用调用方提供的直接替换值
             direct_values = placeholder_data.get('direct_values') if isinstance(placeholder_data, dict) else None
             if isinstance(direct_values, dict):
                 for name, value in direct_values.items():
                     try:
-                        # 数据类型验证和转换
-                        text_value = self._validate_and_convert_placeholder_value(name, value)
-                        if text_value is not None:
-                            replacement_map[f"{{{{{name}}}}}"] = text_value
-                            replacement_map[f"{{{name}}}"] = text_value
+                        # 检查是否需要智能改写
+                        if value is None or value == 0 or value == "":
+                            smart_rewrite_needed[name] = value
+                            logger.info(f"🔧 占位符 {name} 值为空/0，标记为需要智能改写")
+                        else:
+                            # 数据类型验证和转换
+                            text_value = self._validate_and_convert_placeholder_value(name, value)
+                            if text_value is not None:
+                                replacement_map[f"{{{{{name}}}}}"] = text_value
+                                replacement_map[f"{{{name}}}"] = text_value
                     except Exception as e:
                         logger.warning(f"占位符 {name} 数据验证失败: {e}")
                         continue
-            
-            # 如果未提供direct_values或某个占位符仍无值，则回退到从ETL数据推断
+
+            # 回退到从ETL数据推断
             validation_results = placeholder_data.get('validation_results', []) if isinstance(placeholder_data, dict) else []
             for result in validation_results:
                 placeholder_name = result.get('placeholder_name', '')
@@ -269,13 +275,24 @@ class WordExportService:
                 key_single = f"{{{placeholder_name}}}"
                 if placeholder_name and key_braced not in replacement_map and key_single not in replacement_map:
                     replacement_value = self._get_placeholder_value(result, etl_data)
-                    replacement_map[key_braced] = replacement_value
-                    replacement_map[key_single] = replacement_value
-            
+                    # 检查是否需要智能改写
+                    if replacement_value == "[数据为空]" or replacement_value == "0" or not replacement_value:
+                        smart_rewrite_needed[placeholder_name] = replacement_value
+                        logger.info(f"🔧 占位符 {placeholder_name} 值为空，标记为需要智能改写")
+                    else:
+                        replacement_map[key_braced] = replacement_value
+                        replacement_map[key_single] = replacement_value
+
+            # 🆕 步骤1：智能改写包含空值占位符的句子
+            if smart_rewrite_needed:
+                logger.info(f"🤖 开始智能改写 {len(smart_rewrite_needed)} 个占位符所在的句子")
+                await self._smart_rewrite_empty_placeholders(doc, smart_rewrite_needed, placeholder_data)
+
+            # 步骤2：常规占位符替换
             if not replacement_map:
-                logger.warning("没有找到可替换的占位符")
+                logger.warning("没有找到可替换的占位符（可能都已被智能改写）")
                 return
-            
+
             replaced_count = 0
 
             # 替换段落中的占位符（保持格式，支持多个占位符）
@@ -283,24 +300,20 @@ class WordExportService:
                 if not paragraph.runs:
                     continue
 
-                # 使用简化策略：在每个 run 内直接替换占位符
-                # 这种方法适用于大多数情况，且能保留格式
                 for run in paragraph.runs:
                     original_text = run.text
                     if not original_text:
                         continue
 
-                    # 替换所有匹配的占位符
                     modified_text = original_text
                     for placeholder, value in replacement_map.items():
                         if placeholder in modified_text:
                             modified_text = modified_text.replace(placeholder, str(value))
                             replaced_count += 1
 
-                    # 只有文本被修改时才更新
                     if modified_text != original_text:
                         run.text = modified_text
-            
+
             # 替换表格中的占位符（保持格式）
             for table in doc.tables:
                 for row in table.rows:
@@ -315,18 +328,143 @@ class WordExportService:
 
                             for placeholder, value in replacement_map.items():
                                 if placeholder in full_text:
-                                    # 在 run 级别替换，保留格式
                                     for run in paragraph.runs:
                                         if placeholder in run.text:
                                             run.text = run.text.replace(placeholder, str(value))
                                             replaced_count += 1
                                             break
                                     break
-            
-            logger.info(f"已替换 {replaced_count} 个占位符实例（共 {len(replacement_map)} 种占位符）")
-            
+
+            logger.info(f"✅ 已替换 {replaced_count} 个占位符实例（智能改写: {len(smart_rewrite_needed)}，常规替换: {len(replacement_map)}）")
+
         except Exception as e:
             logger.error(f"替换占位符失败: {e}", exc_info=True)
+
+    async def _smart_rewrite_empty_placeholders(
+        self,
+        doc,
+        empty_placeholders: Dict[str, Any],
+        placeholder_data: Dict[str, Any]
+    ):
+        """
+        🆕 智能改写包含空值/0值占位符的句子
+
+        当占位符的值为0、null或空时，不是直接显示"0"或"无数据"，
+        而是调用LLM根据上下文改写整个句子，使其更自然。
+
+        例如：
+        - 原句："本月退货成功数量为{{退货数量}}件"
+        - 值为0时：改为"本月暂无退货成功记录"
+        - 值为null时：改为"本月退货数据暂未统计"
+        """
+        try:
+            from app.services.infrastructure.agents import create_llm_service
+            llm_service = create_llm_service(container=self.container if hasattr(self, 'container') else None)
+
+            rewritten_count = 0
+
+            # 遍历所有段落，找到包含空值占位符的句子
+            for paragraph in doc.paragraphs:
+                full_text = "".join(run.text for run in paragraph.runs)
+                if not full_text:
+                    continue
+
+                # 检查段落是否包含任何空值占位符
+                needs_rewrite = False
+                matched_placeholders = []
+                for placeholder_name, value in empty_placeholders.items():
+                    if f"{{{{{placeholder_name}}}}}" in full_text or f"{{{placeholder_name}}}" in full_text:
+                        needs_rewrite = True
+                        matched_placeholders.append((placeholder_name, value))
+
+                if not needs_rewrite:
+                    continue
+
+                # 调用LLM改写句子
+                logger.info(f"🤖 改写句子: {full_text[:100]}...")
+
+                # 构建改写prompt
+                placeholder_info = "\n".join([
+                    f"- {name}: 值为{repr(value)}（{'null' if value is None else '0' if value == 0 else '空'}）"
+                    for name, value in matched_placeholders
+                ])
+
+                rewrite_prompt = f"""请改写以下句子，使其在数据为空/0/null时仍然自然流畅。
+
+原句子：{full_text}
+
+占位符信息：
+{placeholder_info}
+
+改写要求：
+1. 如果数据为0，改为"暂无XXX"、"尚未有XXX"等表达
+2. 如果数据为null/空，改为"数据暂未统计"、"信息暂缺"等表达
+3. 保持句子的业务含义和语气
+4. 删除数量单位（如"件"、"个"、"元"）
+5. 语言简洁自然，符合中文表达习惯
+
+请直接输出改写后的句子，不要包含任何解释或标记。"""
+
+                try:
+                    response = await llm_service.generate(
+                        prompt=rewrite_prompt,
+                        temperature=0.3,
+                    )
+
+                    rewritten_text = response.get("content", "").strip()
+
+                    if rewritten_text and rewritten_text != full_text:
+                        logger.info(f"✅ 改写成功: {rewritten_text[:100]}...")
+
+                        # 替换段落内容（保持格式）
+                        if paragraph.runs:
+                            # 清空所有run的文本
+                            for run in paragraph.runs[1:]:
+                                run.text = ""
+                            # 在第一个run中设置新文本（保留格式）
+                            paragraph.runs[0].text = rewritten_text
+                            rewritten_count += 1
+                    else:
+                        logger.warning(f"⚠️ LLM改写结果为空或未改变，保持原文")
+
+                except Exception as llm_error:
+                    logger.error(f"LLM改写失败: {llm_error}")
+                    # 降级处理：使用默认文本替换
+                    fallback_text = self._generate_fallback_text(full_text, matched_placeholders)
+                    if paragraph.runs:
+                        for run in paragraph.runs[1:]:
+                            run.text = ""
+                        paragraph.runs[0].text = fallback_text
+                        logger.info(f"📝 使用降级文本: {fallback_text}")
+
+            logger.info(f"🎉 智能改写完成，共改写 {rewritten_count} 个句子")
+
+        except Exception as e:
+            logger.error(f"智能改写过程异常: {e}", exc_info=True)
+
+    def _generate_fallback_text(
+        self,
+        original_text: str,
+        matched_placeholders: List[Tuple[str, Any]]
+    ) -> str:
+        """生成降级文本（当LLM不可用时）"""
+        # 简单的规则替换
+        for placeholder_name, value in matched_placeholders:
+            # 移除占位符和周围的数字、单位
+            import re
+            pattern = rf'(为|是|有|共|达到?)\s*{{{{{placeholder_name}}}}}\s*([件个元项条笔])?'
+            if value is None:
+                original_text = re.sub(pattern, r'\1数据暂未统计', original_text)
+            elif value == 0:
+                original_text = re.sub(pattern, r'暂无相关记录', original_text)
+            else:
+                original_text = re.sub(pattern, r'\1信息暂缺', original_text)
+
+            # 清理剩余的占位符
+            original_text = original_text.replace(f"{{{{{placeholder_name}}}}}", "")
+            original_text = original_text.replace(f"{{{placeholder_name}}}", "")
+
+        return original_text.strip()
 
     def _validate_and_convert_placeholder_value(self, name: str, value: Any) -> Optional[str]:
         """

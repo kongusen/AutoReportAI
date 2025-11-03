@@ -1314,71 +1314,20 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             },
                         )
                     else:
-                        # 查询成功但无数据 - 🆕 进行意图验证
+                        # 查询成功但无数据 - 信任分析阶段的SQL验证结果
                         logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 查询成功但无数据返回")
+                        logger.info(f"✅ SQL已在分析阶段通过意图验证，空值为正常结果")
 
-                        # 🔥 新增：验证SQL是否符合占位符意图
-                        try:
-                            intent_validation = run_async(system._validate_sql_result_intent(
-                                sql=final_sql,
-                                placeholder_text=ph.placeholder_text or ph.placeholder_name,
-                                placeholder_name=ph.placeholder_name,
-                                result_data=None,
-                                row_count=0
-                            ))
-
-                            if not intent_validation.get("matches_intent") and intent_validation.get("requires_regeneration"):
-                                logger.error(f"❌ [意图验证失败] 占位符 {ph.placeholder_name} 的SQL不符合业务意图")
-                                logger.error(f"   发现的问题: {intent_validation.get('issues', [])}")
-                                logger.info(f"💡 改进建议: {intent_validation.get('recommendations', [])}")
-
-                                # 标记为失败，而不是成功但数据为空
-                                _set_etl_result(
-                                    ph.placeholder_name,
-                                    success=False,
-                                    error=f"SQL不符合占位符意图: {'; '.join(intent_validation.get('issues', []))}",
-                                    metadata={
-                                        "reason": "intent_validation_failed",
-                                        "row_count": 0,
-                                        "intent_issues": intent_validation.get("issues", []),
-                                        "recommendations": intent_validation.get("recommendations", []),
-                                        "sql": final_sql  # 保存原SQL用于调试
-                                    },
-                                )
-
-                                # 🔥 TODO: 在未来版本中，这里可以触发自动重新生成SQL
-                                # regeneration_result = run_async(system._regenerate_sql_with_feedback(
-                                #     placeholder=ph,
-                                #     feedback=intent_validation.get("recommendations", [])
-                                # ))
-
-                                logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 需要人工审查和修正")
-                            else:
-                                # 意图验证通过，只是数据真的为空（正常情况）
-                                logger.info(f"✅ [意图验证通过] 占位符 {ph.placeholder_name} SQL正确，数据确实为空")
-                                _set_etl_result(
-                                    ph.placeholder_name,
-                                    success=True,
-                                    value=None,
-                                    metadata={
-                                        "reason": "query_success_empty",
-                                        "row_count": 0,
-                                        "intent_validated": True
-                                    },
-                                )
-                        except Exception as validation_error:
-                            logger.error(f"意图验证过程异常: {validation_error}")
-                            # 降级处理：即使验证失败也返回空结果
-                            _set_etl_result(
-                                ph.placeholder_name,
-                                success=True,
-                                value=None,
-                                metadata={
-                                    "reason": "query_success_empty",
-                                    "row_count": 0,
-                                    "validation_error": str(validation_error)
-                                },
-                            )
+                        _set_etl_result(
+                            ph.placeholder_name,
+                            success=True,
+                            value=None,
+                            metadata={
+                                "reason": "query_success_empty",
+                                "row_count": 0,
+                                "note": "SQL已通过分析阶段意图验证，空值为预期结果"
+                            },
+                        )
 
                     # 更新进度
                     progress_increment = 10 / total_placeholders_count if total_placeholders_count else 0

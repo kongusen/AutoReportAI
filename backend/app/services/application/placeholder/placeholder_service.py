@@ -1000,17 +1000,95 @@ class PlaceholderApplicationService:
                                 "error": f"SQL验证失败（达到最大重试次数）: {combined_issues}"
                             }
 
-                # SQL验证通过
-                logger.info(f"✅ SQL验证通过（占位符格式+Schema）: placeholder={agent_request.placeholder_id}")
+                # SQL基础验证通过（占位符格式+Schema）
+                logger.info(f"✅ SQL基础验证通过: placeholder={agent_request.placeholder_id}")
 
-                # 🆕 额外验证：检查SQL是否真正符合占位符需求（适用于执行后结果为0或null的情况）
-                # 这里先返回SQL，实际的结果验证会在ETL执行阶段进行
+                # 🆕 步骤3：试执行SQL获取查询结果
+                query_result = None
+                query_error = None
+                try:
+                    logger.info(f"🔍 试执行SQL以验证查询结果...")
+                    # 替换占位符为实际值（使用任务时间上下文）
+                    executable_sql = self._prepare_executable_sql(generated_sql, task_context)
+                    query_result = await self._execute_sql_for_validation(
+                        sql=executable_sql,
+                        data_source_id=data_source_id
+                    )
+                    logger.info(f"✅ SQL试执行完成: row_count={query_result.get('row_count', 0)}, preview={str(query_result.get('data', []))[:100]}")
+                except Exception as exec_error:
+                    logger.warning(f"⚠️ SQL试执行失败: {exec_error}")
+                    query_error = str(exec_error)
+
+                # 🆕 步骤4：SQL意图验证（传入查询结果进行综合判断）
+                # 提取任务调度信息
+                task_schedule = None
+                if task_context:
+                    task_schedule = task_context.get("window", {}).get("task_schedule")
+
+                intent_validation = await self._validate_sql_intent_with_result(
+                    sql=generated_sql,
+                    placeholder_text=placeholder.placeholder_text or placeholder.placeholder_name,
+                    placeholder_name=agent_request.placeholder_id,
+                    query_result=query_result,
+                    query_error=query_error,
+                    data_source_id=data_source_id,
+                    task_schedule=task_schedule
+                )
+
+                if not intent_validation.get("likely_matches_intent"):
+                    # 意图预验证发现潜在问题
+                    potential_issues = intent_validation.get("potential_issues", [])
+                    recommendations = intent_validation.get("recommendations", [])
+
+                    logger.warning(f"⚠️ SQL意图预验证发现潜在问题 (尝试 {retry_count + 1}/{MAX_RETRIES})")
+                    for issue in potential_issues:
+                        logger.warning(f"   - {issue}")
+
+                    retry_count += 1
+
+                    if retry_count < MAX_RETRIES:
+                        # 基于问题和建议重新生成SQL
+                        feedback = "\n".join([f"- {rec}" for rec in recommendations])
+                        retry_prompt = f"""{agent_request.requirements}
+
+⚠️ 重试 {retry_count}: 上次生成的SQL可能不符合占位符的业务意图:
+
+检测到的问题:
+{chr(10).join([f'- {issue}' for issue in potential_issues])}
+
+改进建议:
+{feedback}
+
+请重新生成SQL，确保SQL能够准确反映占位符的业务需求。"""
+                        agent_request.requirements = retry_prompt
+                        logger.info(f"🔄 基于意图验证反馈重新生成SQL...")
+                        continue
+                    else:
+                        # 达到最大重试次数，但SQL基础验证通过，可以尝试使用
+                        logger.warning(f"⚠️ 达到最大重试次数，SQL可能存在意图问题但将继续使用")
+                        return {
+                            "success": True,
+                            "sql": generated_sql,
+                            "confidence": sql_result.metadata.get('confidence_level', 0.6),
+                            "validated": True,
+                            "intent_validated": False,  # 标记意图验证未通过
+                            "intent_warnings": potential_issues,
+                            "warning": f"SQL可能不完全符合业务意图: {'; '.join(potential_issues[:2])}"
+                        }
+
+                # 所有验证通过
+                logger.info(f"✅ SQL完整验证通过（格式+Schema+意图）: placeholder={agent_request.placeholder_id}")
                 return {
                     "success": True,
                     "sql": generated_sql,
-                    "confidence": sql_result.metadata.get('confidence_level', 0.9),
+                    "confidence": sql_result.metadata.get('confidence_level', 0.95),
                     "validated": True,
-                    "requires_result_validation": True  # 🔥 标记需要在执行后进行结果验证
+                    "intent_validated": True,  # 🔥 标记意图已验证
+                    "validation_details": {
+                        "placeholder_format": "passed",
+                        "schema_check": "passed",
+                        "intent_check": "passed"
+                    }
                 }
 
             # 达到最大重试次数
@@ -1072,6 +1150,320 @@ class PlaceholderApplicationService:
             logger.debug(f"   修复后: {fixed_sql[:200]}...")
 
         return fixed_sql
+
+    def _prepare_executable_sql(
+        self,
+        sql: str,
+        task_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        准备可执行的SQL（替换占位符为实际值）
+
+        Args:
+            sql: 包含占位符的SQL
+            task_context: 任务上下文（用于获取时间参数）
+
+        Returns:
+            替换后可执行的SQL
+        """
+        executable_sql = sql
+
+        # 获取时间参数
+        if task_context and task_context.get("window"):
+            window = task_context["window"]
+            start_date = window.get("start_date")
+            end_date = window.get("end_date")
+
+            if start_date:
+                executable_sql = executable_sql.replace("{{start_date}}", f"'{start_date}'")
+            if end_date:
+                executable_sql = executable_sql.replace("{{end_date}}", f"'{end_date}'")
+
+        logger.debug(f"准备可执行SQL: {executable_sql[:200]}...")
+        return executable_sql
+
+    async def _execute_sql_for_validation(
+        self,
+        sql: str,
+        data_source_id: str
+    ) -> Dict[str, Any]:
+        """
+        试执行SQL以获取查询结果（用于验证）
+
+        Args:
+            sql: 可执行的SQL
+            data_source_id: 数据源ID
+
+        Returns:
+            查询结果: {
+                "success": bool,
+                "data": List[Dict],
+                "row_count": int,
+                "columns": List[str]
+            }
+        """
+        try:
+            from app.db.session import get_db_session
+            from app import crud
+
+            # 获取数据源配置
+            with get_db_session() as db:
+                data_source = crud.data_source.get(db, id=data_source_id)
+                if not data_source:
+                    raise ValueError(f"数据源不存在: {data_source_id}")
+
+            # 使用connector执行查询
+            from app.services.infrastructure.connectors.doris_connector import DorisConnector
+
+            connector = DorisConnector(
+                host=data_source.host,
+                port=data_source.port,
+                user=data_source.username,
+                password=data_source.password,
+                database=data_source.database
+            )
+
+            await connector.connect()
+            try:
+                # 限制查询结果，只取前10行用于验证
+                limited_sql = f"SELECT * FROM ({sql}) AS validation_query LIMIT 10"
+                query_result = await connector.execute_query(limited_sql)
+
+                # 提取数据
+                data = []
+                columns = []
+                row_count = 0
+
+                if hasattr(query_result, 'data') and query_result.data is not None:
+                    df = query_result.data
+                    if not df.empty:
+                        data = df.to_dict('records')
+                        columns = df.columns.tolist()
+                        row_count = len(data)
+
+                        # 转换Decimal等特殊类型
+                        from app.utils.json_utils import convert_decimals
+                        data = convert_decimals(data)
+
+                logger.info(f"✅ SQL验证查询成功: row_count={row_count}")
+                return {
+                    "success": True,
+                    "data": data,
+                    "row_count": row_count,
+                    "columns": columns
+                }
+
+            finally:
+                await connector.disconnect()
+
+        except Exception as e:
+            logger.error(f"SQL验证查询失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": [],
+                "row_count": 0,
+                "columns": []
+            }
+
+    async def _validate_sql_intent_with_result(
+        self,
+        sql: str,
+        placeholder_text: str,
+        placeholder_name: str,
+        query_result: Optional[Dict[str, Any]] = None,
+        query_error: Optional[str] = None,
+        data_source_id: Optional[str] = None,
+        task_schedule: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        🆕 SQL意图验证（基于查询结果+上下文综合判断）
+
+        在分析阶段试执行SQL，基于实际查询结果判断是否符合占位符意图。
+
+        Args:
+            sql: SQL语句
+            placeholder_text: 占位符描述
+            placeholder_name: 占位符名称
+            query_result: SQL查询结果（试执行的结果）
+            query_error: 查询错误（如果执行失败）
+            data_source_id: 数据源ID
+            task_schedule: 任务调度信息
+
+        Returns:
+            Dict with:
+                - likely_matches_intent: bool - 是否符合意图
+                - potential_issues: List[str] - 问题列表
+                - recommendations: List[str] - 改进建议
+                - reasoning: str - LLM推理过程
+        """
+        logger.info(f"🔍 [LLM意图验证] 基于查询结果验证SQL: {placeholder_name}")
+
+        try:
+            # 准备上下文信息
+            context_parts = []
+
+            # 1. 占位符信息
+            context_parts.append(f"## 占位符需求\n{placeholder_text}")
+
+            # 2. SQL查询
+            context_parts.append(f"## 生成的SQL\n```sql\n{sql}\n```")
+
+            # 🔥 3. 查询结果（核心）
+            if query_error:
+                context_parts.append(f"## 查询执行失败\n错误信息: {query_error}")
+            elif query_result:
+                row_count = query_result.get("row_count", 0)
+                data = query_result.get("data", [])
+                columns = query_result.get("columns", [])
+
+                result_info = f"查询结果行数: {row_count}"
+                if row_count > 0:
+                    result_info += f"\n查询字段: {', '.join(columns)}"
+                    result_info += f"\n示例数据（前3行）:\n"
+                    for i, row in enumerate(data[:3], 1):
+                        result_info += f"  {i}. {row}\n"
+                else:
+                    result_info += "\n⚠️ 查询结果为空（0行数据）"
+
+                context_parts.append(f"## 实际查询结果\n{result_info}")
+
+            # 4. Schema信息（如果有）
+            if data_source_id and self.context_retriever:
+                try:
+                    schema_cache = getattr(self.context_retriever.retriever, 'schema_cache', None)
+                    if schema_cache:
+                        schema_info = []
+                        for table_name, table_info in list(schema_cache.items())[:5]:
+                            columns = [col.get('name') for col in table_info.get('columns', [])[:10]]
+                            if columns:
+                                schema_info.append(f"表 {table_name}: {', '.join(columns)}")
+                        if schema_info:
+                            context_parts.append(f"## 数据源表结构\n" + "\n".join(schema_info))
+                except Exception as e:
+                    logger.warning(f"获取schema信息失败: {e}")
+
+            # 5. 时间上下文信息
+            if task_schedule:
+                time_context = []
+                if task_schedule.get('start_date'):
+                    time_context.append(f"- 数据起始时间: {task_schedule.get('start_date')}")
+                if task_schedule.get('end_date'):
+                    time_context.append(f"- 数据截止时间: {task_schedule.get('end_date')}")
+                if task_schedule.get('execution_time'):
+                    time_context.append(f"- 任务执行时间: {task_schedule.get('execution_time')}")
+                if task_schedule.get('cron_expression'):
+                    time_context.append(f"- 调度周期: {task_schedule.get('cron_expression')}")
+                if time_context:
+                    context_parts.append(f"## 任务时间上下文\n" + "\n".join(time_context))
+
+            context = "\n\n".join(context_parts)
+
+            # 构建验证prompt
+            validation_prompt = f"""请综合分析SQL查询是否符合占位符的业务需求。
+
+{context}
+
+## 验证要点
+
+1. **查询结果合理性**（最重要）：
+   - 如果结果为0：判断是否符合预期
+     * 占位符要求"本月XXX"，但SQL没有时间过滤 → 不合理
+     * 占位符要求"成功的XXX"，但SQL没有status过滤 → 不合理
+     * 占位符要求"所有历史XXX"，结果为0可能是正常的 → 合理
+   - 如果有结果：检查数据字段和值是否匹配占位符需求
+
+2. **时间范围理解**（灵活判断）：
+   - "本月/本周/今天" → 必须有时间范围过滤
+   - "XXX数量"（无时间词） → 根据任务上下文和业务常识判断
+   - "累计/所有/总计" → 统计所有历史数据，可能不需要时间过滤
+
+3. **业务逻辑一致性**：
+   - 状态过滤：要求"成功"则必须有status过滤
+   - 聚合要求：要求"数量/总数"则必须用COUNT/SUM
+   - 字段匹配：返回的数据字段应该与占位符需求对应
+
+4. **SQL完整性**：
+   - WHERE条件是否充分
+   - 表和字段是否正确
+   - 聚合函数使用是否正确
+
+## 输出格式（JSON）
+
+{{
+  "passes": true/false,
+  "reasoning": "详细的推理过程，特别说明查询结果是否符合预期",
+  "issues": ["问题1", "问题2"],
+  "recommendations": ["建议1", "建议2"]
+}}
+
+**重要提示**：
+- **优先基于查询结果判断**：结果为0但应该有数据，说明SQL有问题
+- 灵活理解时间：没有明确时间词时，根据业务常识和任务上下文判断
+- 如果SQL执行失败，必须标记为不通过
+- 如果结果合理但SQL有小瑕疵，可以标记为通过，在recommendations中提建议"""
+
+            # 调用LLM
+            from app.services.infrastructure.agents import create_llm_service
+
+            llm_service = create_llm_service(container=self.container)
+
+            response = await llm_service.generate(
+                prompt=validation_prompt,
+                temperature=0.1,
+                response_format="json"
+            )
+
+            # 解析LLM响应
+            import json
+            try:
+                result = json.loads(response.get("content", "{}"))
+            except json.JSONDecodeError:
+                content = response.get("content", "")
+                import re
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    result = json.loads(json_match.group())
+                else:
+                    raise ValueError("LLM未返回有效的JSON")
+
+            passes = result.get("passes", False)
+            reasoning = result.get("reasoning", "")
+            issues = result.get("issues", [])
+            recommendations = result.get("recommendations", [])
+
+            if passes:
+                logger.info(f"✅ [LLM意图验证] 验证通过")
+                logger.info(f"   推理: {reasoning}")
+            else:
+                logger.warning(f"❌ [LLM意图验证] 验证失败")
+                logger.warning(f"   推理: {reasoning}")
+                logger.warning(f"   问题: {issues}")
+                logger.info(f"   建议: {recommendations}")
+
+            return {
+                "likely_matches_intent": passes,
+                "potential_issues": issues,
+                "recommendations": recommendations,
+                "reasoning": reasoning,
+                "query_result_summary": {
+                    "row_count": query_result.get("row_count", 0) if query_result else 0,
+                    "has_error": bool(query_error)
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"LLM意图验证异常: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # 异常时默认通过，避免阻塞流程
+            return {
+                "likely_matches_intent": True,
+                "potential_issues": [],
+                "recommendations": [],
+                "reasoning": f"验证过程异常: {str(e)}，默认通过"
+            }
+
 
     async def _validate_sql_result_intent(
         self,

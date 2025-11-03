@@ -1,7 +1,7 @@
 """报告管理API端点 - v2版本"""
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Tuple
 import uuid
@@ -138,7 +138,7 @@ async def get_reports(
     )
 
 
-@router.post("/batch/zip", response_model=ApiResponse)
+@router.post("/batch/zip")
 async def download_reports_as_zip(
     request: dict,
     db: Session = Depends(get_db),
@@ -149,10 +149,10 @@ async def download_reports_as_zip(
     请求体:
       - report_ids: List[int]
       - filename: Optional[str] 自定义zip文件名（不含扩展名）
-      - expires: Optional[int] 预签名链接有效期(秒)，默认86400
+      - expires: Optional[int] 预签名链接有效期(秒)，默认86400（仅用于记录，实际直接返回文件）
 
     返回:
-      ApiResponse: 包含zip文件的预签名下载URL等信息
+      直接返回ZIP文件流（application/zip）
     """
     try:
         report_ids: List[int] = request.get("report_ids", []) or []
@@ -164,7 +164,6 @@ async def download_reports_as_zip(
         if len(report_ids) > MAX_BUNDLE:
             raise HTTPException(status_code=400, detail=f"单次最多支持 {MAX_BUNDLE} 个报告")
 
-        expires: int = int(request.get("expires", 86400))
         custom_filename: Optional[str] = request.get("filename")
 
         # 查询用户有权限的报告
@@ -265,32 +264,28 @@ async def download_reports_as_zip(
                 writer.writerow(list(row))
             zf.writestr("manifest.csv", manifest_io.getvalue().encode('utf-8'))
 
-        # 上传ZIP到存储
+        # 🔧 修复：直接返回文件流，而不是上传到MinIO再返回URL
         ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         zip_name = custom_filename.strip() if isinstance(custom_filename, str) and custom_filename.strip() else f"reports_bundle_{ts}"
         zip_name = safe_filename(zip_name) + ".zip"
-        zip_buffer.seek(0)
-        upload_info = storage.upload_file(
-            file_data=zip_buffer,
-            original_filename=zip_name,
-            file_type="reports",
-            content_type="application/zip"
-        )
-        zip_path = upload_info.get("file_path")
-        download_url = storage.get_download_url(zip_path, expires=expires)
 
-        return ApiResponse(
-            success=True,
-            data={
-                "zip_file_path": zip_path,
-                "download_url": download_url,
-                "included_count": len(included_ids),
-                "included_report_ids": included_ids,
-                "skipped_report_ids": skipped_ids,
-                "expires": expires,
-                "filename": zip_name
-            },
-            message=f"打包完成，包含 {len(included_ids)} 个报告"
+        # 记录日志
+        logger.info(f"批量打包完成: 文件名={zip_name}, 包含={len(included_ids)}个报告, 跳过={len(skipped_ids)}个")
+
+        # 将buffer指针移到开始
+        zip_buffer.seek(0)
+
+        # 🔥 直接返回文件流（StreamingResponse）
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{zip_name}"',
+                "X-Included-Count": str(len(included_ids)),
+                "X-Skipped-Count": str(len(skipped_ids)),
+                # 添加自定义头部用于前端显示信息
+                "X-Report-IDs": ",".join(map(str, included_ids)),
+            }
         )
     except HTTPException:
         raise
@@ -1552,20 +1547,30 @@ async def download_report(
             # ASCII文件名作为回退
             ascii_filename = filename.encode('ascii', 'ignore').decode('ascii')
             if not ascii_filename:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 ascii_filename = f"report_{timestamp}.{file_ext}"
 
             # UTF-8编码的文件名（RFC 5987）
             encoded_filename = quote(filename)
 
-            logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {report.file_path}, 文件名: {filename}")
+            # 获取实际文件大小
+            file_size = len(file_data)
+            # 如果数据库中的文件大小为0，更新它
+            if report.file_size == 0 or report.file_size is None:
+                report.file_size = file_size
+                db.commit()
+
+            logger.info(f"用户 {user_id} 下载报告: {report_id}, 文件: {report.file_path}, 文件名: {filename}, 大小: {file_size} bytes")
 
             return StreamingResponse(
                 file_stream,
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}',
+                    "Content-Length": str(file_size),  # 设置文件大小
                     "X-Storage-Backend": backend_type,
-                    "X-Report-ID": str(report_id)
+                    "X-Report-ID": str(report_id),
+                    "X-File-Size": str(file_size)
                 }
             )
             

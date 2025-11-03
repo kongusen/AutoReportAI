@@ -91,15 +91,26 @@ class StageConfigManager:
         # 图表生成阶段配置
         self.stage_configs[ExecutionStage.CHART_GENERATION] = StageConfig(
             enabled_tools=[
+                # 🔧 新增：Schema 工具（图表生成时可能需要查询数据）
+                "schema_discovery",
+                "schema_retrieval",
+                "schema_cache",
+                # 原有工具
                 "data_analyzer",
                 "chart_type_selector",
                 "chart_generator",
                 "chart_validator",
                 "data_sampler",
+                # 🔧 新增：SQL 工具（图表可能需要查询数据）
+                "sql_generator",
+                "sql_validator",
+                "sql_executor",
             ],
             tool_categories=[
+                ToolCategory.SCHEMA,  # 🔧 新增：支持 Schema 查询
                 ToolCategory.DATA,
                 ToolCategory.CHART,
+                ToolCategory.SQL,  # 🔧 新增：支持 SQL 查询
             ],
             system_prompt=self._get_chart_stage_prompt(),
             execution_guidance=self._get_chart_execution_guidance(),
@@ -115,6 +126,7 @@ class StageConfigManager:
                 "priority": "medium",
                 "complexity": "medium",
                 "requires_data": True,
+                "requires_schema": True,  # 🔧 新增：标记需要 Schema
             }
         )
         

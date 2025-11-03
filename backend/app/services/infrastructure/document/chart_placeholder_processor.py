@@ -136,10 +136,13 @@ class ChartPlaceholderProcessor:
                 recommended_chart_type = chart_intent.get("chart_type", "bar")
             else:
                 analyzer = ChartAnalyzerTool(self.container)
-                analysis_result = await analyzer.execute({
-                    "data": data,
-                    "intent": chart_intent["description"]
-                })
+                # 🔧 修复：使用关键字参数调用，并使用正确的参数名
+                analysis_result = await analyzer.execute(
+                    chart_data=data,
+                    chart_config=None,
+                    analysis_focus=["patterns", "trends"],
+                    include_recommendations=True
+                )
 
                 if not analysis_result.get("success"):
                     self.logger.warning(f"数据分析失败，使用默认图表类型: {analysis_result.get('error')}")

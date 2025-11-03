@@ -1002,11 +1002,15 @@ class PlaceholderApplicationService:
 
                 # SQL验证通过
                 logger.info(f"✅ SQL验证通过（占位符格式+Schema）: placeholder={agent_request.placeholder_id}")
+
+                # 🆕 额外验证：检查SQL是否真正符合占位符需求（适用于执行后结果为0或null的情况）
+                # 这里先返回SQL，实际的结果验证会在ETL执行阶段进行
                 return {
                     "success": True,
                     "sql": generated_sql,
                     "confidence": sql_result.metadata.get('confidence_level', 0.9),
-                    "validated": True
+                    "validated": True,
+                    "requires_result_validation": True  # 🔥 标记需要在执行后进行结果验证
                 }
 
             # 达到最大重试次数
@@ -1068,6 +1072,161 @@ class PlaceholderApplicationService:
             logger.debug(f"   修复后: {fixed_sql[:200]}...")
 
         return fixed_sql
+
+    async def _validate_sql_result_intent(
+        self,
+        sql: str,
+        placeholder_text: str,
+        placeholder_name: str,
+        result_data: Any,
+        row_count: int
+    ) -> Dict[str, Any]:
+        """
+        🆕 验证SQL执行结果是否符合占位符的业务意图
+
+        当查询结果为0或null时，检查SQL是否真正符合占位符的需求：
+        - 占位符要求"统计数量"，但SQL只是查询了0条数据
+        - 占位符要求"退货成功的数量"，但SQL查询了"全部退货"
+        - 占位符要求"本月数据"，但SQL没有时间过滤
+
+        Args:
+            sql: 执行的SQL语句
+            placeholder_text: 占位符描述文本
+            placeholder_name: 占位符名称
+            result_data: 查询结果数据
+            row_count: 结果行数
+
+        Returns:
+            Dict with:
+                - matches_intent: bool - 是否符合意图
+                - issues: List[str] - 发现的问题列表
+                - recommendations: List[str] - 改进建议
+        """
+        logger.info(f"🔍 [结果意图验证] 开始验证 SQL 结果是否符合占位符意图: {placeholder_name}")
+        logger.info(f"   占位符文本: {placeholder_text}")
+        logger.info(f"   结果行数: {row_count}")
+        logger.info(f"   结果数据: {result_data}")
+
+        issues = []
+        recommendations = []
+
+        # 只有在结果为0或null时才进行深度验证
+        is_empty_result = (
+            result_data is None
+            or result_data == 0
+            or (isinstance(result_data, list) and len(result_data) == 0)
+            or (isinstance(result_data, dict) and not result_data)
+            or row_count == 0
+        )
+
+        if not is_empty_result:
+            logger.info(f"✅ [结果意图验证] 结果不为空，跳过深度验证")
+            return {
+                "matches_intent": True,
+                "issues": [],
+                "recommendations": [],
+                "skip_reason": "result_not_empty"
+            }
+
+        logger.warning(f"⚠️ [结果意图验证] 检测到空结果，开始深度验证...")
+
+        # 1. 检查SQL中是否包含占位符要求的关键条件
+        placeholder_lower = placeholder_text.lower()
+        sql_lower = sql.lower()
+
+        # 检查状态过滤
+        if any(keyword in placeholder_lower for keyword in ['成功', '已完成', '通过', '正常']):
+            # 占位符要求特定状态，检查SQL是否有status过滤
+            if 'status' not in sql_lower and 'state' not in sql_lower:
+                issues.append(f"占位符要求特定状态（如'成功'），但SQL中没有status/state过滤条件")
+                recommendations.append("添加状态过滤条件，例如: WHERE status = '成功' 或 status = '已完成'")
+            elif '=' not in sql_lower and 'in' not in sql_lower:
+                issues.append(f"SQL中有status/state字段但没有具体的过滤条件")
+                recommendations.append("添加具体的状态值过滤")
+
+        # 检查类型过滤
+        if any(keyword in placeholder_lower for keyword in ['退货', '订单', '支付', '商品']):
+            entity_type = None
+            if '退货' in placeholder_lower:
+                entity_type = '退货'
+            elif '订单' in placeholder_lower:
+                entity_type = '订单'
+            elif '支付' in placeholder_lower:
+                entity_type = '支付'
+
+            if entity_type and 'type' not in sql_lower and 'category' not in sql_lower:
+                issues.append(f"占位符关注'{entity_type}'类型，但SQL中没有type/category过滤")
+                recommendations.append(f"考虑添加类型过滤条件")
+
+        # 2. 检查时间过滤（特别重要）
+        requires_time_filter = any(keyword in placeholder_lower for keyword in [
+            '本月', '当月', '本周', '今天', '昨天', '最近', '近期', '本年', '当前'
+        ])
+
+        has_time_filter = any(keyword in sql_lower for keyword in [
+            'between', 'date', 'time', 'created_at', 'updated_at',
+            '{{start_date}}', '{{end_date}}'
+        ])
+
+        if requires_time_filter and not has_time_filter:
+            issues.append(f"占位符要求时间范围数据，但SQL中没有时间过滤条件")
+            recommendations.append("添加时间过滤条件，例如: WHERE date BETWEEN {{start_date}} AND {{end_date}}")
+
+        # 3. 检查聚合函数使用
+        requires_aggregation = any(keyword in placeholder_lower for keyword in [
+            '数量', '总数', '合计', '统计', '平均', '最大', '最小', 'count', 'sum', 'avg'
+        ])
+
+        has_aggregation = any(keyword in sql_lower for keyword in [
+            'count(', 'sum(', 'avg(', 'max(', 'min(', 'group by'
+        ])
+
+        if requires_aggregation and not has_aggregation:
+            issues.append(f"占位符要求聚合统计，但SQL中没有使用聚合函数")
+            recommendations.append("使用聚合函数，例如: SELECT COUNT(*) 或 SUM(amount)")
+
+        # 4. 检查表名是否合理
+        # 提取SQL中的表名
+        import re
+        table_pattern = r'\bFROM\s+(\w+)|JOIN\s+(\w+)'
+        table_matches = re.findall(table_pattern, sql, re.IGNORECASE)
+        tables_in_sql = [t for match in table_matches for t in match if t]
+
+        if tables_in_sql:
+            # 检查表名是否与占位符意图匹配
+            placeholder_keywords = placeholder_lower.split()
+            table_keywords = [t.lower() for t in tables_in_sql]
+
+            # 简单的关键词匹配检查
+            has_keyword_match = any(
+                any(pk in tk for pk in placeholder_keywords)
+                for tk in table_keywords
+            )
+
+            if not has_keyword_match:
+                issues.append(f"SQL查询的表({', '.join(tables_in_sql)})可能与占位符意图不匹配")
+                recommendations.append(f"确认表名是否正确，占位符关注: {placeholder_text}")
+
+        # 5. 综合判断
+        matches_intent = len(issues) == 0
+
+        if not matches_intent:
+            logger.warning(f"❌ [结果意图验证] SQL可能不符合占位符意图:")
+            for issue in issues:
+                logger.warning(f"   - {issue}")
+            logger.info(f"💡 [结果意图验证] 改进建议:")
+            for rec in recommendations:
+                logger.info(f"   - {rec}")
+        else:
+            logger.info(f"✅ [结果意图验证] SQL符合占位符意图（尽管结果为空）")
+
+        return {
+            "matches_intent": matches_intent,
+            "issues": issues,
+            "recommendations": recommendations,
+            "requires_regeneration": not matches_intent  # 🔥 不符合意图时需要重新生成
+        }
+
 
     async def _validate_sql_schema(self, sql: str) -> Optional[str]:
         """

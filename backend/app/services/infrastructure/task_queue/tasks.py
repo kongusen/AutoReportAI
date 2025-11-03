@@ -1314,17 +1314,71 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             },
                         )
                     else:
-                        # 查询成功但无数据
+                        # 查询成功但无数据 - 🆕 进行意图验证
                         logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 查询成功但无数据返回")
-                        _set_etl_result(
-                            ph.placeholder_name,
-                            success=True,
-                            value=None,
-                            metadata={
-                                "reason": "query_success_empty",
-                                "row_count": 0,
-                            },
-                        )
+
+                        # 🔥 新增：验证SQL是否符合占位符意图
+                        try:
+                            intent_validation = run_async(system._validate_sql_result_intent(
+                                sql=final_sql,
+                                placeholder_text=ph.placeholder_text or ph.placeholder_name,
+                                placeholder_name=ph.placeholder_name,
+                                result_data=None,
+                                row_count=0
+                            ))
+
+                            if not intent_validation.get("matches_intent") and intent_validation.get("requires_regeneration"):
+                                logger.error(f"❌ [意图验证失败] 占位符 {ph.placeholder_name} 的SQL不符合业务意图")
+                                logger.error(f"   发现的问题: {intent_validation.get('issues', [])}")
+                                logger.info(f"💡 改进建议: {intent_validation.get('recommendations', [])}")
+
+                                # 标记为失败，而不是成功但数据为空
+                                _set_etl_result(
+                                    ph.placeholder_name,
+                                    success=False,
+                                    error=f"SQL不符合占位符意图: {'; '.join(intent_validation.get('issues', []))}",
+                                    metadata={
+                                        "reason": "intent_validation_failed",
+                                        "row_count": 0,
+                                        "intent_issues": intent_validation.get("issues", []),
+                                        "recommendations": intent_validation.get("recommendations", []),
+                                        "sql": final_sql  # 保存原SQL用于调试
+                                    },
+                                )
+
+                                # 🔥 TODO: 在未来版本中，这里可以触发自动重新生成SQL
+                                # regeneration_result = run_async(system._regenerate_sql_with_feedback(
+                                #     placeholder=ph,
+                                #     feedback=intent_validation.get("recommendations", [])
+                                # ))
+
+                                logger.warning(f"⚠️ 占位符 {ph.placeholder_name} 需要人工审查和修正")
+                            else:
+                                # 意图验证通过，只是数据真的为空（正常情况）
+                                logger.info(f"✅ [意图验证通过] 占位符 {ph.placeholder_name} SQL正确，数据确实为空")
+                                _set_etl_result(
+                                    ph.placeholder_name,
+                                    success=True,
+                                    value=None,
+                                    metadata={
+                                        "reason": "query_success_empty",
+                                        "row_count": 0,
+                                        "intent_validated": True
+                                    },
+                                )
+                        except Exception as validation_error:
+                            logger.error(f"意图验证过程异常: {validation_error}")
+                            # 降级处理：即使验证失败也返回空结果
+                            _set_etl_result(
+                                ph.placeholder_name,
+                                success=True,
+                                value=None,
+                                metadata={
+                                    "reason": "query_success_empty",
+                                    "row_count": 0,
+                                    "validation_error": str(validation_error)
+                                },
+                            )
 
                     # 更新进度
                     progress_increment = 10 / total_placeholders_count if total_placeholders_count else 0
@@ -1660,7 +1714,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                             "backend": upload_result.get("backend"),
                             "friendly_name": friendly_name,
                             "generation_mode": assemble_res.get("generation_mode", "word_template_service"),
+                            "size": upload_result.get("size", len(payload_bytes)),  # 保存文件大小
                         }
+                        logger.info(f"✅ 报告生成并存储完成: {upload_result.get('file_path')}, 大小: {upload_result.get('size', len(payload_bytes))} bytes")
                         update_progress(
                             95,
                             "文档生成完成",
@@ -1671,11 +1727,26 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             except Exception as e:
                 report_generation_error = str(e)
                 logger.error(f"Document assembly failed: {e}")
-                existing_mode = (execution_result.get("report") or {}).get("generation_mode")
-                execution_result["report"] = {
-                    "error": report_generation_error,
-                    "generation_mode": existing_mode or "assembly_error"
-                }
+                
+                # 🔧 修复：检查是否已有成功的 report 数据（包含 storage_path）
+                # 如果报告已经成功生成并存储，不应该覆盖它，只记录错误信息
+                existing_report = execution_result.get("report") or {}
+                if existing_report.get("storage_path"):
+                    # 报告已成功生成，只更新错误信息，不覆盖已有的数据
+                    logger.warning(
+                        f"⚠️ 清理阶段发生异常，但报告已成功生成: {existing_report.get('storage_path')}, "
+                        f"清理错误: {report_generation_error}"
+                    )
+                    existing_report["cleanup_error"] = report_generation_error
+                    # 保留 storage_path 等关键信息，不覆盖
+                    execution_result["report"] = existing_report
+                else:
+                    # 报告未成功生成，设置完整的错误信息
+                    existing_mode = existing_report.get("generation_mode")
+                    execution_result["report"] = {
+                        "error": report_generation_error,
+                        "generation_mode": existing_mode or "assembly_error"
+                    }
             finally:
                 # 清理模板临时文件
                 if tpl_meta:
@@ -1685,8 +1756,9 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
                     except Exception as cleanup_error:
                         logger.warning(f"清理模板临时文件失败: {cleanup_error}")
         
-        report_info = execution_result.get("report") or {}
-        if not report_info:
+        # 🔧 修复：区分 None 和空字典，避免覆盖已有的 report 数据
+        report_info = execution_result.get("report")
+        if report_info is None:
             report_info = {}
             execution_result["report"] = report_info
 

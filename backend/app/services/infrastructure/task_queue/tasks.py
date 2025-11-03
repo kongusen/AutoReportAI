@@ -1700,7 +1700,10 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
 
         etl_success = etl_phase_success
         execution_result["etl_success"] = etl_success
-        overall_success = etl_success and report_generated
+        
+        # 最终成功判断：只要报告成功生成，任务就认为成功
+        # ETL部分失败不影响最终状态，只作为警告记录
+        overall_success = report_generated
         execution_result["success"] = overall_success
         report_info["generated"] = report_generated
         
@@ -1710,11 +1713,16 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             f"report_generated={report_generated}, "
             f"overall_success={overall_success}"
         )
-        if not overall_success:
-            if not etl_success:
-                logger.warning("⚠️ 任务失败原因: ETL阶段未完全成功")
-            if not report_generated:
-                logger.warning("⚠️ 任务失败原因: 报告文档未生成")
+        
+        # ETL部分失败不影响最终状态，但需要记录警告
+        if not etl_success and report_generated:
+            logger.warning(
+                f"⚠️ ETL阶段未完全成功（存在失败占位符），但报告已成功生成，任务标记为成功"
+            )
+        
+        # 只有在报告生成失败时，才标记为失败
+        if not report_generated:
+            logger.error("❌ 任务失败原因: 报告文档未生成")
         
         # 7. 更新执行结果
         final_status = TaskStatus.COMPLETED if overall_success else TaskStatus.FAILED
@@ -1841,8 +1849,14 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
         )
 
         if overall_success:
+            # 报告成功生成，任务成功
+            complete_message = "任务执行完成"
+            if not etl_success:
+                # 如果ETL有部分失败，在消息中提及（但不影响成功状态）
+                complete_message += "（ETL阶段有部分占位符失败，但不影响报告生成）"
+            
             progress_recorder.complete(
-                "任务执行完成",
+                complete_message,
                 result={
                     "task_id": task_id,
                     "execution_id": str(task_execution.execution_id),
@@ -1850,14 +1864,12 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             )
             logger.info(f"Task {task_id} completed successfully in {task_execution.total_duration}s")
         else:
-            # 根据实际失败原因生成准确错误消息
+            # 报告生成失败，任务失败
             failure_reasons = []
-            if not etl_success:
-                failure_reasons.append("ETL阶段失败")
             if not report_generated:
                 failure_reasons.append("报告生成失败")
-            elif report_info.get("error"):
-                failure_reasons.append(f"报告生成问题: {report_info.get('error')}")
+                if report_info.get("error"):
+                    failure_reasons.append(f"原因: {report_info.get('error')}")
             
             if not failure_reasons:
                 failure_reasons.append("未知错误")
@@ -1866,8 +1878,8 @@ def execute_report_task(self, db: Session, task_id: int, execution_context: Opti
             
             progress_recorder.fail(
                 message=error_message,
-                stage="document_generation" if not report_generated else ("etl_processing" if not etl_success else "unknown"),
-                error_details={"error": report_info.get("error") or "ETL阶段失败" if not etl_success else "报告生成失败"},
+                stage="document_generation",
+                error_details={"error": report_info.get("error") or "报告文档未生成"},
             )
             logger.warning(f"Task {task_id} completed with failures in {task_execution.total_duration}s: {error_message}")
 
